@@ -31,9 +31,40 @@ Follow these steps to set up your local environment:
 
 2. **Install the Mintlify CLI:**
 
+    Use `sudo` to install the package with elevated privileges:
+
     ```bash
-    npm i -g mintlify
+    sudo npm i -g mintlify
     ```
+
+    Alternatively, you can change npm's default global package directory to a
+    location in your home directory where you have write permissions:
+
+    ```bash
+    mkdir ~/.npm-local
+    npm config set prefix '~/.npm-local'
+    ```
+
+    Add this directory to your PATH by adding the following line to your
+    `~/.bashrc` or `~/.zshrc` file:
+
+    ```bash
+    export PATH=~/.npm-local/bin:$PATH
+    ```
+
+    Then, reload your terminal configuration:
+
+    ```bash
+    source ~/.bashrc  # or source ~/.zshrc
+    ```
+
+    After this, you can install global packages without needing sudo:
+
+    ```bash
+    npm install -g mintlify
+    ```
+
+
 
 3. **Install Dependencies:** Run the following command at the root of your
 documentation (where `mint.json` is located).
@@ -44,17 +75,7 @@ documentation (where `mint.json` is located).
 
     This command will re-install any necessary dependencies for the project.
 
-4. **Install Pre-Commit Hooks:**
-
-    ```bash
-    npm i pre-commit
-    pre-commit install
-    ```
-
-    This will install the hooks that automatically check your Markdown files for
-    formatting and style issues on every commit.
-
-5. **Serve the Documentation:**
+4. **Serve the Documentation:**
 
     ```bash
     mintlify dev
