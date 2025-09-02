@@ -1,4 +1,3 @@
-
 # Welcome to the MemMachine Project
 
 Thank you for your interest in contributing to MemMachine! We are a
