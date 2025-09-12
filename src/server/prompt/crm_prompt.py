@@ -579,7 +579,7 @@ UPDATE_PROMPT = UNIFIED_CRM_PROMPT + "\n\n" + THINK_JSON_SUFFIX
 
 def _build_consolidation_prompt() -> str:
     return f"""
-**OUTPUT FORMAT REQUIREMENT: You MUST return valid JSON with "consolidate_memories" and "keep_memories" keys. No exceptions.**
+**CRITICAL OUTPUT REQUIREMENT: You MUST return ONLY valid JSON with EXACTLY these two keys: "consolidate_memories" and "keep_memories". NO OTHER TEXT. NO EXCEPTIONS.**
 
 Your job is to perform memory consolidation for a CRM profile system.
 Despite the name, consolidation is not solely about reducing the amount of memories, but rather, minimizing interference between CRM data points while maintaining sales pipeline integrity.
@@ -656,12 +656,20 @@ The proper noop syntax (when no consolidation is needed):
     "keep_memories": [123, 456]
 }}
 
-**IMPORTANT RULES:**
-1. ALWAYS include both "consolidate_memories" and "keep_memories" keys
-2. "consolidate_memories" should be an array (empty if no consolidation needed)
-3. "keep_memories" should be an array of memory IDs to keep
-4. Use proper JSON syntax with double quotes, not single quotes
-5. Do not include any text outside the JSON object
+**CRITICAL FINAL RULES - FOLLOW EXACTLY:**
+1. Your response must be ONLY valid JSON - no other text before or after
+2. ALWAYS include both "consolidate_memories" and "keep_memories" keys
+3. "consolidate_memories" must be an array (empty [] if no consolidation needed)
+4. "keep_memories" must be an array of memory IDs to keep (empty [] if none)
+5. Use proper JSON syntax with double quotes, not single quotes
+6. NO <think> tags, NO explanatory text, NO markdown - ONLY the JSON object
+7. If you include <think> tags, put them BEFORE the JSON, then return ONLY the JSON
+
+**EXAMPLE OF CORRECT RESPONSE:**
+{{
+    "consolidate_memories": [],
+    "keep_memories": []
+}}
 """.strip()
 
 
