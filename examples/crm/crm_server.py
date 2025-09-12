@@ -107,7 +107,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
         search_data = {
             "session": session_data,
             "query": query,
-            "limit": 20,
+            "limit": 50,
             "filter": {"producer_id": user_id},
         }
 
