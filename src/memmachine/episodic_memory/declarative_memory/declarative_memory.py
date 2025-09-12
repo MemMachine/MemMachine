@@ -8,6 +8,7 @@ import functools
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from string import Template
 from typing import Any, Self, cast
 from uuid import uuid4
 
@@ -74,6 +75,9 @@ class DeclarativeMemory:
                             - derivative_mutator:
                               DerivativeMutator instance
                               used for mutating derivatives.
+                - episode_metadata_template:
+                    Template string supporting $-substitutions
+                    (default: "[$timestamp] $content").
         """
 
         self._vector_graph_store: VectorGraphStore = config[
@@ -148,6 +152,10 @@ class DeclarativeMemory:
                 "derivation_workflows"
             ].items()
         }
+
+        self._episode_metadata_template = Template(
+            config.get("episode_metadata_template", "[$timestamp] $content")
+        )
 
     class Workflow:
         def __init__(
@@ -649,29 +657,9 @@ class DeclarativeMemory:
         )
 
         # Return episodes sorted by timestamp.
-        episodes = [
-            Episode(
-                uuid=node.uuid,
-                episode_type=cast(str, node.properties["episode_type"]),
-                content_type=ContentType(node.properties["content_type"]),
-                content=node.properties["content"],
-                timestamp=cast(
-                    datetime,
-                    node.properties.get("timestamp", datetime.min),
-                ),
-                filterable_properties={
-                    demangle_filterable_property_key(key): cast(
-                        FilterablePropertyValue, value
-                    )
-                    for key, value in node.properties.items()
-                    if is_mangled_filterable_property_key(key)
-                },
-                user_metadata=json.loads(
-                    cast(str, node.properties["user_metadata"])
-                ),
-            )
-            for node in unified_episode_node_context
-        ]
+        episodes = DeclarativeMemory._episodes_from_episode_nodes(
+            list(unified_episode_node_context)
+        )
 
         return sorted(
             episodes,
@@ -730,26 +718,53 @@ class DeclarativeMemory:
         Score episode node contexts
         based on their relevance to the query.
         """
-        episode_node_context_contents = [
-            "\n".join(
-                [
-                    cast(str, episode_node.properties["content"])
-                    for episode_node in sorted(
-                        episode_node_context,
-                        key=lambda node: cast(
-                            datetime,
-                            node.properties.get("timestamp", datetime.min),
-                        ),
-                    )
-                    if ContentType(episode_node.properties["content_type"])
-                    == ContentType.STRING
-                ]
+        contexts_episodes = [
+            DeclarativeMemory._episodes_from_episode_nodes(
+                list(episode_node_context)
             )
             for episode_node_context in episode_node_contexts
         ]
 
+        def get_formatted_episode_content(episode: Episode) -> str:
+            # Format episode content for reranker using metadata.
+            return self._episode_metadata_template.safe_substitute(
+                {
+                    "episode_type": episode.episode_type,
+                    "content_type": episode.content_type.value,
+                    "content": episode.content,
+                    "timestamp": episode.timestamp,
+                    "filterable_properties": (episode.filterable_properties),
+                    "user_metadata": episode.user_metadata,
+                },
+                **{
+                    key: value
+                    for key, value in {
+                        **episode.filterable_properties,
+                        **(
+                            episode.user_metadata
+                            if isinstance(episode.user_metadata, dict)
+                            else {}
+                        ),
+                    }.items()
+                },
+            )
+
+        contexts_content = [
+            "\n".join(
+                [
+                    get_formatted_episode_content(context_episode)
+                    for context_episode in sorted(
+                        context_episodes,
+                        key=lambda episode: episode.timestamp,
+                    )
+                    if context_episode.content_type == ContentType.STRING
+                ]
+            )
+            for context_episodes in contexts_episodes
+        ]
+
         episode_node_context_scores = await self._reranker.score(
-            query, episode_node_context_contents
+            query, contexts_content
         )
 
         return episode_node_context_scores
@@ -893,3 +908,42 @@ class DeclarativeMemory:
 
     async def close(self):
         await self._vector_graph_store.close()
+
+    @staticmethod
+    def _episodes_from_episode_nodes(
+        episode_nodes: list[Node],
+    ) -> list[Episode]:
+        """
+        Convert a list of episode Nodes to a list of Episodes.
+
+        Args:
+            episode_nodes (list[Node]):
+                A list of Nodes representing episodes.
+
+        Returns:
+            list[Episode]:
+                A list of Episodes constructed from the episode Nodes.
+        """
+        return [
+            Episode(
+                uuid=node.uuid,
+                episode_type=cast(str, node.properties["episode_type"]),
+                content_type=ContentType(node.properties["content_type"]),
+                content=node.properties["content"],
+                timestamp=cast(
+                    datetime,
+                    node.properties.get("timestamp", datetime.min),
+                ),
+                filterable_properties={
+                    demangle_filterable_property_key(key): cast(
+                        FilterablePropertyValue, value
+                    )
+                    for key, value in node.properties.items()
+                    if is_mangled_filterable_property_key(key)
+                },
+                user_metadata=json.loads(
+                    cast(str, node.properties["user_metadata"])
+                ),
+            )
+            for node in episode_nodes
+        ]

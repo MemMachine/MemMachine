@@ -129,6 +129,7 @@ class DeclarativeMemoryBuilder(Builder):
                     "derivation_workflows"
                 ].items()
             },
+            "episode_metadata_template": config["episode_metadata_template"],
         }
 
         return DeclarativeMemory(populated_config)
