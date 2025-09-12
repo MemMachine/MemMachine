@@ -7,7 +7,7 @@ from typing import Annotated
 from sqlalchemy import Integer, MetaData, String, Table, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
-from ..data_types import SessionInfo
+from ..data_types import SessionInfo, GroupConfiguration
 
 
 # Base class for declarative class definitions
@@ -64,6 +64,16 @@ class SessionManager:
         group_id: Mapped[StringColumn]
         session_id: Mapped[IntColumn]  # Foreign key to sessions.id
 
+    class GroupInfo(Base):
+        """ORM model for a group information."""
+
+        __tablename__ = "group_info"
+        id: Mapped[IntKeyColumn]
+        group_id: Mapped[StringColumn]
+        user_list: Mapped[StringColumn]
+        agent_list: Mapped[StringColumn]
+        configuration: Mapped[StringColumn]
+
     def __init__(self, config: dict):
         """
         Initializes the SessionManager.
@@ -103,6 +113,112 @@ class SessionManager:
             # Disposes of the connection pool
             self._engine.dispose()
 
+    def create_new_group(
+            self,
+            group_id: str,
+            agent_ids: list[str],
+            user_ids: list[str],
+            configuration: dict | None = None,
+    ) -> tuple[bool, str | None]:
+        """
+        Creates a new group.
+        If the group already exists, this function fails.
+
+        Args:
+            group_id (str): The ID of the group.
+            agent_ids (list[str]): A list of agent IDs.
+            user_ids (list[str]): A list of user IDs.
+            configuration (dict | None): A dictionary for group
+                                          configuration.
+        Returns:
+            tuple[bool, str | None]: The first value is if
+            the function call successful. The second is the error
+            message if the function failed.
+        """
+        if len(agent_ids) == 0 and len(user_ids) == 0:
+            return False, "New group without users or agents"
+        with self._session() as dbsession:
+            # Query for an existing group with the same ID
+            group = (
+                dbsession.query(self.GroupInfo)
+                .filter(self.GroupInfo.group_id == group_id)
+                .first()
+            )
+            if group is not None:
+                return False, f"""Group {group_id} already exists"""
+            group = self.GroupInfo(
+                group_id=group_id,
+                user_list=json.dumps(user_ids),
+                agent_list=json.dumps(agent_ids),
+                configuration=json.dumps(
+                    configuration if configuration is not None else {}
+                ),
+            )
+            dbsession.add(group)
+            dbsession.commit()
+            dbsession.refresh(group)
+            return True, None
+
+    def retrieve_group(self, group_id: str) -> GroupConfiguration | None:
+        """
+        Retrieves a group by its ID.
+
+        Args:
+            group_id (str): The ID of the group.
+
+        Returns:
+            GroupConfiguration | None: A GroupConfiguration object if found,
+                                        None otherwise.
+        """
+        with self._session() as dbsession:
+            group = (
+                dbsession.query(self.GroupInfo)
+                .filter(self.GroupInfo.group_id == group_id)
+                .first()
+            )
+            if group is None:
+                return None
+            return GroupConfiguration(
+                group_id=group.group_id,
+                agent_list=json.loads(group.agent_list),
+                user_list=json.loads(group.user_list),
+                configuration=json.loads(group.configuration),
+            )
+
+    def delete_group(self, group_id: str):
+        """
+        Deletes a group by its ID.
+
+        Args:
+            group_id (str): The ID of the group.
+        """
+        with self._session() as dbsession:
+            dbsession.query(self.GroupInfo).filter(
+                self.GroupInfo.group_id == group_id
+            ).delete()
+            dbsession.commit()
+
+    def retrieve_all_groups(self) -> list[GroupConfiguration]:
+        """
+        Retrieves all groups.
+
+        Returns:
+            list[GroupConfiguration]: A list of GroupConfiguration objects.
+        """
+        with self._session() as dbsession:
+            groups = dbsession.query(self.GroupInfo).all()
+            result = []
+            for group in groups:
+                result.append(
+                    GroupConfiguration(
+                        group_id=group.group_id,
+                        agent_list=json.loads(group.agent_list),
+                        user_list=json.loads(group.user_list),
+                        configuration=json.loads(group.configuration),
+                    )
+                )
+            return result
+
     def create_session_if_not_exist(
         self,
         group_id: str,
@@ -114,7 +230,7 @@ class SessionManager:
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
         """
-        Creates a new session if one with the specified parameters doesn't
+        Creates a new session if one with the specified group doesn't
         already exist.
         If a session exists, it returns the existing session information.
 
@@ -138,22 +254,37 @@ class SessionManager:
         users = json.dumps(user_ids)
         config = json.dumps(configuration if configuration is not None else {})
         with self._session() as dbsession:
-            # Query for an existing session with the same parameters
+            # Query for an existing session with the same group id
             sess = (
                 dbsession.query(self.MemSession)
                 .filter(
-                    self.MemSession.session_id == session_id,
                     self.MemSession.group_id == group_id,
-                    self.MemSession.agent_ids == agents,
-                    self.MemSession.user_ids == users,
+                    self.MemSession.session_id == session_id,
                 )
                 .all()
             )
 
             if len(sess) > 1:
-                raise ValueError("""More than one session found""")
+                raise ValueError(f"""More than one session found with same ID
+                                  {group_id}: {session_id}""")
 
             if len(sess) == 0:
+                # Check if group exists. If not, create one
+                group = (
+                    dbsession.query(self.GroupInfo)
+                    .filter(self.GroupInfo.group_id == group_id)
+                    .first()
+                )
+                if group is None:
+                    ret, msg = self.create_new_group(group_id, agent_ids,
+                                                     user_ids, configuration)
+                    if not ret:
+                        raise ValueError(msg)
+                else:
+                    agents = group.agent_list
+                    users = group.user_list
+                    config = group.configuration
+
                 # Create a new session if it doesn't exist
                 new_sess = self.MemSession(
                     timestamp=int(os.times()[4]),
@@ -353,8 +484,6 @@ class SessionManager:
     def delete_session(
         self,
         group_id: str | None,
-        agent_ids: list[str] | None,
-        user_ids: list[str],
         session_id: str,
     ):
         """
@@ -375,9 +504,6 @@ class SessionManager:
                 .filter(
                     self.MemSession.session_id == session_id,
                     self.MemSession.group_id == group_id,
-                    self.MemSession.agent_ids
-                    == json.dumps(agent_ids if agent_ids is not None else []),
-                    self.MemSession.user_ids == json.dumps(user_ids),
                 )
                 .all()
             )

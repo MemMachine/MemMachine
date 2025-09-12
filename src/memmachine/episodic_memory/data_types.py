@@ -49,6 +49,18 @@ class SessionInfo:
 
 
 @dataclass
+class GroupConfiguration:
+    group_id: str
+    """The identifier for the group."""
+    agent_list: list[str]
+    """A list of agent identifiers in the group."""
+    user_list: list[str]
+    """A list of user identifiers in the group."""
+    configuration: dict
+    """A dictionary containing any custom configuration for the group."""
+
+
+@dataclass
 class MemoryContext:
     """
     Defines the unique context for a memory instance.
