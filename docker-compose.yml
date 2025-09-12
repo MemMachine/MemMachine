@@ -1,0 +1,125 @@
+services:
+  # PostgreSQL with pgvector extension for profile memory storage
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: memmachine-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-memmachine}
+      POSTGRES_USER: ${POSTGRES_USER:-memmachine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASS:-memmachine_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memmachine} -d ${POSTGRES_DB:-memmachine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - memmachine-network
+
+  # Neo4j database for graph storage
+  neo4j:
+    image: neo4j:5.23-community
+    container_name: memmachine-neo4j
+    restart: unless-stopped
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP
+      - "${NEO4J_HTTPS_PORT:-7473}:7473"  # HTTPS
+      - "${NEO4J_PORT:-7687}:7687"  # Bolt
+    environment:
+      NEO4J_EDITION: community
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j_password}
+      NEO4J_server_bolt_thread__pool__max__size: 2000
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_default__listen__address: 0.0.0.0
+      NEO4J_server_bolt_listen__address: 0.0.0.0:7687
+      NEO4J_server_http_listen__address: 0.0.0.0:7474
+      NEO4J_server_https_listen__address: 0.0.0.0:7473
+      NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USER:-neo4j}", "-p", "${NEO4J_PASSWORD:-neo4j_password}", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - memmachine-network
+
+  # MemMachine application
+  memmachine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: memmachine-app
+    restart: unless-stopped
+    ports:
+      - "${MEMORY_SERVER_PORT:-8080}:8080"
+    environment:
+      # Database configuration
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-memmachine}
+      POSTGRES_PASS: ${POSTGRES_PASS:-memmachine_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
+      POSTGRES_DB: ${POSTGRES_DB:-memmachine}
+      
+      # Neo4j configuration
+      NEO4J_HOST: ${NEO4J_HOST:-neo4j}
+      NEO4J_PORT: ${NEO4J_PORT:-7687}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_password}
+      
+      # Application configuration
+      MEMORY_CONFIG: ${MEMORY_CONFIG:-configuration.yml}
+      MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
+      GATEWAY_URL: ${GATEWAY_URL:-http://localhost:8080}
+      FAST_MCP_LOG_LEVEL: ${FAST_MCP_LOG_LEVEL:-INFO}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./configuration.yml:/app/configuration.yml:ro
+      - ./src/server/configuration.yml:/app/src/server/configuration.yml:ro
+      - memmachine_logs:/tmp/memory_logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - memmachine-network
+
+volumes:
+  postgres_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_import:
+    driver: local
+  neo4j_plugins:
+    driver: local
+  memmachine_logs:
+    driver: local
+
+networks:
+  memmachine-network:
+    driver: bridge
+    name: memmachine-network
