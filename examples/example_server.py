@@ -6,8 +6,9 @@ from fastapi import FastAPI
 from default_query_constructor import DefaultQueryConstructor
 
 # Configuration
-MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
-EXAMPLE_SERVER_PORT = int(os.getenv("EXAMPLE_SERVER_PORT", "8000"))
+PORT = int(os.getenv("PORT", "8080"))
+AGENT_PORT = int(os.getenv("AGENT_PORT", "8000"))
+MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL") or f"http://localhost:{PORT}"
 
 app = FastAPI(title="Server", description="Simple middleware")
 
@@ -211,4 +212,5 @@ async def store_and_search_data(user_id: str, query: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=EXAMPLE_SERVER_PORT)
+    agent_host = os.getenv("AGENT_HOST", "0.0.0.0")
+    uvicorn.run(app, host=agent_host, port=AGENT_PORT)
