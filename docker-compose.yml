@@ -1,0 +1,132 @@
+services:
+  # Neo4j database for graph storage
+  neo4j:
+    image: neo4j:ubi9
+    container_name: memmachine-neo4j-custom
+    restart: unless-stopped
+    ports:
+      - "7476:7474"  # HTTP
+      - "7475:7473"  # HTTPS
+      - "7688:7688"  # Bolt
+    environment:
+      NEO4J_EDITION: community
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_server_bolt_thread__pool__max__size: 2000
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # MemMachine Backend Server
+  memmachine:
+    build: .
+    image: memmachine:latest
+    container_name: memmachine-backend
+    working_dir: /app/src
+    command: python -m server.app
+    ports:
+      - "${PORT:-8083}:${PORT:-8083}"
+    environment:
+      - PORT=${PORT:-8083}
+      - HOST=${HOST:-0.0.0.0}
+      - MEMORY_CONFIG=${MEMORY_CONFIG:-configuration.yml}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASS=${POSTGRES_PASS}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - NEO4J_USERNAME=${NEO4J_USERNAME}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - NEO4J_URI=${NEO4J_URI}
+      - MCP_BASE_URL=http://127.0.0.1:${PORT:-8080}
+      - GATEWAY_URL=http://localhost:${PORT:-8080}
+    env_file:
+      - .env
+    volumes:
+      - ./configuration.yml:/app/configuration.yml
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+
+  #  Server (middleware)
+  crm-server:
+    image: memmachine:latest
+    container_name: crm-server
+    working_dir: /app/examples
+    command: python -m crm.crm_server
+    ports:
+      - "${AGENT_PORT:-8002}:${AGENT_PORT:-8002}"
+    environment:
+      - PORT=${PORT:-8083}
+      - AGENT_PORT=${AGENT_PORT:-8002}
+      - AGENT_HOST=${AGENT_HOST:-0.0.0.0}
+      - MEMORY_BACKEND_URL=http://memmachine:${PORT:-8083}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASS}
+      - POSTGRES_DB=${POSTGRES_DB}
+    env_file:
+      - .env
+    depends_on:
+      - memmachine
+    restart: unless-stopped
+
+  # Slack Server
+  slack-server:
+    image: memmachine:latest
+    container_name: memmachine-slack
+    working_dir: /app/examples/crm
+    command: sh -c "uv pip install -r requirements.txt && python slack_server.py"
+    stdin_open: true
+    tty: true
+    ports:
+      - "${SLACK_PORT:-8001}:${SLACK_PORT:-8001}"
+    environment:
+      - PORT=${PORT:-8083}
+      - AGENT_PORT=${AGENT_PORT:-8002}
+      - SLACK_PORT=${SLACK_PORT:-8003}
+      - SLACK_HOST=${SLACK_HOST:-0.0.0.0}
+      - AGENT_SERVER_URL=http://crm-server:${AGENT_PORT:-8002}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - AGENT_CHANNEL_ID=${AGENT_CHANNEL_ID}
+      - SLACK_ENABLE_HISTORICAL=${SLACK_ENABLE_HISTORICAL}
+      - SLACK_MESSAGE_LIMIT=${SLACK_MESSAGE_LIMIT:-5}
+      - SLACK_INTERACTIVE_MODE=${SLACK_INTERACTIVE_MODE:-false}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    env_file:
+      - .env
+    depends_on:
+      - crm-server
+    restart: unless-stopped
+
+  # Ngrok tunnel for Slack Server
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: memmachine-ngrok
+    command: http slack-server:${SLACK_PORT:-8003} --log stdout
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - slack-server
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+
+networks:
+  default:
+    name: memmachine-network

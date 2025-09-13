@@ -43,5 +43,5 @@ RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords
     python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/ms-marco-MiniLM-L6-v2')" && \
     python -c "from sentence_transformers import CrossEncoder; CrossEncoder('cross-encoder/qnli-electra-base')"
 
-EXPOSE 8080
+EXPOSE ${PORT:-8080}
 CMD ["sh", "-c", "memmachine-sync-profile-schema && memmachine-server"]
