@@ -1,0 +1,84 @@
+namespace: memmachine
+backend:
+  enabled: true
+  name: backend
+  image:
+    repository: 10.10.0.42:5005/memmachine/backend
+    tag: x86_64-2025-08-28.3
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 4
+      memory: 4Gi
+    limits:
+      cpu: 4
+      memory: 6Gi
+      #nvidia.com/gpu: 1
+  env: [] 
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+neo4j:
+  enabled: true
+  # REQUIRED: a unique Neo4j cluster/instance name within the namespace
+  neo4j:
+    name: my-graph
+    # Community by default; set to "enterprise" + accept license to use EE
+    edition: "community"   # or "enterprise"
+    # You cannot use "neo4j" as the initial password. Leave empty to auto-generate.  [oai_citation:1‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-standalone/create-value-file)
+    password: "changeMeS3cure"
+    # For Enterprise, set one of: "yes" (licensed) or "eval" (evaluation).  [oai_citation:2‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-standalone/create-value-file)
+    acceptLicenseAgreement: "no"
+
+  # Example: enable useful config via neo4j.conf settings
+  # NOTE: All neo4j.conf values must be strings.  [oai_citation:3‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/configuration)
+  config:
+    server.metrics.enabled: "true"
+    dbms.security.auth_enabled: "true"
+    server.config.strict_validation.enabled: "false"
+    server.memory.heap.initial_size: "3G"
+    server.memory.heap.max_size: "3G"
+    server.memory.pagecache.size: "1G"
+
+  # (Optional) JVM flags
+  jvm:
+    additionalJvmArguments:
+      - "-XX:+HeapDumpOnOutOfMemoryError"
+
+  # (Optional) install plugins (Neo4j 5 uses NEO4J_PLUGINS)
+  env:
+    NEO4J_PLUGINS: '["apoc","graph-data-science"]'  # adjust as needed  [oai_citation:4‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/docker/plugins)
+
+  # Storage: default StorageClass via volume claim templates
+  volumes:
+    data:
+      mode: defaultStorageClass  # PVC with default SC. Adjust to match your cluster.  [oai_citation:5‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-cluster/create-value-file)
+    # To use a specific StorageClass:
+    # data:
+    #   mode: dynamic
+    #   dynamic:
+    #     storageClassName: fast-ssd
+    #     requests:
+    #       storage: 50Gi
+
+  # Resources (tune to your cluster)
+  resources:
+    limits:
+      cpu: "4"
+      memory: "6Gi"
+    requests:
+      cpu: "4"
+      memory: "6Gi"
+
+  # Service exposure (ClusterIP by default)
+  service:
+    type: ClusterIP
+
+  # If you want browser/Bolt through Ingress, Neo4j recommends a separate reverse-proxy chart.
+  # See docs: neo4j/neo4j-reverse-proxy.  [oai_citation:6‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/accessing-neo4j-ingress)

@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ .Release.Name }}-pgvector"
+spec:
+  selector:
+    matchLabels:
+      app: "{{ .Release.Name }}-pgvector"
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: "{{ .Release.Name }}-pgvector"
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.env.POSTGRES_DB | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.env.POSTGRES_USER | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.env.POSTGRES_PASSWORD | quote }}
+            - name: POSTGRES_INITDB_ARGS
+              value: {{ .Values.env.POSTGRES_INITDB_ARGS | quote }}
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.env.POSTGRES_USER }}
+                - -d
+                - {{ .Values.env.POSTGRES_DB }}
+            initialDelaySeconds: {{ .Values.healthcheck.startPeriod | default "30s" | int }}
+            periodSeconds: {{ .Values.healthcheck.interval | default "10s" | int }}
+            timeoutSeconds: {{ .Values.healthcheck.timeout | default "5s" | int }}
+            failureThreshold: {{ .Values.healthcheck.retries | default 5 }}
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-data-claim

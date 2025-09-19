@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ .Release.Name }}-pgvector"
+spec:
+  selector:
+    app: "{{ .Release.Name }}-pgvector"
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 5432
+  type: {{ .Values.service.type }}
