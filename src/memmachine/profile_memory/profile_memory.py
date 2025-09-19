@@ -14,6 +14,7 @@ from types import ModuleType
 from typing import Any
 
 import numpy as np
+from pydantic import BaseModel
 
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
@@ -74,8 +75,6 @@ class ProfileMemory:
         self._consolidation_prompt = getattr(
             prompt_module, "CONSOLIDATION_PROMPT", ""
         )
-        self._update_prompt_data = """The old version persona profile is
-            {profile}.\nThe conversation history is {session}.\n"""
         self._profile_storage = AsyncPgProfileStorage(db_config)
         self._update_interval = 1
         self._msg_count: dict[str, int] = {}
@@ -383,43 +382,130 @@ class ProfileMemory:
         update user profile based on json output, after doing a chain
         of thought.
         """
-        citation_id = record["id"]
+        # TODO: These really should not be raw data structures.
+        citation_id = record["id"]  # Think this is an int
         user_id = record["user_id"]
         isolations = json.loads(record["isolations"])
         # metadata = json.loads(record["metadata"])
+
         profile = await self.get_user_profile(user_id, isolations)
-        userp = self._update_prompt_data.format(
-            profile=str(profile), session=record["content"]
+        memory_content = record["content"]
+
+        user_prompt = (
+            "The old profile is provided below:\n"
+            "<OLD_PROFILE>\n"
+            "{profile}\n"
+            "</OLD_PROFILE>\n"
+            "\n"
+            "The history is provided below:\n"
+            "<HISTORY>\n"
+            "{memory_content}\n"
+            "</HISTORY>\n"
+        ).format(
+            profile=str(profile),
+            memory_content=memory_content,
         )
 
-        raw = await self._model.generate_response(
-            system_prompt=self._update_prompt, user_prompt=userp
+        # Use chain-of-thought to get entity profile update commands.
+        response_text, _ = await self._model.generate_response(
+            system_prompt=self._update_prompt, user_prompt=user_prompt
         )
 
-        def get_suffix(a: str):
-            idx = a.find("</think>")
-            if idx == -1:
-                return None, a
-            return (a[8:idx], a[(idx + 8) :])
+        # Get thinking and JSON from language model response.
+        thinking, _, response_json = response_text.removeprefix(
+            "<think>"
+        ).rpartition("</think>")
+        thinking = thinking.strip()
 
-        pfx, sfx = get_suffix(raw[0])
-        result = {}
+        # TODO: These really should not be raw data structures.
         try:
-            result = json.loads(sfx)
+            profile_update_commands = json.loads(response_json)
         except ValueError as e:
-            logger.error(
-                "unable to format ai output %s, Error %s", str(sfx), str(e)
+            logger.warning(
+                "Unable to load language model output '%s' as JSON, Error %s: "
+                "Proceeding with no profile update commands",
+                str(response_json),
+                str(e),
             )
-            result = {}
+            profile_update_commands = {}
+
         logger.info(
             "PROFILE MEMORY INGESTOR",
             extra={
-                "queries_to_ingest": record["content"],
-                "thoughts": pfx,
-                "outputs": result,
+                "queries_to_ingest": memory_content,
+                "thoughts": thinking,
+                "outputs": profile_update_commands,
             },
         )
-        for command in result.values():
+
+        # This should probably just be a list of commands
+        # instead of a dictionary mapping
+        # from integers in strings (not even bare ints!)
+        # to commands.
+        # TODO: Consider improving this design in a breaking change.
+        if not isinstance(profile_update_commands, dict):
+            logger.warning(
+                "AI response format incorrect: expected dict, got %s %s",
+                type(profile_update_commands).__name__,
+                profile_update_commands,
+            )
+            profile_update_commands = {}
+
+        commands = profile_update_commands.values()
+
+        valid_commands = []
+        for command in commands:
+            if not isinstance(command, dict):
+                logger.warning(
+                    "AI response format incorrect: "
+                    "expected profile update command to be dict, got %s %s",
+                    type(command).__name__,
+                    command,
+                )
+                continue
+
+            if "command" not in command:
+                logger.warning(
+                    "AI response format incorrect: "
+                    "missing 'command' key in %s",
+                    command,
+                )
+                continue
+
+            if command["command"] not in ("add", "delete"):
+                logger.warning(
+                    "AI response format incorrect: "
+                    "expected 'command' value in profile update command "
+                    "to be 'add' or 'delete', got '%s'",
+                    command["command"],
+                )
+                continue
+
+            if "feature" not in command:
+                logger.warning(
+                    "AI response format incorrect: "
+                    "missing 'feature' key in %s",
+                    command,
+                )
+                continue
+
+            if "tag" not in command:
+                logger.warning(
+                    "AI response format incorrect: missing 'tag' key in %s",
+                    command,
+                )
+                continue
+
+            if command["command"] == "add" and "value" not in command:
+                logger.warning(
+                    "AI response format incorrect: missing 'value' key in %s",
+                    command,
+                )
+                continue
+
+            valid_commands.append(command)
+
+        for command in valid_commands:
             if command["command"] == "add":
                 await self.add_new_profile(
                     user_id,
@@ -431,16 +517,22 @@ class ProfileMemory:
                     # metadata=metadata
                 )
             elif command["command"] == "delete":
-                v = command["value"] if "value" in command else None
+                value = command["value"] if "value" in command else None
                 await self.delete_user_profile_feature(
                     user_id,
                     command["feature"],
                     command["tag"],
-                    value=v,
+                    value=value,
                     isolations=isolations,
                 )
             else:
-                logger.error("AI tool call formatting incorrect")
+                logger.error(
+                    "Command with unknown action: %s", command["command"]
+                )
+                raise ValueError(
+                    "Command with unknown action: " + str(command["command"])
+                )
+
         if wait_consolidate:
             s = await self.get_large_profile_sections(
                 user_id, thresh=5, isolations=isolations
@@ -458,37 +550,135 @@ class ProfileMemory:
         sends a list of features to an llm to consolidated
         """
 
-        raw = await self._model.generate_response(
+        response_text, _ = await self._model.generate_response(
             system_prompt=self._consolidation_prompt,
             user_prompt=json.dumps(memories),
         )
 
-        def get_suffix(a: str):
-            idx = a.find("</think>")
-            if idx == -1:
-                return None, a
-            return (a[8:idx], a[(idx + 8) :])
+        # Get thinking and JSON from language model response.
+        thinking, _, response_json = response_text.removeprefix(
+            "<think>"
+        ).rpartition("</think>")
+        thinking = thinking.strip()
 
-        pfx, sfx = get_suffix(raw[0])
-        result = {}
         try:
-            result = json.loads(sfx)
+            updated_profile_entries = json.loads(response_json)
         except ValueError as e:
-            logger.error(
-                "unable to format ai output %s. Error %s", str(sfx), str(e)
+            logger.warning(
+                "Unable to load language model output '%s' as JSON, Error %s",
+                str(response_json),
+                str(e),
             )
-            result = {}
+            updated_profile_entries = {}
+
         logger.info(
             "PROFILE MEMORY CONSOLIDATOR",
-            extra={"receives": memories, "thoughts": pfx, "outputs": result},
+            extra={
+                "receives": memories,
+                "thoughts": thinking,
+                "outputs": updated_profile_entries,
+            },
         )
-        for memory in result["consolidate_memories"]:
+
+        if not isinstance(updated_profile_entries, dict):
+            logger.warning(
+                "AI response format incorrect: expected dict, got %s %s",
+                type(updated_profile_entries).__name__,
+                updated_profile_entries,
+            )
+            updated_profile_entries = {}
+
+        if "consolidate_memories" not in updated_profile_entries:
+            logger.warning(
+                "AI response format incorrect: "
+                "missing 'consolidate_memories' key, got %s",
+                updated_profile_entries,
+            )
+            updated_profile_entries["consolidate_memories"] = []
+
+        if "keep_memories" not in updated_profile_entries:
+            logger.warning(
+                "AI response format incorrect: "
+                "missing 'keep_memories' key, got %s",
+                updated_profile_entries,
+            )
+            updated_profile_entries["keep_memories"] = []
+
+        consolidate_memories = updated_profile_entries["consolidate_memories"]
+        keep_memories = updated_profile_entries["keep_memories"]
+
+        keep_all_memories = False
+
+        if not isinstance(consolidate_memories, list):
+            logger.warning(
+                "AI response format incorrect: "
+                "'consolidate_memories' value is not a list, got %s %s",
+                type(consolidate_memories).__name__,
+                consolidate_memories,
+            )
+            consolidate_memories = []
+            keep_all_memories = True
+
+        if not isinstance(keep_memories, list):
+            logger.warning(
+                "AI response format incorrect: "
+                "'keep_memories' value is not a list, got %s %s",
+                type(keep_memories).__name__,
+                keep_memories,
+            )
+            keep_memories = []
+            keep_all_memories = True
+
+        if not keep_all_memories:
+            valid_keep_memories = []
+            for memory_id in keep_memories:
+                if not isinstance(memory_id, int):
+                    logger.warning(
+                        "AI response format incorrect: "
+                        "expected int memory id in 'keep_memories', got %s %s",
+                        type(memory_id).__name__,
+                        memory_id,
+                    )
+                    continue
+
+                valid_keep_memories.append(memory_id)
+
+            for memory in memories:
+                if memory["metadata"]["id"] not in valid_keep_memories:
+                    self._profile_cache.erase(user_id)
+                    await self._profile_storage.delete_profile_feature_by_id(
+                        memory["metadata"]["id"]
+                    )
+
+        class ConsolidateMemoryMetadata(BaseModel):
+            citations: list[int]
+
+        class ConsolidateMemory(BaseModel):
+            tag: str
+            feature: str
+            value: str
+            metadata: ConsolidateMemoryMetadata
+
+        for memory in consolidate_memories:
+            try:
+                consolidate_memory = ConsolidateMemory(**memory)
+            except Exception as e:
+                logger.warning(
+                    "AI response format incorrect: "
+                    "unable to parse memory %s, error %s",
+                    memory,
+                    str(e),
+                )
+                continue
+
             associations = (
                 await self._profile_storage.get_all_citations_for_ids(
-                    memory["metadata"]["citations"]
+                    consolidate_memory.metadata.citations
                 )
             )
+
             new_citations = [i[0] for i in associations]
+
             # a derivative shall contain all routing information of its
             # components that do not mutually conflict.
             new_isolations: dict[str, bool | int | float | str] = {}
@@ -506,21 +696,15 @@ class ProfileMemory:
                 "CITATION_CHECK",
                 extra={
                     "content_citations": new_citations,
-                    "profile_citations": memory["metadata"]["citations"],
-                    "think": pfx,
+                    "profile_citations": memory.metadata.citations,
+                    "think": thinking,
                 },
             )
             await self.add_new_profile(
                 user_id,
-                memory["feature"],
-                memory["value"],
-                memory["tag"],
+                memory.feature,
+                memory.value,
+                memory.tag,
                 citations=new_citations,
                 isolations=new_isolations,
             )
-        for memory in memories:
-            if memory["metadata"]["id"] not in result["keep_memories"]:
-                self._profile_cache.erase(user_id)
-                await self._profile_storage.delete_profile_feature_by_id(
-                    memory["metadata"]["id"]
-                )
