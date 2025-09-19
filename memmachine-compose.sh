@@ -12,6 +12,31 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+## Function to run a command with a timeout
+timeout() {
+    local duration="$1"
+    shift
+    perl -e '
+        $timeout = shift;
+        $pid = fork();
+        if ($pid == 0) {
+            exec @ARGV;
+        }
+        else {
+            eval {
+                local $SIG{ALRM} = sub { die "timeout\n" };
+                alarm($timeout);
+                waitpid($pid, 0);
+                alarm(0);
+            };
+            if ($@ && $@ =~ /timeout/) {
+                kill 9, $pid;
+                print STDERR "Command timed out after $timeout seconds\n";
+                exit 124;
+            }
+        }
+    ' "$duration" "$@"
+}
 # Function to print colored output
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
