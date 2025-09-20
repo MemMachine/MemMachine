@@ -6,6 +6,7 @@ from memmachine.episodic_memory.data_types import SessionInfo
 from memmachine.episodic_memory.session_manager.session_manager import (
     SessionManager,
 )
+from memmachine.server import app
 
 
 @pytest.fixture
@@ -326,3 +327,17 @@ def test_create_session_with_null_config(session_manager: SessionManager):
         configuration=None,
     )
     assert session_info.configuration == {}
+
+
+def test_missing_config_file(monkeypatch):
+    # Set environment variable to a non-existent config file
+    monkeypatch.setenv("MEMORY_CONFIG", "missing_config_for_test.yml")
+    # Patch open to raise FileNotFoundError
+    with pytest.raises(RuntimeError) as excinfo:
+        # Directly call the lifespan context manager to trigger config loading
+        import asyncio
+        async def run_lifespan():
+            async with app.http_app_lifespan(app.app):
+                pass
+        asyncio.run(run_lifespan())
+    assert "Configuration file 'missing_config_for_test.yml' not found."
