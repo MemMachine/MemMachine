@@ -155,12 +155,12 @@ async def http_app_lifespan(application: FastAPI):
         app: The FastAPI application instance.
     """
     config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
+    yaml_config = {}    
     try:
-        yaml_config = yaml.safe_load(
-            open(config_file, encoding="utf-8")
-        )
-    except Exception as e:
-        raise e
+        with open(config_file, encoding="utf-8") as f:
+            yaml_config = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise RuntimeError(f"Configuration file '{config_file}' not found.")
 
     # if the model is defined in the config, use it.
     profile_config = yaml_config.get("profile_memory", {})
