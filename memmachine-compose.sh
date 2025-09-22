@@ -14,28 +14,29 @@ NC='\033[0m' # No Color
 
 ## Function to run a command with a timeout
 timeout() {
-    local duration="$1"
-    shift
-    perl -e '
-        $timeout = shift;
-        $pid = fork();
-        if ($pid == 0) {
-            exec @ARGV;
-        }
-        else {
-            eval {
-                local $SIG{ALRM} = sub { die "timeout\n" };
-                alarm($timeout);
-                waitpid($pid, 0);
-                alarm(0);
-            };
-            if ($@ && $@ =~ /timeout/) {
-                kill 9, $pid;
-                print STDERR "Command timed out after $timeout seconds\n";
-                exit 124;
-            }
-        }
-    ' "$duration" "$@"
+  local duration=$1
+  shift
+
+  # Run the command in the background
+  "$@" &
+  local cmd_pid=$!
+
+  # Start a background sleep that will kill the command
+  (
+    sleep "$duration"
+    kill -0 "$cmd_pid" 2>/dev/null && kill -TERM "$cmd_pid"
+  ) &
+
+  local watchdog_pid=$!
+
+  # Wait for the command to finish
+  wait "$cmd_pid"
+  local status=$?
+
+  # Clean up watchdog if command finished early
+  kill -TERM "$watchdog_pid" 2>/dev/null
+
+  return $status
 }
 # Function to print colored output
 print_info() {
