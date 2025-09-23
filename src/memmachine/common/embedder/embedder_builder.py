@@ -62,12 +62,12 @@ class EmbedderBuilder(Builder):
 
                 return OpenAIEmbedder(
                     {
-                        "model": config.get("model", "text-embedding-3-small"),
-                        "api_key": config["api_key"],
+                        key: value
+                        for key, value in config.items()
+                        if key != "metrics_factory_id"
+                    }
+                    | {
                         "metrics_factory": injected_metrics_factory,
-                        "user_metrics_labels": config.get(
-                            "user_metrics_labels", {}
-                        ),
                     }
                 )
             case _:

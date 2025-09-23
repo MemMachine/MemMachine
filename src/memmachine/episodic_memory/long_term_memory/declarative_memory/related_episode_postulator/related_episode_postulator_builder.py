@@ -43,13 +43,13 @@ class RelatedEpisodePostulatorBuilder(Builder):
                 )
 
                 populated_config = {
+                    key: value
+                    for key, value in config.items()
+                    if key != "vector_graph_store_id"
+                } | {
                     "vector_graph_store": injections[
                         config["vector_graph_store_id"]
                     ],
-                    "search_limit": config.get("search_limit", 1),
-                    "filterable_property_keys": config.get(
-                        "filterable_property_keys", set()
-                    ),
                 }
                 return PreviousRelatedEpisodePostulator(populated_config)
             case _:

@@ -38,7 +38,9 @@ class CrossEncoderReranker(Reranker):
 
         # TODO @edwinyyyu Remove: temporary fix for memory leak
         if model_name not in self._cross_encoders.keys():
-            CrossEncoderReranker._cross_encoders[model_name] = CrossEncoder(model_name)
+            CrossEncoderReranker._cross_encoders[model_name] = CrossEncoder(
+                model_name
+            )
 
         self._cross_encoder = CrossEncoderReranker._cross_encoders[model_name]
 

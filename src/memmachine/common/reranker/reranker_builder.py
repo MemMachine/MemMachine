@@ -58,11 +58,15 @@ class RerankerBuilder(Builder):
 
                 return RRFHybridReranker(
                     {
+                        key: value
+                        for key, value in config.items()
+                        if key != "reranker_ids"
+                    }
+                    | {
                         "rerankers": [
                             injections[reranker_id]
                             for reranker_id in config["reranker_ids"]
                         ],
-                        "k": config.get("k", 60),
                     }
                 )
             case _:

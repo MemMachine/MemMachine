@@ -1,5 +1,5 @@
 """
-Bootstrap initializer for building resources
+Resource initializer for building resources
 based on their definitions and dependencies.
 """
 
@@ -7,29 +7,25 @@ from collections import deque
 from typing import Any
 
 from memmachine.common.builder import Builder
-from memmachine.common.embedder.embedder_builder import EmbedderBuilder
-from memmachine.common.language_model.language_model_builder import (
-    LanguageModelBuilder,
-)
-from memmachine.common.metrics_factory.metrics_factory_builder import (
-    MetricsFactoryBuilder,
-)
-from memmachine.common.reranker.reranker_builder import RerankerBuilder
-from memmachine.common.vector_graph_store.vector_graph_store_builder import (
-    VectorGraphStoreBuilder,
-)
-from memmachine.episodic_memory.declarative_memory import (
+from memmachine.common.embedder import EmbedderBuilder
+from memmachine.common.language_model import LanguageModelBuilder
+from memmachine.common.metrics_factory import MetricsFactoryBuilder
+from memmachine.common.reranker import RerankerBuilder
+from memmachine.common.vector_graph_store import VectorGraphStoreBuilder
+from memmachine.episodic_memory.long_term_memory import LongTermMemoryBuilder
+from memmachine.episodic_memory.long_term_memory.declarative_memory import (
     DeclarativeMemoryBuilder,
 )
-from memmachine.episodic_memory.declarative_memory.derivative_deriver import (
+from memmachine.episodic_memory.long_term_memory.declarative_memory.derivative_deriver import (
     DerivativeDeriverBuilder,
 )
-from memmachine.episodic_memory.declarative_memory.derivative_mutator import (
+from memmachine.episodic_memory.long_term_memory.declarative_memory.derivative_mutator import (
     DerivativeMutatorBuilder,
 )
-from memmachine.episodic_memory.declarative_memory.related_episode_postulator import (
+from memmachine.episodic_memory.long_term_memory.declarative_memory.related_episode_postulator import (
     RelatedEpisodePostulatorBuilder,
 )
+from memmachine.episodic_memory.short_term_memory import SessionMemoryBuilder
 
 """
 Each entry in resource_definitions should look like this:
@@ -49,23 +45,28 @@ resource_builder_map: dict[str, type[Builder]] = {
     "declarative_memory": DeclarativeMemoryBuilder,
     "derivative_deriver": DerivativeDeriverBuilder,
     "derivative_mutator": DerivativeMutatorBuilder,
-    "related_episode_postulator": RelatedEpisodePostulatorBuilder,
     "embedder": EmbedderBuilder,
     "language_model": LanguageModelBuilder,
+    "long_term_memory": LongTermMemoryBuilder,
     "metrics_factory": MetricsFactoryBuilder,
+    "related_episode_postulator": RelatedEpisodePostulatorBuilder,
     "reranker": RerankerBuilder,
+    "session_memory": SessionMemoryBuilder,
     "vector_graph_store": VectorGraphStoreBuilder,
 }
 
 
-class BootstrapInitializer:
+class ResourceInitializer:
     """
-    Bootstrap initializer for building resources
+    Resource initializer for building resources
     based on their definitions and dependencies.
     """
 
     @staticmethod
-    def initialize(resource_definitions: dict[str, Any]):
+    def initialize(
+        resource_definitions: dict[str, Any],
+        resource_cache: dict[str, Any] = {},
+    ):
         """
         Initialize resources
         based on their definitions and dependencies.
@@ -147,8 +148,11 @@ class BootstrapInitializer:
 
         ordered_resource_ids = order_resources(resource_dependency_graph)
 
-        resources: dict[str, Any] = {}
+        resources = resource_cache.copy()
         for resource_id in ordered_resource_ids:
+            if resource_id in resources:
+                continue
+
             resource_definition = resource_definitions[resource_id]
 
             resource_builder = resource_builder_map[

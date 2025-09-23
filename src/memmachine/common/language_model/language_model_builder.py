@@ -62,12 +62,12 @@ class LanguageModelBuilder(Builder):
 
                 return OpenAILanguageModel(
                     {
-                        "model": config.get("model", "gpt-5-nano"),
-                        "api_key": config["api_key"],
+                        key: value
+                        for key, value in config.items()
+                        if key != "metrics_factory_id"
+                    }
+                    | {
                         "metrics_factory": injected_metrics_factory,
-                        "user_metrics_labels": config.get(
-                            "user_metrics_labels", {}
-                        ),
                     }
                 )
             case _:

@@ -47,7 +47,6 @@ def memory_context():
         agent_id={"agent1"},
         user_id={"user1"},
         session_id="session1",
-        hash_str="group1_agent1_user1_session1",
     )
 
 
@@ -55,13 +54,14 @@ def memory_context():
 def memory(mock_model, memory_context):
     """Fixture for a SessionMemory instance."""
     return SessionMemory(
-        model=mock_model,
-        summary_system_prompt="System prompt",
-        summary_user_prompt="User prompt: {episodes} {summary}",
-        capacity=3,
-        max_message_len=100,
-        max_token_num=50,
-        memory_context=memory_context,
+        config={
+            "model": mock_model,
+            "summary_system_prompt": "System prompt",
+            "summary_user_prompt": "User prompt: {episodes} {summary}",
+            "message_capacity": 3,
+            "max_message_length": 100,
+            "max_token_num": 50,
+        }
     )
 
 
@@ -115,7 +115,7 @@ class TestSessionMemoryPublicAPI:
         )
         assert episodes == [episode2, episode3, episode4]
         assert summary == "summary"
-        
+
     async def test_clear_memory(self, memory):
         """Test clearing the memory."""
         await memory.add_episode(create_test_episode(content="test"))

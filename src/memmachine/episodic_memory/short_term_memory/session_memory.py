@@ -1,9 +1,9 @@
 """
-Manages short-term memory for a conversational session.
+Short-term memory.
 
 This module provides the `SessionMemory` class, which is responsible for
-storing and managing a sequence of conversational turns (episodes) within a
-single session. It uses a deque with a fixed capacity and evicts older
+storing and managing a sequence of conversational turns (episodes).
+It uses a deque with a fixed capacity and evicts older
 episodes when memory limits (number of episodes, message length, or token
 count) are reached. Evicted episodes are summarized asynchronously to maintain
 context over a longer conversation.
@@ -12,8 +12,15 @@ context over a longer conversation.
 import asyncio
 import logging
 from collections import deque
+from typing import Any, Self
 
-from ..data_types import Episode, MemoryContext
+from memmachine.common.language_model import LanguageModel
+
+from ..data_types import Episode
+from .prompt.summary_prompt import (
+    episode_summary_system_prompt,
+    episode_summary_user_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,48 +38,86 @@ class SessionMemory:
 
     def __init__(
         self,
-        model,
-        summary_system_prompt: str,
-        summary_user_prompt: str,
-        capacity: int,
-        max_message_len: int,
-        max_token_num: int,
-        memory_context: MemoryContext,
+        config: dict[str, Any],
     ):
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
         """
-        Initializes the ShortTermMemory instance.
+        Initializes the SessionMemory instance.
 
         Args:
-            model: The language model API for generating summaries.
-            storage: The memory storage API.
-            summary_system_prompt: The system prompt for creating the initial
-                                   summary.
-            summary_user_prompt: The user prompt for creating the initial
-                                 summary.
-            capacity: The maximum number of episodes to store.
-            max_message_len: The maximum total length of all messages in
-                             characters.
-            max_token_num: The maximum total number of tokens for all
-                           messages.
-            memory_context: The context (group, agent, user, session) for the
-                            memory.
+            config: Configuration dictionary with the following keys:
+                model:
+                    The language model API for generating summaries.
+                summary_system_prompt:
+                    The system prompt for creating the initial summary.
+                summary_user_prompt:
+                    The user prompt for creating the initial summary.
+                message_capacity: The maximum number of episodes to store.
+                max_message_length:
+                    The maximum total length
+                    of all messages in characters.
+                max_token_num:
+                    The maximum total number of tokens
+                    for all messages.
+                memory_context:
+                    The context (group, agent, user, session)
+                    for the memory.
         """
-        self._model = model
-        self._summary_user_prompt = summary_user_prompt
-        self._summary_system_prompt = summary_system_prompt
-        self._memory: deque[Episode] = deque(maxlen=capacity)
-        self._capacity = capacity
+        language_model = config.get("language_model")
+        if not isinstance(language_model, LanguageModel):
+            raise TypeError(
+                "language_model must be an instance of LanguageModel"
+            )
+        self._language_model = language_model
+
+        self._summary_system_prompt = config.get(
+            "summary_system_prompt", episode_summary_system_prompt
+        )
+        if not isinstance(self._summary_system_prompt, str):
+            raise TypeError("summary_system_prompt must be a string")
+
+        self._summary_user_prompt = config.get(
+            "summary_user_prompt", episode_summary_user_prompt
+        )
+        if not isinstance(self._summary_user_prompt, str):
+            raise TypeError("summary_user_prompt must be a string")
+
+        self._message_capacity = config.get("message_capacity", 1000)
+        if not isinstance(self._message_capacity, int):
+            raise TypeError("message_capacity must be an integer")
+
+        self._max_message_length = config.get("max_message_length", 128000)
+        if not isinstance(self._max_message_length, int):
+            raise TypeError("max_message_length must be an integer")
+
+        self._max_token_num = config.get("max_token_num", 32000)
+        if not isinstance(self._max_token_num, int):
+            raise TypeError("max_token_num must be an integer")
+
+        self._memory: deque[Episode] = deque(maxlen=self._message_capacity)
+
         self._current_episode_count = 0
-        self._max_message_len = max_message_len
-        self._max_token_num = max_token_num
-        self._current_message_len = 0
+        self._current_message_length = 0
         self._current_token_num = 0
         self._summary = ""
-        self._memory_context = memory_context
         self._summary_task = None
         self._lock = asyncio.Lock()
+
+    async def __aenter__(self) -> Self:
+        """
+        Enters the asynchronous context.
+
+        Returns:
+            The SessionMemory instance.
+        """
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exits the asynchronous context.
+        """
+        await self.close()
 
     def _is_full(self) -> bool:
         """
@@ -85,8 +130,8 @@ class SessionMemory:
             True if the memory is full, False otherwise.
         """
         result = (
-            self._current_episode_count >= self._capacity
-            or self._current_message_len >= self._max_message_len
+            self._current_episode_count >= self._message_capacity
+            or self._current_message_length >= self._max_message_length
             or self._current_token_num >= self._max_token_num
         )
         return result
@@ -106,8 +151,8 @@ class SessionMemory:
             self._memory.append(episode)
 
             self._current_episode_count += 1
-            self._current_message_len += len(episode.content)
-            self._current_token_num += self._compute_token_num(
+            self._current_message_length += len(episode.content)
+            self._current_token_num += SessionMemory._compute_token_num(
                 self._memory[-1]
             )
             full = self._is_full()
@@ -131,7 +176,7 @@ class SessionMemory:
         for e in self._memory:
             result.append(e)
         self._current_episode_count = 0
-        self._current_message_len = 0
+        self._current_message_length = 0
         self._current_token_num = 0
         # if previous summary task is still running, wait for it
         if self._summary_task is not None:
@@ -149,7 +194,7 @@ class SessionMemory:
                 self._summary_task.cancel()
             self._memory.clear()
             self._current_episode_count = 0
-            self._current_message_len = 0
+            self._current_message_length = 0
             self._current_token_num = 0
             self._summary = ""
 
@@ -185,7 +230,7 @@ class SessionMemory:
             msg = self._summary_user_prompt.format(
                 episodes=episode_content, summary=self._summary
             )
-            result = await self._model.generate_response(
+            result = await self._language_model.generate_response(
                 system_prompt=self._summary_system_prompt, user_prompt=msg
             )
             self._summary = result[0]
@@ -195,30 +240,25 @@ class SessionMemory:
         except ValueError as e:
             logger.info("ValueError when create summary: %s", str(e))
 
-    async def get_session_memory_context(
-        self,
-        query,
-        limit: int = 0,
-        max_token_num: int = 0
+    async def get_memory(
+        self, limit: int = 0, max_token_num: int = 0
     ) -> tuple[list[Episode], str]:
         """
-        Retrieves context from short-term memory for a given query.
+        Retrieves context from short-term memory.
 
         This includes the current summary and as many recent episodes as can
         fit within a specified token limit.
 
         Args:
-            query: The user's query string.
             max_token_num: The maximum number of tokens for the context. If 0,
             no limit is applied.
         """
-        logger.debug("Get session for %s", query)
         async with self._lock:
             if self._summary_task is not None:
                 await self._summary_task
                 self._summary_task = None
             length = (
-                self._compute_token_num(self._summary)
+                SessionMemory._compute_token_num(self._summary)
                 if self._summary is not None
                 else 0
             )
@@ -228,14 +268,15 @@ class SessionMemory:
                     break
                 if len(episodes) >= limit > 0:
                     break
-                token_num = self._compute_token_num(e)
+                token_num = SessionMemory._compute_token_num(e)
                 if length + token_num > max_token_num > 0:
                     break
                 episodes.appendleft(e)
                 length += token_num
             return list(episodes), self._summary
 
-    def _compute_token_num(self, episode: Episode | str) -> int:
+    @staticmethod
+    def _compute_token_num(episode: Episode | str) -> int:
         """
         Computes the total number of tokens in an episodes.
         """

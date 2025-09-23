@@ -14,15 +14,15 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from importlib import import_module
 from typing import Any
 
-from dataclasses import dataclass
 import uvicorn
 import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastmcp import FastMCP, Context
+from fastmcp import Context, FastMCP
 from prometheus_client import make_asgi_app
 from pydantic import BaseModel
 
@@ -30,16 +30,13 @@ from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import (
     OpenAILanguageModel,
 )
-from memmachine.episodic_memory.data_types import ContentType
-from memmachine.episodic_memory.episodic_memory import (
+from memmachine.episodic_memory import (
     AsyncEpisodicMemory,
+    ContentType,
     EpisodicMemory,
-)
-from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 from memmachine.profile_memory.profile_memory import ProfileMemory
-
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +75,7 @@ class SearchQuery(BaseModel):
 # === Response Models ===
 class SearchResult(BaseModel):
     """Response model for memory search results."""
+
     status: int = 0
     content: dict[str, Any]
 
@@ -111,9 +109,11 @@ episodic_memory: EpisodicMemoryManager = None
 
 # === Lifespan Management ===
 
+
 @dataclass
 class DBConfig:
     """Database configuration model."""
+
     host: str | None
     port: str | None
     user: str | None
@@ -156,9 +156,7 @@ async def http_app_lifespan(application: FastAPI):
     """
     config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
     try:
-        yaml_config = yaml.safe_load(
-            open(config_file, encoding="utf-8")
-        )
+        yaml_config = yaml.safe_load(open(config_file, encoding="utf-8"))
     except Exception as e:
         raise e
 
@@ -203,7 +201,7 @@ async def http_app_lifespan(application: FastAPI):
     await profile_memory.startup()
     yield
     await profile_memory.cleanup()
-    await episodic_memory.shut_down()
+
 
 mcp = FastMCP("MemMachine")
 mcp_app = mcp.http_app("/")
@@ -224,6 +222,7 @@ async def mcp_http_lifespan(application: FastAPI):
     async with http_app_lifespan(application):
         async with mcp_app.lifespan(application):
             yield
+
 
 app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
@@ -418,13 +417,12 @@ async def add_memory(episode: NewEpisode):
                         or {episode.session.agent_id}""",
             )
 
-        ctx = inst.get_memory_context()
         await profile_memory.add_persona_message(
             str(episode.episode_content),
             episode.metadata if episode.metadata is not None else {},
             {
-                "group_id": ctx.group_id,
-                "session_id": ctx.session_id,
+                "group_id": episode.session.group_id,
+                "session_id": episode.session.session_id,
                 "producer": episode.producer,
                 "produced_for": episode.produced_for,
             },
@@ -465,7 +463,6 @@ async def search_memory(q: SearchQuery) -> SearchResult:
                     {q.session.agent_id}""",
         )
     async with AsyncEpisodicMemory(inst) as inst:
-        ctx = inst.get_memory_context()
         user_id = (
             q.session.user_id[0]
             if q.session.user_id is not None and len(q.session.user_id) > 0
@@ -477,8 +474,8 @@ async def search_memory(q: SearchQuery) -> SearchResult:
                 q.query,
                 q.limit if q.limit is not None else 5,
                 isolations={
-                    "group_id": ctx.group_id,
-                    "session_id": ctx.session_id,
+                    "group_id": q.session.group_id,
+                    "session_id": q.session.session_id,
                 },
                 user_id=user_id,
             ),

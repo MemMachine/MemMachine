@@ -825,7 +825,7 @@ class DeclarativeMemory:
         """
         await self._vector_graph_store.clear_data()
 
-    async def forget_isolated_episodes(
+    async def forget_filtered_episodes(
         self,
         filterable_properties: dict[str, FilterablePropertyValue] = {},
     ):
@@ -905,9 +905,6 @@ class DeclarativeMemory:
             episode_uuids + episode_cluster_uuids + derivative_uuids
         )
         await self._vector_graph_store.delete_nodes(node_uuids_to_delete)
-
-    async def close(self):
-        await self._vector_graph_store.close()
 
     @staticmethod
     def _episodes_from_episode_nodes(
