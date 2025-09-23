@@ -217,7 +217,7 @@ class EpisodicMemory:
                 produced_for_id=produced_for,
                 user_metadata=metadata,
             )
-
+            
             # Add the episode to both memory stores concurrently
             await asyncio.gather(
                 self._session_memory.add_episode(episode),
@@ -225,6 +225,7 @@ class EpisodicMemory:
             )
             end_time = datetime.now()
             delta = end_time - start_time
+            span.log_kv({"ingestion_time_ms": delta.total_seconds() * 1000 + delta.microseconds / 1000})
             self._ingestion_latency_summary.observe(
                 delta.total_seconds() * 1000 + delta.microseconds / 1000
             )
