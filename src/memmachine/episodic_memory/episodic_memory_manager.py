@@ -27,9 +27,10 @@ from .prompt.summary_prompt import (
     episode_summary_user_prompt,
 )
 from .session_manager.session_manager import SessionManager
-
+import os
 logger = logging.getLogger(__name__)
-
+from memmachine.tracing import get_tracer, init_tracer
+    
 
 class EpisodicMemoryManager:
     """
@@ -46,6 +47,7 @@ class EpisodicMemoryManager:
     """
 
     _instance = None
+    _tracer = None
 
     def __init__(self, config: dict):
         """
@@ -66,7 +68,8 @@ class EpisodicMemoryManager:
         # dictionary.
         self._lock = asyncio.Lock()
         # Initialize the session manager for handling session data persistence.
-
+        jaeger_host = os.getenv("JAEGER_HOST", "jaeger")   
+        _tracer = init_tracer(jaeger_host=jaeger_host)
         sessiondb = config.get("sessiondb", {})
         self._session_manager = SessionManager(sessiondb)
 
@@ -204,6 +207,7 @@ class EpisodicMemoryManager:
         user_id: list[str] | None = None,
         session_id: str = "",
         config_path: str | None = None,
+        parent_span: None = None,
     ) -> EpisodicMemory | None:
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
@@ -225,76 +229,84 @@ class EpisodicMemoryManager:
         Returns:
             The EpisodicMemory instance for the specified context.
         """
-        config = {}
-        if config_path is not None:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
+        tracer = get_tracer()
+        with tracer.start_active_span('get_episodic_memory_instance', child_of=parent_span) as scope:
+            span = scope.span
+            span.set_tag("group_id", group_id)
+            span.set_tag("agent_id", ",".join(agent_id) if agent_id else "")
+            span.set_tag("user_id", ",".join(user_id) if user_id else "")
+            span.set_tag("session_id", session_id)
+            span.log_event("get_episodic_memory_instance.START")
+            config = {}
+            if config_path is not None:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = yaml.safe_load(f)
 
-        # Validate that the context is sufficiently defined.
-        if user_id is None:
-            user_id = []
-        if agent_id is None:
-            agent_id = []
-        if group_id is None and len(user_id) < 1 and len(agent_id) < 1:
-            raise ValueError("Invalid context")
-        if session_id is None:
-            raise ValueError("Invalid session id")
-        if len(user_id) < 1:
-            user_id = agent_id
+            # Validate that the context is sufficiently defined.
+            if user_id is None:
+                user_id = []
+            if agent_id is None:
+                agent_id = []
+            if group_id is None and len(user_id) < 1 and len(agent_id) < 1:
+                raise ValueError("Invalid context")
+            if session_id is None:
+                raise ValueError("Invalid session id")
+            if len(user_id) < 1:
+                user_id = agent_id
 
-        # If group_id is not provided, create a composite ID from user IDs.
-        if group_id is None or len(group_id) < 1:
-            group_id = "".join(user_id).join(agent_id)
+            # If group_id is not provided, create a composite ID from user IDs.
+            if group_id is None or len(group_id) < 1:
+                group_id = "".join(user_id).join(agent_id)
 
-        hash_str = (
-            group_id
-            + "_".join(agent_id)
-            + "_".join(user_id)
-            + "_"
-            + session_id
-        )
-
-        # Create the unique memory context object.
-        memory_context = MemoryContext(
-            group_id=group_id,
-            agent_id=set(agent_id),
-            user_id=set(user_id),
-            session_id=session_id,
-            hash_str=hash_str,
-        )
-
-        async with self._lock:
-            # If an instance for this context already exists, increment its
-            # reference count and return it.
-            if hash_str in self._context_memory:
-                print("Use existing session")
-                instance = self._context_memory[hash_str]
-                get_it = await instance.reference()
-                if get_it:
-                    return instance
-                # The instance was closed between checking and referencing.
-                logger.error("Failed get instance reference")
-                return None
-            print("Create new session")
-            # If no instance exists, create a new one.
-            info = self._session_manager.create_session_if_not_exist(
-                group_id, agent_id, user_id, session_id, config
+            hash_str = (
+                group_id
+                + "_".join(agent_id)
+                + "_".join(user_id)
+                + "_"
+                + session_id
             )
 
-            # Merge the base config with the session-specific config.
-            final_config = self._merge_configs(
-                self._memory_config, info.configuration or {}
+            # Create the unique memory context object.
+            memory_context = MemoryContext(
+                group_id=group_id,
+                agent_id=set(agent_id),
+                user_id=set(user_id),
+                session_id=session_id,
+                hash_str=hash_str,
             )
 
-            # Create and store the new memory instance.
-            memory_instance = EpisodicMemory(
-                self, final_config, memory_context
-            )
+            async with self._lock:
+                # If an instance for this context already exists, increment its
+                # reference count and return it.
+                if hash_str in self._context_memory:
+                    print("Use existing session")
+                    instance = self._context_memory[hash_str]
+                    get_it = await instance.reference()
+                    if get_it:
+                        return instance
+                    # The instance was closed between checking and referencing.
+                    logger.error("Failed get instance reference")
+                    return None
+                print("Create new session")
+                # If no instance exists, create a new one.
+                info = self._session_manager.create_session_if_not_exist(
+                    group_id, agent_id, user_id, session_id, config
+                )
 
-            self._context_memory[hash_str] = memory_instance
+                # Merge the base config with the session-specific config.
+                final_config = self._merge_configs(
+                    self._memory_config, info.configuration or {}
+                )
 
-            await memory_instance.reference()
-            return memory_instance
+                # Create and store the new memory instance.
+                memory_instance = EpisodicMemory(
+                    self, final_config, memory_context
+                )
+
+                self._context_memory[hash_str] = memory_instance
+
+                await memory_instance.reference()
+                return memory_instance
 
     async def delete_context_memory(self, context: MemoryContext):
         """

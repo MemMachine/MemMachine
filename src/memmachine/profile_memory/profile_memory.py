@@ -18,6 +18,8 @@ import numpy as np
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
 
+from memmachine.tracing import get_tracer, init_tracer
+
 from .storage.asyncpg_profile import AsyncPgProfileStorage
 from .util.lru_cache import LRUCache
 
@@ -314,6 +316,7 @@ class ProfileMemory:
         metadata: dict[str, str] | None = None,
         isolations: dict[str, bool | int | float | str] | None = None,
         user_id: str = "",  # TODO fully deprecate user_id parameter
+        parent_span: None = None,  # type: ignore
     ):
         """Adds a message to the history and may trigger a profile update.
 
@@ -330,31 +333,35 @@ class ProfileMemory:
         Returns:
             A boolean indicating whether the consolidation process was awaited.
         """
-        # TODO: add or adopt system for more general modifications of
-        # pylint: disable=fixme
-        # the message
-        if metadata is None:
-            metadata = {}
-        if isolations is None:
-            isolations = {}
-        if "speaker" in metadata:
-            content = f"{metadata['speaker']} sends '{content}'"
-        message = await self._profile_storage.add_history(
-            user_id, content, metadata, isolations
-        )
-        self._msg_count[user_id] = self._msg_count.get(user_id, 0) + 1
-        wait_consolidate = False
-        if self._msg_count[user_id] >= self._update_interval:
-            self._msg_count[user_id] = 0
-            wait_consolidate = True
-        fut = asyncio.create_task(
-            self._update_user_profile_think(
-                message, wait_consolidate=wait_consolidate
+        tracer = get_tracer()
+        with tracer.start_active_span('add_persona_message', child_of=parent_span) as scope:
+            span = scope.span
+        
+            # TODO: add or adopt system for more general modifications of
+            # pylint: disable=fixme
+            # the message
+            if metadata is None:
+                metadata = {}
+            if isolations is None:
+                isolations = {}
+            if "speaker" in metadata:
+                content = f"{metadata['speaker']} sends '{content}'"
+            message = await self._profile_storage.add_history(
+                user_id, content, metadata, isolations
             )
-        )
-        if wait_consolidate:
-            await fut
-        return wait_consolidate
+            self._msg_count[user_id] = self._msg_count.get(user_id, 0) + 1
+            wait_consolidate = False
+            if self._msg_count[user_id] >= self._update_interval:
+                self._msg_count[user_id] = 0
+                wait_consolidate = True
+            fut = asyncio.create_task(
+                self._update_user_profile_think(
+                    message, wait_consolidate=wait_consolidate
+                )
+            )
+            if wait_consolidate:
+                await fut
+            return wait_consolidate
 
     async def _reconsolidate_memory(
         self,

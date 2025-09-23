@@ -29,6 +29,8 @@ from memmachine.common.metrics_factory.metrics_factory_builder import (
     MetricsFactoryBuilder,
 )
 
+from memmachine.tracing import get_tracer, init_tracer
+
 from .data_types import ContentType, Episode, MemoryContext
 from .long_term_memory.long_term_memory import LongTermMemory
 from .short_term_memory.session_memory import SessionMemory
@@ -154,6 +156,7 @@ class EpisodicMemory:
         content_type: ContentType,
         timestamp: datetime | None = None,
         metadata: dict | None = None,
+        parent_span: None = None,
     ) -> bool:
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
@@ -177,52 +180,56 @@ class EpisodicMemory:
         """
         # Validate that the producer and recipient are part of this memory
         # context
-        if (
-            producer not in self._memory_context.user_id
-            and producer not in self._memory_context.agent_id
-        ):
-            logger.error(
-                "The producer %s does not belong to the session", producer
+        tracer = get_tracer()
+        with tracer.start_active_span('add_memory_episode', child_of=parent_span) as scope:
+            span = scope.span
+        
+            if (
+                producer not in self._memory_context.user_id
+                and producer not in self._memory_context.agent_id
+            ):
+                logger.error(
+                    "The producer %s does not belong to the session", producer
+                )
+                return False
+
+            if (
+                produced_for not in self._memory_context.user_id
+                and produced_for not in self._memory_context.agent_id
+            ):
+                logger.error(
+                    "The produced_for %s does not belong to the session",
+                    produced_for,
+                )
+                return False
+            start_time = datetime.now()
+
+            # Create a new Episode object
+            episode = Episode(
+                uuid=uuid.uuid4(),
+                episode_type=episode_type,
+                content_type=content_type,
+                content=episode_content,
+                timestamp=timestamp if timestamp else datetime.now(),
+                group_id=self._memory_context.group_id,
+                session_id=self._memory_context.session_id,
+                producer_id=producer,
+                produced_for_id=produced_for,
+                user_metadata=metadata,
             )
-            return False
 
-        if (
-            produced_for not in self._memory_context.user_id
-            and produced_for not in self._memory_context.agent_id
-        ):
-            logger.error(
-                "The produced_for %s does not belong to the session",
-                produced_for,
+            # Add the episode to both memory stores concurrently
+            await asyncio.gather(
+                self._session_memory.add_episode(episode),
+                self._long_term_memory.add_episode(episode),
             )
-            return False
-        start_time = datetime.now()
-
-        # Create a new Episode object
-        episode = Episode(
-            uuid=uuid.uuid4(),
-            episode_type=episode_type,
-            content_type=content_type,
-            content=episode_content,
-            timestamp=timestamp if timestamp else datetime.now(),
-            group_id=self._memory_context.group_id,
-            session_id=self._memory_context.session_id,
-            producer_id=producer,
-            produced_for_id=produced_for,
-            user_metadata=metadata,
-        )
-
-        # Add the episode to both memory stores concurrently
-        await asyncio.gather(
-            self._session_memory.add_episode(episode),
-            self._long_term_memory.add_episode(episode),
-        )
-        end_time = datetime.now()
-        delta = end_time - start_time
-        self._ingestion_latency_summary.observe(
-            delta.total_seconds() * 1000 + delta.microseconds / 1000
-        )
-        self._ingestion_counter.increment()
-        return True
+            end_time = datetime.now()
+            delta = end_time - start_time
+            self._ingestion_latency_summary.observe(
+                delta.total_seconds() * 1000 + delta.microseconds / 1000
+            )
+            self._ingestion_counter.increment()
+            return True
 
     async def close(self):
         """

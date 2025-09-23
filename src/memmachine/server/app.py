@@ -25,6 +25,8 @@ from fastapi import FastAPI, HTTPException
 from fastmcp import FastMCP, Context
 from prometheus_client import make_asgi_app
 from pydantic import BaseModel
+from jaeger_client import Config
+from memmachine.tracing import init_tracer, get_tracer
 
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import (
@@ -39,10 +41,16 @@ from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.tracing import init_tracer,get_tracer
 
 
 logger = logging.getLogger(__name__)
 
+
+def __init__():
+    """Initialize the Jaeger tracer."""
+    jaeger_host = os.getenv("JAEGER_HOST", "jaeger")   
+    init_tracer(jaeger_host=jaeger_host)
 
 # Request session data
 class SessionData(BaseModel):
@@ -107,7 +115,12 @@ class DeleteDataRequest(BaseModel):
 # Global instances for memory managers, initialized during app startup.
 profile_memory: ProfileMemory = None
 episodic_memory: EpisodicMemoryManager = None
+global tracer
+tracer = None
 
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    tracer = init_tracer()
 
 # === Lifespan Management ===
 
@@ -386,51 +399,57 @@ async def add_memory(episode: NewEpisode):
         HTTPException: 400 if the producer or produced_for IDs are invalid
                        for the given context.
     """
-    inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
-        group_id=episode.session.group_id,
-        agent_id=episode.session.agent_id,
-        user_id=episode.session.user_id,
-        session_id=episode.session.session_id,
-    )
-    if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {episode.session.user_id},
-                    {episode.session.session_id},
-                    {episode.session.group_id},
-                    {episode.session.agent_id}""",
+    tracer = get_tracer()
+    with tracer.start_active_span("post/memories") as scope:
+        span = scope.span
+        inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
+            group_id=episode.session.group_id,
+            agent_id=episode.session.agent_id,
+            user_id=episode.session.user_id,
+            session_id=episode.session.session_id,
+            parent_span=span
         )
-    async with AsyncEpisodicMemory(inst) as inst:
-        success = await inst.add_memory_episode(
-            producer=episode.producer,
-            produced_for=episode.produced_for,
-            episode_content=episode.episode_content,
-            episode_type=episode.episode_type,
-            content_type=ContentType.STRING,
-            metadata=episode.metadata,
-        )
-        if not success:
+        if inst is None:
+            span.set_tag("error", "unable to find episodic memory instance")
             raise HTTPException(
-                status_code=400,
-                detail=f"""either {episode.producer} or {episode.produced_for}
-                        is not in {episode.session.user_id}
-                        or {episode.session.agent_id}""",
+                status_code=404,
+                detail=f"""unable to find episodic memory for
+                        {episode.session.user_id},
+                        {episode.session.session_id},
+                        {episode.session.group_id},
+                        {episode.session.agent_id}""",
             )
-
-        ctx = inst.get_memory_context()
-        await profile_memory.add_persona_message(
-            str(episode.episode_content),
-            episode.metadata if episode.metadata is not None else {},
-            {
-                "group_id": ctx.group_id,
-                "session_id": ctx.session_id,
-                "producer": episode.producer,
-                "produced_for": episode.produced_for,
-            },
-            user_id=episode.producer,
-        )
-
+        async with AsyncEpisodicMemory(inst) as inst:
+            success = await inst.add_memory_episode(
+                producer=episode.producer,
+                produced_for=episode.produced_for,
+                episode_content=episode.episode_content,
+                episode_type=episode.episode_type,
+                content_type=ContentType.STRING,
+                metadata=episode.metadata,
+                parent_span=span
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"""either {episode.producer} or {episode.produced_for}
+                            is not in {episode.session.user_id}
+                            or {episode.session.agent_id}""",
+                )
+            ctx = inst.get_memory_context()
+            await profile_memory.add_persona_message(
+                str(episode.episode_content),
+                episode.metadata if episode.metadata is not None else {},
+                {
+                    "group_id": ctx.group_id,
+                    "session_id": ctx.session_id,
+                    "producer": episode.producer,
+                    "produced_for": episode.produced_for,
+                },
+                user_id=episode.producer,
+                parent_span=span
+            )
+            span.log_event("add_memory.profile_memory.add_persona_message.END")
 
 @app.post("/v1/memories/search")
 async def search_memory(q: SearchQuery) -> SearchResult:
@@ -493,23 +512,27 @@ async def delete_session_data(delete_req: DeleteDataRequest):
     """
     Delete data for a particular session
     """
-    inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
-        group_id=delete_req.session.group_id,
-        agent_id=delete_req.session.agent_id,
-        user_id=delete_req.session.user_id,
-        session_id=delete_req.session.session_id,
-    )
-    if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {delete_req.session.user_id},
-                    {delete_req.session.session_id},
-                    {delete_req.session.group_id},
-                    {delete_req.session.agent_id}""",
+    with tracer.start_active_span("memories") as scope:
+        span = scope.span
+        span.log_event("delete_session_data.start")
+        inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
+            group_id=delete_req.session.group_id,
+            agent_id=delete_req.session.agent_id,
+            user_id=delete_req.session.user_id,
+            session_id=delete_req.session.session_id,
         )
-    async with AsyncEpisodicMemory(inst) as inst:
-        await inst.delete_data()
+        span.log_event("delete_session_data.found_instance" if inst else "delete_session_data.not_found_instance")
+        if inst is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"""unable to find episodic memory for
+                        {delete_req.session.user_id},
+                        {delete_req.session.session_id},
+                        {delete_req.session.group_id},
+                        {delete_req.session.agent_id}""",
+            )
+        async with AsyncEpisodicMemory(inst) as inst:
+            await inst.delete_data()
 
 
 @app.get("/v1/sessions")
@@ -592,25 +615,28 @@ async def get_sessions_for_agent(agent_id: str) -> AllSessionsResponse:
 @app.get("/health")
 async def health_check():
     """Health check endpoint for container orchestration."""
-    try:
-        # Check if memory managers are initialized
-        if profile_memory is None or episodic_memory is None:
-            raise HTTPException(
-                status_code=503, detail="Memory managers not initialized"
-            )
-
-        # Basic health check - could be extended to check database connectivity
-        return {
-            "status": "healthy",
-            "service": "memmachine",
-            "version": "1.0.0",
-            "memory_managers": {
-                "profile_memory": profile_memory is not None,
-                "episodic_memory": episodic_memory is not None,
-            },
-        }
-    except Exception as e:
-         raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
+    with tracer.start_active_span("health_check") as span:
+        try:    
+            # Check if memory managers are initialized
+            if profile_memory is None or episodic_memory is None:
+                span.set_status(Status(StatusCode.ERROR, "Memory managers not initialized"))
+                raise HTTPException(
+                    status_code=503, detail="Memory managers not initialized"
+                )
+            # Mark span as successful
+            # Basic health check - could be extended to check database connectivity
+            return {
+                "status": "healthy",
+                "service": "memmachine",
+                "version": "1.0.0",
+                "memory_managers": {
+                    "profile_memory": profile_memory is not None,
+                    "episodic_memory": episodic_memory is not None,
+                },
+            }
+        except Exception as e:
+            span.record_exception(e)
+            raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
 
 
 async def start():
