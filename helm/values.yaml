@@ -3,8 +3,8 @@ backend:
   enabled: true
   name: backend
   image:
-    repository: 10.10.0.42:5005/memmachine/backend
-    tag: x86_64-2025-08-28.3
+    repository: memmachine/memmachine
+    tag: v0.1.1-cpu
     pullPolicy: IfNotPresent
   replicaCount: 1
   service:
@@ -19,7 +19,19 @@ backend:
       memory: 2Gi
       #nvidia.com/gpu: 1
   env: [] 
-
+  config:
+    file: "configuration.yml"
+    openai_api_key: "sk-OPENAI_API_KEY"
+    testmodel:
+      vendor: openai
+      name: gpt-4o-mini
+    sessionMemory:
+      model_name: testmodel
+      message_capacity: 500
+      max_message_length: 16000
+      max_token_num: 8000
+    embedder:
+      model_name: "text-embedding-3-small"
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -29,6 +41,7 @@ neo4j:
   # REQUIRED: a unique Neo4j cluster/instance name within the namespace
   neo4j:
     name: neo4j
+    user: neo4j
     # Community by default; set to "enterprise" + accept license to use EE
     edition: "community"   # or "enterprise"
     # You cannot use "neo4j" as the initial password. Leave empty to auto-generate.  [oai_citation:1‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-standalone/create-value-file)
@@ -89,6 +102,7 @@ neo4j:
   # If you want browser/Bolt through Ingress, Neo4j recommends a separate reverse-proxy chart.
   # See docs: neo4j/neo4j-reverse-proxy.  [oai_citation:6‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/accessing-neo4j-ingress)
 pgvector:
+  enabled: true
   image:
     repository: pgvector/pgvector
     tag: pg16
@@ -101,11 +115,12 @@ pgvector:
     port: 5432
 
   postgres:
-    user: postgres
+    user: memmachine
     # If you set existingSecret, this is ignored. Otherwise a Secret is created with this password:
-    password: postgres
+    password: memmachine_password
     database: postgres  # bootstrap DB used by entrypoint
     existingSecret: ""  # set to name of an existing secret with key POSTGRES_PASSWORD
+    initdbArgs: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
 
   databases:
     # List of DBs to create + enable pgvector in (on first boot only)
@@ -126,7 +141,12 @@ pgvector:
   #  requests:
   #    cpu: 250m
   #    memory: 512Mi
-
+  healthcheck:
+    enabled: true
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    startPeriod: 30s
   podSecurityContext:
     fsGroup: 999      # postgres (Debian-based)
     fsGroupChangePolicy: OnRootMismatch

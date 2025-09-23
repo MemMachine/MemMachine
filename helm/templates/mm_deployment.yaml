@@ -17,6 +17,10 @@ spec:
       labels:
         {{- include "backend.labels" . | nindent 8 }}
     spec:
+      volumes:
+        - name: memmachine-config
+          configMap:
+            name: memmachine-config
       containers:
         - name: {{ .Values.backend.name }}
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
@@ -24,6 +28,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.backend.service.port }}
+          volumeMounts:
+            - name: memmachine-config
+              mountPath: /etc/memmachine/
+              readOnly: true
           env:
             - name: POSTGRES_HOST
               value: "pgvector.{{ .Release.Namespace }}.svc.cluster.local"
@@ -31,6 +39,8 @@ spec:
               value: {{ .Values.pgvector.service.port | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.pgvector.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.pgvector.postgres.password | quote }}
             - name: POSTGRES_PASS
               value: {{ .Values.pgvector.postgres.password | quote }}
             - name: POSTGRES_DB
@@ -47,6 +57,10 @@ spec:
               value: "1"
             - name: PYTHONUNBUFFERED
               value: "1"
+            - name: MEMORY_CONFIG
+              value: "/etc/memmachine/{{ .Values.backend.config.file }}"
+            - name: OPENAI_API_KEY
+              value: {{ .Values.backend.config.openai_api_key | quote }}
             # - name: MEM0_DB_CONFIG: ${MEM0_DB_CONFIG}
             # - name: OPENAI_API_KEY: ${OPENAI_API_KEY}
             # - name: AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}

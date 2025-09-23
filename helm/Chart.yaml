@@ -11,3 +11,7 @@ dependencies:
     version: "*"
     repository: "https://helm.neo4j.com/neo4j"
     condition: neo4j.enabled
+  - name: pgvector
+    version: "*"
+    repository: "file://charts/pgvector"
+    condition: pgvector.enabled

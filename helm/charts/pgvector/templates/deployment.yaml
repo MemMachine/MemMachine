@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ .Release.Name }}-pgvector"
+  name: "pgvector"
 spec:
   selector:
     matchLabels:
-      app: "{{ .Release.Name }}-pgvector"
+      app: "pgvector"
   replicas: 1
   template:
     metadata:
       labels:
-        app: "{{ .Release.Name }}-pgvector"
+        app: "pgvector"
     spec:
       containers:
         - name: postgres
@@ -18,13 +18,13 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: POSTGRES_DB
-              value: {{ .Values.env.POSTGRES_DB | quote }}
+              value: {{ .Values.postgres.database | quote }}
             - name: POSTGRES_USER
-              value: {{ .Values.env.POSTGRES_USER | quote }}
+              value: {{ .Values.postgres.user | quote }}
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.env.POSTGRES_PASSWORD | quote }}
+              value: {{ .Values.postgres.password | quote }}
             - name: POSTGRES_INITDB_ARGS
-              value: {{ .Values.env.POSTGRES_INITDB_ARGS | quote }}
+              value: {{ .Values.postgres.initdbArgs | quote }}
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -35,9 +35,9 @@ spec:
               command:
                 - pg_isready
                 - -U
-                - {{ .Values.env.POSTGRES_USER }}
+                - {{ .Values.postgres.user | quote }}
                 - -d
-                - {{ .Values.env.POSTGRES_DB }}
+                - {{ .Values.postgres.database | quote }}
             initialDelaySeconds: {{ .Values.healthcheck.startPeriod | default "30s" | int }}
             periodSeconds: {{ .Values.healthcheck.interval | default "10s" | int }}
             timeoutSeconds: {{ .Values.healthcheck.timeout | default "5s" | int }}

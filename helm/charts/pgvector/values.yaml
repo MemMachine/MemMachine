@@ -3,26 +3,75 @@ image:
   tag: pg16
   pullPolicy: IfNotPresent
 
-containerName: memmachine-postgres
+replicaCount: 1  # single-instance Postgres (no HA)
 
 service:
   type: ClusterIP
   port: 5432
 
-env:
-  POSTGRES_DB: memmachine
-  POSTGRES_USER: memmachine
-  POSTGRES_PASSWORD: memmachine_password
-  POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+postgres:
+  user: postgres
+  # If you set existingSecret, this is ignored. Otherwise a Secret is created with this password:
+  password: pg_password
+  database: postgres  # bootstrap DB used by entrypoint
+  existingSecret: ""  # set to name of an existing secret with key POSTGRES_PASSWORD
+  initdbArgs: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+
+databases:
+  # List of DBs to create + enable pgvector in (on first boot only)
+  profile: test123
 
 persistence:
   enabled: true
-  size: 8Gi
-  storageClass: ""
+  storageClass: ""   # leave empty for default, or set to your class
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
 
+resources: {}
+#  limits:
+#    cpu: 500m
+#    memory: 1Gi
+#  requests:
+#    cpu: 250m
+#    memory: 512Mi
 healthcheck:
   enabled: true
   interval: 10s
   timeout: 5s
   retries: 5
   startPeriod: 30s
+podSecurityContext:
+  fsGroup: 999      # postgres (Debian-based)
+  fsGroupChangePolicy: OnRootMismatch
+
+securityContext:
+  runAsUser: 999
+  runAsGroup: 999
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+annotations: {}
+labels: {}
+
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  failureThreshold: 6
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  failureThreshold: 6
+
+# Extra env vars to inject into the postgres container
+extraEnv: []
+#  - name: PGDATA
