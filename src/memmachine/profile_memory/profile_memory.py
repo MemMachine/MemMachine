@@ -405,11 +405,14 @@ class ProfileMemory:
             profile=str(profile),
             memory_content=memory_content,
         )
-
         # Use chain-of-thought to get entity profile update commands.
-        response_text, _ = await self._model.generate_response(
-            system_prompt=self._update_prompt, user_prompt=user_prompt
-        )
+        try:
+            raw = await self._model.generate_response(
+                system_prompt=self._update_prompt, user_prompt=userp
+            )
+        except (IOError, ValueError) as e:
+            logger.error("Eror when update profile: %s", str(e))
+            return
 
         # Get thinking and JSON from language model response.
         thinking, _, response_json = response_text.removeprefix(
@@ -550,11 +553,14 @@ class ProfileMemory:
         """
         sends a list of features to an llm to consolidated
         """
-
-        response_text, _ = await self._model.generate_response(
-            system_prompt=self._consolidation_prompt,
-            user_prompt=json.dumps(memories),
-        )
+        try:
+            raw = await self._model.generate_response(
+                system_prompt=self._consolidation_prompt,
+                user_prompt=json.dumps(memories),
+            )
+        except (IOError, ValueError) as e:
+            logger.error("Model Error when deduplicate profile: %s", str(e))
+            return
 
         # Get thinking and JSON from language model response.
         thinking, _, response_json = response_text.removeprefix(

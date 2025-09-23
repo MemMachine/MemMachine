@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from openai import AsyncOpenAI
-
+import openai
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
@@ -115,6 +115,7 @@ class OpenAILanguageModel(LanguageModel):
         user_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] = "auto",
+        retry_limit: int = 1,
     ) -> tuple[str, Any]:
         input_prompts = [
             {"role": "system", "content": system_prompt or ""},
@@ -122,12 +123,43 @@ class OpenAILanguageModel(LanguageModel):
         ]
 
         start_time = time.monotonic()
-        response = await self._client.responses.create(
-            model=self._model,
-            input=input_prompts,
-            tools=tools,
-            tool_choice=tool_choice,
-        )  # type: ignore
+        sleep_seconds = 1
+        while retry_limit > 0:
+            retry_limit -= 1
+            sleep_seconds *= 2
+            try:
+                response = await self._client.responses.create(
+                    model=self._model,
+                    input=input_prompts,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )  # type: ignore
+            # translate vendor specific exeception to common error
+            except openai.AuthenticationError as e:
+                raise ValueError("Invalid OpenAI API key") from e
+            except openai.RateLimitError as e:
+                if retry_limit == 0:
+                    raise IOError("OpenAI rate limit exceeded") from e
+                time.sleep(sleep_seconds)
+                continue
+            except openai.APITimeoutError as e:
+                if retry_limit == 0:
+                    raise IOError("OpenAI API timeout") from e
+                time.sleep(sleep_seconds)
+                continue
+            except openai.APIConnectionError as e:
+                if retry_limit == 0:
+                    raise IOError("OpenAI API connection error") from e
+                time.sleep(sleep_seconds)
+                continue
+            except openai.BadRequestError as e:
+                raise ValueError("OpenAI invalid request") from e
+            except openai.APIError as e:
+                raise ValueError("OpenAI API error") from e
+            except openai.OpenAIError as e:
+                raise ValueError("OpenAI error") from e
+            break
+
         end_time = time.monotonic()
 
         if self._collect_metrics and response.usage is not None:

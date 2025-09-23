@@ -18,6 +18,7 @@ class LanguageModel(ABC):
         user_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] = "auto",
+        retry_limit: int = 1,
     ) -> tuple[str, Any]:
         """
         Generate a response based on the provided prompts and tools.

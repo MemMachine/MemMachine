@@ -12,13 +12,20 @@ class Embedder(ABC):
     """
 
     @abstractmethod
-    async def ingest_embed(self, inputs: list[Any]) -> list[list[float]]:
+    async def ingest_embed(
+        self,
+        inputs: list[Any],
+        retry_limit: int = 1,
+    ) -> list[list[float]]:
         """
         Generate embeddings for the provided inputs.
 
         Args:
             inputs (list[Any]):
                 A list of inputs to be embedded.
+            retry_limit (int):
+                The maximum number of retries to attempt.
+
 
         Returns:
             list[list[float]]:

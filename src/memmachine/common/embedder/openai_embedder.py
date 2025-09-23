@@ -2,14 +2,18 @@
 OpenAI-based embedder implementation.
 """
 
+import logging
 import time
 from typing import Any
 
 from openai import AsyncOpenAI
+import openai
 
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .embedder import Embedder
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIEmbedder(Embedder):
@@ -82,13 +86,16 @@ class OpenAIEmbedder(Embedder):
                 label_names=label_names,
             )
 
-    async def ingest_embed(self, inputs: list[Any]) -> list[list[float]]:
-        return await self._embed(inputs)
+    async def ingest_embed(
+            self,
+            inputs: list[Any],
+            retry_limit: int = 1) -> list[list[float]]:
+        return await self._embed(inputs, retry_limit)
 
     async def search_embed(self, queries: list[Any]) -> list[list[float]]:
         return await self._embed(queries)
 
-    async def _embed(self, inputs: list[Any]) -> list[list[float]]:
+    async def _embed(self, inputs: list[Any], retry_limit: int = 1) -> list[list[float]]:
         if not inputs:
             return []
 
@@ -97,9 +104,43 @@ class OpenAIEmbedder(Embedder):
         ]
 
         start_time = time.monotonic()
-        response = await self._client.embeddings.create(
-            input=inputs, model=self._model
-        )
+        sleep_seconds = 1
+        while retry_limit > 0:
+            retry_limit -= 1
+            sleep_seconds *= 2
+            try:
+                response = await self._client.embeddings.create(
+                    input=inputs, model=self._model
+                )
+            # translate vendor specific exeception to common error
+            # for rate limit and timeout error, may retry the request
+            except openai.AuthenticationError as e:
+                raise ValueError("Invalid OpenAI API key") from e
+            except openai.RateLimitError as e:
+                logger.warning("OpenAI rate limit exceeded")
+                if retry_limit == 0:
+                    raise IOError("OpenAI rate limit exceeded") from e
+                time.sleep(sleep_seconds)
+                continue
+            except openai.APITimeoutError as e:
+                logger.warning("OpenAI API timeout")
+                if retry_limit == 0:
+                    raise IOError("OpenAI API timeout") from e
+                time.sleep(sleep_seconds)
+                continue
+            except openai.APIConnectionError as e:
+                logger.warning("OpenAI API connection error")
+                if retry_limit == 0:
+                    raise IOError("OpenAI API connection error") from e
+                time.sleep(sleep_seconds)
+                continue
+            except openai.BadRequestError as e:
+                raise ValueError("OpenAI invalid request") from e
+            except openai.APIError as e:
+                raise ValueError("OpenAI API error") from e
+            except openai.OpenAIError as e:
+                raise ValueError("OpenAI error") from e
+            break
         end_time = time.monotonic()
 
         if self._collect_metrics:
