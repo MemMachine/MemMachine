@@ -190,3 +190,109 @@ pgvector:
   # Extra env vars to inject into the postgres container
   extraEnv: []
   #  - name: PGDATA
+open-webui:
+  # values-openwebui.yaml
+  image:
+    # pick cuda/ollama variants only if you want the UI pod to bundle those; not required
+    repository: ghcr.io/open-webui/open-webui
+    tag: 0.6.30
+
+  ollama:
+    # -- Automatically install Ollama Helm chart from https://otwld.github.io/ollama-helm/. Use [Helm Values](https://github.com/otwld/ollama-helm/#helm-values) to configure
+    enabled: false
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: true
+    className: nginx
+    host: "mm-openwebui.rack" # update to your real domain
+    additionalHosts: []
+
+  extraEnvVars:
+    # -- Default API key value for Pipelines. Should be updated in a production deployment, or be changed to the required API key if not using Pipelines
+    - name: OPENAI_API_KEY
+      value: "0p3n-w3bu!"
+    # valueFrom:
+    #   secretKeyRef:
+    #     name: pipelines-api-key
+    #     key: api-key
+    # - name: OPENAI_API_KEY
+    #   valueFrom:
+    #     secretKeyRef:
+    #       name: openai-api-key
+    #       key: api-key
+    - name: OLLAMA_DEBUG
+      value: "1"
+    - name: REQUESTS_CA_BUNDLE
+      value: "/etc/ssl/certs/ca-certificates.crt"
+
+  logging:
+    # -- Set the global log level ["notset", "debug", "info" (default), "warning", "error", "critical"]
+    # @section -- Logging configuration
+    level: "debug"
+
+  # Let Open WebUI aggregate several backends
+  # (Chart versions expose these as arrays; if your version differs,
+  # you can also set them in extraEnv as comma-separated JSON.)
+  openaiBaseApiUrls: []
+    #- http://vllm.vllm.svc.cluster.local:8000/v1
+    
+  pipelines:
+    # -- Automatically install Pipelines chart to extend Open WebUI functionality using Pipelines: https://github.com/open-webui/pipelines
+    enabled: false
+
+  persistence:
+    enabled: true
+    size: 2Gi
+    # -- Use existingClaim if you want to re-use an existing Open WebUI PVC instead of creating a new one
+    #existingClaim: "openwebui-pvc"
+    # -- Subdirectory of Open WebUI PVC to mount. Useful if root directory is not empty.
+    #subPath: ""
+    # -- If using multiple replicas, you must update accessModes to ReadWriteMany
+    accessModes:
+      - ReadWriteOnce
+    storageClass: "nfs-client"
+    selector: {}
+    annotations: {}
+    # -- Sets the storage provider, availables values are `local`, `s3`, `gcs` or `azure`
+    provider: local
+  
+  sso:
+    # -- **Enable SSO authentication globally** must enable to use SSO authentication
+    # @section -- SSO Configuration
+    enabled: true
+    # -- Enable account creation when logging in with OAuth (distinct from regular signup)
+    # @section -- SSO Configuration
+    enableSignup: true
+    # -- Allow logging into accounts that match email from OAuth provider (considered insecure)
+    # @section -- SSO Configuration
+    mergeAccountsByEmail: false
+    # -- Enable OAuth role management through access token roles claim
+    # @section -- SSO Configuration
+    enableRoleManagement: false
+    # -- Enable OAuth group management through access token groups claim
+    # @section -- SSO Configuration
+    enableGroupManagement: false
+
+
+    oidc:
+      # -- Enable OIDC authentication
+      # @section -- OIDC configuration
+      enabled: false
+      # -- OIDC client ID
+      # @section -- OIDC configuration
+      clientId: "xx"
+      # -- OIDC client secret (ignored if clientExistingSecret is set)
+      # @section -- OIDC configuration
+      clientSecret: "xx"
+      # -- OIDC provider well known URL
+      # @section -- OIDC configuration
+      providerUrl: "https://authentik.rack/application/o/openwebui/.well-known/openid-configuration"
+      # -- Name of the provider to show on the UI
+      # @section -- OIDC configuration
+      providerName: "SSO"
+      # -- Scopes to request (space-separated).
+      # @section -- OIDC configuration
+      scopes: "openid email profile"

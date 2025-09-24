@@ -15,3 +15,8 @@ dependencies:
     version: "*"
     repository: "file://charts/pgvector"
     condition: pgvector.enabled
+  - name: open-webui
+    version: "*"
+    repository: "https://helm.openwebui.com"
+    condition: openwebui.enabled
+    
