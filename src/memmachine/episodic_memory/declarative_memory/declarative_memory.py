@@ -297,7 +297,7 @@ class DeclarativeMemory:
         try:
             mutated_derivative_embeddings = await self._embedder.ingest_embed(
                 [derivative.content for derivative in mutated_derivatives],
-                retry_limit=3
+                max_attempts=3
             )
         except (ValueError, IOError) as e:
             logger.error(

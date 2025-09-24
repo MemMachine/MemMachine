@@ -2,6 +2,7 @@
 OpenAI-based language model implementation.
 """
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -115,8 +116,11 @@ class OpenAILanguageModel(LanguageModel):
         user_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] = "auto",
-        retry_limit: int = 1,
+        max_attempts: int = 1,
     ) -> tuple[str, Any]:
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be a positive integer")
+
         input_prompts = [
             {"role": "system", "content": system_prompt or ""},
             {"role": "user", "content": user_prompt or ""},
@@ -124,8 +128,7 @@ class OpenAILanguageModel(LanguageModel):
 
         start_time = time.monotonic()
         sleep_seconds = 1
-        while retry_limit > 0:
-            retry_limit -= 1
+        for attempt in range(max_attempts):
             sleep_seconds *= 2
             try:
                 response = await self._client.responses.create(
@@ -138,19 +141,19 @@ class OpenAILanguageModel(LanguageModel):
             except openai.AuthenticationError as e:
                 raise ValueError("Invalid OpenAI API key") from e
             except openai.RateLimitError as e:
-                if retry_limit == 0:
+                if attempt + 1 >= max_attempts:
                     raise IOError("OpenAI rate limit exceeded") from e
-                time.sleep(sleep_seconds)
+                await asyncio.sleep(sleep_seconds)
                 continue
             except openai.APITimeoutError as e:
-                if retry_limit == 0:
+                if attempt + 1 >= max_attempts:
                     raise IOError("OpenAI API timeout") from e
-                time.sleep(sleep_seconds)
+                await asyncio.sleep(sleep_seconds)
                 continue
             except openai.APIConnectionError as e:
-                if retry_limit == 0:
+                if attempt + 1 >= max_attempts:
                     raise IOError("OpenAI API connection error") from e
-                time.sleep(sleep_seconds)
+                await asyncio.sleep(sleep_seconds)
                 continue
             except openai.BadRequestError as e:
                 raise ValueError("OpenAI invalid request") from e

@@ -15,7 +15,7 @@ class Embedder(ABC):
     async def ingest_embed(
         self,
         inputs: list[Any],
-        retry_limit: int = 1,
+        max_attempts: int = 1,
     ) -> list[list[float]]:
         """
         Generate embeddings for the provided inputs.
@@ -23,8 +23,9 @@ class Embedder(ABC):
         Args:
             inputs (list[Any]):
                 A list of inputs to be embedded.
-            retry_limit (int):
-                The maximum number of retries to attempt.
+            max_attempts (int):
+                The maximum number of attempts to make before giving up.
+                Defaults to 1.
 
 
         Returns:
@@ -34,13 +35,20 @@ class Embedder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def search_embed(self, queries: list[Any]) -> list[list[float]]:
+    async def search_embed(
+        self,
+        queries: list[Any],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
         """
         Generate embeddings for the provided queries.
 
         Args:
             queries (list[Any]):
                 A list of queries to be embedded.
+            max_attempts (int):
+                The maximum number of attempts to make before giving up.
+                Defaults to 1.
 
         Returns:
             list[list[float]]:
