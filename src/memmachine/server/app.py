@@ -229,7 +229,9 @@ async def mcp_http_lifespan(application: FastAPI):
 
 app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
-app.add_route("/metrics", make_asgi_app())
+# app.add_route("/metrics", make_asgi_app())
+app.mount("/metrics", make_asgi_app())
+
 
 
 @mcp.tool()
