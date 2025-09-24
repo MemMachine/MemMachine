@@ -58,7 +58,7 @@ services:
 
   # MemMachine application
   memmachine:
-    image: memmachine/memmachine
+    build: .
     container_name: memmachine-app
     restart: unless-stopped
     ports:
@@ -94,13 +94,14 @@ services:
       neo4j:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health", "||", "exit", "1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/docs", "||", "exit", "1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     networks:
       - memmachine-network
+
 
 volumes:
   postgres_data:

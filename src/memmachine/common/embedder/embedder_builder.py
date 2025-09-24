@@ -23,6 +23,9 @@ class EmbedderBuilder(Builder):
             case "openai":
                 if "metrics_factory_id" in config:
                     dependency_ids.add(config["metrics_factory_id"])
+            case "ollama":
+                if "metrics_factory_id" in config:
+                    dependency_ids.add(config["metrics_factory_id"])
 
         return dependency_ids
 
@@ -64,6 +67,45 @@ class EmbedderBuilder(Builder):
                     {
                         "model": config.get("model", "text-embedding-3-small"),
                         "api_key": config["api_key"],
+                        "metrics_factory": injected_metrics_factory,
+                        "user_metrics_labels": config.get(
+                            "user_metrics_labels", {}
+                        ),
+                    }
+                )
+            case "ollama":
+                from .ollama_embedder import OllamaEmbedder
+
+                injected_metrics_factory_id = config.get("metrics_factory_id")
+                if injected_metrics_factory_id is None:
+                    injected_metrics_factory = None
+                elif not isinstance(injected_metrics_factory_id, str):
+                    raise TypeError(
+                        "metrics_factory_id must be a string if provided"
+                    )
+                else:
+                    injected_metrics_factory = injections.get(
+                        injected_metrics_factory_id
+                    )
+                    if injected_metrics_factory is None:
+                        raise ValueError(
+                            "MetricsFactory with id "
+                            f"{injected_metrics_factory_id} "
+                            "not found in injections"
+                        )
+                    elif not isinstance(
+                        injected_metrics_factory, MetricsFactory
+                    ):
+                        raise TypeError(
+                            "Injected dependency with id "
+                            f"{injected_metrics_factory_id} "
+                            "is not a MetricsFactory"
+                        )
+
+                return OllamaEmbedder(
+                    {
+                        "model": config.get("model", "nomic-embed-text"),
+                        "base_url": config.get("base_url", "http://ollama:11434"),
                         "metrics_factory": injected_metrics_factory,
                         "user_metrics_labels": config.get(
                             "user_metrics_labels", {}

@@ -38,13 +38,20 @@ class LongTermMemory:
         embedder_id = long_term_memory_config.get("embedder")
         embedder_config = embedder_configs.get(embedder_id) or {}
 
-        embedder_model_name = embedder_config.get("model_name")
-        if not isinstance(embedder_model_name, str):
-            raise TypeError("Embedder model name must be provided as a string")
+        embedder_type = embedder_config.get("type", "openai")
+        if embedder_type == "openai":
+            embedder_model_name = embedder_config.get("model_name")
+            if not isinstance(embedder_model_name, str):
+                raise TypeError("Embedder model name must be provided as a string")
 
-        embedder_api_key = embedder_config.get("api_key")
-        if not isinstance(embedder_api_key, str):
-            raise TypeError("Embedder API key must be provided as a string")
+            embedder_api_key = embedder_config.get("api_key")
+            if not isinstance(embedder_api_key, str):
+                raise TypeError("Embedder API key must be provided as a string")
+        elif embedder_type == "ollama":
+            embedder_model_name = embedder_config.get("model", "nomic-embed-text")
+            embedder_api_key = None  # Ollama doesn't use API keys
+        else:
+            raise ValueError(f"Unsupported embedder type: {embedder_type}")
 
         # Configure vector graph store
         storage_configs = config.get("storage") or {}
@@ -184,10 +191,11 @@ class LongTermMemory:
             },
             embedder_id: {
                 "type": "embedder",
-                "name": "openai",
+                "name": embedder_type,
                 "config": {
                     "model": embedder_model_name,
                     "api_key": embedder_api_key,
+                    "base_url": embedder_config.get("base_url"),
                     "metrics_factory_id": "_metrics_factory",
                 },
             },
