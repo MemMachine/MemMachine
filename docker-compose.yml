@@ -86,7 +86,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      - ./configuration.yml:/app/configuration.yml:ro
+      - ./configuration.yml:/app/configuration.yml:ro,Z
       - memmachine_logs:/tmp/memory_logs
     depends_on:
       postgres:

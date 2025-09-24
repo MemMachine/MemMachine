@@ -120,6 +120,44 @@ class EpisodicMemory:
         # Initialize long-term declarative memory
         self._long_term_memory = LongTermMemory(config, self._memory_context)
 
+    @property
+    def short_term_memory(self) -> SessionMemory:
+        """
+        Get the short-term memory of the episodic memory instance
+        Returns:
+            The short-term memory of the episodic memory instance.
+        """
+        return self._session_memory
+
+    @short_term_memory.setter
+    def short_term_memory(self, value: SessionMemory):
+        """
+        Set the short-term memory of the episodic memory instance
+        This makes the short term memory can be injected
+        Args:
+            value: The new short-term memory of the episodic memory instance.
+        """
+        self._session_memory = value
+
+    @property
+    def long_term_memory(self) -> LongTermMemory:
+        """
+        Get the long-term memory of the episodic memory instance
+        Returns:
+            The long-term memory of the episodic memory instance.
+        """
+        return self._long_term_memory
+
+    @long_term_memory.setter
+    def long_term_memory(self, value: LongTermMemory):
+        """
+        Set the long-term memory of the episodic memory instance
+        This makes the long term memory can be injected
+        Args:
+            value: The new long-term memory of the episodic memory instance.
+        """
+        self._long_term_memory = value
+
     def get_memory_context(self) -> MemoryContext:
         """
         Get the memory context of the episodic memory instance
@@ -127,6 +165,14 @@ class EpisodicMemory:
             The memory context of the episodic memory instance.
         """
         return self._memory_context
+
+    def get_reference_count(self) -> int:
+        """
+        Get the reference count of the episodic memory instance
+        Returns:
+            The reference count of the episodic memory instance.
+        """
+        return self._ref_count
 
     async def reference(self) -> bool:
         """
@@ -154,7 +200,7 @@ class EpisodicMemory:
         content_type: ContentType,
         timestamp: datetime | None = None,
         metadata: dict | None = None,
-    ) -> bool:
+    ):
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
         """
@@ -184,7 +230,9 @@ class EpisodicMemory:
             logger.error(
                 "The producer %s does not belong to the session", producer
             )
-            return False
+            raise ValueError(
+                f"The producer {producer} does not belong to the session"
+                )
 
         if (
             produced_for not in self._memory_context.user_id
@@ -194,7 +242,11 @@ class EpisodicMemory:
                 "The produced_for %s does not belong to the session",
                 produced_for,
             )
-            return False
+            raise ValueError(
+                f"""The produced_for {produced_for} does not belong to
+                 the session"""
+            )
+
         start_time = datetime.now()
 
         # Create a new Episode object
@@ -330,6 +382,7 @@ class EpisodicMemory:
         self,
         query: str,
         limit: int | None = None,
+        property_filter: dict | None = None,
     ) -> str:
         """
         Constructs a finalized query string that includes context from memory.
@@ -345,7 +398,13 @@ class EpisodicMemory:
         Returns:
             A new query string enriched with context.
         """
-        episodes, summary = await self.query_memory(query, limit)
+        short_memory, long_memory, summary = await self.query_memory(
+            query,
+            limit,
+            property_filter
+        )
+        episodes = sorted(short_memory + long_memory,
+                          key=lambda x: x.timestamp)
 
         finalized_query = ""
         # Add summary if it exists
