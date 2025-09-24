@@ -35,9 +35,9 @@ data:
 
     sessionMemory:
       model_name: {{ .Values.backend.config.sessionMemory.model_name | quote }}
-      message_capacity: {{ .Values.backend.config.sessionMemory.message_capacity | quote }}
-      max_message_length: {{ .Values.backend.config.sessionMemory.max_message_length | quote }}
-      max_token_num: {{ .Values.backend.config.sessionMemory.max_token_num | quote }}
+      message_capacity: {{ .Values.backend.config.sessionMemory.message_capacity  }}
+      max_message_length: {{ .Values.backend.config.sessionMemory.max_message_length  }}
+      max_token_num: {{ .Values.backend.config.sessionMemory.max_token_num }}
 
     embedder:
       my_embedder_id:

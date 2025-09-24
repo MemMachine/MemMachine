@@ -10,6 +10,15 @@ backend:
   service:
     type: ClusterIP
     port: 8080
+  ingress:
+    enabled: true
+    className: nginx
+    host: backend.rack
+    path: /
+    tls: false
+    tlsSecret: backend-tls
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
   resources:
     requests:
       cpu: 2
