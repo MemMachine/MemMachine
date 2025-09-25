@@ -21,6 +21,7 @@ import copy
 import logging
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from memmachine.common.language_model.language_model_builder import (
     LanguageModelBuilder,
@@ -68,31 +69,58 @@ class EpisodicMemory:
 
         model_config = config.get("model")
         short_config = config.get("sessionmemory", {})
+        long_term_config = config.get("long_term_memory", {})
 
         self._ref_count = 1  # For reference counting to manage lifecycle
-        model_name = short_config.get("model_name")
-        if model_name is None or len(model_name) < 1:
-            raise ValueError("Invalid model name")
-
-        if model_config is None or model_config.get(model_name) is None:
-            raise ValueError("Invalid model configuration")
-
-        model_config = copy.deepcopy(model_config.get(model_name))
-        """
-        only support prometheus now.
-        TODO: support different metrics and make it configurable
-        """
-        model_config["metrics_factory_id"] = "prometheus"
+        self._session_memory: Optional[SessionMemory] = None
+        self._long_term_memory: Optional[LongTermMemory] = None
         metrics_manager = MetricsFactoryBuilder.build("prometheus", {}, {})
-        metrics_injection = {}
-        metrics_injection["prometheus"] = metrics_manager
 
-        self._model = LanguageModelBuilder.build(
-            model_config.get("model_vendor", "openai"),
-            model_config,
-            metrics_injection,
-        )
+        if len(short_config) > 0 and short_config.get("enabled") != "false":
+            model_name = short_config.get("model_name")
+            if model_name is None or len(model_name) < 1:
+                raise ValueError("Invalid model name")
 
+            if model_config is None or model_config.get(model_name) is None:
+                raise ValueError("Invalid model configuration")
+
+            model_config = copy.deepcopy(model_config.get(model_name))
+            """
+            only support prometheus now.
+            TODO: support different metrics and make it configurable
+            """
+            model_config["metrics_factory_id"] = "prometheus"
+            metrics_injection = {}
+            metrics_injection["prometheus"] = metrics_manager
+
+            llm_model = LanguageModelBuilder.build(
+                model_config.get("model_vendor", "openai"),
+                model_config,
+                metrics_injection,
+            )
+
+            # Initialize short-term session memory
+            self._session_memory = SessionMemory(
+                llm_model,
+                config.get("prompts", {}).get("episode_summary_prompt_system"),
+                config.get("prompts", {}).get("episode_summary_prompt_user"),
+                short_config.get("message_capacity", 1000),
+                short_config.get("max_message_length", 128000),
+                short_config.get("max_token_num", 65536),
+                self._memory_context,
+            )
+
+        if len(long_term_config) > 0 \
+           and long_term_config.get("enabled") != "false":
+            # Initialize long-term declarative memory
+            self._long_term_memory = LongTermMemory(
+                config,
+                self._memory_context
+            )
+        if self._session_memory is None and self._long_term_memory is None:
+            raise ValueError("No memory is configured")
+
+        # Initialize metrics
         self._ingestion_latency_summary = metrics_manager.get_summary(
             "Ingestion_latency", "Latency of Episode ingestion in milliseconds"
         )
@@ -106,22 +134,8 @@ class EpisodicMemory:
             "query_count", "Count of query processing"
         )
 
-        # Initialize short-term session memory
-        self._session_memory = SessionMemory(
-            self._model,
-            config.get("prompts", {}).get("episode_summary_prompt_system"),
-            config.get("prompts", {}).get("episode_summary_prompt_user"),
-            short_config.get("message_capacity", 1000),
-            short_config.get("max_message_length", 128000),
-            short_config.get("max_token_num", 65536),
-            self._memory_context,
-        )
-
-        # Initialize long-term declarative memory
-        self._long_term_memory = LongTermMemory(config, self._memory_context)
-
     @property
-    def short_term_memory(self) -> SessionMemory:
+    def short_term_memory(self) -> Optional[SessionMemory]:
         """
         Get the short-term memory of the episodic memory instance
         Returns:
@@ -130,7 +144,7 @@ class EpisodicMemory:
         return self._session_memory
 
     @short_term_memory.setter
-    def short_term_memory(self, value: SessionMemory):
+    def short_term_memory(self, value: Optional[SessionMemory]):
         """
         Set the short-term memory of the episodic memory instance
         This makes the short term memory can be injected
@@ -140,7 +154,7 @@ class EpisodicMemory:
         self._session_memory = value
 
     @property
-    def long_term_memory(self) -> LongTermMemory:
+    def long_term_memory(self) -> Optional[LongTermMemory]:
         """
         Get the long-term memory of the episodic memory instance
         Returns:
@@ -149,7 +163,7 @@ class EpisodicMemory:
         return self._long_term_memory
 
     @long_term_memory.setter
-    def long_term_memory(self, value: LongTermMemory):
+    def long_term_memory(self, value: Optional[LongTermMemory]):
         """
         Set the long-term memory of the episodic memory instance
         This makes the long term memory can be injected
@@ -264,9 +278,13 @@ class EpisodicMemory:
         )
 
         # Add the episode to both memory stores concurrently
+        tasks = []
+        if self._session_memory:
+            tasks.append(self._session_memory.add_episode(episode))
+        if self._long_term_memory:
+            tasks.append(self._long_term_memory.add_episode(episode))
         await asyncio.gather(
-            self._session_memory.add_episode(episode),
-            self._long_term_memory.add_episode(episode),
+            *tasks,
         )
         end_time = datetime.now()
         delta = end_time - start_time
@@ -294,8 +312,13 @@ class EpisodicMemory:
             logger.info(
                 "Closing context memory: %s", str(self._memory_context)
             )
+            tasks = []
+            if self._session_memory:
+                tasks.append(self._session_memory.close())
+            if self._long_term_memory:
+                tasks.append(self._long_term_memory.close())
             await asyncio.gather(
-                self._session_memory.close(), self._long_term_memory.close()
+                *tasks,
             )
             await self._manager.delete_context_memory(self._memory_context)
             return
@@ -307,9 +330,13 @@ class EpisodicMemory:
         This is a destructive operation.
         """
         async with self._lock:
+            tasks = []
+            if self._session_memory:
+                tasks.append(self._session_memory.clear_memory())
+            if self._long_term_memory:
+                tasks.append(self._long_term_memory.forget_session())
             await asyncio.gather(
-                self._session_memory.clear_memory(),
-                self._long_term_memory.forget_session(),
+                *tasks
             )
             return
 
@@ -339,6 +366,7 @@ class EpisodicMemory:
             a list of long term memory Episode objects, and a
             list of summary strings.
         """
+
         start_time = datetime.now()
         search_limit = limit if limit is not None else 20
         if property_filter is None:
@@ -347,18 +375,33 @@ class EpisodicMemory:
         property_filter["group_id"] = self._memory_context.group_id
 
         async with self._lock:
-            # Concurrently search both memory stores
-            session_result, long_episode = await asyncio.gather(
-                self._session_memory.get_session_memory_context(
+            if self._session_memory is None:
+                short_episode: list[Episode] = []
+                short_summary = ""
+                long_episode = await self._long_term_memory.search(
                     query,
-                    limit=search_limit
-                ),
-                self._long_term_memory.search(
-                    query, search_limit, property_filter
-                ),
-            )
-
-            short_episode, short_summary = session_result
+                    search_limit,
+                    property_filter,
+                )
+            elif self._long_term_memory is None:
+                session_result = \
+                    await self._session_memory.get_session_memory_context(
+                        query, limit=search_limit
+                    )
+                long_episode = []
+                short_episode, short_summary = session_result
+            else:
+                # Concurrently search both memory stores
+                session_result, long_episode = await asyncio.gather(
+                    self._session_memory.get_session_memory_context(
+                        query,
+                        limit=search_limit
+                    ),
+                    self._long_term_memory.search(
+                        query, search_limit, property_filter
+                    ),
+                )
+                short_episode, short_summary = session_result
 
         # Deduplicate episodes from both memory stores, prioritizing
         # short-term memory
