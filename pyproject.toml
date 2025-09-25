@@ -29,8 +29,8 @@ description = "MemMachine is an open-source memory layer for AI agents, giving y
 readme = "README.md"
 keywords = ["memmachine"]
 classifiers = [
-  "Programming Language :: Python :: 3",
-  "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -55,6 +55,7 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "ruff>=0.13.2",
+    "testcontainers[neo4j]>=4.13.1",
 ]
 
 [tool.mypy]
@@ -63,3 +64,11 @@ follow_untyped_imports = true
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+markers = [
+    "integration: mark the test as an integration test",
+]

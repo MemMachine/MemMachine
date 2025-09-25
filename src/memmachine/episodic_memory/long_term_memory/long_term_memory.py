@@ -236,7 +236,7 @@ class LongTermMemory:
         declarative_memory_episodes = await self._declarative_memory.search(
             query,
             num_episodes_limit=num_episodes_limit,
-            filterable_properties=id_filter,
+            property_filter=id_filter,
         )
         return [
             Episode(
@@ -274,7 +274,7 @@ class LongTermMemory:
         self._declarative_memory.forget_all()
 
     async def forget_session(self):
-        await self._declarative_memory.forget_isolated_episodes(
+        await self._declarative_memory.forget_filtered_episodes(
             filterable_properties={
                 "group_id": self._memory_context.group_id,
                 "session_id": self._memory_context.session_id,
