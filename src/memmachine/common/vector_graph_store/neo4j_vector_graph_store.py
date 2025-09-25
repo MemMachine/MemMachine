@@ -13,6 +13,7 @@ from neo4j import AsyncGraphDatabase
 from neo4j.graph import Node as Neo4jNode
 from neo4j.time import DateTime as Neo4jDateTime
 
+from memmachine.common.embedder import SimilarityMetric
 from memmachine.common.utils import async_with
 
 from .data_types import Edge, Node, Property
@@ -44,6 +45,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 - max_concurrent_transactions (int, optional):
                     Maximum number of concurrent transactions
                     (default: 100).
+                - exact_similarity_search (bool, optional):
+                    Whether to perform exact similarity search
+                    (default: False).
 
         Raises:
             ValueError:
@@ -83,11 +87,49 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 "Maximum number of concurrent transactions must be positive"
             )
 
+        exact_similarity_search = config.get("exact_similarity_search", False)
+        if not isinstance(exact_similarity_search, bool):
+            raise TypeError("Exact similarity search flag must be a boolean")
+
+        self._exact_similarity_search = exact_similarity_search
+
         self._semaphore = asyncio.Semaphore(max_concurrent_transactions)
 
         self._driver = AsyncGraphDatabase.driver(
             uri, auth=(username, password)
         )
+
+    async def create_vector_index_if_not_exist(
+        self,
+        embedding_property_name: str,
+        dimensions: int,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+    ):
+        new_vector_index_name = Neo4jVectorGraphStore._vector_index_name(
+            embedding_property_name
+        )
+
+        match similarity_metric:
+            case SimilarityMetric.COSINE:
+                similarity_function = "cosine"
+            case SimilarityMetric.EUCLIDEAN:
+                similarity_function = "euclidean"
+            case _:
+                similarity_function = "cosine"
+
+        async with self._semaphore:
+            self._driver.execute_query(
+                f"CREATE VECTOR INDEX {new_vector_index_name}\n"
+                f"IF NOT EXISTS FOR (n) ON (n.{embedding_property_name})\n"
+                "OPTIONS {\n"
+                "    indexConfg: {\n"
+                "        'vector.dimensions': $dimensions,\n"
+                "        'vector.similarity_function': $similarity_function,\n"
+                "    }\n"
+                "}",
+                dimensions=dimensions,
+                similarity_function=similarity_function,
+            )
 
     async def add_nodes(self, nodes: list[Node]):
         labels_nodes_map: dict[tuple[str, ...], list[Node]] = {}
@@ -155,33 +197,70 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     async def search_similar_nodes(
         self,
         query_embedding: list[float],
-        similarity_threshold: float = 0.2,
+        embedding_property_name: str,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
         required_labels: set[str] | None = None,
         required_properties: dict[str, Property] = {},
         include_missing_properties: bool = False,
     ) -> list[Node]:
-        async with self._semaphore:
-            records, _, _ = await self._driver.execute_query(
+        vector_index_name = Neo4jVectorGraphStore._vector_index_name(
+            embedding_property_name
+        )
+
+        match similarity_metric:
+            case SimilarityMetric.COSINE:
+                vector_similarity_function = "vector.similarity.cosine"
+            case SimilarityMetric.EUCLIDEAN:
+                vector_similarity_function = "vector.similarity.euclidean"
+            case _:
+                vector_similarity_function = "vector.similarity.cosine"
+
+        # ANN search requires a finite limit.
+        if limit is None and not self._exact_similarity_search:
+            limit = 100_000
+
+        query = (
+            (
                 f"MATCH (n{
                     Neo4jVectorGraphStore._format_labels(required_labels)
                 })\n"
-                "WHERE n.embedding IS NOT NULL\n"
+                f"WHERE n.{embedding_property_name} IS NOT NULL\n"
                 f"AND {
                     Neo4jVectorGraphStore._format_required_properties(
                         required_properties, include_missing_properties
                     )
                 }\n"
                 "WITH n,"
-                "    vector.similarity.cosine("
-                "        n.embedding, $query_embedding"
+                f"    {vector_similarity_function}("
+                f"        n.{embedding_property_name}, $query_embedding"
                 "    ) AS similarity\n"
-                "WHERE similarity > $similarity_threshold\n"
                 "RETURN n\n"
                 "ORDER BY similarity DESC\n"
-                f"{'LIMIT $limit' if limit is not None else ''}",
+                f"{'LIMIT $limit' if limit is not None else ''}"
+            )
+            if self._exact_similarity_search
+            else (
+                "CALL db.index.vector.queryNodes(\n"
+                f"    {vector_index_name}, $limit, $query_embedding\n"
+                ")\n"
+                "YIELD node AS n, score AS similarity\n"
+                f"WHERE n{
+                    Neo4jVectorGraphStore._format_labels(required_labels)
+                }\n"
+                f"AND {
+                    Neo4jVectorGraphStore._format_required_properties(
+                        required_properties, include_missing_properties
+                    )
+                }\n"
+                "RETURN n\n"
+            )
+        )
+
+        async with self._semaphore:
+            records, _, _ = await self._driver.execute_query(
+                query,
                 query_embedding=query_embedding,
-                similarity_threshold=similarity_threshold,
                 limit=limit,
                 required_properties=required_properties,
             )
@@ -437,3 +516,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         if isinstance(value, Neo4jDateTime):
             return value.to_native()
         return value
+
+    @staticmethod
+    def _vector_index_name(embedding_property_name: str) -> str:
+        return f"vector_index_on_{embedding_property_name}"
