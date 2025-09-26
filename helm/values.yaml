@@ -193,8 +193,9 @@ pgvector:
   #  - name: PGDATA
 
 middleware:
-  name: middleware
   enabled: true
+  name: middleware
+  log_level: "DEBUG"
   memory_backend_url: "http://backend.memmachine.svc.cluster.local:8080"
   image:
     repository: public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server
@@ -207,6 +208,7 @@ middleware:
 chatbot:
   enabled: true
   name: chatbot
+  log_level: "DEBUG"
   openaiApiKey: "REPLACE_ME"
   middleware:
     url: "http://middleware.memmachine.svc.cluster.local:8000"

@@ -24,7 +24,7 @@ spec:
             - name: MEMORY_BACKEND_URL
               value: "{{ .Values.middleware.url }}"
             - name: LOG_LEVEL
-              value: "INFO"
+              value: {{ .Values.log_level | default "INFO" | quote }}
             - name: STREAMLIT_SERVER_PORT
               value: "8501"
             - name: OPENAI_API_KEY

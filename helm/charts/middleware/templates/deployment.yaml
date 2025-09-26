@@ -26,3 +26,5 @@ spec:
               value: "{{ .Values.service.port | default 8000 }}"
             - name: MEMORY_BACKEND_URL
               value: "{{ .Values.memory_backend_url }}"
+            - name: LOG_LEVEL
+              value: {{ .Values.log_level | default "INFO" | quote }}
