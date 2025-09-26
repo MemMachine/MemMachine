@@ -15,13 +15,12 @@ Consistency in code style is crucial for readability and collaboration. This gui
 We use automated tools to enforce our style guides. Please install and run these tools before submitting a pull request.
 
 ### Python
-
-- **Style Guide:** [**PEP 8**](https://peps.python.org/pep-0008/)
-  - The official Python style guide.
-- **Formatter:** [**Black**](https://github.com/psf/black)
-  - Black is an "uncompromising" code formatter that automatically formats Python code according to **PEP 8** guidelines.
+- **Formatter:** [**Ruff**](https://github.com/astral-sh/ruff)
+  - Ruff is an extremely fast code formatter that automatically formats Python code.
 - **Linter:** [**Ruff**](https://github.com/astral-sh/ruff)
   - Ruff is an extremely fast linter that is designed to be a drop-in replacement for tools like flake8 and isort. It catches common bugs and stylistic issues.
+- **Type Checker:** [**Mypy**](https://github.com/python/mypy)
+  - Mypy is a static type checker for Python.
 
 ### Markdown
 
