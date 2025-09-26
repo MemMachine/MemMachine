@@ -199,7 +199,7 @@ middleware:
   memory_backend_url: "http://backend.memmachine.svc.cluster.local:8080"
   image:
     repository: public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server
-    tag: 2025-09-26.1
+    tag: 2025-09-26.2
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP
