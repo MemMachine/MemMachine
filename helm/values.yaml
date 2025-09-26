@@ -214,7 +214,7 @@ chatbot:
     url: "http://middleware.memmachine.svc.cluster.local:8000"
   image:
     repository: public.ecr.aws/v3z9g9t6/memmachine/frontend/chatbot
-    tag: 2025-09-26.2
+    tag: 2025-09-26.3
   replicaCount: 1
   service:
     type: ClusterIP
