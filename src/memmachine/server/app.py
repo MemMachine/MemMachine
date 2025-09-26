@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 class SessionData(BaseModel):
     """Request model for session information."""
 
-    group_id: str
+    group_id: str | None
     agent_id: list[str] | None
     user_id: list[str] | None
     session_id: str
@@ -63,7 +63,7 @@ class NewEpisode(BaseModel):
     episode_content: str | list[float]
     episode_type: str
     metadata: dict[str, Any] | None
-    memory_selection: dict[str, Any] | None
+    memory_selection: dict[str, Any] | None = None
 
 
 class SearchQuery(BaseModel):
@@ -73,7 +73,9 @@ class SearchQuery(BaseModel):
     query: str
     filter: dict[str, Any] | None = None
     limit: int | None = None
-    memory_selection: dict[str, Any]
+    memory_selection: dict[str, Any] | None = None
+
+
 
 
 # === Response Models ===
