@@ -5,6 +5,8 @@ Abstract base class for an embedder.
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .data_types import SimilarityMetric
+
 
 class Embedder(ABC):
     """
@@ -38,5 +40,41 @@ class Embedder(ABC):
         Returns:
             list[list[float]]:
                 A list of embedding vectors corresponding to each query.
+        """
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def model_id(self) -> str:
+        """
+        Get an identifier for the embedding model.
+        Identifier-dimensionality pairs must be unique.
+
+        Returns:
+            str: The model identifier.
+        """
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def dimensions(self) -> int:
+        """
+        Get the dimensionality for embeddings
+        produced by this embedder.
+
+        Returns:
+            int: The dimensionality.
+        """
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def similarity_metric(self) -> SimilarityMetric:
+        """
+        Get the similarity metric for embeddings
+        produced by this embedder.
+
+        Returns:
+            SimilarityMetric: The similarity metric.
         """
         raise NotImplementedError

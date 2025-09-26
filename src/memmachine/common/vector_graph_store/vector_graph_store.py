@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import UUID
 
+from memmachine.common.embedder import SimilarityMetric
+
 from .data_types import Edge, Node, Property
 
 
@@ -16,6 +18,29 @@ class VectorGraphStore(ABC):
     """
     Abstract base class for a vector graph store.
     """
+
+    @abstractmethod
+    async def create_vector_index_if_not_exist(
+        self,
+        embedding_property_name: str,
+        dimensions: int,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+    ):
+        """
+        Create a vector index for the specified embedding property
+        if it does not already exist.
+
+        Args:
+            embedding_property_name (str):
+                The name of the property
+                that stores the embedding vector.
+            dimensions (int):
+                The dimensionality of the embedding vectors.
+            similarity_metric (SimilarityMetric, optional):
+                The similarity metric to use
+                (default: SimilarityMetric.COSINE).
+        """
+        raise NotImplementedError
 
     @abstractmethod
     async def add_nodes(self, nodes: list[Node]):
@@ -41,7 +66,8 @@ class VectorGraphStore(ABC):
     async def search_similar_nodes(
         self,
         query_embedding: list[float],
-        similarity_threshold: float = 0.2,
+        embedding_property_name: str,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
         required_labels: set[str] | None = None,
         required_properties: dict[str, Property] = {},
@@ -53,12 +79,16 @@ class VectorGraphStore(ABC):
         Args:
             query_embedding (list[float]):
                 The embedding vector to compare against.
-            similarity_threshold (float, optional):
-                Minimum cosine similarity
-                for a node to be considered similar.
+            embedding_property_name (str):
+                The name of the property
+                that stores the embedding vector.
+            similarity_metric (SimilarityMetric, optional):
+                The similarity metric to use
+                (default: SimilarityMetric.COSINE).
             limit (int | None, optional):
                 Maximum number of similar nodes to return.
-                If None, return all similar nodes.
+                If None, return as many similar nodes as possible
+                (default: 100).
             required_labels (set[str] | None, optional):
                 Set of labels that the nodes must have.
                 If None, no label filtering is applied.
@@ -108,7 +138,8 @@ class VectorGraphStore(ABC):
                 originating from the specified node.
             limit (int | None, optional):
                 Maximum number of related nodes to return.
-                If None, return all related nodes.
+                If None, return as many related nodes as possible
+                (default: None).
             required_labels (set[str] | None, optional):
                 Set of labels that the related nodes must have.
                 If None, no label filtering is applied.
@@ -157,7 +188,8 @@ class VectorGraphStore(ABC):
                 If False, order in descending order.
             limit (int | None, optional):
                 Maximum number of nodes to return.
-                If None, return all matching nodes.
+                If None, return as many matching nodes as possible
+                (default: 1).
             required_labels (set[str] | None, optional):
                 Set of labels that the nodes must have.
                 If None, no label filtering is applied.
@@ -189,7 +221,8 @@ class VectorGraphStore(ABC):
         Args:
             limit (int | None, optional):
                 Maximum number of nodes to return.
-                If None, return all matching nodes.
+                If None, return as many matching nodes as possible
+                (default: None).
             required_labels (set[str] | None, optional):
                 Set of labels that the nodes must have.
                 If None, no label filtering is applied.

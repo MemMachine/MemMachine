@@ -157,6 +157,30 @@ class DeclarativeMemory:
             config.get("episode_metadata_template", "[$timestamp] $content")
         )
 
+    async def _ensure_vector_indexes_created(self):
+        if not hasattr(self, "_vector_index_creation_tasks"):
+            self._vector_index_creation_tasks = [
+                asyncio.create_task(
+                    self._vector_graph_store.create_vector_index_if_not_exist(
+                        embedding_property_name=(
+                            DeclarativeMemory._embedding_property_name(
+                                self._embedder.model_id(),
+                                self._embedder.dimensions(),
+                            )
+                        ),
+                        dimensions=self._embedder.dimensions(),
+                        similarity_metric=self._embedder.similarity_metric(),
+                    )
+                )
+            ]
+
+        try:
+            await asyncio.gather(*self._vector_index_creation_tasks)
+        except Exception as e:
+            # If any task fails, clear the tasks so they can be retried.
+            del self._vector_index_creation_tasks
+            raise e
+
     class Workflow:
         def __init__(
             self,
@@ -414,6 +438,8 @@ class DeclarativeMemory:
         Args:
             episode (Episode): The episode to add.
         """
+        await self._ensure_vector_indexes_created()
+
         episode_node = Node(
             uuid=episode.uuid,
             labels={"Episode"},
@@ -513,6 +539,7 @@ class DeclarativeMemory:
                 A list of episodes relevant to the query,
                 sorted by timestamp.
         """
+        await self._ensure_vector_indexes_created()
 
         # Derive derivatives from query.
         derivatives = await self._query_derivative_deriver.derive(
@@ -539,6 +566,13 @@ class DeclarativeMemory:
         search_similar_nodes_tasks = [
             self._vector_graph_store.search_similar_nodes(
                 query_embedding=derivative_embedding,
+                embedding_property_name=(
+                    DeclarativeMemory._embedding_property_name(
+                        self._embedder.model_id(),
+                        self._embedder.dimensions(),
+                    )
+                ),
+                similarity_metric=self._embedder.similarity_metric(),
                 required_labels={"Derivative"},
                 required_properties={
                     mangle_filterable_property_key(key): value
@@ -947,3 +981,18 @@ class DeclarativeMemory:
             )
             for node in episode_nodes
         ]
+
+    @staticmethod
+    def _embedding_property_name(model_id: str, dimensions: int) -> str:
+        """
+        Generate a standardized property name for embeddings
+        based on the model ID and embedding dimensions.
+
+        Args:
+            model_id (str): The identifier of the embedding model.
+            dimensions (int): The dimensionality of the embedding.
+
+        Returns:
+            str: A standardized property name for the embedding.
+        """
+        return f"embedding_{model_id}_{dimensions}d"
