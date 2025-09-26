@@ -53,5 +53,12 @@ class Embedder(ABC):
         Returns:
             list[list[float]]:
                 A list of embedding vectors corresponding to each query.
+
+        Raises:
+            IOError:
+                If IO error happens. The IO errors can include: Netowrk Error,
+                Rate Litmit, Timeout, etc.
+            ValueError:
+                Any other errors except the IOError.
         """
         raise NotImplementedError

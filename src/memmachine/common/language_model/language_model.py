@@ -45,5 +45,13 @@ class LanguageModel(ABC):
             tuple[str, Any]:
                 A tuple containing the generated response text
                 and tool call outputs (if any).
+
+
+        Raises:
+            IOError:
+                If IO error happens. The IO errors can include: Netowrk Error,
+                Rate Litmit, Timeout, etc.
+            ValueError:
+                Any other errors except the IOError.
         """
         raise NotImplementedError
