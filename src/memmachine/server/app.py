@@ -13,10 +13,11 @@ It includes:
 import asyncio
 import logging
 import os
+from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, List, Coroutine
+from typing import Any
 
 import uvicorn
 import yaml

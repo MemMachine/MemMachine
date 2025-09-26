@@ -21,7 +21,6 @@ import copy
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
 
 from memmachine.common.language_model.language_model_builder import (
     LanguageModelBuilder,
@@ -72,8 +71,8 @@ class EpisodicMemory:
         long_term_config = config.get("long_term_memory", {})
 
         self._ref_count = 1  # For reference counting to manage lifecycle
-        self._session_memory: Optional[SessionMemory] = None
-        self._long_term_memory: Optional[LongTermMemory] = None
+        self._session_memory: SessionMemory | None = None
+        self._long_term_memory: LongTermMemory | None = None
         metrics_manager = MetricsFactoryBuilder.build("prometheus", {}, {})
 
         if len(short_config) > 0 and short_config.get("enabled") != "false":
@@ -135,7 +134,7 @@ class EpisodicMemory:
         )
 
     @property
-    def short_term_memory(self) -> Optional[SessionMemory]:
+    def short_term_memory(self) -> SessionMemory | None:
         """
         Get the short-term memory of the episodic memory instance
         Returns:
@@ -144,7 +143,7 @@ class EpisodicMemory:
         return self._session_memory
 
     @short_term_memory.setter
-    def short_term_memory(self, value: Optional[SessionMemory]):
+    def short_term_memory(self, value: SessionMemory | None):
         """
         Set the short-term memory of the episodic memory instance
         This makes the short term memory can be injected
@@ -154,7 +153,7 @@ class EpisodicMemory:
         self._session_memory = value
 
     @property
-    def long_term_memory(self) -> Optional[LongTermMemory]:
+    def long_term_memory(self) -> LongTermMemory | None:
         """
         Get the long-term memory of the episodic memory instance
         Returns:
@@ -163,7 +162,7 @@ class EpisodicMemory:
         return self._long_term_memory
 
     @long_term_memory.setter
-    def long_term_memory(self, value: Optional[LongTermMemory]):
+    def long_term_memory(self, value: LongTermMemory | None):
         """
         Set the long-term memory of the episodic memory instance
         This makes the long term memory can be injected
