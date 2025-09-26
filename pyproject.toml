@@ -52,3 +52,16 @@ memmachine-nltk-setup = "memmachine:setup_nltk"
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.2",
+    "ruff>=0.13.2",
+]
+
+[tool.mypy]
+follow_untyped_imports = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
