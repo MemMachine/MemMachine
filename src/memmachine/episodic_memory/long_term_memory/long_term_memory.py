@@ -8,15 +8,6 @@ from ..declarative_memory.data_types import (
 )
 from ..declarative_memory.data_types import Episode as DeclarativeMemoryEpisode
 
-supported_derivative_deriver_names = {"identity", "sentence"}
-
-supported_reranker_names = {
-    "identity",
-    "bm25",
-    "cross-encoder",
-    "rrf-hybrid",
-}
-
 content_type_to_declarative_memory_content_type_map = {
     ContentType.STRING: DeclarativeMemoryContentType.STRING,
 }
@@ -80,11 +71,6 @@ class LongTermMemory:
         derivative_deriver_name = long_term_memory_config.get(
             "derivative_deriver", "sentence"
         )
-        if derivative_deriver_name not in supported_derivative_deriver_names:
-            raise ValueError(
-                "Unsupported derivative deriver name: "
-                f"{derivative_deriver_name}"
-            )
 
         # Configure metadata derivative mutator
         metadata_prefix = long_term_memory_config.get(
