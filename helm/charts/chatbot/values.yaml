@@ -1,0 +1,16 @@
+name: chatbot
+openaiApiKey: "REPLACE_ME"
+middleware:
+  url: "http://middleware:8000"
+image:
+  repository: public.ecr.aws/v3z9g9t6/memmachine/frontend/chatbot
+  tag: 2025-09-26.1
+replicaCount: 1
+service:
+  type: ClusterIP
+  port: 8501
+ingress:
+  enabled: false
+  annotations: {}
+  host: chatbot.rack
+      

@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.name | default "middleware" }}
+  labels:
+    app: {{ .Values.name | default "middleware" }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.name | default "middleware" }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.name | default "middleware" }}
+    spec:
+      containers:
+        - name: {{ .Values.name | default "middleware" }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port | default 8000 }} # Match the port defined in service.yaml
+              name: http
+          env:
+            - name: EXAMPLE_SERVER_PORT
+              value: "{{ .Values.service.port | default 8000 }}"
+            - name: MEMORY_BACKEND_URL
+              value: "{{ .Values.memory_backend_url }}"

@@ -28,7 +28,7 @@ data:
     storage:
       my_storage_id:
         vendor_name: neo4j
-        host: {{ .Values.neo4j.neo4j.name | quote }}
+        host: "neo4j-lb-neo4j.{{ .Values.namespace }}.svc.cluster.local"
         port: 7687
         user: {{ .Values.neo4j.neo4j.user | quote }}
         password: {{ .Values.neo4j.neo4j.password | quote }}

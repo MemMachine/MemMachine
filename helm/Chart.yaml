@@ -15,6 +15,10 @@ dependencies:
     version: "*"
     repository: "file://charts/pgvector"
     condition: pgvector.enabled
+  - name: middleware
+    version: "*"
+    repository: "file://charts/middleware"
+    condition: middleware.enabled
   - name: open-webui
     version: "*"
     repository: "https://helm.openwebui.com"

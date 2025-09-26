@@ -47,6 +47,7 @@ backend:
 
 neo4j:
   enabled: true
+  name: neo4j
   # REQUIRED: a unique Neo4j cluster/instance name within the namespace
   neo4j:
     name: neo4j
@@ -88,7 +89,7 @@ neo4j:
     NEO4J_PLUGINS: '["apoc","graph-data-science"]'  # adjust as needed  [oai_citation:4‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/docker/plugins)
   ingress:
     enabled: true
-    hostname: neo4j.example.com
+    hostname: neo4j.rack
 
   # Storage: default StorageClass via volume claim templates
   volumes:
@@ -190,6 +191,37 @@ pgvector:
   # Extra env vars to inject into the postgres container
   extraEnv: []
   #  - name: PGDATA
+
+middleware:
+  name: middleware
+  enabled: true
+  memory_backend_url: "http://backend.memmachine.svc.cluster.local:8080"
+  image:
+    repository: public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server
+    tag: 2025-09-26.1
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+
+chatbot:
+  enabled: true
+  name: chatbot
+  openaiApiKey: "REPLACE_ME"
+  middleware:
+    url: "http://middleware.memmachine.svc.cluster.local:8000"
+  image:
+    repository: public.ecr.aws/v3z9g9t6/memmachine/frontend/chatbot
+    tag: 2025-09-26.1
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8501
+  ingress:
+    enabled: false
+    annotations: {}
+    host: chatbot.rack
+        
 open-webui:
   # values-openwebui.yaml
   image:
