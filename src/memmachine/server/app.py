@@ -13,6 +13,7 @@ It includes:
 import asyncio
 import logging
 import os
+from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
@@ -63,6 +64,7 @@ class NewEpisode(BaseModel):
     episode_content: str | list[float]
     episode_type: str
     metadata: dict[str, Any] | None
+    memory_selection: dict[str, Any] | None = None
 
 
 class SearchQuery(BaseModel):
@@ -72,6 +74,7 @@ class SearchQuery(BaseModel):
     query: str
     filter: dict[str, Any] | None = None
     limit: int | None = None
+    memory_selection: dict[str, Any] | None = None
 
 
 # === Response Models ===
@@ -107,7 +110,6 @@ class DeleteDataRequest(BaseModel):
 # Global instances for memory managers, initialized during app startup.
 profile_memory: ProfileMemory = None
 episodic_memory: EpisodicMemoryManager = None
-
 
 # === Lifespan Management ===
 
@@ -389,45 +391,58 @@ async def add_memory(episode: NewEpisode):
         HTTPException: 400 if the producer or produced_for IDs are invalid
                        for the given context.
     """
-    inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
-        group_id=episode.session.group_id,
-        agent_id=episode.session.agent_id,
-        user_id=episode.session.user_id,
-        session_id=episode.session.session_id,
-    )
-    if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
+    if (
+        episode.memory_selection is None
+        or episode.memory_selection.get("episodic") != "disable"
+    ):
+        group_id = episode.session.group_id \
+            if episode.session.group_id is not None else ""
+        inst: EpisodicMemory | None = \
+            await episodic_memory.get_episodic_memory_instance(
+                group_id=group_id,
+                agent_id=episode.session.agent_id,
+                user_id=episode.session.user_id,
+                session_id=episode.session.session_id,
+            )
+        if inst is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"""unable to find episodic memory for
                     {episode.session.user_id},
                     {episode.session.session_id},
                     {episode.session.group_id},
                     {episode.session.agent_id}""",
-        )
-    async with AsyncEpisodicMemory(inst) as inst:
-        success = await inst.add_memory_episode(
-            producer=episode.producer,
-            produced_for=episode.produced_for,
-            episode_content=episode.episode_content,
-            episode_type=episode.episode_type,
-            content_type=ContentType.STRING,
-            metadata=episode.metadata,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail=f"""either {episode.producer} or {episode.produced_for}
-                        is not in {episode.session.user_id}
-                        or {episode.session.agent_id}""",
             )
+        async with AsyncEpisodicMemory(inst) as inst:
+            success = await inst.add_memory_episode(
+                producer=episode.producer,
+                produced_for=episode.produced_for,
+                episode_content=episode.episode_content,
+                episode_type=episode.episode_type,
+                content_type=ContentType.STRING,
+                metadata=episode.metadata,
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"""either {episode.producer} or
+                            {episode.produced_for}
+                            is not in {episode.session.user_id}
+                            or {episode.session.agent_id}""",
+                )
 
-        ctx = inst.get_memory_context()
+    if (
+        episode.memory_selection is None
+        or episode.memory_selection.get("profile") != "disable"
+    ):
+        gid = episode.session.group_id \
+            if episode.session.group_id is not None else ""
         await profile_memory.add_persona_message(
             str(episode.episode_content),
             episode.metadata if episode.metadata is not None else {},
             {
-                "group_id": ctx.group_id,
-                "session_id": ctx.session_id,
+                "group_id": gid,
+                "session_id": episode.session.session_id,
                 "producer": episode.producer,
                 "produced_for": episode.produced_for,
             },
@@ -452,43 +467,63 @@ async def search_memory(q: SearchQuery) -> SearchResult:
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
     """
-    inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
-        group_id=q.session.group_id,
-        agent_id=q.session.agent_id,
-        user_id=q.session.user_id,
-        session_id=q.session.session_id,
-    )
-    if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
+    tasks: list[Coroutine[Any, Any, Any]] = []
+    inst: EpisodicMemory | None = None
+    episodic_enabled = False
+    profile_enabled = False
+    group_id = q.session.group_id if q.session.group_id is not None else ""
+    if (
+        q.memory_selection is None
+        or q.memory_selection.get("episodic") != "disable"
+    ):
+        episodic_enabled = True
+
+        inst = \
+            await episodic_memory.get_episodic_memory_instance(
+                group_id=group_id,
+                agent_id=q.session.agent_id,
+                user_id=q.session.user_id,
+                session_id=q.session.session_id,
+            )
+        if inst is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"""unable to find episodic memory for
                     {q.session.user_id},
                     {q.session.session_id},
                     {q.session.group_id},
                     {q.session.agent_id}""",
-        )
-    async with AsyncEpisodicMemory(inst) as inst:
-        ctx = inst.get_memory_context()
-        user_id = (
-            q.session.user_id[0]
-            if q.session.user_id is not None and len(q.session.user_id) > 0
-            else None
-        )
-        res = await asyncio.gather(
-            inst.query_memory(q.query, q.limit, q.filter),
+            )
+        tasks.append(inst.query_memory(q.query, q.limit, q.filter))
+    if (
+        q.memory_selection is None
+        or q.memory_selection.get("profile") != "disable"
+    ):
+        profile_enabled = True
+        user_id = q.session.user_id[0] if q.session.user_id is not None else ""
+        tasks.append(
             profile_memory.semantic_search(
                 q.query,
                 q.limit if q.limit is not None else 5,
                 isolations={
-                    "group_id": ctx.group_id,
-                    "session_id": ctx.session_id,
+                    "group_id": group_id,
+                    "session_id": q.session.session_id,
                 },
                 user_id=user_id,
             ),
         )
+    res = await asyncio.gather(*tasks)
+    if inst:
+        await inst.close()
+    if episodic_enabled and profile_enabled:
         return SearchResult(
             content={"episodic_memory": res[0], "profile_memory": res[1]}
         )
+    if episodic_enabled:
+        return SearchResult(content={"episodic_memory": res[0]})
+    if profile_enabled:
+        return SearchResult(content={"profile_memory": res[0]})
+    return SearchResult(content={})
 
 
 @app.delete("/v1/memories")
@@ -496,12 +531,15 @@ async def delete_session_data(delete_req: DeleteDataRequest):
     """
     Delete data for a particular session
     """
-    inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
-        group_id=delete_req.session.group_id,
-        agent_id=delete_req.session.agent_id,
-        user_id=delete_req.session.user_id,
-        session_id=delete_req.session.session_id,
-    )
+    group_id = delete_req.session.group_id \
+        if delete_req.session.group_id is not None else ""
+    inst: EpisodicMemory | None = \
+        await episodic_memory.get_episodic_memory_instance(
+            group_id=group_id,
+            agent_id=delete_req.session.agent_id,
+            user_id=delete_req.session.user_id,
+            session_id=delete_req.session.session_id,
+        )
     if inst is None:
         raise HTTPException(
             status_code=404,
