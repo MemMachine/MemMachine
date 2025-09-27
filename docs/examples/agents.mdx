@@ -1,0 +1,396 @@
+---
+title: "Agents"
+description: "Example Agents you can build with MemMachine"
+icon: "robot"
+---
+
+# Agent Examples
+Ready to see MemMachine in action? Click any link below to got directly to the [MemMachine Agents Repo](https://github.com/MemMachine/MemMachine/blob/main/examples/README.md). You can download and deploy the following agents straight into your own environment to quickly test MemMachine and explore how it shines in different use cases!
+
+<Columns cols={3}>
+  <Card
+    title="Default Agent"
+    icon="globe"
+    href="https://github.com/MemMachine/MemMachine/blob/main/examples/README.md"
+  >
+    General-purpose AI assistant for any chatbot
+  </Card>
+  <Card
+    title="CRM Agent"
+    icon="headset"
+
+    href="https://github.com/MemMachine/MemMachine/blob/main/examples/crm/README.md"
+  >
+    An Agent targeting Customer Relationship Management
+  </Card>
+  <Card
+    title="Financial Analyst Agent"
+    icon="coins"
+    href="https://github.com/MemMachine/MemMachine/blob/main/examples/README.md"
+  >
+    Financial analysis and reporting
+  </Card>
+  <Card
+    title="Healthcare Agent"
+    icon="heart-pulse"
+    href="https://github.com/MemMachine/MemMachine/blob/main/examples/README.md"
+  >
+    Healthcare assistant for patient management
+  </Card>  
+  <Card
+    title="Streamlit Frontend"
+    icon="check"
+    href="https://github.com/MemMachine/MemMachine/blob/main/examples/README.md"
+  >
+  Web-based testing interface for all agents
+  </Card>
+  <Card
+    title="Writing Assistant"
+    icon="notebook"
+    href="https://github.com/MemMachine/MemMachine/blob/main/examples/writing_assistant/README.md"
+>
+    AI-powered Writing assistant
+  </Card>
+</Columns>
+
+<Warning>Advice recieved from using these examples comes from AI generation, and should not be considered the same as advice recieved from an expert in any given field.</Warning>
+
+
+These agents are designed to showcase how to integrate with MemMachine's memory services. Follow these simple steps to get an agent up and running in no time.
+
+### Installation
+
+Getting started is a breeze! We'll just need to set up your local environment and grab a few necessary libraries.
+
+1. **Create a Virtual Environment:** We highly recommend using a virtual environment to keep your project dependencies tidy. You can create one with this simple command:
+
+   ```python
+   python -m venv .venv
+   ```
+
+2. **Activate Your Environment:** Once created, you'll need to activate it so we can install the necessary packages.
+
+   - On macOS/Linux:
+
+     ```bash
+     source .venv/bin/activate
+     ```
+
+   - On Windows:
+
+     ```bash
+     .venv\Scripts\activate
+     ```
+
+3. **Install the Libraries:** Now, let's install the core dependencies for our agents. We'll grab `uvicorn`, `requests`, `fastapi`, and `streamlit` so you're ready to go!
+
+   ```bash
+   pip install "uvicorn[standard]" requests fastapi streamlit
+   ```
+
+### Connecting to MemMachine
+
+Start MemMachine by either running the Python file or the Docker container. These example agents all use the REST API from MemMachine's `app.py`, but you can also integrate using the MCP server.
+
+Be sure to check out the [README file](https://github.com/MemMachine/MemMachine/blob/examples/README.md) in the examples folder for more details on how make the most of our Example Agents.
+
+<Accordion title="Complete .env file example">
+ For ease of management, instead of setting each environment variable individually in your terminal, you can create a `.env` file in the root directory of your project. This file will contain all the necessary environment variables for running the agents. Here's an example of what your `.env` file might look like:
+``` bash
+#memmachine required environment variables
+POSTGRES_HOST="10.0.0.59"
+POSTGRES_PORT="5432"
+POSTGRES_USER="postgres"
+POSTGRES_PASSWORD="strangehorsegreencoffee"
+POSTGRES_DB="your-postgres-db"
+PROFILE_DB="your-profile-db"
+
+MEMORY_CONFIG=/Users/<username>/Desktop/intelligent-memory/memmachine/src/cfg.yml
+
+LOG_LEVEL="DEBUG"
+LOG_FILE="test.txt"
+
+MODEL_ID="gpt-4.1-mini"
+OPENAI_API_KEY="your-api-key-here"
+
+NEO4J_USERNAME="your-username"
+NEO4J_PASSWORD="your-password"
+NEO4J_URI="bolt://localhost:7687"
+
+#example streamlit required environment variables
+MCP_BASE_URL=http://127.0.0.1:8080
+GATEWAY_URL=http://localhost:8080
+
+#example streamlit required environment variables
+#AWS_ACCESS_KEY_ID=ACCESS-KEY
+#AWS_SECRET_ACCESS_KEY=YOUR-SECRET-ACCESS-KEY
+#AWS_REGION=us-west-2
+#CLAUDE_MODEL_ID=anthropic.claude-3-7-sonnet-20250219-v1:0
+#CLAUDE_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+#MODEL_API_KEY=bedrock
+
+
+# SLACK INTEGRATION FOR CRM
+SLACK_BOT_TOKEN=xoxb-your-slack-bot-token
+SLACK_SIGNING_SECRET=your-slack-signing-secret
+CRM_BACKEND_URL=http://localhost:8080
+CRM_CHANNEL_ID=optional for channel access restriction
+LOG_LEVEL=INFO
+CRM_AUTH_TOKEN=your-token
+```
+</Accordion>
+
+### Available Agents
+We offer four available agents to choose from, each tailored to different use cases and functionalities. You can run any of these agents by executing their respective Python files. Each agent is designed to interact with the MemMachine backend for memory storage and retrieval.
+
+<Tabs>
+  <Tab title="Default Agent" icon="globe">
+   - **File Name:** `example_server.py`
+   - **Purpose:** General-purpose AI assistant for any chatbot
+   - **Port:** 8000 (configurable via `EXAMPLE_SERVER_PORT`)
+   - **Features:** Basic memory storage and retrieval
+   - **Use Case:** General conversations and information management
+  </Tab>
+  <Tab title="CRM Agent" icon="headset">
+   - **File Name:** `crm_server.py`
+   - **Purpose:** Customer Relationship Management
+   - **Port:** 8000 (configurable via `CRM_PORT`)
+   - **Features:**
+     - Customer data management
+     - Sales pipeline tracking
+     - Slack integration for real-time communication
+     - CRM-specific query construction
+   - **Use Case:** Sales teams, customer support, and relationship management
+   </Tab>
+   <Tab title="Financial Analyst Agent" icon="coins">
+  
+   - **File Directory:** `financial_analyst/`
+   - **Purpose:** Financial analysis and reporting
+   - **Port:** 8000 (configurable via `FINANCIAL_PORT`)
+   - **Features:**
+     - Financial data analysis
+     - Investment insights
+     - Market trend analysis
+     - Financial reporting
+   - **Use Case:** Financial advisors, investment teams, accounting departments.
+   </Tab>
+   <Tab title="Writing Assistant" icon="notebook">
+   - **File Name:** `/writing_assistant_server.py`
+   - **Purpose:** AI-powered Writing assistant
+   - **Port:** 8000 (configurable via `WRITING_ASSISTANT_PORT`)
+   - **Features:**
+     - **Writing Style Analysis:** Analyzes your writing samples to extract detailed style characteristics
+     - **Content Type Support:** Separate style profiles for different content types (email, blog, LinkedIn, etc.)
+     - **Style Matching:** Generates new content that matches your established writing patterns
+     - **Magic Keyword Support:** Use /submit command to easily submit writing samples
+   - **Use Case:** Technical writers, content creators, professionals looking to maintain a consistent writing style.
+   </Tab>
+</Tabs>
+
+### Agent Quick Start
+
+**Prerequisites**
+
+- Python 3.12+
+- FastAPI
+- Requests library
+- MemMachine backend running
+- Environment variables configured
+
+**Running an Agent**
+
+Set up environment variables:
+
+```bash
+MEMORY_BACKEND_URL="http://localhost:8080"
+OPENAI_API_KEY="your-openai-api-key"
+```
+
+Run a specific agent:
+
+```bash
+# Default agent
+python example_server.py
+
+# CRM agent
+cd crm
+python crm_server.py
+
+# Financial analyst agent
+cd financial_analyst
+python financial_server.py
+```
+
+Access the API:
+
+- **Default:** `http://localhost:8000`
+- **CRM:** `http://localhost:8000` (when running CRM server)
+- **Financial:** `http://localhost:8000` (when running Financial server)
+- **Frontend:** `http://localhost:8502` (when running Streamlit app)
+- **Writing Assistant:** http://localhost:8000 (when running Writing Assistant server)
+
+<Note>
+**Using the CRM Agent in Slack**
+
+To enable Slack integration, you will need to install the `slack_sdk` library. You can do this by running the following command:
+```bash
+# pip install slack_sdk
+```
+You will also need to run the python slack server file found in our examples directory:
+```bash
+# python slack_server.py
+```
+</Note>
+### Using the Streamlit Frontend for Testing
+
+The Streamlit frontend provides an interactive web interface for testing all agents and their memory capabilities.
+
+**Starting the Frontend**
+
+**Prerequisites:**
+
+- MemMachine backend running (see main README)
+- At least one agent server running (CRM, Financial, or Default)
+- Required environment variables set
+
+Run the frontend:
+
+```bash
+cd agents/frontend
+streamlit run app.py
+```
+
+Access the interface:
+
+Open your browser to `http://localhost:8502`
+
+**Frontend Features**
+
+**Model Configuration**
+
+- **Model Selection:** Choose from various LLM providers (OpenAI, Anthropic, DeepSeek, Meta, Mistral)
+- **API Key Management:** Configure API keys for different providers
+- **Model Parameters:** Adjust temperature, max tokens, and other settings
+
+**Memory Testing**
+
+- **Persona Management:** Create and manage different user personas
+- **Memory Storage:** Test memory storage and retrieval
+- **Context Search:** Search through stored memories
+- **Profile Management:** View and manage user profiles
+
+**Agent Testing**
+
+- **Real-time Chat:** Test conversations with different agents
+- **Memory Integration:** See how agents use stored memories
+- **Response Analysis:** Compare responses with and without memory context
+- **Rationale Display:** View how personas influence responses
+
+**Testing Workflow**
+
+1. **Start Services:**
+
+   - **Terminal 1:** Start MemMachine backend
+
+     ```bash
+     cd memmachine/src
+     python -m server.app
+     ```
+
+   - **Terminal 2:** Start an agent (e.g., CRM)
+
+     ```bash
+     cd agents/crm
+     python crm_server.py
+     ```
+
+   - **Terminal 3:** Start the frontend
+
+     ```bash
+     cd agents/frontend
+     streamlit run app.py
+     ```
+
+2. **Configure the Frontend:**
+
+   - Set the CRM Server URL (default: `http://localhost:8000`)
+   - Select your preferred model and provider
+   - Enter your API key
+
+3. **Test Memory Operations:**
+
+   - Create a new persona or use existing ones
+   - Send messages to test memory storage
+   - Use search functionality to retrieve memories
+   - Test different conversation patterns
+
+4. **Analyze Results:**
+
+   - View memory storage logs
+   - Compare responses with/without memory context
+   - Check persona influence on responses
+
+**Environment Variables for Frontend**
+
+```bash
+# Required for frontend functionality
+CRM_SERVER_URL=http://localhost:8000
+MODEL_API_KEY=your-openai-api-key
+OPENAI_API_KEY=your-openai-api-key
+
+# Optional: For other providers
+ANTHROPIC_API_KEY=your-anthropic-key
+AWS_ACCESS_KEY_ID=your-aws-key
+AWS_SECRET_ACCESS_KEY=your-aws-secret
+```
+
+**Troubleshooting Frontend Issues**
+
+**Common Issues:**
+
+- **Connection Refused:** Ensure the agent server is running
+- **API Key Errors:** Verify your API keys are correct
+- **Memory Not Storing:** Check MemMachine backend is running
+- **Model Not Responding:** Verify model selection and API key
+
+**Debug Mode:**
+
+- Run with debug logging
+
+  ```bash
+  LOG_LEVEL=DEBUG streamlit run app.py
+  ```
+
+**Frontend Architecture**
+
+The frontend consists of:
+
+- `app.py`: Main Streamlit application
+- `llm.py`: LLM integration and chat functionality
+- `gateway_client.py`: API client for agent communication
+- `model_config.py`: Model configuration and provider mapping
+- `styles.css`: Custom styling for the interface
+
+**Configuration**
+
+**Environment Variables**
+
+| Variable                | Description                                 | Default                 |
+| ---------------------   | ------------------------------------------- | ----------------------- |
+| `MEMORY_BACKEND_URL`    | URL of the MemMachine backend service       | `http://localhost:8080` |
+| `OPENAI_API_KEY`        | OpenAI API key for LLM access               | Required                |
+| `EXAMPLE_SERVER_PORT`   | Port for example server                     | `8000`                  |
+| `CRM_PORT`              | Port for CRM server                         | `8000`                  |
+| `FINANCIAL_PORT`        | Port for financial analyst server           | `8000`                  |
+| `HEALTH_PORT`           | Port for health check endpoint              | `8000`                  |
+| `WRITING_ASSISTANT_PORT`| Port for the writing assistant server.      | `8000`                  |
+| `LOG_LEVEL`             | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO`                  |
+
+**MemMachine Integration**
+
+All agents integrate with the MemMachine backend by:
+
+- Storing conversation episodes as memories
+- Retrieving relevant context for queries
+- Using profile information for personalized responses
+- Maintaining conversation history and context

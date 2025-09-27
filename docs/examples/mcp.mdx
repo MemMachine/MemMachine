@@ -1,0 +1,125 @@
+---
+title: "MCP"
+description: "MCP API Examples for MemMachine"
+icon: "server"
+---
+
+# MCP API Examples
+## Hello World: A Guide to the MemMachine MCP Server API
+
+This guide provides a quick and simple way to get started with the MemMachine Model Content Protocol (MCP) Server API using `curl` commands. It can also be found in our [Quick Start Guide](https://memmachine.ai/docs/getting-started/quick-start-guide).
+
+### Prerequisites
+
+First, ensure your FastAPI application is running. Open your terminal, navigate to the directory containing your `app.py` file, and run the following command. The output should confirm that the server is listening for requests.
+
+```
+uvicorn app:app --reload
+```
+<Steps>
+<Step title="Get All Sessions">
+
+The simplest way to start is by checking for existing sessions. This is an MCP **resource**, which returns a list of all available sessions.
+
+**Command:**
+
+```
+curl http://127.0.0.1:8080/mcp/sessions
+```
+
+**Expected Output:**
+
+You will likely see an empty list since no sessions have been created yet.
+</Step>
+<Step title="Add a New Memory">
+
+This is where you'll use an MCP **tool** to create your first memory episode. The `mcp_add_session_memory` tool is invoked with a `POST` request to its dedicated endpoint.
+
+**Command:**
+
+```
+curl -X POST "http://127.0.0.1:8080/mcp/add_session_memory" \
+-H "Content-Type: application/json" \
+-d '{
+  "session": {
+    "group_id": "test_group",
+    "agent_id": ["test_agent"],
+    "user_id": ["test_user"],
+    "session_id": "session_123"
+  },
+  "producer": "test_user",
+  "produced_for": "test_agent",
+  "episode_content": "This is a simple test memory.",
+  "episode_type": "message",
+  "metadata": {}
+}'
+```
+
+**Expected Output:**
+
+You will receive a JSON response confirming the status. A status of `0` indicates success.
+
+```
+{
+  "status": 0,
+  "error_msg": ""
+}
+```
+</Step>
+<Step title="Search for the Memory">
+
+Now that a memory has been added, let's use another MCP **tool** to find it. The `mcp_search_session_memory` tool is designed for this purpose.
+
+**Command:**
+
+```
+curl -X POST "http://127.0.0.1:8080/mcp/search_session_memory" \
+-H "Content-Type: application/json" \
+-d '{
+  "session": {
+    "group_id": "test_group",
+    "agent_id": ["test_agent"],
+    "user_id": ["test_user"],
+    "session_id": "session_123"
+  },
+  "query": "simple test memory",
+  "filter": {},
+  "limit": 5
+}'
+```
+
+**Expected Output:**
+
+You should see a `200 OK` response containing the search results, including the memory episode you just added.
+</Step>
+<Step title="Delete the Session Data">
+
+To clean up after your test, use the `mcp_delete_session_data` **tool**. This is a great way to ensure your database remains clean.
+
+**Command:**
+
+```
+curl -X POST "http://127.0.0.1:8080/mcp/delete_session_data" \
+-H "Content-Type: application/json" \
+-d '{
+  "session": {
+    "group_id": "test_group",
+    "agent_id": ["test_agent"],
+    "user_id": ["test_user"],
+    "session_id": "session_123"
+  }
+}'
+```
+
+**Expected Output:**
+
+You will receive a JSON response confirming the status of the deletion. A status of `0` indicates that the data was deleted successfully.
+
+```
+{
+  "status": 0,
+  "error_msg": ""
+}
+```
+</Step>
+</Steps>

@@ -1,0 +1,57 @@
+---
+title: "Python SDK"
+description: "Python SDK Examples for MemMachine"
+icon: "python"
+---
+
+# Python SDK Examples
+
+## Simple Hello World Example
+```python
+import memmachine
+from memmachine.episodic_memory.episodic_memory_manager import EpisodicMemoryManager
+from memmachine.episodic_memory.data_types import MemoryContext, Episode, ContentType
+from datetime import datetime
+import uuid
+
+# Path to your config file (update as needed)
+CONFIG_PATH = "config.yaml"
+
+# Initialize the EpisodicMemoryManager using the config file
+manager = EpisodicMemoryManager.create_episodic_memory_manager(CONFIG_PATH)
+
+# Create a memory context for this example
+memory_context = MemoryContext(
+    group_id="hello-group",
+    agent_id={"hello-agent"},
+    user_id={"hello-user"},
+    session_id="hello-session",
+    hash_str="hello-group:hello-agent:hello-user:hello-session"
+)
+
+# Get or create an episodic memory for the context
+episodic_memory = manager._context_memory.get(memory_context.hash_str)
+if episodic_memory is None:
+    episodic_memory = manager._create_memory_for_context(memory_context)
+    manager._context_memory[memory_context.hash_str] = episodic_memory
+
+# Create a new episode (message)
+episode = Episode(
+    uuid=uuid.uuid4(),
+    episode_type="message",
+    content_type=ContentType.STRING,
+    content="Hello World! This is my first episodic memory.",
+    timestamp=datetime.now(),
+    group_id=memory_context.group_id,
+    session_id=memory_context.session_id,
+    producer_id="hello-user"
+)
+
+# Add the episode to episodic memory
+episodic_memory.add_episode(episode)
+
+# Search for the message
+results = episodic_memory.retrieve_context_for_query("Hello World")
+print("Search results:", results)
+```
+This example demonstrates how to set up and use the MemMachine Python SDK to create and retrieve episodic memories. Make sure to adjust the `CONFIG_PATH` variable to point to your actual configuration file.

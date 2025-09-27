@@ -15,27 +15,32 @@ The agents system is built on a modular architecture with:
 
 ```
 examples/
-├── base_query_constructor.py      # Base class for query constructors
-├── default_query_constructor.py   # Default/general-purpose query constructor
-├── example_server.py             # Example FastAPI server implementation
-├── crm/                          # CRM-specific agent
-│   ├── crm_server.py            # CRM FastAPI server
-│   ├── query_constructor.py     # CRM query constructor
-│   ├── slack_server.py          # Slack integration for CRM
-│   ├── slack_service.py         # Slack service utilities
-│   └── README.md                # CRM-specific documentation
-├── financial_analyst/            # Financial analysis agent
-│   ├── financial_server.py      # Financial analyst FastAPI server
-│   └── query_constructor.py     # Financial query constructor
-├── health_assistant/            # Health and wellness assistant agent
-│   ├── health_server.py         # Health assistant FastAPI server
-│   └── query_constructor.py     # Health query constructor
-└── frontend/                    # Streamlit web interface
-    ├── app.py                   # Main Streamlit application
-    ├── llm.py                   # LLM integration
-    ├── gateway_client.py        # API client
-    ├── model_config.py          # Model configuration
-    └── styles.css               # Custom styling
+├── base_query_constructor.py         # Base class for query constructors
+├── default_query_constructor.py      # Default/general-purpose query constructor
+├── example_server.py                 # Example FastAPI server implementation
+├── crm/                              # CRM-specific agent
+│   ├── crm_server.py                 # CRM FastAPI server
+│   ├── query_constructor.py          # CRM query constructor
+│   ├── slack_server.py               # Slack integration for CRM
+│   ├── slack_service.py              # Slack service utilities
+│   └── README.md                     # CRM-specific documentation
+├── financial_analyst/                # Financial analysis agent
+│   ├── financial_server.py           # Financial analyst FastAPI server
+│   └── query_constructor.py          # Financial query constructor
+├── health_assistant/                 # Health and wellness assistant agent
+│   ├── health_server.py              # Health assistant FastAPI server
+│   └── query_constructor.py          # Health query constructor
+├── writing_assistant/                # Writing assistant agent
+│   ├── writing_assistant_server.py   # Writing assistant FastAPI server
+│   ├── README.md                     # Writing assistant-specific documentation
+│   └── query_constructor.py          # Writing query constructor
+└── frontend/                         # Streamlit web interface
+    ├── app.py                        # Main Streamlit application
+    ├── llm.py                        # LLM integration
+    ├── gateway_client.py             # API client
+    ├── model_config.py               # Model configuration
+    └── styles.css                    # Custom styling
+
 ```
 
 ## Connecting to MemMachine
@@ -85,7 +90,17 @@ These example agents all use the REST API from MemMachine's `app.py`, but you ca
   - Medication and appointment reminders
 - **Use Case**: Health chatbots, patient care systems, wellness applications, and healthcare assistants
 
-### 5. Streamlit Frontend (`frontend/`)
+### 5. Health Assistant Agent (`writing_assistant/`)
+- **Purpose**: AI-powered Writing assistant
+- **Port**: 8000 (configurable via `WRITING_ASSISTANT_PORT`)
+- **Features**:
+  - Analyzes your writing samples to extract detailed style characteristics
+  - Separate style profiles for different content types (email, blog, LinkedIn, etc.)
+  - Generates new content that matches your established writing patterns
+  - Use /submit command to easily submit writing samples
+- **Use Case**: Technical writers, content creators, professionals looking to maintain a consistent writing style.
+
+### 6. Streamlit Frontend (`frontend/`)
 - **Purpose**: Web-based testing interface and demonstration platform for all agents
 - **Port**: 8502 (configurable via Streamlit default)
 - **Features**:
@@ -133,6 +148,10 @@ These example agents all use the REST API from MemMachine's `app.py`, but you ca
    # Health assistant agent
    cd health_assistant
    python health_server.py
+
+   # Writing assistant agent
+   cd writing_assistant
+   python writing_assistant_server.py
    
    # Streamlit frontend (in separate terminal)
    cd frontend
@@ -144,6 +163,7 @@ These example agents all use the REST API from MemMachine's `app.py`, but you ca
    - CRM Agent API: `http://localhost:8000` (when running CRM server)
    - Financial Agent API: `http://localhost:8000` (when running Financial server)
    - Health Agent API: `http://localhost:8000` (when running Health server)
+   - Writing Agent API: `http://localhost:8000` (when running Writing Assistant server)
    - Streamlit Frontend: `http://localhost:8502` (when running Streamlit app)
    - API Documentation: `http://localhost:8000/docs` (FastAPI auto-generated docs)
 
@@ -268,6 +288,7 @@ The frontend consists of:
 | `CRM_PORT` | Port for CRM server | `8000` |
 | `FINANCIAL_PORT` | Port for financial analyst server | `8000` |
 | `HEALTH_PORT` | Port for health assistant server | `8000` |
+| `WRITING_ASSISTANT_PORT` | Port for writing assistant server | `8000` |
 | `LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 
 ### MemMachine Integration
