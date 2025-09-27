@@ -77,8 +77,6 @@ class SearchQuery(BaseModel):
     memory_selection: dict[str, Any] | None = None
 
 
-
-
 # === Response Models ===
 class SearchResult(BaseModel):
     """Response model for memory search results."""
@@ -112,7 +110,6 @@ class DeleteDataRequest(BaseModel):
 # Global instances for memory managers, initialized during app startup.
 profile_memory: ProfileMemory = None
 episodic_memory: EpisodicMemoryManager = None
-
 
 # === Lifespan Management ===
 
@@ -398,9 +395,11 @@ async def add_memory(episode: NewEpisode):
         episode.memory_selection is None
         or episode.memory_selection.get("episodic") != "disable"
     ):
+        group_id = episode.session.group_id \
+            if episode.session.group_id is not None else ""
         inst: EpisodicMemory | None = \
             await episodic_memory.get_episodic_memory_instance(
-                group_id=episode.session.group_id,
+                group_id=group_id,
                 agent_id=episode.session.agent_id,
                 user_id=episode.session.user_id,
                 session_id=episode.session.session_id,
@@ -468,18 +467,20 @@ async def search_memory(q: SearchQuery) -> SearchResult:
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
     """
-    tasks: List[Coroutine[Any, Any, Any]] = []
+    tasks: list[Coroutine[Any, Any, Any]] = []
     inst: EpisodicMemory | None = None
     episodic_enabled = False
     profile_enabled = False
+    group_id = q.session.group_id if q.session.group_id is not None else ""
     if (
         q.memory_selection is None
         or q.memory_selection.get("episodic") != "disable"
     ):
         episodic_enabled = True
+
         inst = \
             await episodic_memory.get_episodic_memory_instance(
-                group_id=q.session.group_id,
+                group_id=group_id,
                 agent_id=q.session.agent_id,
                 user_id=q.session.user_id,
                 session_id=q.session.session_id,
@@ -505,13 +506,15 @@ async def search_memory(q: SearchQuery) -> SearchResult:
                 q.query,
                 q.limit if q.limit is not None else 5,
                 isolations={
-                    "group_id": q.session.group_id,
+                    "group_id": group_id,
                     "session_id": q.session.session_id,
                 },
                 user_id=user_id,
             ),
         )
     res = await asyncio.gather(*tasks)
+    if inst:
+        await inst.close()
     if episodic_enabled and profile_enabled:
         return SearchResult(
             content={"episodic_memory": res[0], "profile_memory": res[1]}
@@ -523,18 +526,20 @@ async def search_memory(q: SearchQuery) -> SearchResult:
     return SearchResult(content={})
 
 
-
 @app.delete("/v1/memories")
 async def delete_session_data(delete_req: DeleteDataRequest):
     """
     Delete data for a particular session
     """
-    inst: EpisodicMemory = await episodic_memory.get_episodic_memory_instance(
-        group_id=delete_req.session.group_id,
-        agent_id=delete_req.session.agent_id,
-        user_id=delete_req.session.user_id,
-        session_id=delete_req.session.session_id,
-    )
+    group_id = delete_req.session.group_id \
+        if delete_req.session.group_id is not None else ""
+    inst: EpisodicMemory | None = \
+        await episodic_memory.get_episodic_memory_instance(
+            group_id=group_id,
+            agent_id=delete_req.session.agent_id,
+            user_id=delete_req.session.user_id,
+            session_id=delete_req.session.session_id,
+        )
     if inst is None:
         raise HTTPException(
             status_code=404,
