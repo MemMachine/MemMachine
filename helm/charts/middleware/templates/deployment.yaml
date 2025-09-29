@@ -26,5 +26,9 @@ spec:
               value: "{{ .Values.service.port | default 8000 }}"
             - name: MEMORY_BACKEND_URL
               value: "{{ .Values.memory_backend_url }}"
+            - name: JAEGER_HOST
+              value: {{ .Values.jaeger.host | default "jaeger" | quote }}
+            - name: JAEGER_SERVICE_NAME
+              value: {{ .Values.name | default "middleware" | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.log_level | default "INFO" | quote }}

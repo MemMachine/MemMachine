@@ -23,4 +23,8 @@ dependencies:
     version: "*"
     repository: "https://helm.openwebui.com"
     condition: openwebui.enabled
-    
+  - name: jaeger-all-in-one
+    alias: jaeger
+    version: "*"
+    repository: "https://raw.githubusercontent.com/hansehe/jaeger-all-in-one/master/helm/charts"
+    condition: jaeger.enabled
