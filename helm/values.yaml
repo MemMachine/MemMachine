@@ -192,7 +192,7 @@ pgvector:
   #  - name: PGDATA
 
 jaeger:
-  enabled: false
+  enabled: true
   name: jaeger
   service:
     type: ClusterIP
@@ -224,7 +224,7 @@ middleware:
   memory_backend_url: "http://backend.memmachine.svc.cluster.local:8080"
   image:
     repository: public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server
-    tag: 2025-09-29.9
+    tag: 2025-09-30.12
     pullPolicy: IfNotPresent
   service:
     type: ClusterIP

@@ -102,6 +102,47 @@ services:
     networks:
       - memmachine-network
 
+  middleware:
+    image: ${MIDDLEWARE_IMAGE:-public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server:2025-09-30.10}
+    restart: unless-stopped
+    ports:
+      - "${MIDDLEWARE_PORT:-8000}:8000"
+    environment:
+      EXAMPLE_SERVER_PORT: ${MIDDLEWARE_PORT:-8000}
+      MEMORY_BACKEND_URL: ${MEMORY_BACKEND_URL:-http://memmachine:8080}
+      JAEGER_HOST: ${JAEGER_HOST:-jaeger}
+      JAEGER_SERVICE_NAME: ${JAEGER_SERVICE_NAME:-middleware}
+      LOG_LEVEL: ${MIDDLEWARE_LOG_LEVEL:-INFO}
+    depends_on:
+      memmachine:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - memmachine-network
+    command: ["sleep", "infinity"]  # Keep the container running for debugging
+  
+  jaeger:
+    image: jaegertracing/all-in-one:1.41
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_HTTP_PORT:-16686}:16686"  # Jaeger UI
+      - "${JAEGER_THRIFT_PORT:-6831}:6831/udp"  # Jaeger Thrift
+      - "${JAEGER_THRIFT_PORT:-6831}:6831/tcp"  # Jaeger Thrift
+      - "${JAEGER_PROTOC_PORT:-4317}:4317"  # Jaeger gRPC
+      - "${JAEGER_HTTP_PORT:-4318}:4318"  # Jaeger HTTP
+      - "${JAEGER_METRICS_PORT:-4319}:4319"  # Jaeger Metrics
+    environment:  
+      COLLECTOR_ZIPKIN_HTTP_PORT: 9411
+      LOG_LEVEL: ${JAEGER_LOG_LEVEL:-info}
+      COLLECTOR_OTLP_ENABLED: true
+    networks:
+      - memmachine-network
+
 volumes:
   postgres_data:
     driver: local
