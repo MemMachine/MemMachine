@@ -245,7 +245,6 @@ app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
 app.mount("/metrics", make_asgi_app())
 app.add_middleware(TracingMiddleware, tracer=tracer)
-app.mount("/metrics", metrics_app)
 
 @app.on_event("shutdown")
 async def _shutdown():
