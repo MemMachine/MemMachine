@@ -42,6 +42,20 @@ from memmachine.profile_memory.profile_memory import ProfileMemory
 
 logger = logging.getLogger(__name__)
 
+from memmachine.observability import (
+    init_tracer,
+    TracingMiddleware,
+    traced_endpoint,
+    metrics_app,
+)
+tracer = init_tracer(
+        service_name=os.getenv("JAEGER_SERVICE_NAME", "backend"),
+        jaeger_agent_host=os.getenv("JAEGER_HOST", "jaeger"),
+        jaeger_agent_port=int(os.getenv("JAEGER_AGENT_PORT", "6831")),
+        sampler_type=os.getenv("JAEGER_SAMPLER_TYPE", "const"),
+        sampler_param=float(os.getenv("JAEGER_SAMPLER_PARAM", "1")),
+        log_spans=os.getenv("JAEGER_LOG_SPANS", "true").lower() == "true",
+    )
 
 # Request session data
 class SessionData(BaseModel):
@@ -230,7 +244,13 @@ async def mcp_http_lifespan(application: FastAPI):
 app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
 app.mount("/metrics", make_asgi_app())
+app.add_middleware(TracingMiddleware, tracer=tracer)
+app.mount("/metrics", metrics_app)
 
+@app.on_event("shutdown")
+async def _shutdown():
+    # Flush spans before exit
+    tracer.close()
 
 @mcp.tool()
 async def mcp_add_session_memory(episode: NewEpisode) -> dict[str, Any]:
@@ -461,6 +481,7 @@ async def mcp_get_agent_sessions(agent_id: str) -> AllSessionsResponse:
 
 # === Route Handlers ===
 @app.post("/v1/memories")
+@traced_endpoint("post_memories")
 async def add_memory(episode: NewEpisode):
     """Adds a memory episode to both episodic and profile memory.
 
@@ -526,6 +547,7 @@ async def add_memory(episode: NewEpisode):
 
 
 @app.post("/v1/memories/episodic")
+@traced_endpoint("post_memory_episodic")
 async def add_episodic_memory(episode: NewEpisode):
     """Adds a memory episode to both episodic memory.
 
@@ -578,6 +600,7 @@ async def add_episodic_memory(episode: NewEpisode):
 
 
 @app.post("/v1/memories/profile")
+@traced_endpoint("post_memory_profile")
 async def add_profile_memory(episode: NewEpisode):
     """Adds a memory episode to both profile memory.
 
@@ -610,6 +633,7 @@ async def add_profile_memory(episode: NewEpisode):
 
 
 @app.post("/v1/memories/search")
+@traced_endpoint("post_memory_search")
 async def search_memory(q: SearchQuery) -> SearchResult:
     """Searches for memories across both episodic and profile memory.
 
@@ -667,6 +691,7 @@ async def search_memory(q: SearchQuery) -> SearchResult:
 
 
 @app.post("/v1/memories/episodic/search")
+@traced_endpoint("post_memory_episodic_search")
 async def search_episodic_memory(q: SearchQuery) -> SearchResult:
     """Searches for memories across both profile memory.
 
@@ -704,6 +729,7 @@ async def search_episodic_memory(q: SearchQuery) -> SearchResult:
 
 
 @app.post("/v1/memories/profile/search")
+@traced_endpoint("post_memory_profile_search")
 async def search_profile_memory(q: SearchQuery) -> SearchResult:
     """Searches for memories across profile memory.
 
@@ -734,6 +760,7 @@ async def search_profile_memory(q: SearchQuery) -> SearchResult:
 
 
 @app.delete("/v1/memories")
+@traced_endpoint("delete_memories")
 async def delete_session_data(delete_req: DeleteDataRequest):
     """
     Delete data for a particular session
@@ -758,6 +785,7 @@ async def delete_session_data(delete_req: DeleteDataRequest):
 
 
 @app.get("/v1/sessions")
+@traced_endpoint("get_all_sessions")
 async def get_all_sessions() -> AllSessionsResponse:
     """
     Get all sessions
@@ -777,6 +805,7 @@ async def get_all_sessions() -> AllSessionsResponse:
 
 
 @app.get("/v1/users/{user_id}/sessions")
+@traced_endpoint("get_sessions_for_user")
 async def get_sessions_for_user(user_id: str) -> AllSessionsResponse:
     """
     Get all sessions for a particular user
@@ -796,6 +825,7 @@ async def get_sessions_for_user(user_id: str) -> AllSessionsResponse:
 
 
 @app.get("/v1/groups/{group_id}/sessions")
+@traced_endpoint("get_sessions_for_group")
 async def get_sessions_for_group(group_id: str) -> AllSessionsResponse:
     """
     Get all sessions for a particular group
@@ -815,6 +845,7 @@ async def get_sessions_for_group(group_id: str) -> AllSessionsResponse:
 
 
 @app.get("/v1/agents/{agent_id}/sessions")
+@traced_endpoint("get_sessions_for_agent")
 async def get_sessions_for_agent(agent_id: str) -> AllSessionsResponse:
     """
     Get all sessions for a particular agent
@@ -835,6 +866,7 @@ async def get_sessions_for_agent(agent_id: str) -> AllSessionsResponse:
 
 # === Health Check Endpoint ===
 @app.get("/health")
+@traced_endpoint("health_check")
 async def health_check():
     """Health check endpoint for container orchestration."""
     try:

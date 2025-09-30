@@ -20,6 +20,9 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
+    "jaeger-client>=4.8",
+    "opentracing>=2.4",
+    "prometheus-client>=0.20",
 ]
 requires-python = ">= 3.12"
 authors = [

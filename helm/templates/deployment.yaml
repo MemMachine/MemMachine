@@ -51,6 +51,8 @@ spec:
               value: {{ .Values.neo4j.password | quote }}
             - name: NEO4J_URI
               value: "neo4j.{{ .Values.namespace }}.svc.cluster.local"
+            - name: JAEGER_HOST
+              value: {{ .Values.backend.jaeger.host | quote }}
             - name: IS_DOCKER
               value: "1"
             - name: MEM0_TELEMETRY
