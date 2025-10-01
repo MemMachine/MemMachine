@@ -20,6 +20,7 @@ from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
 
 from .storage.asyncpg_profile import AsyncPgProfileStorage
+from .storage.storage_base import ProfileStorageBase
 from .util.lru_cache import LRUCache
 
 logger = logging.getLogger(__name__)
@@ -57,12 +58,13 @@ class ProfileMemory:
     """
 
     def __init__(
-        self,
+        self, *,
         model: LanguageModel,
         embeddings: Embedder,
-        db_config: dict[str, Any],
         prompt_module: ModuleType,
+        db_config: dict[str, Any] | None = None,
         max_cache_size=1000,
+        profile_storage: ProfileStorageBase | None = None,
     ):
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
@@ -75,7 +77,12 @@ class ProfileMemory:
         self._consolidation_prompt = getattr(
             prompt_module, "CONSOLIDATION_PROMPT", ""
         )
-        self._profile_storage = AsyncPgProfileStorage(db_config)
+        if profile_storage is None:
+            assert db_config is not None, "db_config must be provided"
+            self._profile_storage = AsyncPgProfileStorage(db_config)
+        else:
+            self._profile_storage = profile_storage
+
         self._update_interval = 1
         self._msg_count: dict[str, int] = {}
         self._profile_cache = LRUCache(self._max_cache_size)
@@ -313,6 +320,7 @@ class ProfileMemory:
         metadata: dict[str, str] | None = None,
         isolations: dict[str, bool | int | float | str] | None = None,
         user_id: str = "",  # TODO fully deprecate user_id parameter
+        wait_consolidate: bool = False,
     ):
         """Adds a message to the history and may trigger a profile update.
 
@@ -325,6 +333,8 @@ class ProfileMemory:
             metadata: Metadata associated with the message, such as the
                      speaker.
             isolations: A dictionary for data isolation.
+            wait_consolidate: If true, wait for consolidation to finish
+                     before returning.
 
         Returns:
             A boolean indicating whether the consolidation process was awaited.
@@ -336,13 +346,14 @@ class ProfileMemory:
             metadata = {}
         if isolations is None:
             isolations = {}
+
         if "speaker" in metadata:
             content = f"{metadata['speaker']} sends '{content}'"
         message = await self._profile_storage.add_history(
             user_id, content, metadata, isolations
         )
+
         self._msg_count[user_id] = self._msg_count.get(user_id, 0) + 1
-        wait_consolidate = False
         if self._msg_count[user_id] >= self._update_interval:
             self._msg_count[user_id] = 0
             wait_consolidate = True
