@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.name | default "chatbot" }}
+  annotations:
+    spec.ingressClassName: nginx
+    # Uncomment if you want to force HTTPS:
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Streamlit usually works fine at "/" path
+spec:
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path | default "/" }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.name }}
+                port:
+                  number: {{ .Values.service.port }}

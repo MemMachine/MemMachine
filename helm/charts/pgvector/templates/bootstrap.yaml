@@ -1,0 +1,54 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pgvector-bootstrap
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          env:
+            - name: PGPASSWORD
+              value: {{ .Values.postgres.password | quote }}
+          command: ["bash","-lc"]
+          args:
+            - |
+              set -euo pipefail
+
+              # --- Config (service DNS works if this runs in same namespace) ---
+              PGHOST="pgvector"
+              PGUSER={{ .Values.postgres.user | quote }}
+              PGPASSWORD={{ .Values.postgres.password | quote }}
+              export PGPASSWORD
+
+              echo "Waiting for Postgres to be ready at ${PGHOST}..."
+              until pg_isready -h "${PGHOST}" -U "${PGUSER}" >/dev/null 2>&1; do sleep 2; done
+
+              echo "Target databases: {{ toJson (values .Values.databases) }}"
+
+              # Ensure we can run meta-queries against 'postgres' database
+              psql_base=(psql -h "${PGHOST}" -U "${PGUSER}" -v ON_ERROR_STOP=1)
+
+              # Iterate over values of the map (profile, memzero -> their DB names)
+              {{- range $k, $db := .Values.databases }}
+
+              DB_NAME={{ $db | quote }}
+
+              # Create database if it does not exist
+              if ! "${psql_base[@]}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname={{ $db | quote }};" | grep -q 1; then
+                echo "Creating database: {{ $db }}"
+                "${psql_base[@]}" -d postgres -c "CREATE DATABASE {{ $db }} OWNER {{ $.Values.postgres.user | quote }};"
+              else
+                echo "Database {{ $db }} already exists."
+              fi
+
+              # Enable pgvector extension in that database (idempotent)
+              echo "Ensuring extension 'vector' in {{ $db }}..."
+              "${psql_base[@]}" -d {{ $db | quote }} -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+              {{- end }}
+
+              echo "Bootstrap complete."

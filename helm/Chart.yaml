@@ -1,0 +1,30 @@
+apiVersion: v2
+name: memmachine
+version: 0.0.1
+appVersion: "0.1.0"
+type: application
+
+# Pull in the upstream Neo4j chart
+dependencies:
+  - name: neo4j
+    # Pick a version you’ve vetted; "*" works to start, but pin in prod.
+    version: "*"
+    repository: "https://helm.neo4j.com/neo4j"
+    condition: neo4j.enabled
+  - name: pgvector
+    version: "*"
+    repository: "file://charts/pgvector"
+    condition: pgvector.enabled
+  - name: middleware
+    version: "*"
+    repository: "file://charts/middleware"
+    condition: middleware.enabled
+  - name: open-webui
+    version: "*"
+    repository: "https://helm.openwebui.com"
+    condition: openwebui.enabled
+  - name: jaeger-all-in-one
+    alias: jaeger
+    version: "*"
+    repository: "https://raw.githubusercontent.com/hansehe/jaeger-all-in-one/master/helm/charts"
+    condition: jaeger.enabled

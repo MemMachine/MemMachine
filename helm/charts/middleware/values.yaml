@@ -1,0 +1,9 @@
+name: middleware
+memory_backend_url: "http://memmachine:8080"
+image:
+  repository: public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server
+  tag: 2025-09-29.9
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8000

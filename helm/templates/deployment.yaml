@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "backend.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata: 
+      labels:
+        {{- include "backend.labels" . | nindent 8 }}
+    spec:
+      volumes:
+        - name: memmachine-config
+          configMap:
+            name: memmachine-config
+      containers:
+        - name: {{ .Values.backend.name }}
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.service.port }}
+          volumeMounts:
+            - name: memmachine-config
+              mountPath: /etc/memmachine/
+              readOnly: true
+          env:
+            - name: POSTGRES_HOST
+              value: "pgvector.{{ .Release.Namespace }}.svc.cluster.local"
+            - name: POSTGRES_PORT
+              value: {{ .Values.pgvector.service.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.pgvector.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.pgvector.postgres.password | quote }}
+            - name: POSTGRES_PASS
+              value: {{ .Values.pgvector.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.pgvector.databases.profile | quote }}
+            - name: NEO4J_USERNAME
+              value: {{ .Values.neo4j.username | quote }}
+            - name: NEO4J_PASSWORD
+              value: {{ .Values.neo4j.password | quote }}
+            - name: NEO4J_URI
+              value: "neo4j.{{ .Values.namespace }}.svc.cluster.local"
+            - name: JAEGER_HOST
+              value: {{ .Values.backend.jaeger.host | quote }}
+            - name: IS_DOCKER
+              value: "1"
+            - name: MEM0_TELEMETRY
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: MEMORY_CONFIG
+              value: "/etc/memmachine/{{ .Values.backend.config.file }}"
+            - name: OPENAI_API_KEY
+              value: {{ .Values.backend.config.openai_api_key | quote }}
+            # - name: MEM0_DB_CONFIG: ${MEM0_DB_CONFIG}
+            # - name: OPENAI_API_KEY: ${OPENAI_API_KEY}
+            # - name: AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+            # - name: AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+            # - name: AWS_REGION: ${AWS_REGION}
+            # - name: TRACE_KEY: ${TRACE_KEY}
+            
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+      {{- with .Values.backend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.backend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

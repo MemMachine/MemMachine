@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.name | default "middleware" }}
+  labels:
+    app: {{ .Values.name | default "middleware" }}
+spec:
+  type: {{ .Values.service.type | default "ClusterIP" }}
+  selector:
+    app: {{ .Values.name | default "middleware" }}
+  ports:
+    - port: {{ .Values.service.port | default 8000 }}
+      targetPort: http
+      protocol: TCP
+      name: http

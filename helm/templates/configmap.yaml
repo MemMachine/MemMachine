@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memmachine-config
+  namespace: {{ .Values.namespace }}
+data:
+  {{ .Values.backend.config.file }}: |
+    logging:
+      path: /tmp/memory_log
+      level: info #| debug | error
+
+    long_term_memory:
+      derivative_deriver: sentence
+      metadata_prefix: "[$timestamp] $producer_id: "
+      embedder: my_embedder_id
+      reranker: my_reranker_id
+      vector_graph_store: my_storage_id
+
+    SessionDB:
+      uri: sqlitetest.db
+
+    Model:
+      testmodel:
+        model_vendor: {{ .Values.backend.config.testmodel.vendor | quote }}
+        model_name: {{ .Values.backend.config.testmodel.name | quote }}
+        api_key: {{ .Values.backend.config.openai_api_key | quote }}
+
+    storage:
+      my_storage_id:
+        vendor_name: neo4j
+        host: "neo4j-lb-neo4j.{{ .Values.namespace }}.svc.cluster.local"
+        port: 7687
+        user: {{ .Values.neo4j.neo4j.user | quote }}
+        password: {{ .Values.neo4j.neo4j.password | quote }}
+
+    sessionMemory:
+      model_name: {{ .Values.backend.config.sessionMemory.model_name | quote }}
+      message_capacity: {{ .Values.backend.config.sessionMemory.message_capacity  }}
+      max_message_length: {{ .Values.backend.config.sessionMemory.max_message_length  }}
+      max_token_num: {{ .Values.backend.config.sessionMemory.max_token_num }}
+
+    embedder:
+      my_embedder_id:
+        model_name: {{ .Values.backend.config.embedder.model_name | quote }}
+        api_key: {{ .Values.backend.config.openai_api_key | quote }}
+
+    reranker:
+      my_reranker_id:
+        type: "rrf-hybrid"
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+          #- ce_ranker_id
+      id_ranker_id:
+        type: "identity"
+      bm_ranker_id:
+        type: "bm25"
+      #ce_ranker_id:
+      #  type: "cross-encoder"
+      #  model_name: "cross-encoder/qnli-electra-base"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
