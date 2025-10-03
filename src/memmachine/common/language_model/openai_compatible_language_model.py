@@ -1,30 +1,29 @@
 """
-OpenAI-based embedder implementation.
+OpenAI-completions API based language model implementation.
 """
 
 import asyncio
-import logging
+import json
 import time
 from typing import Any
 
+from openai import AsyncOpenAI
 import openai
-
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
-from .embedder import Embedder
-
-logger = logging.getLogger(__name__)
+from .language_model import LanguageModel
 
 
-class OpenAIEmbedder(Embedder):
+class OpenAICompatibleLanguageModel(LanguageModel):
     """
-    Embedder that uses OpenAI's embedding models
-    to generate embeddings for inputs and queries.
+    Language model that uses OpenAI's completions API
+    to generate responses based on prompts and tools.
     """
 
     def __init__(self, config: dict[str, Any]):
         """
-        Initialize an OpenAIEmbedder with the provided configuration.
+        Initialize an OpenAICompatibleLanguageModel
+        with the provided configuration.
 
         Args:
             config (dict[str, Any]):
@@ -32,15 +31,14 @@ class OpenAIEmbedder(Embedder):
                 - api_key (str):
                   API key for accessing the OpenAI service.
                 - model (str, optional):
-                  Name of the OpenAI embedding model to use
-                  (default: "text-embedding-3-small").
-                - base url (str, optional):
-                  Base URL of the OpenAI embedding model to use
+                  Name of the OpenAI model to use
+                  (default: "gpt-5-nano").
                 - metrics_factory (MetricsFactory, optional):
                   An instance of MetricsFactory
                   for collecting usage metrics.
                 - user_metrics_labels (dict[str, str], optional):
                   Labels to attach to the collected metrics.
+                - base_url: The base URL of the model
 
         Raises:
             ValueError:
@@ -50,13 +48,13 @@ class OpenAIEmbedder(Embedder):
         """
         super().__init__()
 
-        self._model = config.get("model", "text-embedding-3-small")
+        self._model = config.get("model", "gpt-5-nano")
 
         api_key = config.get("api_key")
         if api_key is None:
-            raise ValueError("Embedder API key must be provided")
+            raise ValueError("Language API key must be provided")
 
-        self._client = openai.AsyncOpenAI(
+        self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=config.get("base_url")
         )
@@ -75,47 +73,41 @@ class OpenAIEmbedder(Embedder):
             self._user_metrics_labels = config.get("user_metrics_labels", {})
             label_names = self._user_metrics_labels.keys()
 
-            self._prompt_tokens_usage_counter = metrics_factory.get_counter(
-                "embedder_openai_usage_prompt_tokens",
-                "Number of tokens used by prompts to OpenAI embedder",
+            self._input_tokens_usage_counter = metrics_factory.get_counter(
+                "language_model_openai_usage_input_tokens",
+                "Number of input tokens used for OpenAI language model",
+                label_names=label_names,
+            )
+            self._output_tokens_usage_counter = metrics_factory.get_counter(
+                "language_model_openai_usage_output_tokens",
+                "Number of output tokens used for OpenAI language model",
                 label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
-                "embedder_openai_usage_total_tokens",
-                "Number of tokens used by requests to OpenAI embedder",
+                "language_model_openai_usage_total_tokens",
+                "Number of tokens used for OpenAI language model",
                 label_names=label_names,
             )
             self._latency_summary = metrics_factory.get_summary(
-                "embedder_openai_latency_seconds",
-                "Latency in seconds for OpenAI embedder requests",
+                "language_model_openai_latency_seconds",
+                "Latency in seconds for OpenAI language model requests",
                 label_names=label_names,
             )
 
-    async def ingest_embed(
+    async def generate_response(
         self,
-        inputs: list[Any],
-        max_attempts: int = 1
-    ) -> list[list[float]]:
-        return await self._embed(inputs, max_attempts)
-
-    async def search_embed(
-        self,
-        queries: list[Any],
-        max_attempts: int = 1
-    ) -> list[list[float]]:
-        return await self._embed(queries, max_attempts)
-
-    async def _embed(
-            self,
-            inputs: list[Any],
-            max_attempts: int = 1) -> list[list[float]]:
-        if not inputs:
-            return []
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] = "auto",
+        max_attempts: int = 1,
+    ) -> tuple[str, Any]:
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        inputs = [
-            input.replace("\n", " ") if input else "\n" for input in inputs
+        input_prompts = [
+            {"role": "system", "content": system_prompt or ""},
+            {"role": "user", "content": user_prompt or ""},
         ]
 
         start_time = time.monotonic()
@@ -123,27 +115,26 @@ class OpenAIEmbedder(Embedder):
         for attempt in range(max_attempts):
             sleep_seconds *= 2
             try:
-                response = await self._client.embeddings.create(
-                    input=inputs, model=self._model
-                )
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=input_prompts,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )  # type: ignore
             # translate vendor specific exeception to common error
-            # for rate limit and timeout error, may retry the request
             except openai.AuthenticationError as e:
                 raise ValueError("Invalid OpenAI API key") from e
             except openai.RateLimitError as e:
-                logger.warning("OpenAI rate limit exceeded")
                 if attempt + 1 >= max_attempts:
                     raise IOError("OpenAI rate limit exceeded") from e
                 await asyncio.sleep(sleep_seconds)
                 continue
             except openai.APITimeoutError as e:
-                logger.warning("OpenAI API timeout")
                 if attempt + 1 >= max_attempts:
                     raise IOError("OpenAI API timeout") from e
                 await asyncio.sleep(sleep_seconds)
                 continue
             except openai.APIConnectionError as e:
-                logger.warning("OpenAI API connection error")
                 if attempt + 1 >= max_attempts:
                     raise IOError("OpenAI API connection error") from e
                 await asyncio.sleep(sleep_seconds)
@@ -151,15 +142,20 @@ class OpenAIEmbedder(Embedder):
             except openai.BadRequestError as e:
                 raise ValueError("OpenAI invalid request") from e
             except openai.APIError as e:
-                raise ValueError("OpenAI API error") from e
+                raise ValueError(f"OpenAI API error {str(e)}") from e
             except openai.OpenAIError as e:
                 raise ValueError("OpenAI error") from e
             break
+
         end_time = time.monotonic()
 
-        if self._collect_metrics:
-            self._prompt_tokens_usage_counter.increment(
+        if self._collect_metrics and response.usage is not None:
+            self._input_tokens_usage_counter.increment(
                 value=response.usage.prompt_tokens,
+                labels=self._user_metrics_labels,
+            )
+            self._output_tokens_usage_counter.increment(
+                value=response.usage.completion_tokens,
                 labels=self._user_metrics_labels,
             )
             self._total_tokens_usage_counter.increment(
@@ -171,4 +167,18 @@ class OpenAIEmbedder(Embedder):
                 labels=self._user_metrics_labels,
             )
 
-        return [datum.embedding for datum in response.data]
+        function_calls_arguments = []
+        if response.choices[0].message.tool_calls:
+            for tool_call in response.choices[0].message.tool_calls:
+                function_calls_arguments.append({
+                    "call_id": tool_call.id,
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": json.loads(tool_call.function.arguments)
+                    }
+                })
+
+        return (
+            response.choices[0].message.content,
+            function_calls_arguments,
+        )
