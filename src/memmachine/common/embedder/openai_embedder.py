@@ -36,6 +36,8 @@ class OpenAIEmbedder(Embedder):
                 - model (str, optional):
                   Name of the OpenAI embedding model to use
                   (default: "text-embedding-3-small").
+                - base url (str, optional):
+                  Base URL of the OpenAI embedding model to use
                 - metrics_factory (MetricsFactory, optional):
                   An instance of MetricsFactory
                   for collecting usage metrics.
@@ -56,7 +58,10 @@ class OpenAIEmbedder(Embedder):
         if api_key is None:
             raise ValueError("Embedder API key must be provided")
 
-        self._client = openai.AsyncOpenAI(api_key=api_key)
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=config.get("base_url")
+        )
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(

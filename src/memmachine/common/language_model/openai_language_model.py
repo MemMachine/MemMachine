@@ -221,7 +221,13 @@ class OpenAILanguageModel(LanguageModel):
             )
 
         function_calls_arguments = [
-            json.loads(output.arguments)
+            {
+                "call_id": output.call_id,
+                "function": {
+                    "name": output.name,
+                    "arguments": json.loads(output.arguments),
+                }
+            }
             for output in response.output
             if output.type == "function_call"
         ]
