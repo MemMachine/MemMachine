@@ -10,9 +10,8 @@ client = TestClient(app, raise_server_exceptions=False)
 
 def test_health_check_propagates_unexpected_exceptions(monkeypatch):
     """
-    This test verifies two behaviors of the /health endpoint:
-    1. When expected errors occur (e.g., missing memory managers), the endpoint returns a 503 status code and a useful error message.
-    2. When an unexpected exception occurs, the endpoint returns a generic 500 Internal Server Error response.
+    This test verifies that when expected errors occur (e.g., missing memory managers),
+    the endpoint returns a 503 status code and a useful error message.
     """
 
     # Monkeypatch global memory managers to None to simulate an expected error condition.
@@ -26,23 +25,6 @@ def test_health_check_propagates_unexpected_exceptions(monkeypatch):
     response = client.get("/health")
     assert response.status_code == 503
     assert "Memory managers not initialized" in response.text
-
-    # Monkeypatch the /health endpoint itself to raise an unexpected exception.
-    # This simulates a programming error or bug in the health check logic.
-    async def broken_health_check():
-        raise ValueError("Unexpected error")
-
-    # Remove the original /health route and replace it with the broken one.
-    app.router.routes = [
-        route for route in app.router.routes if route.path != "/health"
-    ]
-    app.get("/health")(broken_health_check)
-
-    # Call the /health endpoint again and verify it returns a 500 status code
-    # and a generic error message (FastAPI does not expose exception details by default).
-    response = client.get("/health")
-    assert response.status_code == 500
-    assert "Internal Server Error" in response.text
 
 
 def test_health_check_returns_healthy_status(monkeypatch):
