@@ -13,19 +13,21 @@ It includes:
 import asyncio
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from enum import Enum
 from importlib import import_module
-from typing import Any, cast
+from typing import Annotated, Any, ClassVar, cast
 
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from fastmcp import Context, FastMCP
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import (
@@ -48,21 +50,56 @@ logger = logging.getLogger(__name__)
 class SessionData(BaseModel):
     """Request model for session information."""
 
-    group_id: str
-    agent_id: list[str] | None
-    user_id: list[str] | None
-    session_id: str
+    ID_PATTERN: ClassVar[str] = r"^[a-zA-Z0-9_-]+$"
+
+    group_id: str | None = Field(None, pattern=ID_PATTERN)
+    agent_id: list[str] | None = None
+    user_id: list[str] | None = None
+    session_id: str = Field(..., pattern=ID_PATTERN)
+
+    @field_validator("agent_id", "user_id", mode="after")
+    @classmethod
+    def validate_agent_user_ids(cls, v: list[str] | None):
+        if v is None:
+            return v
+        if len(v) == 0:
+            raise ValueError("List cannot be empty if provided.")
+        for item in v:
+            if not re.match(cls.ID_PATTERN, item):
+                raise ValueError(
+                    f"Invalid character in ID: {item}. Must be alphanumeric, hyphens, or underscores."
+                )
+        return v
 
 
 # === Request Models ===
+# Custom type for episode_content
+def validate_episode_content_type(v: Any) -> str:
+    if not isinstance(v, str):
+        raise ValueError("episode_content must be a string.")
+    if len(v) == 0:
+        raise ValueError("episode_content cannot be an empty string.")
+    return v
+
+
+EpisodeContentString = Annotated[str, BeforeValidator(validate_episode_content_type)]
+
+
+class EpisodeType(str, Enum):
+    """Enum for the types of episodes that can be stored."""
+
+    MESSAGE = "message"
+    EMBEDDING = "embedding"
+
+
 class NewEpisode(BaseModel):
     """Request model for adding a new memory episode."""
 
     session: SessionData
-    producer: str
-    produced_for: str
-    episode_content: str | list[float]
-    episode_type: str
+    producer: str = Field(..., pattern=SessionData.ID_PATTERN)
+    produced_for: str = Field(..., pattern=SessionData.ID_PATTERN)
+    episode_content: EpisodeContentString  # Use the custom type
+    episode_type: EpisodeType
     metadata: dict[str, Any] | None
 
 
@@ -70,9 +107,9 @@ class SearchQuery(BaseModel):
     """Request model for searching memories."""
 
     session: SessionData
-    query: str
+    query: str = Field(..., min_length=1)
     filter: dict[str, Any] | None = None
-    limit: int | None = None
+    limit: int | None = Field(None, ge=0)
 
 
 # === Response Models ===
@@ -226,6 +263,14 @@ async def mcp_http_lifespan(application: FastAPI):
 
 app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
+
+
+@app.exception_handler(ValueError)
+async def value_error_exception_handler(request: Request, exc: ValueError):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc)},
+    )
 
 
 @mcp.tool()
@@ -625,10 +670,11 @@ async def search_memory(q: SearchQuery) -> SearchResult:
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
     """
+    group_id = q.session.group_id if q.session.group_id is not None else ""
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
-        group_id=q.session.group_id,
+        group_id=group_id,
         agent_id=q.session.agent_id,
         user_id=q.session.user_id,
         session_id=q.session.session_id,
@@ -735,10 +781,13 @@ async def delete_session_data(delete_req: DeleteDataRequest):
     """
     Delete data for a particular session
     """
+    group_id = (
+        delete_req.session.group_id if delete_req.session.group_id is not None else ""
+    )
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
-        group_id=delete_req.session.group_id,
+        group_id=group_id,
         agent_id=delete_req.session.agent_id,
         user_id=delete_req.session.user_id,
         session_id=delete_req.session.session_id,
