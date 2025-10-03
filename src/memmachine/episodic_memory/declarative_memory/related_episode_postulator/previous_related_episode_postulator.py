@@ -66,9 +66,7 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
 
         self._search_limit = config.get("search_limit", 1)
 
-        self._filterable_property_keys = (
-            config.get("filterable_property_keys") or set()
-        )
+        self._filterable_property_keys = config.get("filterable_property_keys") or set()
 
     async def postulate(self, episode: Episode) -> list[Episode]:
         previous_episode_nodes = (
@@ -79,9 +77,9 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
                 limit=self._search_limit,
                 required_labels={"Episode"},
                 required_properties={
-                    mangle_filterable_property_key(
+                    mangle_filterable_property_key(key): episode.filterable_properties[
                         key
-                    ): episode.filterable_properties[key]
+                    ]
                     for key in self._filterable_property_keys
                     if key in episode.filterable_properties
                 },
@@ -101,9 +99,7 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
                 content=previous_episode_node.properties["content"],
                 timestamp=cast(
                     datetime,
-                    previous_episode_node.properties.get(
-                        "timestamp", datetime.min
-                    ),
+                    previous_episode_node.properties.get("timestamp", datetime.min),
                 ),
                 filterable_properties={
                     demangle_filterable_property_key(key): cast(

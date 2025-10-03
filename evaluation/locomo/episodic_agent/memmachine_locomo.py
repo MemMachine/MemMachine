@@ -36,9 +36,7 @@ class MemMachineSearch:
 
     async def answer_question_with_mcp(self, question, idx, users):
         t1 = time.time()
-        response_parsed = await locomo_response(
-            idx, question, users, "gpt-4o-mini"
-        )
+        response_parsed = await locomo_response(idx, question, users, "gpt-4o-mini")
         t2 = time.time()
         return (
             response_parsed["response"],

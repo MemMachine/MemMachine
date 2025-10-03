@@ -40,10 +40,6 @@ gpu = [
     "sentence-transformers>=5.1.0",
 ]
 
-test = [
-    "pytest-asyncio>=0.23.7"
-]
-
 [project.scripts]
 memmachine-server = "memmachine.server.app:main"
 memmachine-sync-profile-schema = "memmachine.profile_memory.storage.syncschema:main"
@@ -55,6 +51,15 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "ruff>=0.13.2",
 ]
+
+[tool.mypy]
+follow_untyped_imports = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

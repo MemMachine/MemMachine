@@ -1,10 +1,11 @@
-import os
-import requests
-import asyncpg
 import logging
+import os
 from datetime import datetime
-from fastapi import FastAPI
+
+import asyncpg
+import requests
 from dotenv import load_dotenv
+from fastapi import FastAPI
 from query_constructor import CRMQueryConstructor
 
 load_dotenv()
@@ -111,7 +112,9 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "filter": {"producer_id": user_id},
         }
 
-        logging.debug(f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search")
+        logging.debug(
+            f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search"
+        )
         logging.debug(f"Search data: {search_data}")
 
         response = requests.post(
@@ -211,7 +214,9 @@ async def store_and_search_data(user_id: str, query: str):
 
         logging.debug(f"Store-and-search response status: {search_resp.status_code}")
         if search_resp.status_code != 200:
-            logging.error(f"Search failed with {search_resp.status_code}: {search_resp.text}")
+            logging.error(
+                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            )
             return {
                 "status": "error",
                 "message": "Failed to search memory data",

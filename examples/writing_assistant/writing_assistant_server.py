@@ -1,7 +1,8 @@
-import os
-import requests
 import logging
+import os
 from datetime import datetime
+
+import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel

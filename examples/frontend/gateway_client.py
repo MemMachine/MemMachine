@@ -1,6 +1,7 @@
 import os
-import requests
 from datetime import datetime
+
+import requests
 
 EXAMPLE_SERVER_PORT = os.getenv("EXAMPLE_SERVER_PORT", "http://localhost:8000")
 

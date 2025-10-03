@@ -37,12 +37,8 @@ class RRFHybridReranker(Reranker):
         self._rerankers = config.get("rerankers", [])
         if not isinstance(self._rerankers, list):
             raise TypeError("Rerankers must be provided in a list")
-        if not all(
-            isinstance(reranker, Reranker) for reranker in self._rerankers
-        ):
-            raise TypeError(
-                "All items in rerankers list must be Reranker instances"
-            )
+        if not all(isinstance(reranker, Reranker) for reranker in self._rerankers):
+            raise TypeError("All items in rerankers list must be Reranker instances")
         if len(self._rerankers) == 0:
             raise ValueError("At least one reranker must be provided")
 
@@ -57,16 +53,12 @@ class RRFHybridReranker(Reranker):
         score_lists = await asyncio.gather(*score_tasks)
 
         rank_lists = [
-            RRFHybridReranker._get_ranks(score_list)
-            for score_list in score_lists
+            RRFHybridReranker._get_ranks(score_list) for score_list in score_lists
         ]
 
         scores = [
             sum(
-                [
-                    1 / (self._k + rank_list[candidate_index])
-                    for rank_list in rank_lists
-                ]
+                [1 / (self._k + rank_list[candidate_index]) for rank_list in rank_lists]
             )
             for candidate_index in range(len(candidates))
         ]
@@ -87,9 +79,7 @@ class RRFHybridReranker(Reranker):
                 List of ranks corresponding to the input scores.
         """
         n = len(scores)
-        sorted_indices = sorted(
-            range(n), key=lambda index: scores[index], reverse=True
-        )
+        sorted_indices = sorted(range(n), key=lambda index: scores[index], reverse=True)
         ranks = [0] * n
         for rank, index in enumerate(sorted_indices):
             ranks[index] = rank + 1

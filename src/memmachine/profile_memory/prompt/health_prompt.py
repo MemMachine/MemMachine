@@ -7,30 +7,30 @@ DEFAULT_CREATE_PROFILE_PROMPT = """
     - Symptoms
     - Medications
     - Medical History
-    - Family History 
-    - Lifestyle 
-    - Health Goals 
-    - Health Concerns 
-    - Health History 
-    - Allergies 
-    - Medical Procedures 
-    - Test Results 
-    - Diagnosis 
-    - Treatment 
-    - Diet 
-    - Exercise 
-    - Sleep 
-    - Stress 
-    - Mental Health 
-    - Physical Health 
-    - Wellness 
-    - Dietary Restrictions 
-    - Food Allergies 
-    - Food Intolerances 
-    - Food Preferences 
-    - Food Aversions 
-    - Food Intolerances 
-    - Food Preferences 
+    - Family History
+    - Lifestyle
+    - Health Goals
+    - Health Concerns
+    - Health History
+    - Allergies
+    - Medical Procedures
+    - Test Results
+    - Diagnosis
+    - Treatment
+    - Diet
+    - Exercise
+    - Sleep
+    - Stress
+    - Mental Health
+    - Physical Health
+    - Wellness
+    - Dietary Restrictions
+    - Food Allergies
+    - Food Intolerances
+    - Food Preferences
+    - Food Aversions
+    - Food Intolerances
+    - Food Preferences
 """
 DEFAULT_REWRITE_PROFILE_PROMPT = """
     You are an AI assistant that extracts ONLY the health and wellness related information about the user. You extract profile tag, feature, and values from a user's messages to their AI assistant.
@@ -38,33 +38,33 @@ DEFAULT_REWRITE_PROFILE_PROMPT = """
     You will create sets of tags, features, and values that describe the user's medical condition and history. The tag is the category of the feature, and the feature is the type of profile attribute. The value is a verbose description of the user's profile feature, not a short keyword or phrase.
 
     The tags you are looking for include:
-    - Symptoms 
-    - Medications 
-    - Medical History 
-    - Family History 
-    - Lifestyle 
-    - Health Goals 
-    - Health Concerns 
-    - Health History 
-    - Allergies 
-    - Medical Procedures 
-    - Test Results 
-    - Diagnosis 
-    - Treatment 
-    - Diet 
-    - Exercise 
-    - Sleep 
-    - Stress 
-    - Mental Health 
-    - Physical Health 
-    - Wellness 
-    - Dietary Restrictions 
-    - Food Allergies 
-    - Food Intolerances 
-    - Food Preferences 
-    - Food Aversions 
-    - Food Intolerances 
-    - Food Preferences 
+    - Symptoms
+    - Medications
+    - Medical History
+    - Family History
+    - Lifestyle
+    - Health Goals
+    - Health Concerns
+    - Health History
+    - Allergies
+    - Medical Procedures
+    - Test Results
+    - Diagnosis
+    - Treatment
+    - Diet
+    - Exercise
+    - Sleep
+    - Stress
+    - Mental Health
+    - Physical Health
+    - Wellness
+    - Dietary Restrictions
+    - Food Allergies
+    - Food Intolerances
+    - Food Preferences
+    - Food Aversions
+    - Food Intolerances
+    - Food Preferences
 """
 
 DEFAULT_CREATE_PROFILE_PROMPT_DATA = """
@@ -72,21 +72,21 @@ The conversation history is: {context}.
 """
 
 DEFAULT_UPDATE_PROFILE_PROMPT = """
-    Your job is to handle memory consolidation for a personalized memory system, specifically, a user profile recording details relevant to personalizing chat engine responses. 
-    You will receive a health and wellness related profile and a user's query to the chat system, your job is to update that profile by extracting out relevant health and wellness related information from the query.    
-    A profile is a two-level key-value store. We call the outer key the *tag*, and the inner key the *feature*. Together, a *tag* and a *feature* are associated with one or several *value*s.  
+    Your job is to handle memory consolidation for a personalized memory system, specifically, a user profile recording details relevant to personalizing chat engine responses.
+    You will receive a health and wellness related profile and a user's query to the chat system, your job is to update that profile by extracting out relevant health and wellness related information from the query.
+    A profile is a two-level key-value store. We call the outer key the *tag*, and the inner key the *feature*. Together, a *tag* and a *feature* are associated with one or several *value*s.
 
     How to construct profile entries:
     - Entries should be atomic. They should communicate a single discrete fact. Split entries up to aid in enforcing this constraint.
     - Entries should be as short as possible without corrupting meaning. Be careful when leaving out prepositions, qualifiers, negations, etc. Some modifiers will be longer range, find the best way to compactify such phrases.
-    
+
     An entry should be a fast and automatic association between the tag+feature and the value. Too much filler destroys the quick association.
 
     Remember:When the user reports a symptom that is already recorded in the profile, do NOT delete or modify the existing record. Instead, add a new row with the same tag and feature (chest_pain) and include the timestamp in the value field if applicable.
 
     Remember: If the user claims to have a medical condition, then ask them if it is an official diagnosis or a self-diagnosis/something that they think they have. If they say it is an official diagnosis, add it to the profile with the "Official Diagnosis" tag. If they say it is a self-diagnosis, add it to the profile with the "Self-Diagnosis" tag.
-    
-    Remember: You will be the one reading over this profile later on! What should and shouldn't your future self remember? They can't remember everything!  
+
+    Remember: You will be the one reading over this profile later on! What should and shouldn't your future self remember? They can't remember everything!
 
     The tags you are looking for include:
         - Assistant Response Preferences: How the user prefers the assistant to communicate (style, tone, structure, data format). (type: object)
@@ -235,13 +235,13 @@ DEFAULT_UPDATE_PROFILE_PROMPT = """
 }
 
 
-    
+
     To update the user's profile, you will output a JSON document containing a list of commands to be executed in sequence.
     The following output will add a feature:
     {
         "0": {
             "command": "add",
-            "tag": "Symptoms", 
+            "tag": "Symptoms",
             "feature": "headache",
             "value": "User reports experiencing frequent tension headaches in the afternoon"
         }
@@ -275,7 +275,7 @@ DEFAULT_UPDATE_PROFILE_PROMPT = """
     {
         "0": {
             "command": "add",
-            "tag": "Symptoms", 
+            "tag": "Symptoms",
             "feature": "migraine",
             "value": "User experiencing frequent migraines for the past week, particularly in the morning"
         },
@@ -296,7 +296,7 @@ DEFAULT_UPDATE_PROFILE_PROMPT = """
     {
         "0": {
             "command": "add",
-            "tag": "Diet", 
+            "tag": "Diet",
             "feature": "mediterranean_diet",
             "value": "User following Mediterranean diet for heart health"
         },
@@ -352,15 +352,15 @@ The conversation history is a list of recent user or assistant messages.
 Examples:
 
 Original query: "How do I learn machine learning?"
-Persona: interest: Python, interest: data science, tool: scikit-learn  
+Persona: interest: Python, interest: data science, tool: scikit-learn
 Rewritten query: "How do I learn machine learning using Python and scikit-learn?"
 
 Original query: "Give me advice on resumes"
-Persona: department: marketing  
+Persona: department: marketing
 Rewritten query: "What are good resume tips for someone in marketing?"
 
 Original query: "What's the best way to learn SQL?"
-Persona: [irrelevant or empty]  
+Persona: [irrelevant or empty]
 Rewritten query: "What's the best way to learn SQL?"  # unchanged
 
 Now rewrite the following query based on the user's persona and conversation history.

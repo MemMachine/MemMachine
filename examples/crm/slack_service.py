@@ -1,10 +1,9 @@
-import os
 import logging
-from typing import Optional, Dict, Any
+import os
+from typing import Any, Dict, Optional
 
-from slack_sdk.web.async_client import AsyncWebClient
 from slack_sdk.errors import SlackApiError
-
+from slack_sdk.web.async_client import AsyncWebClient
 
 logger = logging.getLogger(__name__)
 

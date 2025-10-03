@@ -5,15 +5,7 @@ from typing import Any
 from uuid import UUID
 
 FilterablePropertyValue = bool | int | str
-JSONValue = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | list["JSONValue"]
-    | dict[str, "JSONValue"]
-)
+JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 
 
 class ContentType(Enum):

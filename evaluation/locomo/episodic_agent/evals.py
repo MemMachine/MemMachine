@@ -77,8 +77,7 @@ def main():
         max_workers=args.max_workers
     ) as executor:
         futures = [
-            executor.submit(process_item, item_data)
-            for item_data in data.items()
+            executor.submit(process_item, item_data) for item_data in data.items()
         ]
 
         for future in tqdm(

@@ -48,12 +48,8 @@ class LongTermMemory:
 
         # Configure vector graph store
         storage_configs = config.get("storage") or {}
-        vector_graph_store_id = long_term_memory_config.get(
-            "vector_graph_store"
-        )
-        vector_graph_store_config = (
-            storage_configs.get(vector_graph_store_id) or {}
-        )
+        vector_graph_store_id = long_term_memory_config.get("vector_graph_store")
+        vector_graph_store_config = storage_configs.get(vector_graph_store_id) or {}
 
         if vector_graph_store_config.get("vendor_name") != "neo4j":
             raise ValueError("Only Neo4j vector graph store is supported")
@@ -82,8 +78,7 @@ class LongTermMemory:
         )
         if derivative_deriver_name not in supported_derivative_deriver_names:
             raise ValueError(
-                "Unsupported derivative deriver name: "
-                f"{derivative_deriver_name}"
+                f"Unsupported derivative deriver name: {derivative_deriver_name}"
             )
 
         # Configure metadata derivative mutator
@@ -114,17 +109,13 @@ class LongTermMemory:
         reranker_id = long_term_memory_config.get("reranker")
 
         derivation_workflow_definition = {
-            "related_episode_postulator_id": (
-                "_null_related_episode_postulator"
-            ),
+            "related_episode_postulator_id": ("_null_related_episode_postulator"),
             "derivative_derivation_workflows": [
                 {
                     "derivative_deriver_id": ("_episode_derivative_deriver"),
                     "derivative_mutation_workflows": [
                         {
-                            "derivative_mutator_id": (
-                                "_metadata_derivative_mutator"
-                            ),
+                            "derivative_mutator_id": ("_metadata_derivative_mutator"),
                         },
                     ],
                 },

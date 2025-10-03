@@ -1,10 +1,11 @@
-import os
 import json
+import os
 import time
-import openai
+
 import boto3
-from model_config import MODEL_TO_PROVIDER
+import openai
 from dotenv import load_dotenv
+from model_config import MODEL_TO_PROVIDER
 
 # ──────────────────────────────────────────────────────────────
 # Load environment variables
@@ -37,7 +38,6 @@ def set_provider(provider: str) -> None:
 # High-level Chat wrapper
 # ──────────────────────────────────────────────────────────────
 def chat(messages, persona):
-
     provider = MODEL_TO_PROVIDER[MODEL_STRING]
 
     if provider == "openai":

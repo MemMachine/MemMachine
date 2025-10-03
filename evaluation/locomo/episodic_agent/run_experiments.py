@@ -24,9 +24,7 @@ def main():
     args = parser.parse_args()
 
     print(
-        f"\nMethod: {args.method}"
-        f"\nDataset: {args.dataset}"
-        f"\nBase Url: {args.base_url}"
+        f"\nMethod: {args.method}\nDataset: {args.dataset}\nBase Url: {args.base_url}"
     )
 
     from memmachine_locomo import MemMachineSearch

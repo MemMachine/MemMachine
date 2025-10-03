@@ -45,9 +45,7 @@ class ThirdPersonRewriteDerivativeMutator(DerivativeMutator):
         if language_model is None:
             raise ValueError("Language model must be provided")
         if not isinstance(language_model, LanguageModel):
-            raise TypeError(
-                "Language model must be an instance of LanguageModel"
-            )
+            raise TypeError("Language model must be an instance of LanguageModel")
 
         self._language_model = language_model
 
@@ -63,8 +61,7 @@ class ThirdPersonRewriteDerivativeMutator(DerivativeMutator):
             system_prompt=THIRD_PERSON_REWRITE_SYSTEM_PROMPT,
             user_prompt=THIRD_PERSON_REWRITE_USER_PROMPT.format(
                 context="\n".join(
-                    episode.content
-                    for episode in source_episode_cluster.episodes
+                    episode.content for episode in source_episode_cluster.episodes
                 ),
                 derivative=derivative.content,
             ),
@@ -88,9 +85,7 @@ class ThirdPersonRewriteDerivativeMutator(DerivativeMutator):
                 content_type=ContentType.STRING,
                 content=mutated_content,
                 timestamp=derivative.timestamp,
-                filterable_properties=(
-                    source_episode_cluster.filterable_properties
-                ),
+                filterable_properties=(source_episode_cluster.filterable_properties),
                 user_metadata=derivative.user_metadata,
             )
             for mutated_content in rewritten_derivative_content

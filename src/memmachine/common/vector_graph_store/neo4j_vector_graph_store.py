@@ -71,9 +71,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         if not isinstance(password, str):
             raise TypeError("Neo4j password must be a string")
 
-        max_concurrent_transactions = config.get(
-            "max_concurrent_transactions", 100
-        )
+        max_concurrent_transactions = config.get("max_concurrent_transactions", 100)
         if not isinstance(max_concurrent_transactions, int):
             raise TypeError(
                 "Maximum number of concurrent transactions must be an integer"
@@ -85,16 +83,12 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         self._semaphore = asyncio.Semaphore(max_concurrent_transactions)
 
-        self._driver = AsyncGraphDatabase.driver(
-            uri, auth=(username, password)
-        )
+        self._driver = AsyncGraphDatabase.driver(uri, auth=(username, password))
 
     async def add_nodes(self, nodes: list[Node]):
         labels_nodes_map: dict[tuple[str, ...], list[Node]] = {}
         for node in nodes:
-            labels_nodes_map.setdefault(tuple(sorted(node.labels)), []).append(
-                node
-            )
+            labels_nodes_map.setdefault(tuple(sorted(node.labels)), []).append(node)
 
         add_nodes_tasks = [
             async_with(
@@ -163,9 +157,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     ) -> list[Node]:
         async with self._semaphore:
             records, _, _ = await self._driver.execute_query(
-                f"MATCH (n{
-                    Neo4jVectorGraphStore._format_labels(required_labels)
-                })\n"
+                f"MATCH (n{Neo4jVectorGraphStore._format_labels(required_labels)})\n"
                 "WHERE n.embedding IS NOT NULL\n"
                 f"AND {
                     Neo4jVectorGraphStore._format_required_properties(
@@ -187,9 +179,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
 
         similar_neo4j_nodes = [record["n"] for record in records]
-        return Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-            similar_neo4j_nodes
-        )
+        return Neo4jVectorGraphStore._nodes_from_neo4j_nodes(similar_neo4j_nodes)
 
     async def search_related_nodes(
         self,
@@ -214,9 +204,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     f"    {'-' if find_targets else '<-'}"
                     f"    [{f':{relation}' if relation is not None else ''}]"
                     f"    {'-' if find_sources else '->'}"
-                    f"    (n{
-                        Neo4jVectorGraphStore._format_labels(required_labels)
-                    })"
+                    f"    (n{Neo4jVectorGraphStore._format_labels(required_labels)})"
                     f"WHERE {
                         Neo4jVectorGraphStore._format_required_properties(
                             required_properties, include_missing_properties
@@ -238,9 +226,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         for records, _, _ in results:
             related_neo4j_nodes = [record["n"] for record in records]
             related_nodes.update(
-                Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-                    related_neo4j_nodes
-                )
+                Neo4jVectorGraphStore._nodes_from_neo4j_nodes(related_neo4j_nodes)
             )
 
         return list(related_nodes)[:limit]
@@ -258,9 +244,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     ) -> list[Node]:
         async with self._semaphore:
             records, _, _ = await self._driver.execute_query(
-                f"MATCH (n{
-                    Neo4jVectorGraphStore._format_labels(required_labels)
-                })\n"
+                f"MATCH (n{Neo4jVectorGraphStore._format_labels(required_labels)})\n"
                 f"WHERE n.{by_property} IS NOT NULL\n"
                 f"{
                     (
@@ -278,9 +262,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     )
                 }\n"
                 "RETURN n\n"
-                f"ORDER BY n.{by_property} {
-                    'ASC' if order_ascending else 'DESC'
-                }\n"
+                f"ORDER BY n.{by_property} {'ASC' if order_ascending else 'DESC'}\n"
                 f"{'LIMIT $limit' if limit is not None else ''}",
                 start_at_value=start_at_value,
                 limit=limit,
@@ -301,9 +283,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     ) -> list[Node]:
         async with self._semaphore:
             records, _, _ = await self._driver.execute_query(
-                f"MATCH (n{
-                    Neo4jVectorGraphStore._format_labels(required_labels)
-                })\n"
+                f"MATCH (n{Neo4jVectorGraphStore._format_labels(required_labels)})\n"
                 f"WHERE {
                     Neo4jVectorGraphStore._format_required_properties(
                         required_properties, include_missing_properties
@@ -316,9 +296,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
 
         matching_neo4j_nodes = [record["n"] for record in records]
-        return Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-            matching_neo4j_nodes
-        )
+        return Neo4jVectorGraphStore._nodes_from_neo4j_nodes(matching_neo4j_nodes)
 
     async def delete_nodes(
         self,
@@ -354,11 +332,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             str:
                 Formatted labels string for Cypher query.
         """
-        return (
-            "".join([f":{label}" for label in labels])
-            if labels is not None
-            else ""
-        )
+        return "".join([f":{label}" for label in labels]) if labels is not None else ""
 
     @staticmethod
     def _format_required_properties(
@@ -413,9 +387,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 uuid=UUID(neo4j_node["uuid"]),
                 labels=set(neo4j_node.labels),
                 properties={
-                    key: Neo4jVectorGraphStore._python_value_from_neo4j_value(
-                        value
-                    )
+                    key: Neo4jVectorGraphStore._python_value_from_neo4j_value(value)
                     for key, value in neo4j_node.items()
                     if key != "uuid"
                 },

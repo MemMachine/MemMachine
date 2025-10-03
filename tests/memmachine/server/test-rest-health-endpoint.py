@@ -1,10 +1,12 @@
 from fastapi.testclient import TestClient
+
 from memmachine.server.app import app
 
 # Create a test client for the FastAPI app.
 # Setting raise_server_exceptions=False ensures that server-side exceptions
 # are returned as HTTP 500 responses instead of being raised in the test code.
 client = TestClient(app, raise_server_exceptions=False)
+
 
 def test_health_check_propagates_unexpected_exceptions(monkeypatch):
     """
@@ -15,6 +17,7 @@ def test_health_check_propagates_unexpected_exceptions(monkeypatch):
 
     # Monkeypatch global memory managers to None to simulate an expected error condition.
     import memmachine.server.app as app_module
+
     monkeypatch.setattr(app_module, "profile_memory", None)
     monkeypatch.setattr(app_module, "episodic_memory", None)
 
@@ -28,6 +31,7 @@ def test_health_check_propagates_unexpected_exceptions(monkeypatch):
     # This simulates a programming error or bug in the health check logic.
     async def broken_health_check():
         raise ValueError("Unexpected error")
+
     # Remove the original /health route and replace it with the broken one.
     app.router.routes = [
         route for route in app.router.routes if route.path != "/health"
@@ -39,6 +43,7 @@ def test_health_check_propagates_unexpected_exceptions(monkeypatch):
     response = client.get("/health")
     assert response.status_code == 500
     assert "Internal Server Error" in response.text
+
 
 def test_health_check_returns_healthy_status(monkeypatch):
     """
@@ -72,4 +77,3 @@ def test_health_check_returns_healthy_status(monkeypatch):
     assert "version" in json_data
     assert json_data["memory_managers"]["profile_memory"] is True
     assert json_data["memory_managers"]["episodic_memory"] is True
-

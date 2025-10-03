@@ -6,11 +6,12 @@ import time
 from typing import Any, cast
 
 from dotenv import load_dotenv
+from openai import AsyncOpenAI
+
 from memmachine.episodic_memory.episodic_memory import EpisodicMemory
 from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
-from openai import AsyncOpenAI
 
 # This is adapted from Mem0 (https://github.com/mem0ai/mem0/blob/main/evaluation/prompts.py).
 # It is modified to work with MemMachine.

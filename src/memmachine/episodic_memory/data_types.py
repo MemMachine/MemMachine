@@ -5,15 +5,7 @@ from typing import Any
 from uuid import UUID
 
 # Type alias for JSON-compatible data structures.
-JSONValue = (
-    None
-    | bool
-    | int
-    | float
-    | str
-    | list["JSONValue"]
-    | dict[str, "JSONValue"]
-)
+JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 
 
 class ContentType(Enum):
@@ -30,6 +22,7 @@ class SessionInfo:
     This is typically retrieved from or stored in a session management
     database.
     """
+
     group_id: str
     """The identifier for a group conversation."""
     session_id: str
@@ -49,6 +42,7 @@ class GroupConfiguration:
     """
     Represents the configuration for a group of conversations.
     """
+
     group_id: str
     """The identifier for the group."""
     agent_list: list[str]
@@ -75,13 +69,11 @@ class MemoryContext:
     """A set of user identifiers for the context."""
     session_id: str
     """The identifier for the session context."""
+
     def __eq__(self, other):
         if not isinstance(other, MemoryContext):
             return False
-        return (
-            self.group_id == other.group_id
-            and self.session_id == other.session_id
-        )
+        return self.group_id == other.group_id and self.session_id == other.session_id
 
     def __hash__(self):
         return hash(

@@ -3,9 +3,9 @@ CRM ingestion prompts for Intelligent Memory System
 Handles company profiles with direct feature/value pairs
 """
 
-from datetime import datetime
-import zoneinfo
 import json
+import zoneinfo
+from datetime import datetime
 
 # -----------------------
 # QUICK ACCESS TO MAIN CONFIG
@@ -146,7 +146,7 @@ ROUTING_RULES = """
 ROUTING_EXAMPLES = """
 **What constitutes actionable CRM data (ALWAYS EXTRACT):**
 - Sales stage + company name (e.g., "Interest AMILI", "Qualified HP", "POC Cisco")
-- Company name + contact info (e.g., "AMILI Mathew Yap", "HP Mark Fahrenkrug")  
+- Company name + contact info (e.g., "AMILI Mathew Yap", "HP Mark Fahrenkrug")
 - Company name + timeline entries (e.g., "7/8: Let Mathew know...", "5/13: Jing to reach out...")
 - Company name + deal/product information (e.g., "Cisco $50k deal", "AMILI SpotSurfing GPUs")
 - ANY input with company name + CRM field data → EXTRACT, don't treat as query
@@ -195,7 +195,7 @@ Timeline date handling (for status, comments, next_step):
 - Relative date examples:
   • "2/3: meeting arranged for next week" → use next week's date, not 2/3
   • "early August" → "<CURRENT_YEAR>-08-01" (first day of month for "early")
-  • "late August" → "<CURRENT_YEAR>-08-31" (last day of month for "late") 
+  • "late August" → "<CURRENT_YEAR>-08-31" (last day of month for "late")
   • "mid August" → "<CURRENT_YEAR>-08-15" (middle of month)
   • "August" → "<CURRENT_YEAR>-08" (month only)
 - Process using above date extraction rules: yesterday, today, tomorrow, this week, last week, next week, this Tuesday, etc.
@@ -229,7 +229,7 @@ General extraction rules:
 - **Extract actionable CRM data**: Any message containing company name + CRM field information should be extracted, NOT treated as a query.
 """
 
-FIELD_EXTRACTION_SPECIFIC_FIELDS = """ 
+FIELD_EXTRACTION_SPECIFIC_FIELDS = """
 Field guidance:
 **NON-TIMELINE FIELDS** (no date fields, no EDTF formatting):
 - company: Company name (single-valued)
@@ -632,25 +632,27 @@ To minimize this, under such circumstances, you need to be more aggressive about
     - Massage out the parts to keep and ruthlessly throw away the rest
     - There is no free lunch here! At least some redundant CRM information must be deleted!
 
-Do not create new CRM feature names outside of the standard CRM schema: {_features_inline_list()}
+Do not create new CRM feature names outside of the standard CRM schema: {
+        _features_inline_list()
+    }
 
 **CRITICAL: You MUST return valid JSON with EXACTLY these two keys: "consolidate_memories" and "keep_memories"**
 
 The proper noop syntax (when no consolidation is needed):
 {
-    "consolidate_memories": [],
+        "consolidate_memories": [],
     "keep_memories": []
 }
 
 **REQUIRED OUTPUT FORMAT:**
 <think>insert your chain of thought here</think>
 {
-    "consolidate_memories": [
+        "consolidate_memories": [
         {
             "feature": "sales_stage",
             "value": "Validated",
-            "tag": "Roche", 
-            "metadata": {{}}
+            "tag": "Roche",
+            "metadata": { {} }
         }
     ],
     "keep_memories": [123, 456]

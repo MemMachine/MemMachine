@@ -39,9 +39,7 @@ class DeclarativeMemoryBuilder(Builder):
                     "derivative_derivation_workflows"
                 ]:
                     dependency_ids.add(
-                        derivative_derivation_workflow_config[
-                            "derivative_deriver_id"
-                        ]
+                        derivative_derivation_workflow_config["derivative_deriver_id"]
                     )
                     for (
                         derivative_mutation_workflow_config
@@ -49,9 +47,7 @@ class DeclarativeMemoryBuilder(Builder):
                         "derivative_mutation_workflows"
                     ]:
                         dependency_ids.add(
-                            derivative_mutation_workflow_config[
-                                "derivative_mutator_id"
-                            ]
+                            derivative_mutation_workflow_config["derivative_mutator_id"]
                         )
 
         return dependency_ids
@@ -63,19 +59,13 @@ class DeclarativeMemoryBuilder(Builder):
         def build_injected_derivative_mutation_workflow_config(
             config: dict[str, Any], injections: dict[str, Any]
         ):
-            return {
-                "derivative_mutator": injections[
-                    config["derivative_mutator_id"]
-                ]
-            }
+            return {"derivative_mutator": injections[config["derivative_mutator_id"]]}
 
         def build_injected_derivative_derivation_workflow_config(
             config: dict[str, Any], injections: dict[str, Any]
         ):
             return {
-                "derivative_deriver": injections[
-                    config["derivative_deriver_id"]
-                ],
+                "derivative_deriver": injections[config["derivative_deriver_id"]],
                 "derivative_mutation_workflows": [
                     build_injected_derivative_mutation_workflow_config(
                         derivative_mutation_workflow_config, injections

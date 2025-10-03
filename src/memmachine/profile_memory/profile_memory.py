@@ -72,9 +72,7 @@ class ProfileMemory:
 
         self._max_cache_size = max_cache_size
         self._update_prompt = getattr(prompt_module, "UPDATE_PROMPT", "")
-        self._consolidation_prompt = getattr(
-            prompt_module, "CONSOLIDATION_PROMPT", ""
-        )
+        self._consolidation_prompt = getattr(prompt_module, "CONSOLIDATION_PROMPT", "")
         self._profile_storage = AsyncPgProfileStorage(db_config)
         self._update_interval = 1
         self._msg_count: dict[str, int] = {}
@@ -273,9 +271,7 @@ class ProfileMemory:
         candidates = await self._profile_storage.semantic_search(
             user_id, np.array(qemb), k, min_cos, isolations
         )
-        formatted = [
-            (i["metadata"]["similarity_score"], i) for i in candidates
-        ]
+        formatted = [(i["metadata"]["similarity_score"], i) for i in candidates]
         return self.range_filter(formatted, max_range, max_std)
 
     async def get_large_profile_sections(
@@ -347,9 +343,7 @@ class ProfileMemory:
             self._msg_count[user_id] = 0
             wait_consolidate = True
         fut = asyncio.create_task(
-            self._update_user_profile_think(
-                message, wait_consolidate=wait_consolidate
-            )
+            self._update_user_profile_think(message, wait_consolidate=wait_consolidate)
         )
         if wait_consolidate:
             await fut
@@ -415,9 +409,9 @@ class ProfileMemory:
             return
 
         # Get thinking and JSON from language model response.
-        thinking, _, response_json = response_text.removeprefix(
-            "<think>"
-        ).rpartition("</think>")
+        thinking, _, response_json = response_text.removeprefix("<think>").rpartition(
+            "</think>"
+        )
         thinking = thinking.strip()
 
         # TODO: These really should not be raw data structures.
@@ -470,8 +464,7 @@ class ProfileMemory:
 
             if "command" not in command:
                 logger.warning(
-                    "AI response format incorrect: "
-                    "missing 'command' key in %s",
+                    "AI response format incorrect: missing 'command' key in %s",
                     command,
                 )
                 continue
@@ -487,8 +480,7 @@ class ProfileMemory:
 
             if "feature" not in command:
                 logger.warning(
-                    "AI response format incorrect: "
-                    "missing 'feature' key in %s",
+                    "AI response format incorrect: missing 'feature' key in %s",
                     command,
                 )
                 continue
@@ -530,9 +522,7 @@ class ProfileMemory:
                     isolations=isolations,
                 )
             else:
-                logger.error(
-                    "Command with unknown action: %s", command["command"]
-                )
+                logger.error("Command with unknown action: %s", command["command"])
                 raise ValueError(
                     "Command with unknown action: " + str(command["command"])
                 )
@@ -563,9 +553,9 @@ class ProfileMemory:
             return
 
         # Get thinking and JSON from language model response.
-        thinking, _, response_json = response_text.removeprefix(
-            "<think>"
-        ).rpartition("</think>")
+        thinking, _, response_json = response_text.removeprefix("<think>").rpartition(
+            "</think>"
+        )
         thinking = thinking.strip()
 
         try:
@@ -608,8 +598,7 @@ class ProfileMemory:
 
         if "keep_memories" not in updated_profile_entries:
             logger.warning(
-                "AI response format incorrect: "
-                "missing 'keep_memories' key, got %s",
+                "AI response format incorrect: missing 'keep_memories' key, got %s",
                 updated_profile_entries,
             )
             updated_profile_entries["keep_memories"] = []
@@ -673,17 +662,14 @@ class ProfileMemory:
                 consolidate_memory = ConsolidateMemory(**memory)
             except Exception as e:
                 logger.warning(
-                    "AI response format incorrect: "
-                    "unable to parse memory %s, error %s",
+                    "AI response format incorrect: unable to parse memory %s, error %s",
                     memory,
                     str(e),
                 )
                 continue
 
-            associations = (
-                await self._profile_storage.get_all_citations_for_ids(
-                    consolidate_memory.metadata.citations
-                )
+            associations = await self._profile_storage.get_all_citations_for_ids(
+                consolidate_memory.metadata.citations
             )
 
             new_citations = [i[0] for i in associations]

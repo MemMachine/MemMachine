@@ -34,9 +34,7 @@ class MetadataDerivativeMutator(DerivativeMutator):
         """
         super().__init__()
 
-        self._template = Template(
-            config.get("template", "[$timestamp] $content")
-        )
+        self._template = Template(config.get("template", "[$timestamp] $content"))
 
     async def mutate(
         self,

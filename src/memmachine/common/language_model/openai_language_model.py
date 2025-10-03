@@ -7,8 +7,9 @@ import json
 import time
 from typing import Any
 
-from openai import AsyncOpenAI
 import openai
+from openai import AsyncOpenAI
+
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
@@ -59,9 +60,7 @@ class OpenAILanguageModel(LanguageModel):
         if metrics_factory is not None and not isinstance(
             metrics_factory, MetricsFactory
         ):
-            raise TypeError(
-                "Metrics factory must be an instance of MetricsFactory"
-            )
+            raise TypeError("Metrics factory must be an instance of MetricsFactory")
 
         self._collect_metrics = False
         if metrics_factory is not None:
@@ -74,30 +73,23 @@ class OpenAILanguageModel(LanguageModel):
                 "Number of input tokens used for OpenAI language model",
                 label_names=label_names,
             )
-            self._input_cached_tokens_usage_counter = (
-                metrics_factory.get_counter(
-                    "language_model_openai_usage_input_cached_tokens",
-                    (
-                        "Number of tokens retrieved from cache "
-                        "used for OpenAI language model"
-                    ),
-                    label_names=label_names,
-                )
+            self._input_cached_tokens_usage_counter = metrics_factory.get_counter(
+                "language_model_openai_usage_input_cached_tokens",
+                (
+                    "Number of tokens retrieved from cache "
+                    "used for OpenAI language model"
+                ),
+                label_names=label_names,
             )
             self._output_tokens_usage_counter = metrics_factory.get_counter(
                 "language_model_openai_usage_output_tokens",
                 "Number of output tokens used for OpenAI language model",
                 label_names=label_names,
             )
-            self._output_reasoning_tokens_usage_counter = (
-                metrics_factory.get_counter(
-                    "language_model_openai_usage_output_reasoning_tokens",
-                    (
-                        "Number of reasoning tokens "
-                        "used for OpenAI language model"
-                    ),
-                    label_names=label_names,
-                )
+            self._output_reasoning_tokens_usage_counter = metrics_factory.get_counter(
+                "language_model_openai_usage_output_reasoning_tokens",
+                ("Number of reasoning tokens used for OpenAI language model"),
+                label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
                 "language_model_openai_usage_total_tokens",

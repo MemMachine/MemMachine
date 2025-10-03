@@ -35,9 +35,7 @@ class BM25Reranker(Reranker):
         try:
             self._stop_words = stopwords.words(languages)
         except Exception as e:
-            raise ValueError(
-                f"Unsupported language(s) provided: {languages}"
-            ) from e
+            raise ValueError(f"Unsupported language(s) provided: {languages}") from e
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         candidates_tokens = [
@@ -52,8 +50,7 @@ class BM25Reranker(Reranker):
         bm25 = BM25Okapi(candidates_tokens)
 
         scores = [
-            float(score)
-            for score in bm25.get_scores(self._preprocess_text(query))
+            float(score) for score in bm25.get_scores(self._preprocess_text(query))
         ]
 
         return scores
@@ -75,7 +72,5 @@ class BM25Reranker(Reranker):
         alphanumeric_text = re.sub(r"\W+", " ", text)
         lower_text = alphanumeric_text.lower()
         words = word_tokenize(lower_text)
-        tokens = [
-            word for word in words if word and word not in self._stop_words
-        ]
+        tokens = [word for word in words if word and word not in self._stop_words]
         return tokens

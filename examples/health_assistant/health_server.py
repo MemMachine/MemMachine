@@ -1,7 +1,8 @@
-import os
-import requests
 import logging
+import os
 from datetime import datetime
+
+import requests
 from fastapi import FastAPI
 from query_constructor import HealthAssistantQueryConstructor
 
@@ -167,7 +168,9 @@ async def store_and_search_data(user_id: str, query: str):
 
         logging.debug(f"Store-and-search response status: {search_resp.status_code}")
         if search_resp.status_code != 200:
-            logging.error(f"Search failed with {search_resp.status_code}: {search_resp.text}")
+            logging.error(
+                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            )
             return {
                 "status": "error",
                 "message": "Failed to search memory data",

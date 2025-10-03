@@ -125,7 +125,7 @@ def _build_unified_financial_prompt() -> str:
 
 **CRITICAL: What constitutes actionable financial data (ALWAYS EXTRACT):**
 - Income information + amounts (e.g., "salary $75k", "freelance income $2k/month")
-- Investment details + values (e.g., "invested $10k in stocks", "401k balance $50k")  
+- Investment details + values (e.g., "invested $10k in stocks", "401k balance $50k")
 - Financial goals + timelines (e.g., "save $100k by 2025", "retire at 65")
 - Debt information + amounts (e.g., "student loan $25k", "credit card debt $5k")
 - ANY input with financial context + financial field data → EXTRACT, don't treat as query
@@ -195,7 +195,7 @@ Field guidance:
     - Financial concerns: Worries, market reactions, economic concerns, financial stress
   • **Classification examples**:
     - "Bought $10k VTI shares" → investments
-    - "Goal: save $50k for house by 2025" → financial_goals  
+    - "Goal: save $50k for house by 2025" → financial_goals
     - "Paid off $5k credit card" → debts
     - "Bought new car for $25k" → major_purchases
     - "Got promoted, salary increase" → financial_timeline
@@ -470,7 +470,7 @@ The final output schema is:
         {{{{
             "feature": "investments",
             "value": "Bought $10k VTI ETF",
-            "tag": "financial_profile", 
+            "tag": "financial_profile",
             "metadata": {{{{"citations": [456, 789]}}}}
         }}}}
     ],
@@ -504,7 +504,7 @@ The conversation history is a list of recent user or assistant messages.
 Examples:
 
 Original query: "How do I start investing?"
-Financial Profile: investment_portfolio: stocks, risk_tolerance: moderate, financial_goals: retirement  
+Financial Profile: investment_portfolio: stocks, risk_tolerance: moderate, financial_goals: retirement
 Rewritten query: "How do I start investing in stocks for retirement with moderate risk?"
 
 Original query: "Give me advice on budgeting"
@@ -512,7 +512,7 @@ Financial Profile: monthly_income: 5000, monthly_expenses: 4000, budgeting_metho
 Rewritten query: "What are good budgeting tips for someone earning $5k/month with $4k expenses using zero-based budgeting?"
 
 Original query: "What's the best way to save for college?"
-Financial Profile: [irrelevant or empty]  
+Financial Profile: [irrelevant or empty]
 Rewritten query: "What's the best way to save for college?"  # unchanged
 
 Now rewrite the following query based on the user's financial profile and conversation history.

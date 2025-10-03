@@ -107,9 +107,7 @@ class SessionMemory:
 
             self._current_episode_count += 1
             self._current_message_len += len(episode.content)
-            self._current_token_num += self._compute_token_num(
-                self._memory[-1]
-            )
+            self._current_token_num += self._compute_token_num(self._memory[-1])
             full = self._is_full()
             if full:
                 await self._do_evict()
@@ -179,9 +177,7 @@ class SessionMemory:
                         meta += f"[{k}: {v}] "
                 else:
                     meta = repr(entry.user_metadata)
-                episode_content += (
-                    f"[{str(entry.uuid)} : {meta} : {entry.content}]"
-                )
+                episode_content += f"[{str(entry.uuid)} : {meta} : {entry.content}]"
             msg = self._summary_user_prompt.format(
                 episodes=episode_content, summary=self._summary
             )
@@ -196,10 +192,7 @@ class SessionMemory:
             logger.info("ValueError when create summary: %s", str(e))
 
     async def get_session_memory_context(
-        self,
-        query,
-        limit: int = 0,
-        max_token_num: int = 0
+        self, query, limit: int = 0, max_token_num: int = 0
     ) -> tuple[list[Episode], str]:
         """
         Retrieves context from short-term memory for a given query.

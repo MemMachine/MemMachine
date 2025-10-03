@@ -1,7 +1,7 @@
 import pytest
 
-from memmachine.common.reranker.bm25_reranker import BM25Reranker
 from memmachine import setup_nltk
+from memmachine.common.reranker.bm25_reranker import BM25Reranker
 
 
 @pytest.fixture

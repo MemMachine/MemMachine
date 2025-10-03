@@ -38,9 +38,7 @@ class EmbedderBuilder(Builder):
                 if injected_metrics_factory_id is None:
                     injected_metrics_factory = None
                 elif not isinstance(injected_metrics_factory_id, str):
-                    raise TypeError(
-                        "metrics_factory_id must be a string if provided"
-                    )
+                    raise TypeError("metrics_factory_id must be a string if provided")
                 else:
                     injected_metrics_factory = injections.get(
                         injected_metrics_factory_id
@@ -51,9 +49,7 @@ class EmbedderBuilder(Builder):
                             f"{injected_metrics_factory_id} "
                             "not found in injections"
                         )
-                    elif not isinstance(
-                        injected_metrics_factory, MetricsFactory
-                    ):
+                    elif not isinstance(injected_metrics_factory, MetricsFactory):
                         raise TypeError(
                             "Injected dependency with id "
                             f"{injected_metrics_factory_id} "
@@ -65,9 +61,7 @@ class EmbedderBuilder(Builder):
                         "model": config.get("model", "text-embedding-3-small"),
                         "api_key": config["api_key"],
                         "metrics_factory": injected_metrics_factory,
-                        "user_metrics_labels": config.get(
-                            "user_metrics_labels", {}
-                        ),
+                        "user_metrics_labels": config.get("user_metrics_labels", {}),
                     }
                 )
             case _:

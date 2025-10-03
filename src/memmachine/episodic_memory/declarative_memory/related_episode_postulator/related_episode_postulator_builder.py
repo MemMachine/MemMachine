@@ -43,9 +43,7 @@ class RelatedEpisodePostulatorBuilder(Builder):
                 )
 
                 populated_config = {
-                    "vector_graph_store": injections[
-                        config["vector_graph_store_id"]
-                    ],
+                    "vector_graph_store": injections[config["vector_graph_store_id"]],
                     "search_limit": config.get("search_limit", 1),
                     "filterable_property_keys": config.get(
                         "filterable_property_keys", set()
@@ -53,6 +51,4 @@ class RelatedEpisodePostulatorBuilder(Builder):
                 }
                 return PreviousRelatedEpisodePostulator(populated_config)
             case _:
-                raise ValueError(
-                    f"Unknown RelatedEpisodePostulator name: {name}"
-                )
+                raise ValueError(f"Unknown RelatedEpisodePostulator name: {name}")

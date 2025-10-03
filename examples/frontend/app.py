@@ -1,7 +1,8 @@
-import streamlit as st
-from llm import chat, set_model
-from gateway_client import ingest_and_rewrite, delete_profile
 from typing import cast
+
+import streamlit as st
+from gateway_client import delete_profile, ingest_and_rewrite
+from llm import chat, set_model
 from model_config import MODEL_CHOICES, MODEL_TO_PROVIDER
 
 

@@ -1,7 +1,9 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
+
 from memmachine.server.app import app
-from unittest.mock import MagicMock, AsyncMock
 
 """
 ================================================================================
@@ -39,11 +41,8 @@ def mock_memory_managers(monkeypatch):
     mock_inst = MagicMock()
     mock_inst.add_memory_episode = AsyncMock(return_value=True)
     mock_inst.delete_data = AsyncMock()
-    mock_inst.get_memory_context.return_value = \
-        MagicMock(group_id="g", session_id="s")
-    mock_inst.query_memory = \
-        AsyncMock(return_value=([], [], ["EpisodicMemory"]))
-
+    mock_inst.get_memory_context.return_value = MagicMock(group_id="g", session_id="s")
+    mock_inst.query_memory = AsyncMock(return_value=([], [], ["EpisodicMemory"]))
 
     # 2. Create a mock async context manager that yields the mock instance.
     mock_context_manager = AsyncMock()
@@ -66,24 +65,16 @@ def mock_memory_managers(monkeypatch):
         async def semantic_search(self, *args, **kwargs):
             return []
 
-
     # 5. Apply all patches to the app module.
-    monkeypatch.setattr(
-        app_module,
-        "episodic_memory",
-        DummyEpisodicMemoryManager()
-    )
+    monkeypatch.setattr(app_module, "episodic_memory", DummyEpisodicMemoryManager())
     monkeypatch.setattr(app_module, "profile_memory", DummyProfileMemory())
     # This is the crucial fix: patch the name in the module where it's looked
     # up.
-    monkeypatch.setattr(
-        app_module,
-        "AsyncEpisodicMemory",
-        MockAsyncEpisodicMemory
-    )
+    monkeypatch.setattr(app_module, "AsyncEpisodicMemory", MockAsyncEpisodicMemory)
 
 
 # --- Base Payloads for DRY Tests ---
+
 
 @pytest.fixture
 def valid_post_payload():
@@ -93,14 +84,15 @@ def valid_post_payload():
             "group_id": "group1",
             "agent_id": ["agent1", "agent2"],
             "user_id": ["user1", "user2"],
-            "session_id": "session1"
+            "session_id": "session1",
         },
         "producer": "user1",
         "produced_for": "agent1",
         "episode_content": "A valid memory string.",
         "episode_type": "message",
-        "metadata": {"source": "test-suite"}
+        "metadata": {"source": "test-suite"},
     }
+
 
 @pytest.fixture
 def valid_query_payload():
@@ -110,9 +102,9 @@ def valid_query_payload():
             "group_id": "group1",
             "agent_id": ["agent1", "agent2"],
             "user_id": ["user1", "user2"],
-            "session_id": "session1"
+            "session_id": "session1",
         },
-        "query": "test"
+        "query": "test",
     }
 
 
@@ -124,13 +116,14 @@ def valid_delete_payload():
             "group_id": "group1",
             "agent_id": ["agent1"],
             "user_id": ["user1"],
-            "session_id": "session1"
+            "session_id": "session1",
         }
     }
 
 
 # --- Tests for POST /v1/memories ---
 # (No changes needed to the test functions themselves)
+
 
 def test_post_memories_valid_string_content(valid_post_payload):
     response = client.post("/v1/memories", json=valid_post_payload)
@@ -161,34 +154,49 @@ def test_post_memories_valid_list_content(valid_post_payload):
     assert response.status_code in (200, 201, 204)
 
 
-@pytest.mark.parametrize("missing_field", [
-    "session", "producer", "produced_for", "episode_content", "episode_type"
-])
+@pytest.mark.parametrize(
+    "missing_field",
+    ["session", "producer", "produced_for", "episode_content", "episode_type"],
+)
 def test_post_memories_missing_required_field(valid_post_payload, missing_field):
     del valid_post_payload[missing_field]
     response = client.post("/v1/memories", json=valid_post_payload)
-    assert response.status_code == 422, f"Should fail with missing field: {missing_field}"
+    assert response.status_code == 422, (
+        f"Should fail with missing field: {missing_field}"
+    )
 
-@pytest.mark.parametrize("missing_session_field", [
-    "group_id", "agent_id", "user_id", "session_id"
-])
-def test_post_memories_missing_nested_session_field(valid_post_payload, missing_session_field):
+
+@pytest.mark.parametrize(
+    "missing_session_field", ["group_id", "agent_id", "user_id", "session_id"]
+)
+def test_post_memories_missing_nested_session_field(
+    valid_post_payload, missing_session_field
+):
     del valid_post_payload["session"][missing_session_field]
     response = client.post("/v1/memories", json=valid_post_payload)
-    assert response.status_code == 422, f"Should fail with missing session field: {missing_session_field}"
+    assert response.status_code == 422, (
+        f"Should fail with missing session field: {missing_session_field}"
+    )
+
 
 def test_post_memories_invalid_types(valid_post_payload):
     invalid_payload = {
-        "session": "not-a-dict", "producer": 123, "produced_for": ["not-a-string"],
-        "episode_content": {"wrong": "type"}, "episode_type": False, "metadata": "not-a-dict"
+        "session": "not-a-dict",
+        "producer": 123,
+        "produced_for": ["not-a-string"],
+        "episode_content": {"wrong": "type"},
+        "episode_type": False,
+        "metadata": "not-a-dict",
     }
     response = client.post("/v1/memories", json=invalid_payload)
     assert response.status_code == 422
+
 
 def test_post_memories_extra_field(valid_post_payload):
     valid_post_payload["unexpected_field"] = "should-be-accepted"
     response = client.post("/v1/memories", json=valid_post_payload)
     assert response.status_code in (200, 201, 204)
+
 
 def test_post_memories_boundary_empty_values(valid_post_payload):
     valid_post_payload["session"]["group_id"] = ""
@@ -198,6 +206,7 @@ def test_post_memories_boundary_empty_values(valid_post_payload):
     valid_post_payload["episode_content"] = ""
     response = client.post("/v1/memories", json=valid_post_payload)
     assert response.status_code in (200, 201, 204)
+
 
 def test_post_memories_null_metadata(valid_post_payload):
     valid_post_payload["metadata"] = None
@@ -210,10 +219,7 @@ def test_memory_search_valid(valid_query_payload):
     """
     Test query both episodic and profile memories.
     """
-    response = client.post(
-        "/v1/memories/search",
-        json=valid_query_payload
-    )
+    response = client.post("/v1/memories/search", json=valid_query_payload)
     assert response.status_code in (200, 201, 204)
     rsp = response.json()["content"]
     assert len(rsp) == 2
@@ -226,10 +232,7 @@ def test_episodic_memory_search_valid(valid_query_payload):
     """
     Test episodic memory query.
     """
-    response = client.post(
-        "/v1/memories/episodic/search",
-        json=valid_query_payload
-    )
+    response = client.post("/v1/memories/episodic/search", json=valid_query_payload)
     assert response.status_code in (200, 201, 204)
     rsp = response.json()["content"]
     assert len(rsp) == 1
@@ -241,10 +244,7 @@ def test_profile_memory_search_valid(valid_query_payload):
     """
     Test profile memory query.
     """
-    response = client.post(
-        "/v1/memories/profile/search",
-        json=valid_query_payload
-    )
+    response = client.post("/v1/memories/profile/search", json=valid_query_payload)
     assert response.status_code in (200, 201, 204)
     rsp = response.json()["content"]
     assert len(rsp) == 1
@@ -253,30 +253,44 @@ def test_profile_memory_search_valid(valid_query_payload):
 
 # --- Tests for DELETE /v1/memories ---
 
+
 def test_delete_memories_valid(valid_delete_payload):
     response = client.request("DELETE", "/v1/memories", json=valid_delete_payload)
     assert response.status_code in (200, 201, 204)
+
 
 def test_delete_memories_missing_session():
     response = client.request("DELETE", "/v1/memories", json={})
     assert response.status_code == 422
 
-@pytest.mark.parametrize("missing_session_field", [
-    "group_id", "agent_id", "user_id", "session_id"
-])
-def test_delete_memories_missing_nested_session_field(valid_delete_payload, missing_session_field):
+
+@pytest.mark.parametrize(
+    "missing_session_field", ["group_id", "agent_id", "user_id", "session_id"]
+)
+def test_delete_memories_missing_nested_session_field(
+    valid_delete_payload, missing_session_field
+):
     del valid_delete_payload["session"][missing_session_field]
     response = client.request("DELETE", "/v1/memories", json=valid_delete_payload)
-    assert response.status_code == 422, f"Should fail with missing session field: {missing_session_field}"
+    assert response.status_code == 422, (
+        f"Should fail with missing session field: {missing_session_field}"
+    )
+
 
 def test_delete_memories_invalid_types():
-    invalid_payload = { "session": { "group_id": 123, "agent_id": "not-a-list",
-        "user_id": False, "session_id": None } }
+    invalid_payload = {
+        "session": {
+            "group_id": 123,
+            "agent_id": "not-a-list",
+            "user_id": False,
+            "session_id": None,
+        }
+    }
     response = client.request("DELETE", "/v1/memories", json=invalid_payload)
     assert response.status_code == 422
+
 
 def test_delete_memories_extra_field(valid_delete_payload):
     valid_delete_payload["unexpected_field"] = "should-be-accepted"
     response = client.request("DELETE", "/v1/memories", json=valid_delete_payload)
     assert response.status_code in (200, 201, 204)
-

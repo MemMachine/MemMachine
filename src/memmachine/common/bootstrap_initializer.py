@@ -76,9 +76,7 @@ class BootstrapInitializer:
             resource_id,
             resource_definition,
         ) in resource_definitions.items():
-            resource_builder = resource_builder_map[
-                resource_definition["type"]
-            ]
+            resource_builder = resource_builder_map[resource_definition["type"]]
             resource_dependency_graph[resource_id] = (
                 resource_builder.get_dependency_ids(
                     resource_definition["name"],
@@ -96,12 +94,10 @@ class BootstrapInitializer:
             ordered_resource_ids = []
 
             dependency_counts = {
-                resource_id: 0
-                for resource_id in resource_dependency_graph.keys()
+                resource_id: 0 for resource_id in resource_dependency_graph.keys()
             }
             dependent_resource_ids: dict[str, set[str]] = {
-                resource_id: set()
-                for resource_id in resource_dependency_graph.keys()
+                resource_id: set() for resource_id in resource_dependency_graph.keys()
             }
 
             for (
@@ -131,17 +127,13 @@ class BootstrapInitializer:
                 resource_id = queue.popleft()
                 ordered_resource_ids.append(resource_id)
 
-                for dependent_resource_id in dependent_resource_ids[
-                    resource_id
-                ]:
+                for dependent_resource_id in dependent_resource_ids[resource_id]:
                     dependency_counts[dependent_resource_id] -= 1
                     if dependency_counts[dependent_resource_id] == 0:
                         queue.append(dependent_resource_id)
 
             if len(ordered_resource_ids) != len(resource_dependency_graph):
-                raise ValueError(
-                    "Cyclic dependency detected in resource definitions"
-                )
+                raise ValueError("Cyclic dependency detected in resource definitions")
 
             return ordered_resource_ids
 
@@ -151,9 +143,7 @@ class BootstrapInitializer:
         for resource_id in ordered_resource_ids:
             resource_definition = resource_definitions[resource_id]
 
-            resource_builder = resource_builder_map[
-                resource_definition["type"]
-            ]
+            resource_builder = resource_builder_map[resource_definition["type"]]
 
             resources[resource_id] = resource_builder.build(
                 resource_definition["name"],

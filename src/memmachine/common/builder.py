@@ -35,9 +35,7 @@ class Builder(ABC):
 
     @staticmethod
     @abstractmethod
-    def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
-    ) -> Any:
+    def build(name: str, config: dict[str, Any], injections: dict[str, Any]) -> Any:
         """
         Build the resource
         based on its name,

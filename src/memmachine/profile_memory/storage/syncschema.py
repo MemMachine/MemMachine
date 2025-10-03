@@ -14,9 +14,7 @@ def get_base() -> str:
     return open(f"{script_dir}/baseschema.sql", "r").read()
 
 
-async def delete_data(
-    database: str, host: str, port: str, user: str, password: str
-):
+async def delete_data(database: str, host: str, port: str, user: str, password: str):
     d: dict[str, str] = {
         "host": host,
         "port": port,
@@ -49,9 +47,7 @@ async def delete_data(
         await pool.execute(f'DROP TABLE IF EXISTS "{table}" CASCADE;')
 
 
-async def sync_to(
-    database: str, host: str, port: str, user: str, password: str
-):
+async def sync_to(database: str, host: str, port: str, user: str, password: str):
     d: dict[str, str] = {
         "host": host,
         "port": port,
@@ -119,12 +115,8 @@ def main():
 
 async def main_async(args):
     if args.delete:
-        await delete_data(
-            args.database, args.host, args.port, args.user, args.password
-        )
-    await sync_to(
-        args.database, args.host, args.port, args.user, args.password
-    )
+        await delete_data(args.database, args.host, args.port, args.user, args.password)
+    await sync_to(args.database, args.host, args.port, args.user, args.password)
 
 
 if __name__ == "__main__":

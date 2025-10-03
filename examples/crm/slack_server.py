@@ -1,19 +1,17 @@
-import os
-import hmac
-import hashlib
-import time
 import asyncio
+import hashlib
+import hmac
 import logging
-import uvicorn
+import os
+import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Request, Header, HTTPException, FastAPI
-from fastapi.responses import PlainTextResponse
-
-from slack_service import SlackService
-
+import uvicorn
 from dotenv import load_dotenv
+from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
+from fastapi.responses import PlainTextResponse
+from slack_service import SlackService
 
 load_dotenv()
 
@@ -149,9 +147,7 @@ async def process_memory_post(
     """
     logger.debug(f"[SLACK] Processing message from user {user}")
 
-    (
-        await slack_service.get_user_display_name(user) if user else (user or "")
-    )
+    (await slack_service.get_user_display_name(user) if user else (user or ""))
 
     slack_message_id = f"slack_{channel}_{user}_{ts}"
 
@@ -194,9 +190,7 @@ async def process_query_and_reply(
     """Handle *Q queries by searching memory and using OpenAI chat completion"""
     logger.info(f"[SLACK] Processing query from user {user}: {query_text[:50]}...")
 
-    (
-        await slack_service.get_user_display_name(user) if user else (user or "")
-    )
+    (await slack_service.get_user_display_name(user) if user else (user or ""))
 
     search_url = f"{CRM_SERVER_URL}/memory"
 
@@ -326,11 +320,11 @@ async def main():
 
     print("\nStarting Slack server on port 8001...")
     print("Server ready for real-time messages!")
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print("HISTORICAL INGESTION")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     print(f"Processing {message_limit} messages per channel...")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     historical_task = asyncio.create_task(
         ingest_historical_messages_with_limit(message_limit)
@@ -432,15 +426,15 @@ async def ingest_historical_messages_with_limit(message_limit: int):
                 print(f"✅ {channel_processed} processed")
 
         counters = get_counter_status()
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print("INGESTION COMPLETE")
-        print(f"{'='*50}")
+        print(f"{'=' * 50}")
         print(
             f"Total: {counters['processed']} processed, {counters['skipped']} skipped"
         )
         if counters["errors"] > 0:
             print(f"❌ Errors: {counters['errors']}")
-        print(f"{'='*50}")
+        print(f"{'=' * 50}")
 
         logger.info(
             f"[SLACK] Historical ingestion complete. Processed: {counters['processed']}, Skipped: {counters['skipped']}, Errors: {counters['errors']}"

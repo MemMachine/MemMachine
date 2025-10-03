@@ -36,9 +36,7 @@ class ConcatenationDerivativeDeriver(DerivativeDeriver):
         self._derivative_type = config.get("derivative_type", "concatenation")
         self._separator = config.get("separator", "\n")
 
-    async def derive(
-        self, episode_cluster: EpisodeCluster
-    ) -> list[Derivative]:
+    async def derive(self, episode_cluster: EpisodeCluster) -> list[Derivative]:
         return [
             Derivative(
                 uuid=uuid4(),

@@ -60,9 +60,7 @@ class OpenAIEmbedder(Embedder):
         if metrics_factory is not None and not isinstance(
             metrics_factory, MetricsFactory
         ):
-            raise TypeError(
-                "Metrics factory must be an instance of MetricsFactory"
-            )
+            raise TypeError("Metrics factory must be an instance of MetricsFactory")
 
         self._collect_metrics = False
         if metrics_factory is not None:
@@ -87,31 +85,24 @@ class OpenAIEmbedder(Embedder):
             )
 
     async def ingest_embed(
-        self,
-        inputs: list[Any],
-        max_attempts: int = 1
+        self, inputs: list[Any], max_attempts: int = 1
     ) -> list[list[float]]:
         return await self._embed(inputs, max_attempts)
 
     async def search_embed(
-        self,
-        queries: list[Any],
-        max_attempts: int = 1
+        self, queries: list[Any], max_attempts: int = 1
     ) -> list[list[float]]:
         return await self._embed(queries, max_attempts)
 
     async def _embed(
-            self,
-            inputs: list[Any],
-            max_attempts: int = 1) -> list[list[float]]:
+        self, inputs: list[Any], max_attempts: int = 1
+    ) -> list[list[float]]:
         if not inputs:
             return []
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        inputs = [
-            input.replace("\n", " ") if input else "\n" for input in inputs
-        ]
+        inputs = [input.replace("\n", " ") if input else "\n" for input in inputs]
 
         start_time = time.monotonic()
         sleep_seconds = 1

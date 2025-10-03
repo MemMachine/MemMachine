@@ -97,10 +97,7 @@ async def search_memories(
         "content",
         "blip_caption",
     ]
-    episodes = (
-        search_result["episodic_memory"][1]
-        + search_result["episodic_memory"][0]
-    )
+    episodes = search_result["episodic_memory"][1] + search_result["episodic_memory"][0]
     episodic_memories = [
         {
             rename_property(wanted_property): (
@@ -124,9 +121,7 @@ async def search_memories(
     )
 
 
-async def locomo_response(
-    group_id: int, query: str, users: list[str], model: str
-):
+async def locomo_response(group_id: int, query: str, users: list[str], model: str):
     """
     Answer a locomo benchmark question using an OpenAI Agents SDK client to the MCP server.
     """
@@ -201,9 +196,7 @@ async def locomo_response(
             name="executor",
             instructions=executor_instructions,
             model=model,
-            model_settings=ModelSettings(
-                max_tokens=2000, temperature=0.2, store=False
-            ),
+            model_settings=ModelSettings(max_tokens=2000, temperature=0.2, store=False),
             hooks=LocomoPrefetches(),
             tools=[memory_search_tool],
         )
@@ -241,9 +234,7 @@ def convert_for_json(obj: Any) -> Any:
         return [convert_for_json(item) for item in obj]
     elif hasattr(obj, "__dict__"):
         # Handle regular Python objects
-        return {
-            key: convert_for_json(value) for key, value in obj.__dict__.items()
-        }
+        return {key: convert_for_json(value) for key, value in obj.__dict__.items()}
     elif isinstance(obj, str):
         try:
             return convert_for_json(json.loads(obj))
