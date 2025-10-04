@@ -9,7 +9,7 @@ information extraction and a vector database for semantic search capabilities.
 import asyncio
 import json
 import logging
-from itertools import accumulate, tee
+from itertools import accumulate, tee, groupby
 from types import ModuleType
 from typing import Any
 
@@ -20,6 +20,7 @@ from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
 
 from .storage.asyncpg_profile import AsyncPgProfileStorage
+from .storage.storage_base import ProfileStorageBase
 from .util.lru_cache import LRUCache
 
 logger = logging.getLogger(__name__)
@@ -57,12 +58,13 @@ class ProfileMemory:
     """
 
     def __init__(
-        self,
+        self, *,
         model: LanguageModel,
         embeddings: Embedder,
-        db_config: dict[str, Any],
         prompt_module: ModuleType,
+        db_config: dict[str, Any] | None = None,
         max_cache_size=1000,
+        profile_storage: ProfileStorageBase | None = None,
     ):
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
@@ -75,9 +77,18 @@ class ProfileMemory:
         self._consolidation_prompt = getattr(
             prompt_module, "CONSOLIDATION_PROMPT", ""
         )
-        self._profile_storage = AsyncPgProfileStorage(db_config)
+        if profile_storage is None:
+            if db_config is None:
+                raise ValueError("db_config must be provided if profile_storage is None")
+            self._profile_storage = AsyncPgProfileStorage(db_config)
+        else:
+            self._profile_storage = profile_storage
+
         self._update_interval = 1
-        self._msg_count: dict[str, int] = {}
+        self._dirty_users: dict[str, bool] = {}
+        self._dirty_users_lock = asyncio.Lock()
+        self._ingestion_task = asyncio.create_task(self._background_ingestion_task())
+        self._is_shutting_down = False
         self._profile_cache = LRUCache(self._max_cache_size)
 
     async def startup(self):
@@ -86,6 +97,8 @@ class ProfileMemory:
 
     async def cleanup(self):
         """Releases resources, such as the database connection pool."""
+        self._is_shutting_down = True
+        await self._ingestion_task
         await self._profile_storage.cleanup()
 
     # === CRUD ===
@@ -313,6 +326,7 @@ class ProfileMemory:
         metadata: dict[str, str] | None = None,
         isolations: dict[str, bool | int | float | str] | None = None,
         user_id: str = "",  # TODO fully deprecate user_id parameter
+        wait_consolidate: bool = False,
     ):
         """Adds a message to the history and may trigger a profile update.
 
@@ -325,6 +339,8 @@ class ProfileMemory:
             metadata: Metadata associated with the message, such as the
                      speaker.
             isolations: A dictionary for data isolation.
+            wait_consolidate: If true, wait for consolidation to finish
+                     before returning.
 
         Returns:
             A boolean indicating whether the consolidation process was awaited.
@@ -336,42 +352,67 @@ class ProfileMemory:
             metadata = {}
         if isolations is None:
             isolations = {}
+
         if "speaker" in metadata:
             content = f"{metadata['speaker']} sends '{content}'"
-        message = await self._profile_storage.add_history(
+
+        await self._profile_storage.add_history(
             user_id, content, metadata, isolations
         )
-        self._msg_count[user_id] = self._msg_count.get(user_id, 0) + 1
-        wait_consolidate = False
-        if self._msg_count[user_id] >= self._update_interval:
-            self._msg_count[user_id] = 0
-            wait_consolidate = True
-        fut = asyncio.create_task(
-            self._update_user_profile_think(
-                message, wait_consolidate=wait_consolidate
-            )
-        )
-        if wait_consolidate:
-            await fut
-        return wait_consolidate
 
-    async def _reconsolidate_memory(
+        async with self._dirty_users_lock:
+            self._dirty_users[user_id] = True
+
+    async def uningested_message_count(self):
+        return await self._profile_storage.get_uningested_history_messages_count()
+
+    async def _background_ingestion_task(self):
+        while not self._is_shutting_down:
+            async with self._dirty_users_lock:
+                dirty_users = self._dirty_users.copy()
+                self._dirty_users = {}
+
+            if len(dirty_users) == 0:
+                await asyncio.sleep(2)
+                continue
+
+            await asyncio.gather(
+                *[self._process_uningested_memories(user_id)
+                 for user_id in dirty_users.keys()]
+            )
+
+    async def _get_isolation_grouped_memories(self, user_id: str):
+        rows = await self._profile_storage.get_ingested_history_messages(
+            user_id=user_id, k=1_000_000, is_ingested=False,
+        )
+
+        def key_fn(r):
+            # normalize JSONB dict to a stable string key
+            return json.dumps(r["isolations"], sort_keys=True)
+        rows = sorted(rows, key=key_fn)
+        return [list(group) for _, group in groupby(rows, key_fn)]
+
+    async def _process_uningested_memories(
         self,
         user_id: str,
-        isolations: dict[str, bool | int | float | str] | None = None,
     ):
-        """request re-ingestion of session data to profile"""
-        if isolations is None:
-            isolations = {}
+        message_isolation_groups = await self._get_isolation_grouped_memories(user_id)
 
-        messages = await self._profile_storage.get_last_history_messages(
-            user_id=user_id, k=1_000_000, isolations=isolations
-        )
-        for i in range(0, len(messages), 10):
-            chunk = messages[i : i + 10]
-            await asyncio.gather(
-                *[self._update_user_profile_think(msg) for msg in chunk]
-            )
+        async def process_messages(messages):
+            for i in range(0, len(messages)-1):
+                message = messages[i]
+                await self._update_user_profile_think(message)
+
+            await self._update_user_profile_think(messages[-1], wait_consolidate=True)
+            await self._profile_storage.mark_messages_ingested([msg["id"] for msg in messages])
+
+        tasks = []
+        for isolation_messages in message_isolation_groups:
+            tasks.append(process_messages(isolation_messages))
+
+        await asyncio.gather(*tasks)
+
+
 
     async def _update_user_profile_think(
         self,
