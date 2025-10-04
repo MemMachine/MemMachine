@@ -58,3 +58,8 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "manual_integration: integration test that requires manual user setup"
+]
