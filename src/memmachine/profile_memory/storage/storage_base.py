@@ -11,6 +11,18 @@ class ProfileStorageBase(ABC):
     """
 
     @abstractmethod
+    async def startup(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def cleanup(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_all(self):
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_profile(self, user_id: str) -> dict[str, Any]:
         """
         Get profile by id
@@ -41,7 +53,14 @@ class ProfileStorageBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_profile_feature(self, user_id: str, feature: str):
+    async def delete_profile_feature(
+        self,
+        user_id: str,
+        feature: str,
+        tag: str,
+        value: str | None = None,
+        isolations: dict[str, bool | int | float | str] = None,
+    ):
         """
         Delete a feature from the profile with the key from the given user
         """
@@ -49,8 +68,11 @@ class ProfileStorageBase(ABC):
 
     @abstractmethod
     async def get_large_profile_sections(
-        self, user_id: str, thresh: int
-    ) -> list[dict[str, Any]]:
+        self,
+        user_id: str,
+        thresh: int,
+        isolations: dict[str, bool | int | float | str] | None = None,
+    ) -> list[list[dict[str, Any]]]:
         """
         get sections of profile with at least thresh entries
         """
@@ -59,51 +81,56 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def add_history(
         self,
-        group_id: str = "NA",
-        user_id: str = "NA",
-        session_id: str = "NA",
-        messages: str = "NA",
+        user_id: str,
+        content: str,
+        metadata: dict[str, str] | None = None,
+        isolations: dict[str, bool | int | float | str] | None = None,
     ):
         raise NotImplementedError
 
     @abstractmethod
     async def delete_history(
         self,
-        group_id: str = "NA",
-        user_id: str = "NA",
-        session_id: str = "NA",
-        start_time=0,
-        end_time=0,
+        user_id: str,
+        start_time: int = 0,
+        end_time: int = 0,
+        isolations: dict[str, bool | int | float | str] | None = None,
     ):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_last_history_messages(
-        self,
-        group_id: str = "NA",
-        user_id: str = "NA",
-        session_id: str = "NA",
-        message_num=0,
-    ) -> list[tuple[int, str]]:
+    async def get_ingested_history_messages(
+            self,
+            user_id: str,
+            k: int = 0,
+            is_ingested: bool = False,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_uningested_history_messages_count(self) -> int:
+        raise NotImplementedError
+
+
+    @abstractmethod
+    async def mark_messages_ingested(self, ids: list[int]) -> None:
         raise NotImplementedError
 
     @abstractmethod
     async def get_history_message(
         self,
-        group_id: str = "NA",
-        user_id: str = "NA",
-        session_id: str = "NA",
-        start_time=0,
-        end_time=0,
+        user_id: str,
+        start_time: int = 0,
+        end_time: int = 0,
+        isolations: dict[str, bool | int | float | str] | None = None,
     ) -> list[str]:
         raise NotImplementedError
 
     @abstractmethod
     async def purge_history(
         self,
-        group_id: str = "NA",
-        user_id: str = "NA",
-        session_id: str = "NA",
-        start_time=0,
+        user_id: str,
+        start_time: int = 0,
+        isolations: dict[str, bool | int | float | str] | None= None,
     ):
         raise NotImplementedError
