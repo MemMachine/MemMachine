@@ -1,4 +1,3 @@
-
 import uuid
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -114,7 +113,7 @@ class TestSessionMemoryPublicAPI:
         )
         assert episodes == [episode2, episode3, episode4]
         assert summary == "summary"
-        
+
     async def test_clear_memory(self, memory):
         """Test clearing the memory."""
         await memory.add_episode(create_test_episode(content="test"))
@@ -168,8 +167,7 @@ class TestSessionMemoryPublicAPI:
 
         # Test with episode limit
         episodes, summary = await memory.get_session_memory_context(
-            query="test",
-            limit=1
+            query="test", limit=1
         )
         assert len(episodes) == 1
         assert episodes == [ep3]

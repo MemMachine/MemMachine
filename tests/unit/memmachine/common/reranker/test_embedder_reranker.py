@@ -1,6 +1,6 @@
 import pytest
 
-from memmachine.common.embedder import Embedder
+from memmachine.common.embedder import Embedder, SimilarityMetric
 from memmachine.common.reranker.embedder_reranker import EmbedderReranker
 
 
@@ -10,6 +10,18 @@ class FakeEmbedder(Embedder):
 
     async def search_embed(self, queries: list[str]) -> list[list[float]]:
         return [[float(len(query)), -float(len(query))] for query in queries]
+
+    @property
+    def model_id(self) -> str:
+        return "fake-model"
+
+    @property
+    def dimensions(self) -> int:
+        return 2
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        return SimilarityMetric.COSINE
 
 
 @pytest.fixture

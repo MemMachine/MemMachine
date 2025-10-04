@@ -33,9 +33,10 @@ async def manager(mock_config):
     """
     # We patch `open` to simulate reading the config file, and `logging` to
     # prevent it from affecting the test environment.
-    with patch(
-        "builtins.open", mock_open(read_data=yaml.dump(mock_config))
-    ), patch("logging.basicConfig"):
+    with (
+        patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))),
+        patch("logging.basicConfig"),
+    ):
         # The public factory method to create an instance
         instance = EpisodicMemoryManager.create_episodic_memory_manager(
             "dummy_path.yaml"
@@ -100,8 +101,9 @@ async def test_get_episodic_memory_instance_new(MockEpisodicMemory, manager):
 
 
 @patch("memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory")
-async def test_get_episodic_memory_instance_existing(MockEpisodicMemory,
-                                                     manager):
+async def test_get_episodic_memory_instance_existing(
+    MockEpisodicMemory, manager
+):
     """Test retrieving an existing EpisodicMemory instance."""
     mock_instance = MockEpisodicMemory.return_value
     mock_instance.reference = AsyncMock(return_value=True)
@@ -142,8 +144,7 @@ async def test_create_group(manager):
 
 
 @patch("memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory")
-async def test_create_episodic_memory_instance(MockEpisodicMemory,
-                                               manager):
+async def test_create_episodic_memory_instance(MockEpisodicMemory, manager):
     """Test create episodic memory"""
     mock_instance = MockEpisodicMemory.return_value
     mock_instance.reference = AsyncMock(return_value=True)
@@ -179,8 +180,9 @@ async def test_create_episodic_memory_instance(MockEpisodicMemory,
 
 
 @patch("memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory")
-async def test_async_open_episodic_memory_instance(MockEpisodicMemory,
-                                                   manager):
+async def test_async_open_episodic_memory_instance(
+    MockEpisodicMemory, manager
+):
     """Test retrieving an existing EpisodicMemory instance."""
     mock_instance = MockEpisodicMemory.return_value
     mock_instance.reference = AsyncMock(return_value=True)
@@ -199,9 +201,7 @@ async def test_async_open_episodic_memory_instance(MockEpisodicMemory,
         assert mock_instance.reference.await_count == 2
 
         # Second call for the same context should return the same instance
-        instance2 = await manager.open_episodic_memory_instance(
-            "g1", "s1"
-        )
+        instance2 = await manager.open_episodic_memory_instance("g1", "s1")
         assert instance2 is instance1
         # No new EpisodicMemory should be created
         MockEpisodicMemory.assert_called_once()
@@ -213,8 +213,9 @@ async def test_async_open_episodic_memory_instance(MockEpisodicMemory,
 
 
 @patch("memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory")
-async def test_async_create_episodic_memory_instance(MockEpisodicMemory,
-                                                     manager):
+async def test_async_create_episodic_memory_instance(
+    MockEpisodicMemory, manager
+):
     """Test retrieving an existing EpisodicMemory instance."""
     mock_instance = MockEpisodicMemory.return_value
     mock_instance.reference = AsyncMock(return_value=True)
@@ -232,15 +233,13 @@ async def test_async_create_episodic_memory_instance(MockEpisodicMemory,
 
 
 async def test_get_episodic_memory_instance_invalid_context(manager):
-    """Test that getting an instance with an invalid context raises an error.
-    """
+    """Test that getting an instance with an invalid context raises an error."""
     with pytest.raises(ValueError):
         await manager.get_episodic_memory_instance(None, None)
 
     with pytest.raises(ValueError):
         await manager.get_episodic_memory_instance(
-            group_id="g1",
-            session_id=None
+            group_id="g1", session_id=None
         )
 
 
@@ -255,9 +254,7 @@ async def test_close_episodic_memory_instance(MockEpisodicMemory, manager):
     await manager.get_episodic_memory_instance("g1", ["a1"], ["u1"], "s1")
 
     # Close it
-    result = await manager.close_episodic_memory_instance(
-        "g1", "s1"
-    )
+    result = await manager.close_episodic_memory_instance("g1", "s1")
 
     assert result is True
     mock_instance.close.assert_awaited_once()
@@ -265,9 +262,7 @@ async def test_close_episodic_memory_instance(MockEpisodicMemory, manager):
 
 async def test_close_non_existent_instance(manager):
     """Test that closing a non-existent instance returns False."""
-    result = await manager.close_episodic_memory_instance(
-        "non-existent", "s1"
-    )
+    result = await manager.close_episodic_memory_instance("non-existent", "s1")
     assert result is False
 
 

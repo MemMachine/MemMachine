@@ -57,4 +57,9 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "testcontainers[neo4j]>=4.13.1",
 ]
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"

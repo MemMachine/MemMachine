@@ -297,12 +297,12 @@ class DeclarativeMemory:
         try:
             mutated_derivative_embeddings = await self._embedder.ingest_embed(
                 [derivative.content for derivative in mutated_derivatives],
-                max_attempts=3
+                max_attempts=3,
             )
         except (ValueError, IOError) as e:
             logger.error(
                 "Failed to create embeddings for mutated derivatives %s",
-                str(e)
+                str(e),
             )
             return []
 
@@ -312,7 +312,10 @@ class DeclarativeMemory:
                 labels={"Derivative"},
                 properties={
                     "content": derivative.content,
-                    "embedding": derivative_embedding,
+                    DeclarativeMemory._embedding_property_name(
+                        self._embedder.model_id,
+                        self._embedder.dimensions,
+                    ): derivative_embedding,
                     "timestamp": derivative.timestamp,
                     "user_metadata": json.dumps(derivative.user_metadata),
                 }
@@ -549,6 +552,13 @@ class DeclarativeMemory:
         search_similar_nodes_tasks = [
             self._vector_graph_store.search_similar_nodes(
                 query_embedding=derivative_embedding,
+                embedding_property_name=(
+                    DeclarativeMemory._embedding_property_name(
+                        self._embedder.model_id,
+                        self._embedder.dimensions,
+                    )
+                ),
+                similarity_metric=self._embedder.similarity_metric,
                 required_labels={"Derivative"},
                 required_properties={
                     mangle_filterable_property_key(key): value
@@ -957,3 +967,18 @@ class DeclarativeMemory:
             )
             for node in episode_nodes
         ]
+
+    @staticmethod
+    def _embedding_property_name(model_id: str, dimensions: int) -> str:
+        """
+        Generate a standardized property name for embeddings
+        based on the model ID and embedding dimensions.
+
+        Args:
+            model_id (str): The identifier of the embedding model.
+            dimensions (int): The dimensionality of the embedding.
+
+        Returns:
+            str: A standardized property name for the embedding.
+        """
+        return f"embedding_{model_id}_{dimensions}d"

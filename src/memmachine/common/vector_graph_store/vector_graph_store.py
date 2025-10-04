@@ -6,8 +6,11 @@ and deleting nodes and edges.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Collection, Mapping
 from typing import Any
 from uuid import UUID
+
+from memmachine.common.embedder import SimilarityMetric
 
 from .data_types import Edge, Node, Property
 
@@ -18,22 +21,22 @@ class VectorGraphStore(ABC):
     """
 
     @abstractmethod
-    async def add_nodes(self, nodes: list[Node]):
+    async def add_nodes(self, nodes: Collection[Node]):
         """
         Add nodes to the graph store.
 
         Args:
-            nodes (list[Node]): List of Node objects to add.
+            nodes (Collection[Node]): Collection of Node objects to add.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def add_edges(self, edges: list[Edge]):
+    async def add_edges(self, edges: Collection[Edge]):
         """
         Add edges to the graph store.
 
         Args:
-            edges (list[Edge]): List of Edge objects to add.
+            edges (Collection[Edge]): Collection of Edge objects to add.
         """
         raise NotImplementedError
 
@@ -41,10 +44,11 @@ class VectorGraphStore(ABC):
     async def search_similar_nodes(
         self,
         query_embedding: list[float],
-        similarity_threshold: float = 0.2,
+        embedding_property_name: str,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
-        required_labels: set[str] | None = None,
-        required_properties: dict[str, Property] = {},
+        required_labels: Collection[str] | None = None,
+        required_properties: Mapping[str, Property] = {},
         include_missing_properties: bool = False,
     ) -> list[Node]:
         """
@@ -53,17 +57,21 @@ class VectorGraphStore(ABC):
         Args:
             query_embedding (list[float]):
                 The embedding vector to compare against.
-            similarity_threshold (float, optional):
-                Minimum cosine similarity
-                for a node to be considered similar.
+            embedding_property_name (str):
+                The name of the property
+                that stores the embedding vector.
+            similarity_metric (SimilarityMetric, optional):
+                The similarity metric to use
+                (default: SimilarityMetric.COSINE).
             limit (int | None, optional):
                 Maximum number of similar nodes to return.
-                If None, return all similar nodes.
-            required_labels (set[str] | None, optional):
-                Set of labels that the nodes must have.
+                If None, return as many similar nodes as possible
+                (default: 100).
+            required_labels (Collection[str] | None, optional):
+                Collection of labels that the nodes must have.
                 If None, no label filtering is applied.
-            required_properties (dict[str, Property], optional):
-                Dictionary of property names and their required values
+            required_properties (Mapping[str, Property], optional):
+                Mapping of property names to their required values
                 that the nodes must have.
                 If empty, no property filtering is applied.
             include_missing_properties (bool, optional):
@@ -81,12 +89,12 @@ class VectorGraphStore(ABC):
     async def search_related_nodes(
         self,
         node_uuid: UUID,
-        allowed_relations: set[str] | None = None,
+        allowed_relations: Collection[str] | None = None,
         find_sources: bool = True,
         find_targets: bool = True,
         limit: int | None = None,
-        required_labels: set[str] | None = None,
-        required_properties: dict[str, Property] = {},
+        required_labels: Collection[str] | None = None,
+        required_properties: Mapping[str, Property] = {},
         include_missing_properties: bool = False,
     ) -> list[Node]:
         """
@@ -95,8 +103,8 @@ class VectorGraphStore(ABC):
         Args:
             node_uuid (UUID):
                 UUID of the node to find related nodes for.
-            allowed_relations (set[str] | None, optional):
-                Set of relationship types to consider.
+            allowed_relations (Collection[str] | None, optional):
+                Collection of relationship types to consider.
                 If None, all relationship types are considered.
             find_sources (bool, optional):
                 If True, search for nodes
@@ -108,13 +116,14 @@ class VectorGraphStore(ABC):
                 originating from the specified node.
             limit (int | None, optional):
                 Maximum number of related nodes to return.
-                If None, return all related nodes.
-            required_labels (set[str] | None, optional):
-                Set of labels that the related nodes must have.
+                If None, return as many related nodes as possible
+                (default: None).
+            required_labels (Collection[str] | None, optional):
+                Collection of labels that the related nodes must have.
                 If None, no label filtering is applied.
-            required_properties (dict[str, Property], optional):
-                Dictionary of property names and their required values
-                that the related nodes must have.
+            required_properties (Mapping[str, Property], optional):
+                Mapping of property names to their required values
+                that the nodes must have.
                 If empty, no property filtering is applied.
             include_missing_properties (bool, optional):
                 If True, nodes missing any of the required properties
@@ -135,8 +144,8 @@ class VectorGraphStore(ABC):
         include_equal_start_at_value: bool = False,
         order_ascending: bool = True,
         limit: int | None = 1,
-        required_labels: set[str] | None = None,
-        required_properties: dict[str, Property] = {},
+        required_labels: Collection[str] | None = None,
+        required_properties: Mapping[str, Property] = {},
         include_missing_properties: bool = False,
     ) -> list[Node]:
         """
@@ -157,12 +166,13 @@ class VectorGraphStore(ABC):
                 If False, order in descending order.
             limit (int | None, optional):
                 Maximum number of nodes to return.
-                If None, return all matching nodes.
-            required_labels (set[str] | None, optional):
-                Set of labels that the nodes must have.
+                If None, return as many matching nodes as possible
+                (default: 1).
+            required_labels (Collection[str] | None, optional):
+                Collection of labels that the nodes must have.
                 If None, no label filtering is applied.
-            required_properties (dict[str, Property], optional):
-                Dictionary of property names and their required values
+            required_properties (Mapping[str, Property], optional):
+                Mapping of property names to their required values
                 that the nodes must have.
                 If empty, no property filtering is applied.
             include_missing_properties (bool, optional):
@@ -179,8 +189,8 @@ class VectorGraphStore(ABC):
     async def search_matching_nodes(
         self,
         limit: int | None = None,
-        required_labels: set[str] | None = None,
-        required_properties: dict[str, Property] = {},
+        required_labels: Collection[str] | None = None,
+        required_properties: Mapping[str, Property] = {},
         include_missing_properties: bool = False,
     ) -> list[Node]:
         """
@@ -189,12 +199,13 @@ class VectorGraphStore(ABC):
         Args:
             limit (int | None, optional):
                 Maximum number of nodes to return.
-                If None, return all matching nodes.
-            required_labels (set[str] | None, optional):
-                Set of labels that the nodes must have.
+                If None, return as many matching nodes as possible
+                (default: None).
+            required_labels (Collection[str] | None, optional):
+                Collection of labels that the nodes must have.
                 If None, no label filtering is applied.
-            required_properties (dict[str, Property], optional):
-                Dictionary of property names and their required values
+            required_properties (Mapping[str, Property], optional):
+                Mapping of property names to their required values
                 that the nodes must have.
                 If empty, no property filtering is applied.
             include_missing_properties (bool, optional):
@@ -210,14 +221,14 @@ class VectorGraphStore(ABC):
     @abstractmethod
     async def delete_nodes(
         self,
-        node_uuids: list[UUID],
+        node_uuids: Collection[UUID],
     ):
         """
         Delete nodes from the graph store.
 
         Args:
-            node_uuids (list[UUID]):
-                List of UUIDs of the nodes to delete.
+            node_uuids (Collection[UUID]):
+                Collection of UUIDs of the nodes to delete.
         """
         raise NotImplementedError
 
