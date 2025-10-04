@@ -7,8 +7,9 @@ import json
 import time
 from typing import Any
 
-from openai import AsyncOpenAI
 import openai
+
+from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
@@ -53,7 +54,7 @@ class OpenAILanguageModel(LanguageModel):
         if api_key is None:
             raise ValueError("Language API key must be provided")
 
-        self._client = AsyncOpenAI(api_key=api_key)
+        self._client = openai.AsyncOpenAI(api_key=api_key)
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(
@@ -127,9 +128,9 @@ class OpenAILanguageModel(LanguageModel):
         ]
 
         start_time = time.monotonic()
+
         sleep_seconds = 1
         for attempt in range(max_attempts):
-            sleep_seconds *= 2
             try:
                 response = await self._client.responses.create(
                     model=self._model,
@@ -137,31 +138,33 @@ class OpenAILanguageModel(LanguageModel):
                     tools=tools,
                     tool_choice=tool_choice,
                 )  # type: ignore
-            # translate vendor specific exeception to common error
-            except openai.AuthenticationError as e:
-                raise ValueError("Invalid OpenAI API key") from e
-            except openai.RateLimitError as e:
+                break
+            except (
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+            ) as e:
+                # Exception may be retried.
                 if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI rate limit exceeded") from e
+                    raise ExternalServiceAPIError(
+                        "Failed to generate response after "
+                        f"{max_attempts} attempts "
+                        "due to retryable OpenAI API error"
+                    ) from e
+
                 await asyncio.sleep(sleep_seconds)
+                sleep_seconds *= 2
                 continue
-            except openai.APITimeoutError as e:
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI API timeout") from e
-                await asyncio.sleep(sleep_seconds)
-                continue
-            except openai.APIConnectionError as e:
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI API connection error") from e
-                await asyncio.sleep(sleep_seconds)
-                continue
-            except openai.BadRequestError as e:
-                raise ValueError("OpenAI invalid request") from e
             except openai.APIError as e:
-                raise ValueError("OpenAI API error") from e
+                raise ExternalServiceAPIError(
+                    "Failed to generate response "
+                    "due to non-retryable OpenAI API error"
+                ) from e
             except openai.OpenAIError as e:
-                raise ValueError("OpenAI error") from e
-            break
+                raise RuntimeError(
+                    "Failed to generate response "
+                    "due to non-retryable OpenAI error"
+                ) from e
 
         end_time = time.monotonic()
 

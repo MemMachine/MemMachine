@@ -3,17 +3,15 @@ OpenAI-based embedder implementation.
 """
 
 import asyncio
-import logging
 import time
 from typing import Any
 
 import openai
 
+from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .embedder import Embedder
-
-logger = logging.getLogger(__name__)
 
 
 class OpenAIEmbedder(Embedder):
@@ -89,21 +87,22 @@ class OpenAIEmbedder(Embedder):
     async def ingest_embed(
         self,
         inputs: list[Any],
-        max_attempts: int = 1
+        max_attempts: int = 1,
     ) -> list[list[float]]:
         return await self._embed(inputs, max_attempts)
 
     async def search_embed(
         self,
         queries: list[Any],
-        max_attempts: int = 1
+        max_attempts: int = 1,
     ) -> list[list[float]]:
         return await self._embed(queries, max_attempts)
 
     async def _embed(
-            self,
-            inputs: list[Any],
-            max_attempts: int = 1) -> list[list[float]]:
+        self,
+        inputs: list[Any],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
         if not inputs:
             return []
         if max_attempts <= 0:
@@ -114,42 +113,41 @@ class OpenAIEmbedder(Embedder):
         ]
 
         start_time = time.monotonic()
+
         sleep_seconds = 1
         for attempt in range(max_attempts):
-            sleep_seconds *= 2
             try:
                 response = await self._client.embeddings.create(
                     input=inputs, model=self._model
                 )
-            # translate vendor specific exeception to common error
-            # for rate limit and timeout error, may retry the request
-            except openai.AuthenticationError as e:
-                raise ValueError("Invalid OpenAI API key") from e
-            except openai.RateLimitError as e:
-                logger.warning("OpenAI rate limit exceeded")
+                break
+            except (
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+            ) as e:
+                # Exception may be retried.
                 if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI rate limit exceeded") from e
+                    raise ExternalServiceAPIError(
+                        "Failed to create embeddings after "
+                        f"{max_attempts} attempts "
+                        "due to retryable OpenAI API error"
+                    ) from e
+
                 await asyncio.sleep(sleep_seconds)
+                sleep_seconds *= 2
                 continue
-            except openai.APITimeoutError as e:
-                logger.warning("OpenAI API timeout")
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI API timeout") from e
-                await asyncio.sleep(sleep_seconds)
-                continue
-            except openai.APIConnectionError as e:
-                logger.warning("OpenAI API connection error")
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI API connection error") from e
-                await asyncio.sleep(sleep_seconds)
-                continue
-            except openai.BadRequestError as e:
-                raise ValueError("OpenAI invalid request") from e
             except openai.APIError as e:
-                raise ValueError("OpenAI API error") from e
+                raise ExternalServiceAPIError(
+                    "Failed to create embeddings "
+                    "due to non-retryable OpenAI API error"
+                ) from e
             except openai.OpenAIError as e:
-                raise ValueError("OpenAI error") from e
-            break
+                raise RuntimeError(
+                    "Failed to create embeddings "
+                    "due to non-retryable OpenAI error"
+                ) from e
+
         end_time = time.monotonic()
 
         if self._collect_metrics:

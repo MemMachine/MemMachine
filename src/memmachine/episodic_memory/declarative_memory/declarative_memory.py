@@ -13,6 +13,7 @@ from string import Template
 from typing import Any, Self, cast
 from uuid import uuid4
 
+from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.reranker.reranker import Reranker
 from memmachine.common.vector_graph_store import Edge, Node, VectorGraphStore
@@ -297,13 +298,10 @@ class DeclarativeMemory:
         try:
             mutated_derivative_embeddings = await self._embedder.ingest_embed(
                 [derivative.content for derivative in mutated_derivatives],
-                max_attempts=3
+                max_attempts=3,
             )
-        except (ValueError, IOError) as e:
-            logger.error(
-                "Failed to create embeddings for mutated derivatives %s",
-                str(e)
-            )
+        except (ExternalServiceAPIError, ValueError, RuntimeError):
+            logger.error("Failed to create embeddings for mutated derivatives")
             return []
 
         mutated_derivative_nodes = [
@@ -541,9 +539,14 @@ class DeclarativeMemory:
         )
 
         # Embed derivatives.
-        derivative_embeddings = await self._embedder.search_embed(
-            [derivative.content for derivative in derivatives]
-        )
+        try:
+            derivative_embeddings = await self._embedder.search_embed(
+                [derivative.content for derivative in derivatives],
+                max_attempts=3,
+            )
+        except (ExternalServiceAPIError, ValueError, RuntimeError):
+            logger.error("Failed to create embeddings for query derivatives")
+            return []
 
         # Search graph store for vector matches.
         search_similar_nodes_tasks = [

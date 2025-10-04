@@ -24,13 +24,21 @@ class Embedder(ABC):
             inputs (list[Any]):
                 A list of inputs to be embedded.
             max_attempts (int):
-                The maximum number of attempts to make before giving up.
-                Defaults to 1.
+                The maximum number of attempts to make before giving up
+                (default: 1).
 
 
         Returns:
             list[list[float]]:
                 A list of embedding vectors corresponding to each input.
+
+        Raises:
+            ExternalServiceAPIError:
+                Errors from the underlying embedding API.
+            ValueError:
+                Invalid input or max_attempts.
+            RuntimeError:
+                Catch-all for any other errors.
         """
         raise NotImplementedError
 
@@ -47,18 +55,19 @@ class Embedder(ABC):
             queries (list[Any]):
                 A list of queries to be embedded.
             max_attempts (int):
-                The maximum number of attempts to make before giving up.
-                Defaults to 1.
+                The maximum number of attempts to make before giving up
+                (default: 1).
 
         Returns:
             list[list[float]]:
                 A list of embedding vectors corresponding to each query.
 
         Raises:
-            IOError:
-                If IO error happens. The IO errors can include: Netowrk Error,
-                Rate Litmit, Timeout, etc.
+            ExternalServiceAPIError:
+                Errors from the underlying embedding API.
             ValueError:
-                Any other errors except the IOError.
+                Invalid input or max_attempts.
+            RuntimeError:
+                Catch-all for any other errors.
         """
         raise NotImplementedError
