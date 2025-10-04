@@ -374,49 +374,6 @@ The CRM agent includes Slack integration for real-time communication:
    - Port configuration
    - MemMachine backend integration
 
-### Testing
-
-Each agent can be tested independently:
-
-```bash
-# Test memory storage
-curl -X POST "http://localhost:8080/v1/memories" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session": {
-      "group_id": "test_group",
-      "agent_id": ["test_agent"],
-      "user_id": ["test_user"],
-      "session_id": "test_session_123"
-    },
-    "producer": "test_user",
-    "produced_for": "test_user",
-    "episode_content": "I am testing MemMachine v1/memories.",
-    "episode_type": "conversation",
-    "metadata": {"test": true}
-  }'
-# Test query processing
-curl -X POST "http://localhost:8080/v1/memories/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session": {
-      "group_id": "test_group",
-      "agent_id": ["test_agent"],
-      "user_id": ["test_user"],
-      "session_id": "test_session_search"
-    },
-    "query": "What do you know about me?",
-    "limit": 5,
-    "filter": {
-      "type": "conversation",
-      "date_range": "2024-01-01"
-    }
-  }'
-
-# Test agent health
-curl -X GET "http://localhost:8080/health"
-```
-
 ## Troubleshooting
 
 ### Common Issues

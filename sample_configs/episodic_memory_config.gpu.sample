@@ -53,4 +53,4 @@ reranker:
     model_name: "cross-encoder/qnli-electra-base"
 
 prompt:
-  profile: writing_assistant_prompt
+  profile: profile_prompt

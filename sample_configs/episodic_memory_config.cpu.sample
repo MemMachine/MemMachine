@@ -49,4 +49,4 @@ reranker:
     type: "bm25"
 
 prompt:
-  profile: writing_assistant_prompt
+  profile: profile_prompt

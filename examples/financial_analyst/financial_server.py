@@ -36,12 +36,12 @@ async def store_data(user_id: str, query: str):
             },
         }
         
-        response = requests.post(f"{MEMORY_BACKEND_URL}/add_memory", json=episode_data, timeout=1000)
+        response = requests.post(f"{MEMORY_BACKEND_URL}/v1/memories", json=episode_data, timeout=1000)
         response.raise_for_status()
         return {"status": "success", "data": response.json()}
     except Exception:
-        logging.exception("Error occurred in /memory store_data")
-        return {"status": "error", "message": "Internal error in /memory store_data"}
+        logging.exception("Error occurred in /v1/memories store_data")
+        return {"status": "error", "message": "Internal error in /v1/memories store_data"}
 
 @app.get("/memory")
 async def get_data(query: str, user_id: str, timestamp: str):
@@ -60,10 +60,10 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "filter": {"producer_id": user_id}
         }
         
-        logging.debug(f"Sending POST request to {MEMORY_BACKEND_URL}/search_memory")
+        logging.debug(f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search")
         logging.debug(f"Search data: {search_data}")
         
-        response = requests.post(f"{MEMORY_BACKEND_URL}/search_memory", json=search_data, timeout=1000)
+        response = requests.post(f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000)
         
         logging.debug(f"Response status: {response.status_code}")
         logging.debug(f"Response headers: {dict(response.headers)}")
@@ -109,8 +109,8 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "query_type": "financial_analyst"
         }
     except Exception:
-        logging.exception("Error occurred in /memory get_data")
-        return {"status": "error", "message": "Internal error in /memory get_data"}
+        logging.exception("Error occurred in /v1/memories get_data")
+        return {"status": "error", "message": "Internal error in /v1/memories get_data"}
 
 @app.post("/memory/store-and-search")
 async def store_and_search_data(user_id: str, query: str):
@@ -135,7 +135,7 @@ async def store_and_search_data(user_id: str, query: str):
             },
         }
         
-        resp = requests.post(f"{MEMORY_BACKEND_URL}/add_memory", json=episode_data, timeout=1000)
+        resp = requests.post(f"{MEMORY_BACKEND_URL}/v1/memories", json=episode_data, timeout=1000)
         
         logging.debug(f"Store-and-search response status: {resp.status_code}")
         if resp.status_code != 200:
@@ -149,7 +149,7 @@ async def store_and_search_data(user_id: str, query: str):
             "filter": {"producer_id": user_id}
         }
         
-        search_resp = requests.post(f"{MEMORY_BACKEND_URL}/search_memory", json=search_data, timeout=1000)
+        search_resp = requests.post(f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000)
         
         logging.debug(f"Store-and-search response status: {search_resp.status_code}")
         if search_resp.status_code != 200:
