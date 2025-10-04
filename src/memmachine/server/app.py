@@ -16,17 +16,17 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any
+from typing import Any, ClassVar, Annotated
+import re
 
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastmcp import Context, FastMCP
 from prometheus_client import make_asgi_app
-from pydantic import BaseModel
-
-from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
+from pydantic import BaseModel, Field, field_validator, BeforeValidator
 from memmachine.common.language_model.openai_language_model import (
     OpenAILanguageModel,
 )
@@ -47,20 +47,44 @@ logger = logging.getLogger(__name__)
 class SessionData(BaseModel):
     """Request model for session information."""
 
-    group_id: str | None
-    agent_id: list[str] | None
-    user_id: list[str] | None
-    session_id: str
+    ID_PATTERN: ClassVar[str] = r"^[a-zA-Z0-9_-]+$"
+
+    group_id: str | None = Field(None, pattern=ID_PATTERN)
+    agent_id: list[str] | None = None
+    user_id: list[str] | None = None
+    session_id: str = Field(..., pattern=ID_PATTERN)
+
+    @field_validator('agent_id', 'user_id', mode='after')
+    @classmethod
+    def validate_agent_user_ids(cls, v: list[str] | None):
+        if v is None:
+            return v
+        if len(v) == 0:
+            raise ValueError("List cannot be empty if provided.")
+        for item in v:
+            if not re.match(cls.ID_PATTERN, item):
+                raise ValueError(f"Invalid character in ID: {item}. Must be alphanumeric, hyphens, or underscores.")
+        return v
 
 
 # === Request Models ===
+# Custom type for episode_content
+def validate_episode_content_type(v: Any) -> str:
+    if not isinstance(v, str):
+        raise ValueError("episode_content must be a string.")
+    if len(v) == 0:
+        raise ValueError("episode_content cannot be an empty string.")
+    return v
+
+EpisodeContentString = Annotated[str, BeforeValidator(validate_episode_content_type)]
+
 class NewEpisode(BaseModel):
     """Request model for adding a new memory episode."""
 
     session: SessionData
     producer: str
     produced_for: str
-    episode_content: str | list[float]
+    episode_content: EpisodeContentString # Use the custom type
     episode_type: str
     metadata: dict[str, Any] | None
 
@@ -176,7 +200,7 @@ async def http_app_lifespan(application: FastAPI):
 
     # TODO switch to using builder initialization
     llm_model = OpenAILanguageModel({"api_key": api_key, "model": model})
-    embeddings = OpenAIEmbedder({"api_key": api_key})
+    embeddings = OpenAIEmbedder({"api_key": api_key})  # noqa: F821
 
     global profile_memory
     prompt_file = yaml_config.get("prompt", {}).get(
@@ -230,6 +254,13 @@ async def mcp_http_lifespan(application: FastAPI):
 app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
 app.mount("/metrics", make_asgi_app())
+
+@app.exception_handler(ValueError)
+async def value_error_exception_handler(request: Request, exc: ValueError):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc)},
+    )
 
 
 @mcp.tool()
