@@ -48,7 +48,7 @@ class LanguageModelBuilder(Builder):
                         f"{injected_metrics_factory_id} "
                         "not found in injections"
                     )
-                elif not isinstance(
+                if not isinstance(
                     injected_metrics_factory, MetricsFactory
                 ):
                     raise TypeError(
@@ -56,6 +56,7 @@ class LanguageModelBuilder(Builder):
                         f"{injected_metrics_factory_id} "
                         "is not a MetricsFactory"
                     )
+            return injected_metrics_factory
 
         match name:
             case "openai":
@@ -66,6 +67,7 @@ class LanguageModelBuilder(Builder):
                         "api_key": config["api_key"],
                         "metrics_factory": injected_metrics_factory,
                         "user_metrics_labels": config.get("user_metrics_labels", {}),
+                        "max_delay": config.get("max_delay", 120),
                     }
                 )
 
@@ -82,6 +84,7 @@ class LanguageModelBuilder(Builder):
                         "user_metrics_labels": config.get(
                             "user_metrics_labels", {}
                         ),
+                        "max_delay": config.get("max_delay", 120),
                     }
                 )
 

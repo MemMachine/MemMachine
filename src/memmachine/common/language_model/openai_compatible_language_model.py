@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from openai import AsyncOpenAI
 import openai
@@ -30,15 +31,16 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                 Configuration dictionary containing:
                 - api_key (str):
                   API key for accessing the OpenAI service.
-                - model (str, optional):
+                - model (str):
                   Name of the OpenAI model to use
-                  (default: "gpt-5-nano").
                 - metrics_factory (MetricsFactory, optional):
                   An instance of MetricsFactory
                   for collecting usage metrics.
                 - user_metrics_labels (dict[str, str], optional):
                   Labels to attach to the collected metrics.
                 - base_url: The base URL of the model
+                - max_delay: maximal seconds to delay when retrying API calls.
+                  The default value is 120 seconds.
 
         Raises:
             ValueError:
@@ -48,16 +50,36 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         """
         super().__init__()
 
-        self._model = config.get("model", "gpt-5-nano")
+        self._model = config.get("model")
+        if self._model is None:
+            raise ValueError("The model name must be configured")
+
+        if not isinstance(self._model, str):
+            raise TypeError("The model name must be a string")
 
         api_key = config.get("api_key")
         if api_key is None:
             raise ValueError("Language API key must be provided")
 
+        base_url = config.get("base_url")
+        if base_url is not None:
+            try:
+                parsed_url = urlparse(base_url)
+                if not parsed_url.scheme or not parsed_url.netloc:
+                    raise ValueError(f"Invalid base URL: {base_url}")
+            except ValueError as e:
+                raise ValueError(f"Invalid base URL: {base_url}") from e
+
         self._client = AsyncOpenAI(
             api_key=api_key,
-            base_url=config.get("base_url")
+            base_url=base_url
         )
+
+        self._max_delay = config.get("max_delay", 120)
+        if not isinstance(self._max_delay, int):
+            raise TypeError("max_delay must be an integer")
+        if self._max_delay <= 0:
+            raise ValueError("max_delay must be a positive integer")
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(
@@ -71,6 +93,10 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         if metrics_factory is not None:
             self._collect_metrics = True
             self._user_metrics_labels = config.get("user_metrics_labels", {})
+            if not isinstance(self._user_metrics_labels, dict):
+                raise TypeError(
+                    "user_metrics_labels must be a dictionary"
+                )
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
@@ -94,6 +120,21 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                 label_names=label_names,
             )
 
+    @property
+    def model(self) -> str:
+        """Get the configured model name"""
+        return self._model
+
+    @property
+    def max_delay(self) -> int:
+        """Get the configured maximum delay"""
+        return self._max_delay
+
+    @property
+    def collect_metrics(self) -> bool:
+        """Get whether metrics should be collected"""
+        return self._collect_metrics
+
     async def generate_response(
         self,
         system_prompt: str | None = None,
@@ -114,6 +155,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         sleep_seconds = 1
         for attempt in range(max_attempts):
             sleep_seconds *= 2
+            sleep_seconds = min(sleep_seconds, self._max_delay)
             try:
                 response = await self._client.chat.completions.create(
                     model=self._model,
@@ -168,15 +210,20 @@ class OpenAICompatibleLanguageModel(LanguageModel):
             )
 
         function_calls_arguments = []
-        if response.choices[0].message.tool_calls:
-            for tool_call in response.choices[0].message.tool_calls:
-                function_calls_arguments.append({
-                    "call_id": tool_call.id,
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": json.loads(tool_call.function.arguments)
-                    }
-                })
+        try:
+            if response.choices[0].message.tool_calls:
+                for tool_call in response.choices[0].message.tool_calls:
+                    function_calls_arguments.append({
+                        "call_id": tool_call.id,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": json.loads(
+                                tool_call.function.arguments
+                            ),
+                        }
+                    })
+        except (json.JSONDecodeError) as e:
+            raise ValueError("JSON decode error") from e
 
         return (
             response.choices[0].message.content,

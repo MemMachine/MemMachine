@@ -37,12 +37,13 @@ class OpenAILanguageModel(LanguageModel):
                   API key for accessing the OpenAI service.
                 - model (str, optional):
                   Name of the OpenAI model to use
-                  (default: "gpt-5-nano").
                 - metrics_factory (MetricsFactory, optional):
                   An instance of MetricsFactory
                   for collecting usage metrics.
                 - user_metrics_labels (dict[str, str], optional):
                   Labels to attach to the collected metrics.
+                - max_delay: maximal seconds to delay when retrying API calls.
+                  The default value is 120 seconds.
 
         Raises:
             ValueError:
@@ -52,13 +53,24 @@ class OpenAILanguageModel(LanguageModel):
         """
         super().__init__()
 
-        self._model = config.get("model", "gpt-5-nano")
+        self._model = config.get("model")
+        if self._model is None:
+            raise ValueError("The model name must be configured")
+        if not isinstance(self._model, str):
+            raise TypeError("The model name must be a string")
 
         api_key = config.get("api_key")
         if api_key is None:
             raise ValueError("Language API key must be provided")
 
         self._client = openai.AsyncOpenAI(api_key=api_key)
+
+        self._max_delay = config.get("max_delay", 120)
+        if not isinstance(self._max_delay, int):
+            raise TypeError("max_delay must be an integer")
+
+        if self._max_delay <= 0:
+            raise ValueError("max_delay must be a positive integer")
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(
@@ -70,6 +82,10 @@ class OpenAILanguageModel(LanguageModel):
         if metrics_factory is not None:
             self._collect_metrics = True
             self._user_metrics_labels = config.get("user_metrics_labels", {})
+            if not isinstance(self._user_metrics_labels, dict):
+                raise TypeError(
+                    "user_metrics_labels must be a dictionary"
+                )
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
@@ -105,6 +121,21 @@ class OpenAILanguageModel(LanguageModel):
                 "Latency in seconds for OpenAI language model requests",
                 label_names=label_names,
             )
+
+    @property
+    def model(self) -> str:
+        """Retrieves the model name."""
+        return self._model
+
+    @property
+    def max_delay(self) -> int:
+        """Retrieves the maximum delay in seconds."""
+        return self._max_delay
+
+    @property
+    def collect_metrics(self) -> bool:
+        """Retrieves whether metrics are collected."""
+        return self._collect_metrics
 
     async def generate_response(
         self,
@@ -173,6 +204,7 @@ class OpenAILanguageModel(LanguageModel):
                 )
                 await asyncio.sleep(sleep_seconds)
                 sleep_seconds *= 2
+                sleep_seconds = min(sleep_seconds, self._max_delay)
                 continue
             except (openai.APIError, openai.OpenAIError) as e:
                 error_message = (
@@ -219,18 +251,23 @@ class OpenAILanguageModel(LanguageModel):
                 value=end_time - start_time,
                 labels=self._user_metrics_labels,
             )
+        if response.output is None:
+            return (response.output_text or "", [])
 
-        function_calls_arguments = [
-            {
-                "call_id": output.call_id,
-                "function": {
-                    "name": output.name,
-                    "arguments": json.loads(output.arguments),
+        try:
+            function_calls_arguments = [
+                {
+                    "call_id": output.call_id,
+                    "function": {
+                        "name": output.name,
+                        "arguments": json.loads(output.arguments),
+                    }
                 }
-            }
-            for output in response.output
-            if output.type == "function_call"
-        ]
+                for output in response.output
+                if output.type == "function_call"
+            ]
+        except (json.JSONDecodeError) as e:
+            raise ValueError("JSON decode error") from e
 
         return (
             response.output_text,
