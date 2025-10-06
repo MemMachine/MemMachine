@@ -65,8 +65,7 @@ def full_config(mock_metrics_factory):
 
 
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-     .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 def test_init_success(mock_async_openai, minimal_config):
     """Test successful initialization."""
@@ -79,8 +78,7 @@ def test_init_success(mock_async_openai, minimal_config):
 
 
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 def test_init_with_full_config(mock_async_openai, full_config):
     """Test successful initialization with all optional parameters."""
@@ -166,8 +164,7 @@ async def test_generate_response_invalid_max_attempts(minimal_config):
 
 @pytest.mark.asyncio
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_generate_response_success(mock_async_openai, minimal_config):
     """Test a successful call to generate_response."""
@@ -198,8 +195,7 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
 
 @pytest.mark.asyncio
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_generate_response_with_tool_calls(
     mock_async_openai, minimal_config
@@ -236,8 +232,7 @@ async def test_generate_response_with_tool_calls(
 
 @pytest.mark.asyncio
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_generate_response_tool_call_json_error(
     mock_async_openai, minimal_config
@@ -264,8 +259,7 @@ async def test_generate_response_tool_call_json_error(
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_generate_response_retry_on_rate_limit(
     mock_async_openai, mock_sleep, minimal_config
@@ -296,8 +290,7 @@ async def test_generate_response_retry_on_rate_limit(
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_generate_response_fail_after_max_retries(
     mock_async_openai, mock_sleep, minimal_config
@@ -346,8 +339,7 @@ async def test_generate_response_fail_after_max_retries(
     ],
 )
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_generate_response_exception_mapping(
     mock_async_openai, minimal_config, exception, expected_message
@@ -366,8 +358,7 @@ async def test_generate_response_exception_mapping(
 
 @pytest.mark.asyncio
 @patch(
-    """memmachine.common.language_model.openai_compatible_language_model
-    .AsyncOpenAI"""
+    "memmachine.common.language_model.openai_compatible_language_model.AsyncOpenAI"
 )
 async def test_metrics_collection(mock_async_openai, full_config):
     """Test that metrics are collected on a successful call."""

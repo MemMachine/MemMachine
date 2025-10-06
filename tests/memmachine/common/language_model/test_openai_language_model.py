@@ -2,7 +2,6 @@
 Unit tests for OpenAICompatibleLanguageModel.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
