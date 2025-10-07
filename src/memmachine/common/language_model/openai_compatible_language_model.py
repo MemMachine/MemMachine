@@ -4,15 +4,20 @@ OpenAI-completions API based language model implementation.
 
 import asyncio
 import json
+import logging
 import time
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
+from uuid import uuid4
 
-from openai import AsyncOpenAI
 import openai
+
+from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleLanguageModel(LanguageModel):
@@ -70,10 +75,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
             except ValueError as e:
                 raise ValueError(f"Invalid base URL: {base_url}") from e
 
-        self._client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
 
         self._max_delay = config.get("max_delay", 120)
         if not isinstance(self._max_delay, int):
@@ -85,18 +87,14 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         if metrics_factory is not None and not isinstance(
             metrics_factory, MetricsFactory
         ):
-            raise TypeError(
-                "Metrics factory must be an instance of MetricsFactory"
-            )
+            raise TypeError("Metrics factory must be an instance of MetricsFactory")
 
         self._collect_metrics = False
         if metrics_factory is not None:
             self._collect_metrics = True
             self._user_metrics_labels = config.get("user_metrics_labels", {})
             if not isinstance(self._user_metrics_labels, dict):
-                raise TypeError(
-                    "user_metrics_labels must be a dictionary"
-                )
+                raise TypeError("user_metrics_labels must be a dictionary")
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
@@ -123,7 +121,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
     @property
     def model(self) -> str:
         """Get the configured model name"""
-        return self._model
+        return cast(str, self._model)
 
     @property
     def max_delay(self) -> int:
@@ -150,12 +148,11 @@ class OpenAICompatibleLanguageModel(LanguageModel):
             {"role": "system", "content": system_prompt or ""},
             {"role": "user", "content": user_prompt or ""},
         ]
+        generate_response_call_uuid = uuid4()
 
         start_time = time.monotonic()
         sleep_seconds = 1
-        for attempt in range(max_attempts):
-            sleep_seconds *= 2
-            sleep_seconds = min(sleep_seconds, self._max_delay)
+        for attempt in range(1, max_attempts + 1):
             try:
                 response = await self._client.chat.completions.create(
                     model=self._model,
@@ -163,31 +160,46 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                     tools=tools,
                     tool_choice=tool_choice,
                 )  # type: ignore
-            # translate vendor specific exeception to common error
-            except openai.AuthenticationError as e:
-                raise ValueError("Invalid OpenAI API key") from e
-            except openai.RateLimitError as e:
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI rate limit exceeded") from e
+                break
+            except (
+                openai.RateLimitError,
+                openai.APITimeoutError,
+                openai.APIConnectionError,
+            ) as e:
+                # Exception may be retried.
+                if attempt >= max_attempts:
+                    error_message = (
+                        f"[call uuid: {generate_response_call_uuid}] "
+                        "Giving up generating response "
+                        f"after failed attempt {attempt} "
+                        f"due to retryable {type(e).__name__}: "
+                        f"max attempts {max_attempts} reached"
+                    )
+                    logger.error(error_message)
+                    raise ExternalServiceAPIError(error_message)
+
+                logger.info(
+                    "[call uuid: %s] "
+                    "Retrying generating response in %d seconds "
+                    "after failed attempt %d due to retryable %s...",
+                    generate_response_call_uuid,
+                    sleep_seconds,
+                    attempt,
+                    type(e).__name__,
+                )
                 await asyncio.sleep(sleep_seconds)
+                sleep_seconds *= 2
+                sleep_seconds = min(sleep_seconds, self._max_delay)
                 continue
-            except openai.APITimeoutError as e:
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI API timeout") from e
-                await asyncio.sleep(sleep_seconds)
-                continue
-            except openai.APIConnectionError as e:
-                if attempt + 1 >= max_attempts:
-                    raise IOError("OpenAI API connection error") from e
-                await asyncio.sleep(sleep_seconds)
-                continue
-            except openai.BadRequestError as e:
-                raise ValueError("OpenAI invalid request") from e
-            except openai.APIError as e:
-                raise ValueError(f"OpenAI API error {str(e)}") from e
             except openai.OpenAIError as e:
-                raise ValueError("OpenAI error") from e
-            break
+                error_message = (
+                    f"[call uuid: {generate_response_call_uuid}] "
+                    "Giving up generating response "
+                    f"after failed attempt {attempt} "
+                    f"due to non-retryable {type(e).__name__}"
+                )
+                logger.error(error_message)
+                raise ExternalServiceAPIError(error_message)
 
         end_time = time.monotonic()
 
@@ -213,16 +225,16 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         try:
             if response.choices[0].message.tool_calls:
                 for tool_call in response.choices[0].message.tool_calls:
-                    function_calls_arguments.append({
-                        "call_id": tool_call.id,
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": json.loads(
-                                tool_call.function.arguments
-                            ),
+                    function_calls_arguments.append(
+                        {
+                            "call_id": tool_call.id,
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": json.loads(tool_call.function.arguments),
+                            },
                         }
-                    })
-        except (json.JSONDecodeError) as e:
+                    )
+        except json.JSONDecodeError as e:
             raise ValueError("JSON decode error") from e
 
         return (

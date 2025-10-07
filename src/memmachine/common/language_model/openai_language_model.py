@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import openai
@@ -83,9 +83,7 @@ class OpenAILanguageModel(LanguageModel):
             self._collect_metrics = True
             self._user_metrics_labels = config.get("user_metrics_labels", {})
             if not isinstance(self._user_metrics_labels, dict):
-                raise TypeError(
-                    "user_metrics_labels must be a dictionary"
-                )
+                raise TypeError("user_metrics_labels must be a dictionary")
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
@@ -125,7 +123,7 @@ class OpenAILanguageModel(LanguageModel):
     @property
     def model(self) -> str:
         """Retrieves the model name."""
-        return self._model
+        return cast(str, self._model)
 
     @property
     def max_delay(self) -> int:
@@ -206,7 +204,7 @@ class OpenAILanguageModel(LanguageModel):
                 sleep_seconds *= 2
                 sleep_seconds = min(sleep_seconds, self._max_delay)
                 continue
-            except (openai.APIError, openai.OpenAIError) as e:
+            except openai.OpenAIError as e:
                 error_message = (
                     f"[call uuid: {generate_response_call_uuid}] "
                     "Giving up generating response "
@@ -214,10 +212,7 @@ class OpenAILanguageModel(LanguageModel):
                     f"due to non-retryable {type(e).__name__}"
                 )
                 logger.error(error_message)
-                if isinstance(e, openai.APIError):
-                    raise ExternalServiceAPIError(error_message)
-                else:
-                    raise RuntimeError(error_message)
+                raise ExternalServiceAPIError(error_message)
 
         end_time = time.monotonic()
         logger.debug(
@@ -261,12 +256,12 @@ class OpenAILanguageModel(LanguageModel):
                     "function": {
                         "name": output.name,
                         "arguments": json.loads(output.arguments),
-                    }
+                    },
                 }
                 for output in response.output
                 if output.type == "function_call"
             ]
-        except (json.JSONDecodeError) as e:
+        except json.JSONDecodeError as e:
             raise ValueError("JSON decode error") from e
 
         return (
