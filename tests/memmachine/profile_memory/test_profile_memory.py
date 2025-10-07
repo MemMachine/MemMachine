@@ -8,13 +8,11 @@ from memmachine.common.embedder import Embedder
 from memmachine.common.language_model import LanguageModel
 from memmachine.profile_memory.profile_memory import ProfileMemory
 from memmachine.profile_memory.storage.storage_base import ProfileStorageBase
-
 from tests.memmachine.profile_memory.storage.in_memory_profile_storage import InMemoryProfileStorage
 from tests.memmachine.common.reranker.test_embedder_reranker import FakeEmbedder
 
 # Mark all tests in this file as asyncio
 pytestmark = pytest.mark.asyncio
-
 
 @pytest.fixture
 def mock_embedder():
@@ -200,7 +198,7 @@ async def test_add_persona_message_with_speaker_metadata(profile_memory):
         metadata={"speaker": "User"},
     )
 
-    history = await profile_memory._profile_storage.get_last_history_messages(
+    history = await profile_memory._profile_storage.get_ingested_history_messages(
         user_id="test_user",
         k=1,
     )

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from importlib import import_module
 
@@ -7,6 +8,8 @@ import pytest_asyncio
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import OpenAILanguageModel
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
+
 from tests.memmachine.profile_memory.storage.in_memory_profile_storage import InMemoryProfileStorage
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.manual_integration]
@@ -38,9 +41,22 @@ def llm_model(config):
     })
 
 
+def in_memory_profile_storage():
+    return InMemoryProfileStorage()
+
+def asyncpg_profile_storage():
+    return AsyncPgProfileStorage({
+        "host": "localhost",
+        "port": 5432,
+        "database": "memmachine",
+        "user": "memmachine",
+        "password": "memmachine_password",
+    })
+
+
 @pytest.fixture
 def storage():
-    return InMemoryProfileStorage()
+    return asyncpg_profile_storage()
 
 
 @pytest.fixture
@@ -79,7 +95,6 @@ class TestLongMemEvalIngestion:
                 await profile_memory.add_persona_message(
                     user_id=user_id,
                     content=turn["content"],
-                    wait_consolidate=True,
                 )
 
     @staticmethod
@@ -93,16 +108,20 @@ class TestLongMemEvalIngestion:
                                                                    user_id=user_id)
         profile_search_resp = profile_search_resp[:4]
 
-        answer_prompt_template = (
+        system_prompt = (
             "You are an AI assistant who answers questions based on provided information. "
             "I will give you the user persona profile between a user and an assistnat. "
             "Please answer the question based on the relevant history context and user's persona profile information. "
             "If relevant information is not found, please say that you don't know with the exact format: "
             "'The relevant information is not found in the user's persona profile.'."
-            "\n\n\nPersona Profile:\n{}\nQuestion: {}\nAnswer:"
         )
+
+        answer_prompt_template = (
+            "Persona Profile:\n{}\nQuestion: {}\nAnswer:"
+        )
+
         eval_prompt = answer_prompt_template.format(profile_search_resp, question_str)
-        eval_resp = await llm_model.generate_response(eval_prompt)
+        eval_resp = await llm_model.generate_response(system_prompt, eval_prompt)
         return eval_resp
 
     @pytest.fixture
@@ -128,6 +147,15 @@ class TestLongMemEvalIngestion:
         await self.ingest_question_convos("test_user",
                                           profile_memory=profile_memory,
                                           conversation_sessions=long_mem_convos)
+        count = 1
+        for i in range(300):
+            count = await profile_memory.uningested_message_count()
+            if count == 0:
+                break
+            await asyncio.sleep(1)
+
+        if count != 0:
+            pytest.fail("Messages are not ingested")
 
         eval_resp = await self.eval_answer("test_user",
                                            profile_memory=profile_memory,

@@ -4,7 +4,6 @@ import pytest_asyncio
 
 from tests.memmachine.profile_memory.storage.in_memory_profile_storage import InMemoryProfileStorage
 
-
 @pytest_asyncio.fixture
 async def storage():
     store = InMemoryProfileStorage()
@@ -189,7 +188,7 @@ async def test_history_management(storage: InMemoryProfileStorage):
     storage._history_by_id[h2["id"]].timestamp = 200.0
     storage._history_by_id[h3["id"]].timestamp = 300.0
 
-    last_two = await storage.get_last_history_messages("user", k=2, isolations={})
+    last_two = await storage.get_ingested_history_messages("user", k=2, isolations={})
     assert [entry["id"] for entry in last_two] == [h3["id"], h2["id"]]
 
     window = await storage.get_history_message(
@@ -206,7 +205,7 @@ async def test_history_management(storage: InMemoryProfileStorage):
         end_time=250,
         isolations={},
     )
-    remaining = await storage.get_last_history_messages("user", k=5, isolations={})
+    remaining = await storage.get_ingested_history_messages("user", k=5, isolations={})
     assert [entry["content"] for entry in remaining] == ["third"]
 
     tenant_history = await storage.add_history(
@@ -216,7 +215,7 @@ async def test_history_management(storage: InMemoryProfileStorage):
         isolations={"tenant": "A"},
     )
     storage._history_by_id[tenant_history["id"]].timestamp = 400.0
-    tenant_messages = await storage.get_last_history_messages(
+    tenant_messages = await storage.get_ingested_history_messages(
         "user", k=5, isolations={"tenant": "A"}
     )
     assert [entry["id"] for entry in tenant_messages] == [tenant_history["id"]]
@@ -226,7 +225,7 @@ async def test_history_management(storage: InMemoryProfileStorage):
         start_time=450,
         isolations={"tenant": "A"},
     )
-    assert await storage.get_last_history_messages(
+    assert await storage.get_ingested_history_messages(
         "user", k=5, isolations={"tenant": "A"}
     ) == []
 
