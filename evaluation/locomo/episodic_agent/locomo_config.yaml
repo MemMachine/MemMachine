@@ -8,11 +8,6 @@ long_term_memory:
 sessiondb:
   uri: sqlitetest.db
 
-# Profile memory not used for LoCoMo. Note: This will use some embedding tokens.
-profile_memory:
-  model_name: my_model_id
-  database: my_db_id
-
 model:
   my_model_id:
     model_name: "gpt-4o-mini"
@@ -24,20 +19,7 @@ storage:
     port: 7687
     user: neo4j
     password: <NEO4J_PASSWORD>
-  my_db_id:
-    vendor_name: postgres
-    host: <POSTGRES_HOST>
-    port: <POSTGRES_PORT>
-    user: <POSTGRES_USER>
-    password: <POSTGRES_PASS>
-    database: <POSTGRES_DB>
-
-# Session memory not used for LoCoMo. Note: This will use some chat completion tokens.
-sessionmemory:
-  model_name: my_model_id
-  message_capacity: 50000
-  max_message_length: 16000
-  max_token_num: 8000
+    force_exact_similarity_search: true
 
 embedder:
   my_embedder_id:

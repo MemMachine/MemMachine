@@ -19,13 +19,7 @@ storage:
     port: 7687
     user: neo4j
     password: <NEO4J_PASSWORD>
-
-# Session memory not used for LoCoMo. Note: This will use some chat completion tokens.
-sessionmemory:
-  model_name: my_model_id
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
+    force_exact_similarity_search: true
 
 embedder:
   my_embedder_id:
