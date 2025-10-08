@@ -1,0 +1,23 @@
+{{- if and .Values.config.enabled (not (empty .Values.config.singleFile)) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gatus.fullname" . }}-config
+  labels:
+    {{- include "gatus.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+{{ tpl .Values.config.singleFile . | indent 4 }}
+{{- else if and .Values.config.enabled (gt (len .Values.config.files) 0) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gatus.fullname" . }}-config
+  labels:
+    {{- include "gatus.labels" . | nindent 4 }}
+data:
+{{- range $fname, $content := .Values.config.files }}
+  {{ $fname }}: |
+{{ tpl $content $ | indent 4 }}
+{{- end }}
+{{- end }}
