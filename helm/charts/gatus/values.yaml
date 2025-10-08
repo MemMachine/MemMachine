@@ -1,0 +1,130 @@
+image:
+  repository: twinproduction/gatus
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+
+ingress:
+  enabled: true
+  className: ""
+  annotations: {}
+  hosts:
+    - host: gatus.rack
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: gatus-tls
+  #   hosts:
+  #     - status.example.com
+
+# Gatus configuration
+config:
+  enabled: true
+  # Option A: provide a single file (string). (Rendered with tpl, so you can use templates.)
+  singleFile: |
+    endpoints:
+      - name: MemMachine middleware
+        url: http://middleware.memmachine.svc.cluster.local:8000/health
+        interval: 30s
+        timeout: 3s
+        method: GET
+        conditions:
+          - "[STATUS] == 200"
+          - "[BODY].status == healthy"
+      - name: MemMachine Neo4j
+        url: http://neo4j-lb-neo4j.memmachine.svc.cluster.local:7474
+        interval: 30s
+        method: GET
+        security:
+          basic:
+            username: neo4j
+            password-bcrypt-base64: Y2hhbmdlTWVTM2N1cmUK
+        conditions:
+          - "[STATUS] == 200"
+      - name: MemMachine PostMemory
+        url: http://backend.memmachine.svc.cluster.local:8080/v1/memories
+        interval: 60s
+        timeout: 30s
+        method: POST
+        body: |
+          {
+            "session": {
+              "group_id": "test-group",
+              "agent_id": ["test-agent"],
+              "user_id": ["test-user"],
+              "session_id": "test-session-123"
+            },
+            "producer": "test-user",
+            "produced_for": "test-user",
+            "episode_content": "Hello, this is a test message",
+            "episode_type": "text",
+            "metadata": {"test": true}
+          }
+        headers:
+          Content-Type: application/json
+        conditions:
+          - "[STATUS] == 200"
+        
+
+  # Option B: provide multiple files (map of filename->content). Ignored if singleFile is set (non-empty).
+  files: {}
+  #   config.yaml: |
+  #     endpoints: [...]
+  #   alerts.yaml: |
+  #     alerting: [...]
+
+# ICMP (ping) checks need NET_RAW capability
+icmp:
+  enabled: true
+
+# Persistence (SQLite history, etc.)
+persistence:
+  enabled: false
+  existingClaim: ""
+  accessModes: ["ReadWriteOnce"]
+  size: 1Gi
+  storageClass: ""
+  annotations: {}
+
+# Extra knobs
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+#  fsGroup: 1000
+
+securityContext:
+  # Add NET_RAW only if icmp.enabled
+  capabilities: {}
+
+env:
+  # Gatus reads all *.yml/*.yaml in this dir when pointing to a folder
+  - name: GATUS_CONFIG_PATH
+    value: /config
+
+extraEnv: []
+# - name: GATUS_LOG_LEVEL
+#   value: INFO
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+  path: /metrics

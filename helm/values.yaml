@@ -1,0 +1,494 @@
+namespace: memmachine
+
+backend:
+  enabled: true
+  name: backend
+  jaeger:
+    host: "memmachine-jaeger.memmachine.svc.cluster.local"
+  image:
+    repository: memmachine/memmachine
+    tag: v0.1.5-cpu
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: true
+    className: nginx
+    host: backend.rack
+    path: /
+    tls: false
+    tlsSecret: backend-tls
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /
+  resources:
+    requests:
+      cpu: 2
+      memory: 2Gi
+    limits:
+      cpu: 2
+      memory: 2Gi
+      #nvidia.com/gpu: 1
+  env: [] 
+  config:
+    file: "configuration.yml"
+    openai_api_key: "sk-OPENAI_API_KEY"
+    testmodel:
+      vendor: openai
+      name: gpt-4o-mini
+    sessionMemory:
+      model_name: testmodel
+      message_capacity: 500
+      max_message_length: 16000
+      max_token_num: 8000
+    embedder:
+      model_name: "text-embedding-3-small"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+neo4j:
+  enabled: true
+  name: neo4j
+  # REQUIRED: a unique Neo4j cluster/instance name within the namespace
+  neo4j:
+    name: neo4j
+    user: neo4j
+    # Community by default; set to "enterprise" + accept license to use EE
+    edition: "community"   # or "enterprise"
+    # You cannot use "neo4j" as the initial password. Leave empty to auto-generate.  [oai_citation:1‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-standalone/create-value-file)
+    password: "changeMeS3cure"
+    # For Enterprise, set one of: "yes" (licensed) or "eval" (evaluation).  [oai_citation:2‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-standalone/create-value-file)
+    acceptLicenseAgreement: "no"
+  
+  # Resources (tune to your cluster)
+  resources:
+    cpu: "2"
+    memory: "4Gi"
+    limits:
+      cpu: "4"
+      memory: "6Gi"
+    requests:
+      cpu: "4"
+      memory: "6Gi"
+  # Example: enable useful config via neo4j.conf settings
+  # NOTE: All neo4j.conf values must be strings.  [oai_citation:3‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/configuration)
+  config:
+    server.metrics.enabled: "true"
+    dbms.security.auth_enabled: "true"
+    server.config.strict_validation.enabled: "false"
+    server.memory.heap.initial_size: "1G"
+    server.memory.heap.max_size: "1G"
+    server.memory.pagecache.size: "1G"
+
+  # (Optional) JVM flags
+  jvm:
+    additionalJvmArguments:
+      - "-XX:+HeapDumpOnOutOfMemoryError"
+
+  # (Optional) install plugins (Neo4j 5 uses NEO4J_PLUGINS)
+  env:
+    NEO4J_PLUGINS: '["apoc","graph-data-science"]'  # adjust as needed  [oai_citation:4‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/docker/plugins)
+  ingress:
+    enabled: true
+    hostname: neo4j.rack
+
+  # Storage: default StorageClass via volume claim templates
+  volumes:
+    data:
+      mode: defaultStorageClass  # PVC with default SC. Adjust to match your cluster.  [oai_citation:5‡Graph Database & Analytics](https://neo4j.com/docs/operations-manual/current/kubernetes/quickstart-cluster/create-value-file)
+    # To use a specific StorageClass:
+    # data:
+    #   mode: dynamic
+    #   dynamic:
+    #     storageClassName: fast-ssd
+    #     requests:
+    #       storage: 50Gi
+
+  
+
+  # Service exposure (ClusterIP by default)
+  service:
+    type: ClusterIP
+
+pgvector:
+  enabled: true
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1  # single-instance Postgres (no HA)
+
+  service:
+    type: ClusterIP
+    port: 5432
+
+  postgres:
+    user: memmachine
+    # If you set existingSecret, this is ignored. Otherwise a Secret is created with this password:
+    password: memmachine_password
+    database: postgres  # bootstrap DB used by entrypoint
+    existingSecret: ""  # set to name of an existing secret with key POSTGRES_PASSWORD
+    initdbArgs: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+
+  databases:
+    # List of DBs to create + enable pgvector in (on first boot only)
+    profile: tianya_profile
+    memzero: tianya_memzero
+  
+  persistence:
+    enabled: true
+    storageClass: "local-path"   # leave empty for default, or set to your class
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+
+  resources: {}
+  #  limits:
+  #    cpu: 500m
+  #    memory: 1Gi
+  #  requests:
+  #    cpu: 250m
+  #    memory: 512Mi
+  healthcheck:
+    enabled: true
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    startPeriod: 30s
+  podSecurityContext:
+    fsGroup: 999      # postgres (Debian-based)
+    fsGroupChangePolicy: OnRootMismatch
+
+  securityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  annotations: {}
+  labels: {}
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    failureThreshold: 6
+
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 6
+
+  # Extra env vars to inject into the postgres container
+  extraEnv: []
+  #  - name: PGDATA
+
+jaeger:
+  enabled: false
+  name: jaeger
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: true
+    className: ""
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # cert-manager.io/cluster-issuer: letsencrypt
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+      # nginx.ingress.kubernetes.io/from-to-www-redirect: "true"
+    hosts:
+      - host: jaeger.rack
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
+  volume:
+    enabled: true
+    className: "nfs-client"
+    size: 3Gi
+
+middleware:
+  enabled: true
+  name: middleware
+  log_level: "DEBUG"
+  jaeger:
+    host: "memmachine-jaeger.memmachine.svc.cluster.local"
+  memory_backend_url: "http://backend.memmachine.svc.cluster.local:8080"
+  image:
+    repository: public.ecr.aws/v3z9g9t6/memmachine/middleware/example_server
+    tag: 2025-09-30.12
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+
+chatbot:
+  enabled: true
+  name: chatbot
+  log_level: "DEBUG"
+  openaiApiKey: "REPLACE_ME"
+  middleware:
+    url: "http://middleware.memmachine.svc.cluster.local:8000"
+  image:
+    repository: public.ecr.aws/v3z9g9t6/memmachine/frontend/chatbot
+    tag: 2025-09-26.3
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8501
+  ingress:
+    enabled: false
+    annotations: {}
+    host: chatbot.rack
+        
+open-webui:
+  # values-openwebui.yaml
+  image:
+    # pick cuda/ollama variants only if you want the UI pod to bundle those; not required
+    repository: ghcr.io/open-webui/open-webui
+    tag: 0.6.33
+
+  ollama:
+    # -- Automatically install Ollama Helm chart from https://otwld.github.io/ollama-helm/. Use [Helm Values](https://github.com/otwld/ollama-helm/#helm-values) to configure
+    enabled: false
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: true
+    className: nginx
+    host: "mm-openwebui.rack" # update to your real domain
+    additionalHosts: []
+
+  extraEnvVars:
+    # -- Default API key value for Pipelines. Should be updated in a production deployment, or be changed to the required API key if not using Pipelines
+    - name: OPENAI_API_KEY
+      value: "0p3n-w3bu!"
+    # valueFrom:
+    #   secretKeyRef:
+    #     name: pipelines-api-key
+    #     key: api-key
+    # - name: OPENAI_API_KEY
+    #   valueFrom:
+    #     secretKeyRef:
+    #       name: openai-api-key
+    #       key: api-key
+    - name: OLLAMA_DEBUG
+      value: "1"
+    - name: REQUESTS_CA_BUNDLE
+      value: "/etc/ssl/certs/ca-certificates.crt"
+
+  logging:
+    # -- Set the global log level ["notset", "debug", "info" (default), "warning", "error", "critical"]
+    # @section -- Logging configuration
+    level: "debug"
+
+  # Let Open WebUI aggregate several backends
+  # (Chart versions expose these as arrays; if your version differs,
+  # you can also set them in extraEnv as comma-separated JSON.)
+  openaiBaseApiUrls: []
+    #- http://vllm.vllm.svc.cluster.local:8000/v1
+    
+  pipelines:
+    # -- Automatically install Pipelines chart to extend Open WebUI functionality using Pipelines: https://github.com/open-webui/pipelines
+    enabled: false
+
+  persistence:
+    enabled: true
+    size: 2Gi
+    # -- Use existingClaim if you want to re-use an existing Open WebUI PVC instead of creating a new one
+    #existingClaim: "openwebui-pvc"
+    # -- Subdirectory of Open WebUI PVC to mount. Useful if root directory is not empty.
+    #subPath: ""
+    # -- If using multiple replicas, you must update accessModes to ReadWriteMany
+    accessModes:
+      - ReadWriteOnce
+    storageClass: "nfs-client"
+    selector: {}
+    annotations: {}
+    # -- Sets the storage provider, availables values are `local`, `s3`, `gcs` or `azure`
+    provider: local
+  
+  sso:
+    # -- **Enable SSO authentication globally** must enable to use SSO authentication
+    # @section -- SSO Configuration
+    enabled: true
+    # -- Enable account creation when logging in with OAuth (distinct from regular signup)
+    # @section -- SSO Configuration
+    enableSignup: true
+    # -- Allow logging into accounts that match email from OAuth provider (considered insecure)
+    # @section -- SSO Configuration
+    mergeAccountsByEmail: false
+    # -- Enable OAuth role management through access token roles claim
+    # @section -- SSO Configuration
+    enableRoleManagement: false
+    # -- Enable OAuth group management through access token groups claim
+    # @section -- SSO Configuration
+    enableGroupManagement: false
+
+
+    oidc:
+      # -- Enable OIDC authentication
+      # @section -- OIDC configuration
+      enabled: false
+      # -- OIDC client ID
+      # @section -- OIDC configuration
+      clientId: "xx"
+      # -- OIDC client secret (ignored if clientExistingSecret is set)
+      # @section -- OIDC configuration
+      clientSecret: "xx"
+      # -- OIDC provider well known URL
+      # @section -- OIDC configuration
+      providerUrl: "https://authentik.rack/application/o/openwebui/.well-known/openid-configuration"
+      # -- Name of the provider to show on the UI
+      # @section -- OIDC configuration
+      providerName: "SSO"
+      # -- Scopes to request (space-separated).
+      # @section -- OIDC configuration
+      scopes: "openid email profile"
+
+gatus:
+  enabled: true
+  name: gatus
+  log_level: "INFO"
+  image:
+    repository: twinproduction/gatus
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+
+  ingress:
+    enabled: true
+    className: ""
+    annotations: {}
+    hosts:
+      - host: gatus.rack
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    # - secretName: gatus-tls
+    #   hosts:
+    #     - status.example.com
+
+  # Gatus configuration
+  config:
+    enabled: true
+    # Option A: provide a single file (string). (Rendered with tpl, so you can use templates.)
+    singleFile: |
+      endpoints:
+        - name: MemMachine middleware
+          url: http://middleware.memmachine.svc.cluster.local:8000/health
+          interval: 30s
+          timeout: 3s
+          method: GET
+          conditions:
+            - "[STATUS] == 200"
+            - "[BODY].status == healthy"
+        - name: MemMachine Neo4j
+          url: http://neo4j-lb-neo4j.memmachine.svc.cluster.local:7474
+          interval: 30s
+          method: GET
+          security:
+            basic:
+              username: neo4j
+              password-bcrypt-base64: Y2hhbmdlTWVTM2N1cmUK
+          conditions:
+            - "[STATUS] == 200"
+        - name: MemMachine PostMemory
+          url: http://backend.memmachine.svc.cluster.local:8080/v1/memories
+          interval: 60s
+          timeout: 30s
+          method: POST
+          body: |
+            {
+              "session": {
+                "group_id": "test-group",
+                "agent_id": ["test-agent"],
+                "user_id": ["test-user"],
+                "session_id": "test-session-123"
+              },
+              "producer": "test-user",
+              "produced_for": "test-user",
+              "episode_content": "Hello, this is a test message",
+              "episode_type": "text",
+              "metadata": {"test": true}
+            }
+          headers:
+            Content-Type: application/json
+          conditions:
+            - "[STATUS] == 200"
+          
+
+    # Option B: provide multiple files (map of filename->content). Ignored if singleFile is set (non-empty).
+    files: {}
+    #   config.yaml: |
+    #     endpoints: [...]
+    #   alerts.yaml: |
+    #     alerting: [...]
+
+  # ICMP (ping) checks need NET_RAW capability
+  icmp:
+    enabled: true
+
+  # Persistence (SQLite history, etc.)
+  persistence:
+    enabled: false
+    existingClaim: ""
+    accessModes: ["ReadWriteOnce"]
+    size: 1Gi
+    storageClass: ""
+    annotations: {}
+
+  # Extra knobs
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podAnnotations: {}
+  podLabels: {}
+
+  podSecurityContext: {}
+  #  fsGroup: 1000
+
+  securityContext:
+    # Add NET_RAW only if icmp.enabled
+    capabilities: {}
+
+  env:
+    # Gatus reads all *.yml/*.yaml in this dir when pointing to a folder
+    - name: GATUS_CONFIG_PATH
+      value: /config
+
+  extraEnv: []
+  # - name: GATUS_LOG_LEVEL
+  #   value: INFO
+
+  imagePullSecrets: []
+  nameOverride: ""
+  fullnameOverride: ""
+
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
