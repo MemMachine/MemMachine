@@ -4,14 +4,18 @@
 # 3. cp ~/MemMachine/evaluation/locomo/locomo10.json data  # copy locomo dataset into data dir
 # 4. pytest  # run test
 
+import os
+
 from migration import MigrationHack
 
 
 def test_migration():
     base_url = "http://localhost:8080"
-    chat_history = "data/locomo10.json"
+    my_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(my_dir)
+    chat_history = "../../evaluation/locomo/locomo10.json"
     chat_type = "locomo"
-    start_time = "0"
+    start_time = 0
     max_messages = 0
     summarize = False
     summarize_every = 20
@@ -22,6 +26,7 @@ def test_migration():
         chat_type=chat_type,
         start_time=start_time,
         max_messages=max_messages,
+        dry_run=True,
     )
 
     migration_hack.migrate(summarize=summarize, summarize_every=summarize_every)
