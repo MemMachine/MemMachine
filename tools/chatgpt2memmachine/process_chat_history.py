@@ -1,9 +1,6 @@
-#!/usr/bin/python3
-
 import argparse
 import datetime
 import json
-import os
 import re
 import sys
 import traceback
@@ -318,8 +315,7 @@ def load_openai(
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Process chat history", add_help=False)
-    parser.add_argument("-h", "--help", action="store_true", help="print usage")
+    parser = argparse.ArgumentParser(description="Process chat history")
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="print debug info if available"
     )
@@ -357,13 +353,10 @@ def get_args():
     parser.add_argument(
         "--how_many_conversations",
         action="store_true",
-        help="how many conversations are in the input file",
+        help="returns how many conversations are in the input file",
     )
     # parser.add_argument('--summarize_every', action='store', type=int, default=0, help='summarize before storing into memmachine, default is 0')
     args = parser.parse_args()
-    if args.help:
-        usage(args)
-        sys.exit(0)
     if not args.infile:
         print("ERROR: must specify --infile", file=sys.stderr)
         sys.exit(1)
@@ -385,24 +378,6 @@ def get_args():
                 pass
         args.start_time = ts
     return args
-
-
-def usage(args):
-    prog = os.path.basename(sys.argv[0])
-    # print(f'Usage: {prog} [--src <src>] [--infile <chat_history>] [--outfile <parsed_chat>] [--summarize_every <n_messages>] [--start_time <timestamp>')
-    print(
-        f"Usage: {prog} [--src <src>] --infile <chat_history> [--outfile <parsed_chat>] [--start_time <timestamp> [--num_messages <n>] [--openai_chat <title>] [--conversation <n>] [--how_many_conversations]"
-    )
-    print("")
-    print("src: input file format, either locomo or openai")
-    print("infile: input filename")
-    print("outfile: output filename, default is stdout")
-    print("start_time: read message after this time")
-    print("    either YYYY-MM-DDTHH:MM:SS or secs since epoch")
-    print("num_messages: read only this many messages")
-    print("openai_chat: if input is openai, load only this chat title")
-    print("conversation: load only this conversation number")
-    print("how_many_conversations: how many conversations are in the input file")
 
 
 if __name__ == "__main__":

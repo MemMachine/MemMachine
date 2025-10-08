@@ -9,7 +9,7 @@ from restcli import MemMachineRestClient
 def test_tracing():
     print("Testing API tracing functionality...")
 
-    client = MemMachineRestClient(base_url="http://52.15.149.39:8080", trace=True)
+    client = MemMachineRestClient(base_url="http://localhost:8080", trace=True)
 
     try:
         # This will show tracing for a successful request

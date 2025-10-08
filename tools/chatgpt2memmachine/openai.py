@@ -1,20 +1,22 @@
-import json
+import os
 import re
 
 import requests
 
 
 class OpenAISummary:
-    def __init__(self, api_key):
+    def __init__(self, api_key, model=None):
         self.openai_url = "https://api.openai.com/v1/chat/completions"
         self.api_key = api_key
+        self.model = model
+        if not model:
+            self.model = "gpt-4.1-mini"
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
         self.openai_session = requests.Session()
         self.openai_session.headers.update(self.headers)
-        self.model = "gpt-4.1-mini"
         self.temperature = 0.7
         self.max_tokens = 150
         self.top_p = 1
@@ -49,11 +51,11 @@ class OpenAISummary:
 
 
 if __name__ == "__main__":
-    api_key = None
-    with open("api_key.json", "r") as f:
-        api_key = json.load(f)["api_key"]
+    api_key = os.getenv("OPENAI_API_KEY", None)
     if not api_key:
-        print("Error: API key not found, please configure api_key.json")
+        print(
+            "Error: API key not found, please set environment variable OPENAI_API_KEY"
+        )
         exit(1)
 
     openai_summary = OpenAISummary(api_key=api_key)
