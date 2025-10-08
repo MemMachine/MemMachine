@@ -1,11 +1,11 @@
 #!/usr/bin/python3
 
-import os
-import sys
 import argparse
-import re
-import json
 import datetime
+import json
+import os
+import re
+import sys
 import traceback
 
 

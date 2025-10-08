@@ -1,6 +1,7 @@
-import requests
 import json
 import re
+
+import requests
 
 
 class OpenAISummary:
@@ -76,7 +77,7 @@ if __name__ == "__main__":
     batch_num = 1
 
     for i in range(0, len(messages), batch_size):
-        batch = messages[i:i + batch_size]
+        batch = messages[i : i + batch_size]
         print(
             f"\n--- Processing Batch {batch_num} (messages {i+1}-{min(i+batch_size, len(messages))}) ---"
         )

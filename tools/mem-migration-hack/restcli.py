@@ -1,8 +1,9 @@
-import requests
-import time
 import json
 import os
+import time
 from datetime import datetime
+
+import requests
 
 episodic_memory_path = "memories/episodic"
 

@@ -1,17 +1,18 @@
+import argparse
 import json
 import os
-import argparse
 import sys
-
-from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from restcli import MemMachineRestClient
-from process_chat_history import locomo_count_conversations
-from process_chat_history import openai_count_conversations
-from process_chat_history import load_locomo
-from process_chat_history import load_openai
 from openai import OpenAISummary
+from process_chat_history import (
+    load_locomo,
+    load_openai,
+    locomo_count_conversations,
+    openai_count_conversations,
+)
+from restcli import MemMachineRestClient
+from tqdm import tqdm
 
 
 class MigrationHack:
@@ -25,6 +26,7 @@ class MigrationHack:
         max_messages=0,
         extract_dir="extracted",
         api_key_file="api_key.json",
+        dry_run=False,
     ):
         self.user_session_file = user_session_file
         with open(self.user_session_file, "r") as f:
@@ -46,6 +48,7 @@ class MigrationHack:
         self.num_conversations = 0
         self.messages = {}  # key: conversation id, value: list of messages
         self.api_key_file = api_key_file
+        self.dry_run = dry_run
         with open(self.api_key_file, "r") as f:
             self.api_key = json.load(f)["api_key"]
         self.summaries = {}  # key: conversation id, value: list of summaries
@@ -88,17 +91,17 @@ class MigrationHack:
                 if self.chat_type == "locomo":
                     messages = load_locomo(
                         self.chat_history_file,
-                        start_time=0,
+                        start_time=self.start_time,
                         conv_num=conv_id,
-                        max_messages=0,
+                        max_messages=self.max_messages,
                         verbose=False,
                     )
                 elif self.chat_type == "openai":
                     messages = load_openai(
                         self.chat_history_file,
-                        start_time=0,
+                        start_time=self.start_time,
                         conv_num=conv_id,
-                        max_messages=0,
+                        max_messages=self.max_messages,
                         verbose=False,
                     )
                 else:
@@ -139,7 +142,7 @@ class MigrationHack:
             else:
                 self.summaries[conv_id] = []
                 for i in range(0, len(messages), summarize_every):
-                    batch = messages[i:i + summarize_every]
+                    batch = messages[i : i + summarize_every]
                     batch_text = "\n".join(batch)
                     summary = ""
                     try:
@@ -169,9 +172,10 @@ class MigrationHack:
         )
         for message in msg_pbar:
             # TODO: insert messages into episodic memory
-            self.client.post_episodic_memory(
-                message, session_id=f"conversation_{conv_id}"
-            )
+            if not self.dry_run:
+                self.client.post_episodic_memory(
+                    message, session_id=f"conversation_{conv_id}"
+                )
 
         msg_pbar.close()
         return conv_id, len(messages)
