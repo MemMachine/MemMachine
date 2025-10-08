@@ -38,7 +38,31 @@ safe_sed_inplace() {
         sed -i '' "$1" "$2"
     fi
 }
+timeout() {
+  local duration=$1
+  shift
 
+  # Run the command in the background
+  "$@" &
+  local cmd_pid=$!
+
+  # Start a background sleep that will kill the command
+  (
+    sleep "$duration"
+    kill -0 "$cmd_pid" 2>/dev/null && kill -TERM "$cmd_pid"
+  ) &
+
+  local watchdog_pid=$!
+
+  # Wait for the command to finish
+  wait "$cmd_pid"
+  local status=$?
+
+  # Clean up watchdog if command finished early
+  kill -TERM "$watchdog_pid" 2>/dev/null
+
+  return $status
+}
 # Check if Docker is installed
 check_docker() {
     if ! command -v docker &> /dev/null; then
@@ -118,6 +142,32 @@ check_config_file() {
         fi
     else
         print_success "configuration.yml file found"
+    fi
+}
+set_neo4j_config() {
+    local neo4j_password=""
+    local reply=""
+    if [ -f ".env" ]; then
+        source .env
+        if [ -z "$NEO4J_PASSWORD" ] ; then
+            read -p "NEO4J_PASSWORD is not set or is using placeholder value. Would you like to set your Neo4j password? (y/N) " reply
+            if [[ $reply =~ ^[Yy]$ ]]; then
+                read -sp "Enter your Neo4j password: " neo4j_password
+                echo setting .env
+                safe_sed_inplace "s/NEO4J_PASSWORD=.*/NEO4J_PASSWORD=$neo4j_password/" .env
+                echo setting sample_configs/gatus.yaml
+                safe_sed_inplace "s/password-bcrypt-base64: .*$/password-bcrypt-base64: $(echo -n $neo4j_password | base64)/g" sample_configs/gatus.yaml
+                print_success "Set NEO4J_PASSWORD in .env and sample_configs/gatus.yaml"
+                safe_sed_inplace "s/password: <YOUR_PASSWORD_HERE>/password: $NEO4J_PASSWORD/g" configuration.yml
+                print_success "Set NEO4J_PASSWORD in sample_configs/gatus.yaml and configuration.yml"
+            fi
+        else
+            print_success "NEO4J_PASSWORD is configured in .env"
+            echo setting sample_configs/gatus.yaml
+            safe_sed_inplace "s/password-bcrypt-base64: .*$/password-bcrypt-base64: $(echo -n $NEO4J_PASSWORD | base64)/g" sample_configs/gatus.yaml
+            safe_sed_inplace "s/password: <YOUR_PASSWORD_HERE>/password: $NEO4J_PASSWORD/g" configuration.yml
+            print_success "Set NEO4J_PASSWORD in sample_configs/gatus.yaml and configuration.yml"
+        fi
     fi
 }
 
@@ -249,6 +299,7 @@ show_service_info() {
     echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
     echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/health"
     echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/metrics"
+    echo "  ⚙️ Gatus Dashboard: http://localhost:8081"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"
@@ -315,6 +366,7 @@ main() {
     check_env_file
     check_config_file
     set_openai_api_key
+    set_neo4j_config
     check_required_env
     check_required_config
     start_services

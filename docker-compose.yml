@@ -102,6 +102,17 @@ services:
     networks:
       - memmachine-network
 
+  gatus:
+    image: twinproduction/gatus:latest
+    ports:
+      - "8001:8080"
+    volumes:
+      - ./sample_configs/gatus.yaml:/config/config.yaml:ro
+    cap_add:
+      - NET_RAW
+    restart: unless-stopped
+    networks:
+      - memmachine-network
 volumes:
   postgres_data:
     driver: local

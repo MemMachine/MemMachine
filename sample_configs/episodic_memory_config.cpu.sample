@@ -21,7 +21,7 @@ Model:
 storage:
   my_storage_id:
     vendor_name: neo4j
-    host: localhost
+    host: neo4j
     port: 7687
     user: neo4j
     password: <YOUR_PASSWORD_HERE>
