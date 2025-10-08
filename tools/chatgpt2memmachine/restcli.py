@@ -11,7 +11,7 @@ episodic_memory_path = "memories/episodic"
 class MemMachineRestClient:
     def __init__(
         self,
-        base_url="http://127.0.0.1:8080",
+        base_url="http://localhost:8080",
         session=None,
         producer=None,
         produced_for=None,
@@ -82,7 +82,7 @@ class MemMachineRestClient:
         return trace_info
 
     """
-    curl -X POST "http://127.0.0.1:8080/v1/memories/episodic" \
+    curl -X POST "http://localhost:8080/v1/memories/episodic" \
     -H "Content-Type: application/json" \
     -d '{
       "session": {
@@ -132,7 +132,7 @@ class MemMachineRestClient:
         return response.json()
 
     """
-    curl -X POST "http://127.0.0.1:8080/v1/memories/episodic/search" \
+    curl -X POST "http://localhost:8080/v1/memories/episodic/search" \
     -H "Content-Type: application/json" \
     -d '{
       "session": {
@@ -180,7 +180,7 @@ class MemMachineRestClient:
 
 
 if __name__ == "__main__":
-    client = MemMachineRestClient(base_url="http://52.15.149.39:8080")
+    client = MemMachineRestClient(base_url="http://localhost:8080")
     client.post_episodic_memory(
         "I will start to write a new story today. There are 1 main characters in my story, lilith. she transmigrates into a game, After experiencing a series of bad endings, she breaks free in her final reincarnation, joining forces with her female companions to rebel and overthrow the corrupt dynasty."
     )

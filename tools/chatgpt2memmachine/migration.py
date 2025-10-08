@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from openai import OpenAISummary
@@ -18,14 +17,14 @@ from tqdm import tqdm
 class MigrationHack:
     def __init__(
         self,
-        base_url="http://127.0.0.1:8080",
+        base_url="http://localhost:8080",
         user_session_file="user_session.json",
         chat_history_file="data/locomo10.json",
         chat_type="locomo",
         start_time=0,
         max_messages=0,
         extract_dir="extracted",
-        api_key_file="api_key.json",
+        model=None,
         dry_run=False,
     ):
         self.user_session_file = user_session_file
@@ -47,10 +46,9 @@ class MigrationHack:
         # list of messages in conversations loaded from file
         self.num_conversations = 0
         self.messages = {}  # key: conversation id, value: list of messages
-        self.api_key_file = api_key_file
+        self.model = model
         self.dry_run = dry_run
-        with open(self.api_key_file, "r") as f:
-            self.api_key = json.load(f)["api_key"]
+        self.api_key = os.getenv("OPENAI_API_KEY", None)
         self.summaries = {}  # key: conversation id, value: list of summaries
 
     def load(self):
@@ -119,8 +117,10 @@ class MigrationHack:
     def summarize_messages(self, summarize_every=20):
         print("== Summarizing messages starts")
         if not self.api_key:
-            raise Exception("Error: API key not found, please configure api_key.json")
-        openai_summary = OpenAISummary(api_key=self.api_key)
+            raise Exception(
+                "Error: API key not found, please set environment variable OPENAI_API_KEY"
+            )
+        openai_summary = OpenAISummary(api_key=self.api_key, model=self.model)
 
         summarized_file_prefix = f"{self.chat_base_name}_summarized"
         batch_num = 1
@@ -227,23 +227,14 @@ class MigrationHack:
         print("== Migration done")
 
 
-def usage():
-    print(
-        "Usage: python migration.py [--base_url <url>] [--chat_history <file>] [--summarize] [--summarize_every <n>]"
-    )
-    print("")
-    print("base_url: Base URL of the MemMachine API")
-    print("chat_history: Chat history file")
-    print("summarize: Summarize messages")
-    print("summarize_every: Summarize every n messages")
-
-
 def get_args():
-    parser = argparse.ArgumentParser(description="Migration Hack", add_help=False)
+    parser = argparse.ArgumentParser(
+        description="Hackathon - Migration from ChatGPT to MemMachine"
+    )
     parser.add_argument(
         "--base_url",
         type=str,
-        default="http://52.15.149.39:8080",
+        default="http://localhost:8080",
         help="Base URL of the MemMachine API",
     )
     parser.add_argument(
@@ -270,11 +261,7 @@ def get_args():
     parser.add_argument(
         "--summarize_every", type=int, default=20, help="Summarize every n messages"
     )
-    parser.add_argument("-h", "--help", action="store_true", help="Print usage")
     args = parser.parse_args()
-    if args.help:
-        usage()
-        sys.exit(0)
     return args
 
 

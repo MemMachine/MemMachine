@@ -1,4 +1,4 @@
-# Core dependencies for mem-migration-hack project
+# Core dependencies for chatgpt2memmachine project
 requests>=2.31.0
 tqdm>=4.65.0
 
