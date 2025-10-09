@@ -132,9 +132,7 @@ check_config_file() {
         if [ -f "$CONFIG_SOURCE" ]; then
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
-            print_warning "Please edit configuration.yml file with your configuration before continuing"
-            print_warning "Especially set your API keys and database credentials"
-            print_info "Exiting script. Please edit configuration.yml file and re-run the script."
+            print_info "Exiting script. Please edit .env file and re-run the script."
             exit 0
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
@@ -144,8 +142,10 @@ check_config_file() {
         print_success "configuration.yml file found"
     fi
 }
+
 set_neo4j_config() {
     local neo4j_password=""
+    local neo4j_host=""
     local reply=""
     if [ -f ".env" ]; then
         source .env
@@ -155,20 +155,31 @@ set_neo4j_config() {
                 read -sp "Enter your Neo4j password: " neo4j_password
                 echo setting .env
                 safe_sed_inplace "s/NEO4J_PASSWORD=.*/NEO4J_PASSWORD=$neo4j_password/" .env
-                echo setting sample_configs/gatus.yaml
-                safe_sed_inplace "s/password-bcrypt-base64: .*$/password-bcrypt-base64: $(echo -n $neo4j_password | base64)/g" sample_configs/gatus.yaml
-                print_success "Set NEO4J_PASSWORD in .env and sample_configs/gatus.yaml"
-                safe_sed_inplace "s/password: <YOUR_PASSWORD_HERE>/password: $NEO4J_PASSWORD/g" configuration.yml
-                print_success "Set NEO4J_PASSWORD in sample_configs/gatus.yaml and configuration.yml"
+                
             fi
         else
             print_success "NEO4J_PASSWORD is configured in .env"
-            echo setting sample_configs/gatus.yaml
-            safe_sed_inplace "s/password-bcrypt-base64: .*$/password-bcrypt-base64: $(echo -n $NEO4J_PASSWORD | base64)/g" sample_configs/gatus.yaml
-            safe_sed_inplace "s/password: <YOUR_PASSWORD_HERE>/password: $NEO4J_PASSWORD/g" configuration.yml
-            print_success "Set NEO4J_PASSWORD in sample_configs/gatus.yaml and configuration.yml"
+        fi
+        if [ -z "$NEO4J_HOST" ] || [ "$NEO4J_HOST" = "NEO4J_HOST" ]; then
+            read -p "NEO4J_HOST is not set or is using placeholder value. Would you like to set your Neo4j host? (y/N) " reply
+            if [[ $reply =~ ^[Yy]$ ]]; then
+                read -p "Enter your Neo4j host (default: neo4j): " neo4j_host
+                neo4j_host=${neo4j_host:-neo4j}
+                echo setting .env
+                safe_sed_inplace "s/NEO4J_HOST=.*/NEO4J_HOST=$neo4j_host/" .env
+            fi
+        else
+            print_success "NEO4J_HOST is configured in .env"
         fi
     fi
+    echo setting sample_configs/gatus.yaml
+    safe_sed_inplace "s/password-bcrypt-base64: .*$/password-bcrypt-base64: $(echo -n $neo4j_password | base64)/g" sample_configs/gatus.yaml
+    print_success "Set NEO4J_PASSWORD in .env and sample_configs/gatus.yaml"
+    echo setting configuration.yml
+    safe_sed_inplace "s/password: <YOUR_PASSWORD_HERE>/password: $NEO4J_PASSWORD/g" configuration.yml
+    print_success "Set NEO4J_PASSWORD in sample_configs/gatus.yaml and configuration.yml"
+    safe_sed_inplace "s/host: NEO4J_HOST/host: $NEO4J_HOST/g" configuration.yml
+    print_success "Set NEO4J_HOST in configuration.yml"
 }
 
 # Prompt user if they would like to set their OpenAI API key; then set it in the .env file and configuration.yml file
@@ -177,17 +188,19 @@ set_openai_api_key() {
     local reply=""
     if [ -f ".env" ]; then
         source .env
-        if [ -z "$OPENAI_API_KEY" ] ||  [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ] || grep -q "<YOUR_API_KEY>" configuration.yml ; then
+        if [ -z "$OPENAI_API_KEY" ] ||  [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ]; then
             read -p "OPENAI_API_KEY is not set or is using placeholder value. Would you like to set your OpenAI API key? (y/N) " reply
             if [[ $reply =~ ^[Yy]$ ]]; then
                 read -sp "Enter your OpenAI API key: " api_key
                 echo setting .env
                 safe_sed_inplace "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$api_key/" .env
-                echo setting configuration.yml
-                safe_sed_inplace "s/api_key: .*$/api_key: $api_key/g" configuration.yml
-                print_success "Set OPENAI_API_KEY in .env and configuration.yml"
             fi
         fi
+    fi
+    if [ grep -q "<YOUR_API_KEY>" configuration.yml ];then
+        echo setting configuration.yml      
+        safe_sed_inplace "s/api_key: .*$/api_key: $api_key/g" configuration.yml
+        print_success "Set OPENAI_API_KEY in .env and configuration.yml"
     fi
 }
 
@@ -299,7 +312,7 @@ show_service_info() {
     echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
     echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/health"
     echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/metrics"
-    echo "  ⚙️ Gatus Dashboard: http://localhost:8081"
+    echo "  ⚙️ Gatus Dashboard: http://localhost:8001"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"

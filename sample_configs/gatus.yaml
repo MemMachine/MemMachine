@@ -6,7 +6,7 @@ endpoints:
           security:
             basic:
               username: neo4j
-              password-bcrypt-base64: bmVvNGpfcGFzc3dk
+              password-bcrypt-base64: 
           conditions:
             - "[STATUS] == 200"
         - name: MemMachine /health
