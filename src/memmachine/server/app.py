@@ -16,16 +16,18 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, cast
+from typing import Any, Self, cast
 
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.params import Depends
 from fastapi.responses import Response
 from fastmcp import Context, FastMCP
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import (
@@ -53,12 +55,118 @@ class SessionData(BaseModel):
     user_id: list[str] | None
     session_id: str
 
+    def merge(self, other: Self) -> None:
+        """Merge another SessionData into this one in place.
+
+        - Combine and deduplicate list fields.
+        - Overwrite string fields if the new value is set.
+        """
+
+        def merge_lists(a: list[str] | None, b: list[str] | None) -> list[str] | None:
+            if a and b:
+                return list(dict.fromkeys(a + b))  # preserve order & unique
+            return a or b
+
+        if other.group_id:
+            self.group_id = other.group_id
+
+        if other.session_id:
+            self.session_id = other.session_id
+
+        self.agent_id = merge_lists(self.agent_id, other.agent_id)
+        self.user_id = merge_lists(self.user_id, other.user_id)
+
+    def is_valid(self) -> bool:
+        """Return True if the session data is invalid (both group_id and
+        session_id are empty), False otherwise.
+        """
+        return self.group_id != "" or self.session_id != ""
+
+
+class RequestWithSession(BaseModel):
+    """Base class for requests that include session data."""
+
+    session: SessionData | None = Field(
+        None,
+        deprecated=True,
+        description="Session field in the body is deprecated. "
+        "Use header-based session instead.",
+    )
+
+    def log_error_with_session(self, e: HTTPException, message: str):
+        sess = self.get_session()
+        session_name = (
+            f"{sess.group_id}-{sess.agent_id}-{sess.user_id}-{sess.session_id}"
+        )
+        logger.error(f"{message} for %s", session_name)
+        logger.error(e)
+
+    def get_session(self) -> SessionData:
+        if self.session is None:
+            return SessionData(
+                group_id="",
+                agent_id=[],
+                user_id=[],
+                session_id="",
+            )
+        return self.session
+
+    def new_404_not_found_error(self, message: str):
+        session = self.get_session()
+        return HTTPException(
+            status_code=404,
+            detail=f"{message} for {session.user_id},"
+            f"{session.session_id},"
+            f"{session.group_id},"
+            f"{session.agent_id}",
+        )
+
+    def merge_session(self, session: SessionData) -> None:
+        """Merge another SessionData into this one in place.
+
+        - Combine and deduplicate list fields.
+        - Overwrite string fields if the new value is set.
+        """
+        if self.session is None:
+            self.session = session
+        else:
+            self.session.merge(session)
+
+    def validate_session(self) -> None:
+        """Validate that the session data is not empty.
+        Raises:
+            RequestValidationError: If the session data is empty.
+        """
+        if self.session is None or not self.session.is_valid():
+            # Raise the same type of validation error FastAPI uses
+            raise RequestValidationError(
+                [
+                    {
+                        "loc": ["header", "session"],
+                        "msg": "group_id or user_id cannot be empty",
+                        "type": "value_error.missing",
+                    }
+                ]
+            )
+
+    def merge_and_validate_session(self, other: SessionData) -> None:
+        """Merge another SessionData into this one in place and validate.
+
+        - Combine and deduplicate list fields.
+        - Overwrite string fields if the new value is set.
+        - Validate that the resulting session data is not empty.
+
+        Raises:
+            RequestValidationError: If the resulting session data is empty.
+        """
+        self.merge_session(other)
+        self.validate_session()
+
 
 # === Request Models ===
-class NewEpisode(BaseModel):
+class NewEpisode(RequestWithSession):
     """Request model for adding a new memory episode."""
 
-    session: SessionData
     producer: str
     produced_for: str
     episode_content: str | list[float]
@@ -66,13 +174,33 @@ class NewEpisode(BaseModel):
     metadata: dict[str, Any] | None
 
 
-class SearchQuery(BaseModel):
+class SearchQuery(RequestWithSession):
     """Request model for searching memories."""
 
-    session: SessionData
     query: str
     filter: dict[str, Any] | None = None
     limit: int | None = None
+
+
+def _split_str_to_list(s: str | None) -> list[str] | None:
+    if s is None:
+        return None
+    return [x.strip() for x in s.split(",") if x.strip() != ""]
+
+
+async def _get_session_from_header(
+    group_id: str = Header(None, alias="group-id"),
+    session_id: str = Header(None, alias="session-id"),
+    agent_id: str | None = Header(None, alias="agent-id"),
+    user_id: str | None = Header(None, alias="user-id"),
+) -> SessionData:
+    """Extract session data from headers and return a SessionData object."""
+    return SessionData(
+        group_id=group_id or "",  # fill empty string if missing
+        session_id=session_id or "",  # fill empty string if missing
+        agent_id=_split_str_to_list(agent_id),
+        user_id=_split_str_to_list(user_id),
+    )
 
 
 # === Response Models ===
@@ -98,10 +226,10 @@ class AllSessionsResponse(BaseModel):
     sessions: list[MemorySession]
 
 
-class DeleteDataRequest(BaseModel):
+class DeleteDataRequest(RequestWithSession):
     """Request model for deleting all data for a session."""
 
-    session: SessionData
+    pass
 
 
 # === Globals ===
@@ -246,13 +374,9 @@ async def mcp_add_session_memory(episode: NewEpisode) -> dict[str, Any]:
         with error message.
     """
     try:
-        await add_memory(episode)
+        await _add_memory(episode)
     except HTTPException as e:
-        sess = episode.session
-        session_name = f"""{sess.group_id}-{sess.agent_id}-
-                           {sess.user_id}-{sess.session_id}"""
-        logger.error("Failed to add memory episode for %s", session_name)
-        logger.error(e)
+        episode.log_error_with_session(e, "Failed to add memory episode")
         return {"status": -1, "error_msg": str(e)}
     return {"status": 0, "error_msg": ""}
 
@@ -275,13 +399,9 @@ async def mcp_add_episodic_memory(episode: NewEpisode) -> dict[str, Any]:
         with error message.
     """
     try:
-        await add_episodic_memory(episode)
+        await _add_episodic_memory(episode)
     except HTTPException as e:
-        sess = episode.session
-        session_name = f"""{sess.group_id}-{sess.agent_id}-
-                           {sess.user_id}-{sess.session_id}"""
-        logger.error("Failed to add memory episode for %s", session_name)
-        logger.error(e)
+        episode.log_error_with_session(e, "Failed to add memory episode")
         return {"status": -1, "error_msg": str(e)}
     return {"status": 0, "error_msg": ""}
 
@@ -304,9 +424,9 @@ async def mcp_add_profile_memory(episode: NewEpisode) -> dict[str, Any]:
         with error message.
     """
     try:
-        await add_profile_memory(episode)
+        await _add_profile_memory(episode)
     except HTTPException as e:
-        sess = episode.session
+        sess = episode.get_session()
         session_name = f"""{sess.group_id}-{sess.agent_id}-
                            {sess.user_id}-{sess.session_id}"""
         logger.error("Failed to add memory episode for %s", session_name)
@@ -327,7 +447,7 @@ async def mcp_search_episodic_memory(q: SearchQuery) -> SearchResult:
     Return:
         A SearchResult object if successful, None otherwise.
     """
-    return await search_episodic_memory(q)
+    return await _search_episodic_memory(q)
 
 
 @mcp.tool()
@@ -342,7 +462,7 @@ async def mcp_search_profile_memory(q: SearchQuery) -> SearchResult:
     Return:
         A SearchResult object if successful, None otherwise.
     """
-    return await search_profile_memory(q)
+    return await _search_profile_memory(q)
 
 
 @mcp.tool()
@@ -358,7 +478,7 @@ async def mcp_search_session_memory(q: SearchQuery) -> SearchResult:
     Return:
         A SearchResult object if successful, None otherwise.
     """
-    return await search_memory(q)
+    return await _search_memory(q)
 
 
 @mcp.tool()
@@ -377,7 +497,7 @@ async def mcp_delete_session_data(sess: SessionData) -> dict[str, Any]:
         with error message.
     """
     try:
-        await delete_session_data(DeleteDataRequest(session=sess))
+        await _delete_session_data(DeleteDataRequest(session=sess))
     except HTTPException as e:
         session_name = f"""{sess.group_id}-{sess.agent_id}-
                            {sess.user_id}-{sess.session_id}"""
@@ -406,7 +526,7 @@ async def mcp_delete_data(ctx: Context) -> dict[str, Any]:
         if sess is None:
             return {"status": -1, "error_msg": "No session open"}
         delete_data_req = DeleteDataRequest(session=sess)
-        await delete_session_data(delete_data_req)
+        await _delete_session_data(delete_data_req)
     except HTTPException as e:
         session_name = f"""{sess.group_id}-{sess.agent_id}-
                            {sess.user_id}-{sess.session_id}"""
@@ -458,7 +578,10 @@ async def mcp_get_agent_sessions(agent_id: str) -> AllSessionsResponse:
 
 # === Route Handlers ===
 @app.post("/v1/memories")
-async def add_memory(episode: NewEpisode):
+async def add_memory(
+    episode: NewEpisode,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+):
     """Adds a memory episode to both episodic and profile memory.
 
     This endpoint first retrieves the appropriate episodic memory instance
@@ -468,30 +591,34 @@ async def add_memory(episode: NewEpisode):
 
     Args:
         episode: The NewEpisode object containing the memory details.
+        session: The session data from headers to merge with the request.
 
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
         HTTPException: 400 if the producer or produced_for IDs are invalid
                        for the given context.
     """
-    group_id = episode.session.group_id
+    episode.merge_and_validate_session(session)
+    await _add_memory(episode)
+
+
+async def _add_memory(episode: NewEpisode):
+    """Adds a memory episode to both episodic and profile memory.
+    Internal function.  Shared by both REST API and MCP API
+
+    See the docstring for add_memory() for details."""
+    session = episode.get_session()
+    group_id = session.group_id
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
         group_id=group_id if group_id is not None else "",
-        agent_id=episode.session.agent_id,
-        user_id=episode.session.user_id,
-        session_id=episode.session.session_id,
+        agent_id=session.agent_id,
+        user_id=session.user_id,
+        session_id=session.session_id,
     )
     if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {episode.session.user_id},
-                    {episode.session.session_id},
-                    {episode.session.group_id},
-                    {episode.session.agent_id}""",
-        )
+        raise episode.new_404_not_found_error("unable to find episodic memory")
     async with AsyncEpisodicMemory(inst) as inst:
         success = await inst.add_memory_episode(
             producer=episode.producer,
@@ -505,8 +632,8 @@ async def add_memory(episode: NewEpisode):
             raise HTTPException(
                 status_code=400,
                 detail=f"""either {episode.producer} or {episode.produced_for}
-                        is not in {episode.session.user_id}
-                        or {episode.session.agent_id}""",
+                        is not in {session.user_id}
+                        or {session.agent_id}""",
             )
 
         ctx = inst.get_memory_context()
@@ -524,7 +651,10 @@ async def add_memory(episode: NewEpisode):
 
 
 @app.post("/v1/memories/episodic")
-async def add_episodic_memory(episode: NewEpisode):
+async def add_episodic_memory(
+    episode: NewEpisode,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+):
     """Adds a memory episode to both episodic memory.
 
     This endpoint first retrieves the appropriate episodic memory instance
@@ -534,30 +664,35 @@ async def add_episodic_memory(episode: NewEpisode):
 
     Args:
         episode: The NewEpisode object containing the memory details.
+        session: The session data from headers to merge with the request.
 
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
         HTTPException: 400 if the producer or produced_for IDs are invalid
                        for the given context.
     """
-    group_id = episode.session.group_id
+    episode.merge_and_validate_session(session)
+    await _add_episodic_memory(episode)
+
+
+async def _add_episodic_memory(episode: NewEpisode):
+    """Adds a memory episode to both episodic and profile memory.
+    Internal function.  Shared by both REST API and MCP API
+
+    See the docstring for add_episodic_memory() for details.
+    """
+    session = episode.get_session()
+    group_id = session.group_id
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
         group_id=group_id if group_id is not None else "",
-        agent_id=episode.session.agent_id,
-        user_id=episode.session.user_id,
-        session_id=episode.session.session_id,
+        agent_id=session.agent_id,
+        user_id=session.user_id,
+        session_id=session.session_id,
     )
     if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {episode.session.user_id},
-                    {episode.session.session_id},
-                    {episode.session.group_id},
-                    {episode.session.agent_id}""",
-        )
+        raise episode.new_404_not_found_error("unable to find episodic memory")
     async with AsyncEpisodicMemory(inst) as inst:
         success = await inst.add_memory_episode(
             producer=episode.producer,
@@ -571,13 +706,16 @@ async def add_episodic_memory(episode: NewEpisode):
             raise HTTPException(
                 status_code=400,
                 detail=f"""either {episode.producer} or {episode.produced_for}
-                        is not in {episode.session.user_id}
-                        or {episode.session.agent_id}""",
+                        is not in {session.user_id}
+                        or {session.agent_id}""",
             )
 
 
 @app.post("/v1/memories/profile")
-async def add_profile_memory(episode: NewEpisode):
+async def add_profile_memory(
+    episode: NewEpisode,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+):
     """Adds a memory episode to both profile memory.
 
     This endpoint first retrieves the appropriate episodic memory instance
@@ -587,20 +725,32 @@ async def add_profile_memory(episode: NewEpisode):
 
     Args:
         episode: The NewEpisode object containing the memory details.
+        session: The session data from headers to merge with the request.
 
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
         HTTPException: 400 if the producer or produced_for IDs are invalid
                        for the given context.
     """
-    group_id = episode.session.group_id
+    episode.merge_and_validate_session(session)
+    await _add_profile_memory(episode)
+
+
+async def _add_profile_memory(episode: NewEpisode):
+    """Adds a memory episode to profile memory.
+    Internal function.  Shared by both REST API and MCP API
+
+    See the docstring for add_profile_memory() for details.
+    """
+    session = episode.get_session()
+    group_id = session.group_id
 
     await cast(ProfileMemory, profile_memory).add_persona_message(
         str(episode.episode_content),
         episode.metadata if episode.metadata is not None else {},
         {
             "group_id": group_id if group_id is not None else "",
-            "session_id": episode.session.session_id,
+            "session_id": session.session_id,
             "producer": episode.producer,
             "produced_for": episode.produced_for,
         },
@@ -609,7 +759,10 @@ async def add_profile_memory(episode: NewEpisode):
 
 
 @app.post("/v1/memories/search")
-async def search_memory(q: SearchQuery) -> SearchResult:
+async def search_memory(
+    q: SearchQuery,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+) -> SearchResult:
     """Searches for memories across both episodic and profile memory.
 
     Retrieves the relevant episodic memory instance and then performs
@@ -618,6 +771,7 @@ async def search_memory(q: SearchQuery) -> SearchResult:
 
     Args:
         q: The SearchQuery object containing the query and context.
+        session: The session data from headers to merge with the request.
 
     Returns:
         A SearchResult object containing results from both memory types.
@@ -625,28 +779,30 @@ async def search_memory(q: SearchQuery) -> SearchResult:
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
     """
+    q.merge_and_validate_session(session)
+    return await _search_memory(q)
+
+
+async def _search_memory(q: SearchQuery) -> SearchResult:
+    """Searches for memories across both episodic and profile memory.
+    Internal function.  Shared by both REST API and MCP API
+    See the docstring for search_memory() for details."""
+    session = q.get_session()
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
-        group_id=q.session.group_id,
-        agent_id=q.session.agent_id,
-        user_id=q.session.user_id,
-        session_id=q.session.session_id,
+        group_id=session.group_id,
+        agent_id=session.agent_id,
+        user_id=session.user_id,
+        session_id=session.session_id,
     )
     if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {q.session.user_id},
-                    {q.session.session_id},
-                    {q.session.group_id},
-                    {q.session.agent_id}""",
-        )
+        raise q.new_404_not_found_error("unable to find episodic memory")
     async with AsyncEpisodicMemory(inst) as inst:
         ctx = inst.get_memory_context()
         user_id = (
-            q.session.user_id[0]
-            if q.session.user_id is not None and len(q.session.user_id) > 0
+            session.user_id[0]
+            if session.user_id is not None and len(session.user_id) > 0
             else ""
         )
         res = await asyncio.gather(
@@ -667,11 +823,15 @@ async def search_memory(q: SearchQuery) -> SearchResult:
 
 
 @app.post("/v1/memories/episodic/search")
-async def search_episodic_memory(q: SearchQuery) -> SearchResult:
+async def search_episodic_memory(
+    q: SearchQuery,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+) -> SearchResult:
     """Searches for memories across both profile memory.
 
     Args:
         q: The SearchQuery object containing the query and context.
+        session: The session data from headers to merge with the request.
 
     Returns:
         A SearchResult object containing results from episodic memory.
@@ -679,35 +839,42 @@ async def search_episodic_memory(q: SearchQuery) -> SearchResult:
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
     """
-    group_id = q.session.group_id if q.session.group_id is not None else ""
+    q.merge_and_validate_session(session)
+    return await _search_episodic_memory(q)
+
+
+async def _search_episodic_memory(q: SearchQuery) -> SearchResult:
+    """Searches for memories across episodic memory.
+    Internal function.  Shared by both REST API and MCP API
+    See the docstring for search_episodic_memory() for details.
+    """
+    session = q.get_session()
+    group_id = session.group_id if session.group_id is not None else ""
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
         group_id=group_id,
-        agent_id=q.session.agent_id,
-        user_id=q.session.user_id,
-        session_id=q.session.session_id,
+        agent_id=session.agent_id,
+        user_id=session.user_id,
+        session_id=session.session_id,
     )
     if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {q.session.user_id},
-                    {q.session.session_id},
-                    {q.session.group_id},
-                    {q.session.agent_id}""",
-        )
+        raise q.new_404_not_found_error("unable to find episodic memory")
     async with AsyncEpisodicMemory(inst) as inst:
         res = await inst.query_memory(q.query, q.limit, q.filter)
         return SearchResult(content={"episodic_memory": res})
 
 
 @app.post("/v1/memories/profile/search")
-async def search_profile_memory(q: SearchQuery) -> SearchResult:
+async def search_profile_memory(
+    q: SearchQuery,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+) -> SearchResult:
     """Searches for memories across profile memory.
 
     Args:
         q: The SearchQuery object containing the query and context.
+        session: The session data from headers to merge with the request.
 
     Returns:
         A SearchResult object containing results from profile memory.
@@ -715,15 +882,25 @@ async def search_profile_memory(q: SearchQuery) -> SearchResult:
     Raises:
         HTTPException: 404 if no matching episodic memory instance is found.
     """
-    user_id = q.session.user_id[0] if q.session.user_id is not None else ""
-    group_id = q.session.group_id if q.session.group_id is not None else ""
+    q.merge_and_validate_session(session)
+    return await _search_profile_memory(q)
+
+
+async def _search_profile_memory(q: SearchQuery) -> SearchResult:
+    """Searches for memories across profile memory.
+    Internal function.  Shared by both REST API and MCP API
+    See the docstring for search_profile_memory() for details.
+    """
+    session = q.get_session()
+    user_id = session.user_id[0] if session.user_id is not None else ""
+    group_id = session.group_id if session.group_id is not None else ""
 
     res = await cast(ProfileMemory, profile_memory).semantic_search(
         q.query,
         q.limit if q.limit is not None else 5,
         isolations={
             "group_id": group_id,
-            "session_id": q.session.session_id,
+            "session_id": session.session_id,
         },
         user_id=user_id,
     )
@@ -731,27 +908,36 @@ async def search_profile_memory(q: SearchQuery) -> SearchResult:
 
 
 @app.delete("/v1/memories")
-async def delete_session_data(delete_req: DeleteDataRequest):
+async def delete_session_data(
+    delete_req: DeleteDataRequest,
+    session: SessionData = Depends(_get_session_from_header),  # type: ignore
+):
     """
     Delete data for a particular session
+    Args:
+        delete_req: The DeleteDataRequest object containing the session info.
+        session: The session data from headers to merge with the request.
     """
+    delete_req.merge_and_validate_session(session)
+    await _delete_session_data(delete_req)
+
+
+async def _delete_session_data(delete_req: DeleteDataRequest):
+    """Deletes all data for a specific session.
+    Internal function.  Shared by both REST API and MCP API
+    See the docstring for delete_session_data() for details.
+    """
+    session = delete_req.get_session()
     inst: EpisodicMemory | None = await cast(
         EpisodicMemoryManager, episodic_memory
     ).get_episodic_memory_instance(
-        group_id=delete_req.session.group_id,
-        agent_id=delete_req.session.agent_id,
-        user_id=delete_req.session.user_id,
-        session_id=delete_req.session.session_id,
+        group_id=session.group_id,
+        agent_id=session.agent_id,
+        user_id=session.user_id,
+        session_id=session.session_id,
     )
     if inst is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"""unable to find episodic memory for
-                    {delete_req.session.user_id},
-                    {delete_req.session.session_id},
-                    {delete_req.session.group_id},
-                    {delete_req.session.agent_id}""",
-        )
+        raise delete_req.new_404_not_found_error("unable to find episodic memory")
     async with AsyncEpisodicMemory(inst) as inst:
         await inst.delete_data()
 
