@@ -5,11 +5,13 @@ FROM python:3.12-slim-trixie AS builder
 
 # Update OS and Python/PIP Packages
 # Install curl
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y curl && \
-    apt-get clean && \
+RUN << EOF
+    apt-get update
+    apt-get upgrade -y
+    apt-get install -y curl
+    apt-get clean
     rm -rf /var/lib/apt/lists/*
+EOF
 
 RUN python -m pip install --upgrade pip
 
@@ -25,24 +27,25 @@ COPY pyproject.toml uv.lock ./
 ARG GPU="false"
 
 # Install dependencies into a virtual environment, but NOT the project itself
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$GPU" = "true" ]; then \
-        uv sync --locked --no-install-project --no-editable --no-dev --extra gpu; \
-    else \
-        uv sync --locked --no-install-project --no-editable --no-dev; \
+RUN --mount=type=cache,target=/root/.cache/uv << EOF
+    if [ "$GPU" = "true" ]; then
+        uv sync --locked --no-install-project --no-editable --no-dev --extra gpu
+    else 
+        uv sync --locked --no-install-project --no-editable --no-dev
     fi
+EOF
 
 # Copy the application source code
 COPY . /app
 
 # Install the project itself from the local source
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$GPU" = "true" ]; then \
-        uv sync --locked --no-editable --no-dev --extra gpu; \
-    else \
-        uv sync --locked --no-editable --no-dev; \
+RUN --mount=type=cache,target=/root/.cache/uv << EOF
+    if [ "$GPU" = "true" ]; then
+        uv sync --locked --no-editable --no-dev --extra gpu
+    else
+        uv sync --locked --no-editable --no-dev
     fi
-
+EOF
 
 #
 # Stage 2: Final
@@ -51,11 +54,13 @@ FROM python:3.12-slim-trixie AS final
 
 # Update OS and Python/PIP Packages
 # Install curl
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y curl && \
-    apt-get clean && \
+RUN << EOF
+    apt-get update
+    apt-get upgrade -y
+    apt-get install -y curl
+    apt-get clean
     rm -rf /var/lib/apt/lists/*
+EOF
 
 RUN python -m pip install --upgrade pip
 
