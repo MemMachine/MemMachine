@@ -53,41 +53,36 @@ def full_config(mock_metrics_factory):
     return {
         "api_key": "test_api_key",
         "model": "test-model",
-        "max_delay": 60,
+        "max_retry_interval_seconds": 60,
         "metrics_factory": mock_metrics_factory,
         "user_metrics_labels": {"user": "test-user"},
     }
 
 
 @pytest.fixture
-def minimal_max_delay_config():
+def max_retry_interval_seconds_config():
     """Fixture for a minimal valid configuration."""
     return {
         "api_key": "test_api_key",
         "model": "test-model",
-        "max_delay": 4,
+        "max_retry_interval_seconds": 4,
     }
 
 
 @patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 def test_init_success(mock_async_openai, minimal_config):
     """Test successful initialization."""
-    lm = OpenAILanguageModel(minimal_config)
+    OpenAILanguageModel(minimal_config)
     mock_async_openai.assert_called_once_with(
         api_key="test_api_key",
     )
-    assert lm.model == "test-model"
-    assert not lm.collect_metrics
 
 
 @patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 def test_init_with_full_config(mock_async_openai, full_config):
     """Test successful initialization with all optional parameters."""
-    lm = OpenAILanguageModel(full_config)
+    OpenAILanguageModel(full_config)
     mock_async_openai.assert_called_once_with(api_key="test_api_key")
-    assert lm.model == "test-model"
-    assert lm.max_delay == 60
-    assert lm.collect_metrics
 
 
 def test_init_missing_model():
@@ -102,17 +97,21 @@ def test_init_missing_api_key():
         OpenAILanguageModel({"model": "test-model"})
 
 
-def test_init_invalid_max_delay_type(minimal_config):
-    """Test initialization fails with non-integer max_delay."""
-    config = {**minimal_config, "max_delay": "not-an-int"}
-    with pytest.raises(TypeError, match="max_delay must be an integer"):
+def test_init_invalid_max_retry_interval_seconds_type(minimal_config):
+    """Test initialization fails with non-integer max_retry_interval_seconds."""
+    config = {**minimal_config, "max_retry_interval_seconds": "not-an-int"}
+    with pytest.raises(
+        TypeError, match="max_retry_interval_seconds must be an integer"
+    ):
         OpenAILanguageModel(config)
 
 
-def test_init_invalid_max_delay_value(minimal_config):
-    """Test initialization fails with non-positive max_delay."""
-    config = {**minimal_config, "max_delay": 0}
-    with pytest.raises(ValueError, match="max_delay must be a positive integer"):
+def test_init_invalid_max_retry_interval_seconds_value(minimal_config):
+    """Test initialization fails with non-positive max_retry_interval_seconds."""
+    config = {**minimal_config, "max_retry_interval_seconds": 0}
+    with pytest.raises(
+        ValueError, match="max_retry_interval_seconds must be a positive integer"
+    ):
         OpenAILanguageModel(config)
 
 
@@ -266,8 +265,8 @@ async def test_generate_response_retry_on_rate_limit(
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
 @patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
-async def test_generate_response_retry_on_rate_limit_with_max_delay(
-    mock_async_openai, mock_sleep, minimal_max_delay_config
+async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_seconds(
+    mock_async_openai, mock_sleep, max_retry_interval_seconds_config
 ):
     """Test retry logic on RateLimitError."""
     mock_response = MagicMock()
@@ -281,7 +280,7 @@ async def test_generate_response_retry_on_rate_limit_with_max_delay(
     )
     mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_max_delay_config)
+    lm = OpenAILanguageModel(max_retry_interval_seconds_config)
     with pytest.raises(ExternalServiceAPIError):
         await lm.generate_response(max_attempts=6)
 
@@ -368,7 +367,6 @@ async def test_metrics_collection(mock_async_openai, full_config):
     mock_async_openai.return_value = mock_client
 
     lm = OpenAILanguageModel(full_config)
-    assert lm.collect_metrics
     await lm.generate_response()
 
     metrics_factory = full_config["metrics_factory"]

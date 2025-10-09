@@ -78,7 +78,9 @@ class LanguageModelBuilder(Builder):
                         "base_url": config.get("base_url"),
                         "metrics_factory": get_metrics_factory(config),
                         "user_metrics_labels": config.get("user_metrics_labels", {}),
-                        "max_delay": config.get("max_delay", 120),
+                        "max_retry_interval_seconds": config.get(
+                            "max_retry_interval_seconds", 120
+                        ),
                     }
                 )
 

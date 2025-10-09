@@ -57,19 +57,19 @@ def full_config(mock_metrics_factory):
         "api_key": "test_api_key",
         "model": "test-model",
         "base_url": "http://localhost:8080",
-        "max_delay": 60,
+        "max_retry_interval_seconds": 60,
         "metrics_factory": mock_metrics_factory,
         "user_metrics_labels": {"user": "test-user"},
     }
 
 
 @pytest.fixture
-def minimal_max_delay_config():
-    """Fixture for a minimal valid configuration."""
+def max_retry_interval_seconds_config():
+    """Fixture for a valid configuration with small max_retry_interval_seconds."""
     return {
         "api_key": "test_api_key",
         "model": "test-model",
-        "max_delay": 4,
+        "max_retry_interval_seconds": 4,
     }
 
 
@@ -78,10 +78,8 @@ def minimal_max_delay_config():
 )
 def test_init_success(mock_async_openai, minimal_config):
     """Test successful initialization."""
-    lm = OpenAICompatibleLanguageModel(minimal_config)
+    OpenAICompatibleLanguageModel(minimal_config)
     mock_async_openai.assert_called_once_with(api_key="test_api_key", base_url=None)
-    assert lm.model == "test-model"
-    assert not lm.collect_metrics
 
 
 @patch(
@@ -89,13 +87,10 @@ def test_init_success(mock_async_openai, minimal_config):
 )
 def test_init_with_full_config(mock_async_openai, full_config):
     """Test successful initialization with all optional parameters."""
-    lm = OpenAICompatibleLanguageModel(full_config)
+    _ = OpenAICompatibleLanguageModel(full_config)
     mock_async_openai.assert_called_once_with(
         api_key="test_api_key", base_url="http://localhost:8080"
     )
-    assert lm.model == "test-model"
-    assert lm.max_delay == 60
-    assert lm.collect_metrics
 
 
 def test_init_missing_model():
@@ -118,17 +113,21 @@ def test_init_invalid_base_url(bad_url, minimal_config):
         OpenAICompatibleLanguageModel(config)
 
 
-def test_init_invalid_max_delay_type(minimal_config):
-    """Test initialization fails with non-integer max_delay."""
-    config = {**minimal_config, "max_delay": "not-an-int"}
-    with pytest.raises(TypeError, match="max_delay must be an integer"):
+def test_init_invalid_max_retry_interval_seconds_type(minimal_config):
+    """Test initialization fails with non-integer max_retry_interval_seconds."""
+    config = {**minimal_config, "max_retry_interval_seconds": "not-an-int"}
+    with pytest.raises(
+        TypeError, match="max_retry_interval_seconds must be an integer"
+    ):
         OpenAICompatibleLanguageModel(config)
 
 
-def test_init_invalid_max_delay_value(minimal_config):
-    """Test initialization fails with non-positive max_delay."""
-    config = {**minimal_config, "max_delay": 0}
-    with pytest.raises(ValueError, match="max_delay must be a positive integer"):
+def test_init_invalid_max_retry_interval_seconds_value(minimal_config):
+    """Test initialization fails with non-positive max_retry_interval_seconds."""
+    config = {**minimal_config, "max_retry_interval_seconds": 0}
+    with pytest.raises(
+        ValueError, match="max_retry_interval_seconds must be a positive integer"
+    ):
         OpenAICompatibleLanguageModel(config)
 
 
@@ -286,8 +285,8 @@ async def test_generate_response_retry_on_rate_limit(
 @patch(
     "memmachine.common.language_model.openai_compatible_language_model.openai.AsyncOpenAI"
 )
-async def test_generate_response_retry_on_rate_limit_with_max_delay(
-    mock_async_openai, mock_sleep, minimal_max_delay_config
+async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_seconds(
+    mock_async_openai, mock_sleep, max_retry_interval_seconds_config
 ):
     """Test retry logic on RateLimitError."""
     mock_response = MagicMock()
@@ -301,7 +300,7 @@ async def test_generate_response_retry_on_rate_limit_with_max_delay(
     )
     mock_async_openai.return_value = mock_client
 
-    lm = OpenAICompatibleLanguageModel(minimal_max_delay_config)
+    lm = OpenAICompatibleLanguageModel(max_retry_interval_seconds_config)
     with pytest.raises(ExternalServiceAPIError):
         await lm.generate_response(max_attempts=6)
 

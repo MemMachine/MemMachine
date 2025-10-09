@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 import openai
@@ -42,7 +42,8 @@ class OpenAILanguageModel(LanguageModel):
                   for collecting usage metrics.
                 - user_metrics_labels (dict[str, str], optional):
                   Labels to attach to the collected metrics.
-                - max_delay: maximal seconds to delay when retrying API calls.
+                - max_retry_interval_seconds(int, optional):
+                  Maximal retry interval in seconds when retrying API calls.
                   The default value is 120 seconds.
 
         Raises:
@@ -65,12 +66,12 @@ class OpenAILanguageModel(LanguageModel):
 
         self._client = openai.AsyncOpenAI(api_key=api_key)
 
-        self._max_delay = config.get("max_delay", 120)
-        if not isinstance(self._max_delay, int):
-            raise TypeError("max_delay must be an integer")
+        self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
+        if not isinstance(self._max_retry_interval_seconds, int):
+            raise TypeError("max_retry_interval_seconds must be an integer")
 
-        if self._max_delay <= 0:
-            raise ValueError("max_delay must be a positive integer")
+        if self._max_retry_interval_seconds <= 0:
+            raise ValueError("max_retry_interval_seconds must be a positive integer")
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(
@@ -119,21 +120,6 @@ class OpenAILanguageModel(LanguageModel):
                 "Latency in seconds for OpenAI language model requests",
                 label_names=label_names,
             )
-
-    @property
-    def model(self) -> str:
-        """Retrieves the model name."""
-        return cast(str, self._model)
-
-    @property
-    def max_delay(self) -> int:
-        """Retrieves the maximum delay in seconds."""
-        return self._max_delay
-
-    @property
-    def collect_metrics(self) -> bool:
-        """Retrieves whether metrics are collected."""
-        return self._collect_metrics
 
     async def generate_response(
         self,
@@ -202,7 +188,7 @@ class OpenAILanguageModel(LanguageModel):
                 )
                 await asyncio.sleep(sleep_seconds)
                 sleep_seconds *= 2
-                sleep_seconds = min(sleep_seconds, self._max_delay)
+                sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
                 continue
             except openai.OpenAIError as e:
                 error_message = (
