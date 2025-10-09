@@ -12,7 +12,7 @@
       },
       "tags": [],
       "request": {
-        "url": "{{HOST}}/memory?user_id=christian&query=In the evening I was thirsty and drank a gin tonic",
+        "url": "{{HOST}}/memory?user_id=dave&query=I took asperin today.",
         "method": "POST",
         "headers": [
           {
@@ -24,13 +24,13 @@
         "params": [
           {
             "name": "user_id",
-            "value": "christian",
+            "value": "dave",
             "type": "query",
             "enabled": true
           },
           {
             "name": "query",
-            "value": "In the evening I was thirsty and drank a gin tonic",
+            "value": "I took asperin today.",
             "type": "query",
             "enabled": true
           }
@@ -46,7 +46,7 @@
           "req": [
             {
               "name": "HOST",
-              "value": "http://localhost:8001",
+              "value": "http://localhost:8000",
               "enabled": true,
               "local": false
             }
@@ -183,7 +183,21 @@
       }
     }
   ],
-  "environments": [],
+  "activeEnvironmentUid": "eABPOydVZMSGLzKcu1UgQ",
+  "environments": [
+    {
+      "variables": [
+        {
+          "name": "HOST",
+          "value": "http://localhost:8001",
+          "enabled": true,
+          "secret": false,
+          "type": "text"
+        }
+      ],
+      "name": "localhost"
+    }
+  ],
   "brunoConfig": {
     "version": "1",
     "name": "health-assistant",
