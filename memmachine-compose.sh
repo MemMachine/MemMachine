@@ -14,30 +14,31 @@ NC='\033[0m' # No Color
 
 ## Function to run a command with a timeout
 timeout() {
-  local duration=$1
-  shift
+    local duration=$1
+    shift
 
-  # Run the command in the background
-  "$@" &
-  local cmd_pid=$!
+    # Run the command in the background
+    "$@" &
+    local cmd_pid=$!
 
-  # Start a background sleep that will kill the command
-  (
-    sleep "$duration"
-    kill -0 "$cmd_pid" 2>/dev/null && kill -TERM "$cmd_pid"
-  ) &
+    # Start a background sleep that will kill the command
+    (
+        sleep "$duration"
+        kill -0 "$cmd_pid" 2>/dev/null && kill -TERM "$cmd_pid"
+    ) &
 
-  local watchdog_pid=$!
+    local watchdog_pid=$!
 
-  # Wait for the command to finish
-  wait "$cmd_pid"
-  local status=$?
+    # Wait for the command to finish
+    wait "$cmd_pid"
+    local status=$?
 
-  # Clean up watchdog if command finished early
-  kill -TERM "$watchdog_pid" 2>/dev/null
+    # Clean up watchdog if command finished early
+    kill -TERM "$watchdog_pid" 2>/dev/null
 
-  return $status
+    return $status
 }
+
 # Function to print colored output
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
