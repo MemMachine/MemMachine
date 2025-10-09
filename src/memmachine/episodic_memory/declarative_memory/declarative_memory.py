@@ -298,7 +298,10 @@ class DeclarativeMemory:
                 labels={"Derivative"},
                 properties={
                     "content": derivative.content,
-                    "embedding": derivative_embedding,
+                    DeclarativeMemory._embedding_property_name(
+                        self._embedder.model_id,
+                        self._embedder.dimensions,
+                    ): derivative_embedding,
                     "timestamp": derivative.timestamp,
                     "user_metadata": json.dumps(derivative.user_metadata),
                 }
@@ -484,7 +487,7 @@ class DeclarativeMemory:
         self,
         query: str,
         num_episodes_limit: int = 20,
-        filterable_properties: dict[str, FilterablePropertyValue] = {},
+        property_filter: dict[str, FilterablePropertyValue] = {},
     ) -> list[Episode]:
         """
         Search declarative memory for episodes relevant to the query.
@@ -495,7 +498,7 @@ class DeclarativeMemory:
             num_episodes_limit (int, optional):
                 The maximum number
                 of episodes to return (default: 20).
-            filterable_properties (
+            property_filter (
                 dict[str, FilterablePropertyValue], optional
             ):
                 Filterable property keys and values to use
@@ -538,10 +541,17 @@ class DeclarativeMemory:
         search_similar_nodes_tasks = [
             self._vector_graph_store.search_similar_nodes(
                 query_embedding=derivative_embedding,
+                embedding_property_name=(
+                    DeclarativeMemory._embedding_property_name(
+                        self._embedder.model_id,
+                        self._embedder.dimensions,
+                    )
+                ),
+                similarity_metric=self._embedder.similarity_metric,
                 required_labels={"Derivative"},
                 required_properties={
                     mangle_filterable_property_key(key): value
-                    for key, value in filterable_properties.items()
+                    for key, value in property_filter.items()
                 },
                 include_missing_properties=True,
             )
@@ -564,7 +574,7 @@ class DeclarativeMemory:
                 required_labels={"EpisodeCluster"},
                 required_properties={
                     mangle_filterable_property_key(key): value
-                    for key, value in filterable_properties.items()
+                    for key, value in property_filter.items()
                 },
                 include_missing_properties=True,
             )
@@ -594,7 +604,7 @@ class DeclarativeMemory:
                 required_labels={"Episode"},
                 required_properties={
                     mangle_filterable_property_key(key): value
-                    for key, value in filterable_properties.items()
+                    for key, value in property_filter.items()
                 },
             )
             for matched_episode_cluster_node in matched_episode_cluster_nodes
@@ -618,7 +628,7 @@ class DeclarativeMemory:
         expand_episode_node_contexts_tasks = [
             self._expand_episode_node_context(
                 nuclear_episode_node,
-                filterable_properties=filterable_properties,
+                property_filter=property_filter,
             )
             for nuclear_episode_node in nuclear_episode_nodes
         ]
@@ -667,7 +677,7 @@ class DeclarativeMemory:
         self,
         nucleus_episode_node: Node,
         retrieval_depth_limit: int = 1,
-        filterable_properties: dict[str, FilterablePropertyValue] = {},
+        property_filter: dict[str, FilterablePropertyValue] = {},
     ) -> set[Node]:
         """
         Expand the context of a nucleus episode node
@@ -687,7 +697,7 @@ class DeclarativeMemory:
                     required_labels={"Episode"},
                     required_properties={
                         mangle_filterable_property_key(key): value
-                        for key, value in filterable_properties.items()
+                        for key, value in property_filter.items()
                     },
                 )
                 for frontier_node in frontier
@@ -818,9 +828,9 @@ class DeclarativeMemory:
         """
         await self._vector_graph_store.clear_data()
 
-    async def forget_isolated_episodes(
+    async def forget_filtered_episodes(
         self,
-        filterable_properties: dict[str, FilterablePropertyValue] = {},
+        property_filter: dict[str, FilterablePropertyValue] = {},
     ):
         """
         Forget all episodes matching the given filterable properties
@@ -830,7 +840,7 @@ class DeclarativeMemory:
             required_labels={"Episode"},
             required_properties={
                 mangle_filterable_property_key(key): value
-                for key, value in filterable_properties.items()
+                for key, value in property_filter.items()
             },
         )
 
@@ -928,3 +938,18 @@ class DeclarativeMemory:
             )
             for node in episode_nodes
         ]
+
+    @staticmethod
+    def _embedding_property_name(model_id: str, dimensions: int) -> str:
+        """
+        Generate a standardized property name for embeddings
+        based on the model ID and embedding dimensions.
+
+        Args:
+            model_id (str): The identifier of the embedding model.
+            dimensions (int): The dimensionality of the embedding.
+
+        Returns:
+            str: A standardized property name for the embedding.
+        """
+        return f"embedding_{model_id}_{dimensions}d"

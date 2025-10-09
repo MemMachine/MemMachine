@@ -2,8 +2,8 @@ import functools
 import json
 import os
 import traceback
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Any, cast
 
 import dotenv
 from agents import (
@@ -17,8 +17,12 @@ from agents import (
     set_tracing_export_api_key,
     trace,
 )
-from agents.mcp import MCPServerStreamableHttp, MCPServerStreamableHttpParams
 from pydantic import BaseModel
+
+from memmachine.episodic_memory.episodic_memory import EpisodicMemory
+from memmachine.episodic_memory.episodic_memory_manager import (
+    EpisodicMemoryManager,
+)
 
 LOCOMO_EXECUTOR_INSTRUCTIONS = """
 You are the executor agent. As the executor, your role is to answer the user's quesiton using the memories in the context and by querying for more memories if necessary.
@@ -61,28 +65,23 @@ dotenv.load_dotenv()
 set_tracing_export_api_key(os.getenv("TRACE_API_KEY"))
 set_default_openai_key(os.getenv("OPENAI_API_KEY"))
 
+memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
+    "locomo_config.yaml"
+)
 
-async def search_memories(
-    mcp_server, group_id, session_id, user_ids, agent_ids, context, query
-):
-    search_response = await mcp_server.call_tool(
-        "mcp_search_session_memory",
-        arguments={
-            "q": {
-                "query": query,
-                "user_id": user_ids[0],
-                "limit": 30,
-                "session": {
-                    "group_id": group_id,
-                    "session_id": session_id,
-                    "user_id": user_ids,
-                    "agent_id": agent_ids,
-                },
-            }
-        },
+
+async def search_memories(group_id, session_id, user_ids, agent_ids, context, query):
+    memory = cast(
+        EpisodicMemory,
+        await memory_manager.get_episodic_memory_instance(
+            group_id=group_id,
+            session_id=session_id,
+            user_id=user_ids,
+            agent_id=agent_ids,
+        ),
     )
 
-    search_result = json.loads(search_response.content[0].text)["content"]
+    _, episodes, _ = await memory.query_memory(query=query, limit=30)
 
     def rename_property(property_key):
         if property_key == "source_timestamp":
@@ -97,7 +96,6 @@ async def search_memories(
         "content",
         "blip_caption",
     ]
-    episodes = search_result["episodic_memory"][1] + search_result["episodic_memory"][0]
     episodic_memories = [
         {
             rename_property(wanted_property): (
@@ -110,7 +108,7 @@ async def search_memories(
             )
             for wanted_property in wanted_episode_properties
         }
-        for episode in episodes
+        for episode in [asdict(e) for e in episodes]
     ]
 
     return json.dumps(
@@ -123,105 +121,86 @@ async def search_memories(
 
 async def locomo_response(group_id: int, query: str, users: list[str], model: str):
     """
-    Answer a locomo benchmark question using an OpenAI Agents SDK client to the MCP server.
+    Answer a locomo benchmark question using an OpenAI Agents SDK agent.
     """
-    async with (
-        MCPServerStreamableHttp(
-            params=MCPServerStreamableHttpParams(
-                {
-                    "url": "http://localhost:8080/mcp/",
-                    "timeout": 100,
-                }
-            ),
-            name="mcp_server",
-            client_session_timeout_seconds=200,
-            tool_filter=(
-                lambda context, tool: False
-                if context.agent
-                else True  # Disable all tools from being called directly by agents. We will process the outputs for the model.
-            ),
-        ) as mcp_server
-    ):
-        search_result = await search_memories(
-            mcp_server,
+    search_result = await search_memories(
+        f"group_{group_id}",
+        f"group_{group_id}",
+        users,
+        [],
+        None,
+        query,
+    )
+
+    @dataclass
+    class Memory:
+        memory: list[dict[str, Any]]
+        analysis: str = ""
+        turn: int = 0
+
+    class LocomoPrefetches(AgentHooks):
+        async def on_start(
+            self, wrapper: RunContextWrapper[Memory], agent: Agent[Memory]
+        ):
+            wrapper.context.memory = search_result
+            wrapper.context.turn += 1
+
+    def executor_instructions(
+        wrapped_memory: RunContextWrapper[Memory], agent: Agent[Memory]
+    ) -> str:
+        turns = wrapped_memory.context.turn
+        return f"""{LOCOMO_EXECUTOR_INSTRUCTIONS.format(turns=turns)}
+        Base Memories:\n{json.dumps(wrapped_memory.context.memory, indent=4)}
+        Question: {query}
+        """
+
+    class MemorySearchArgs(BaseModel):
+        query: str
+
+    # OpenAI Agents SDK doesn't support preprocessing MCP tool outputs natively.
+    memory_search_tool = FunctionTool(
+        name="search_conversation_session_memory",
+        description="Searches for memories in a specific conversation session.",
+        params_json_schema=MemorySearchArgs.model_json_schema(),
+        on_invoke_tool=functools.partial(
+            search_memories,
             f"group_{group_id}",
             f"group_{group_id}",
             users,
             [],
-            None,
-            query,
-        )
+        ),
+    )
 
-        @dataclass
-        class Memory:
-            memory: list[dict[str, Any]]
-            analysis: str = ""
-            turn: int = 0
+    locomo_executor = Agent[Memory](
+        name="executor",
+        instructions=executor_instructions,
+        model=model,
+        model_settings=ModelSettings(max_tokens=2000, temperature=0.2, store=False),
+        hooks=LocomoPrefetches(),
+        tools=[memory_search_tool],
+    )
 
-        class LocomoPrefetches(AgentHooks):
-            async def on_start(
-                self, wrapper: RunContextWrapper[Memory], agent: Agent[Memory]
-            ):
-                wrapper.context.memory = search_result
-                wrapper.context.turn += 1
-
-        def executor_instructions(
-            wrapped_memory: RunContextWrapper[Memory], agent: Agent[Memory]
-        ) -> str:
-            turns = wrapped_memory.context.turn
-            return f"""{LOCOMO_EXECUTOR_INSTRUCTIONS.format(turns=turns)}
-            Base Memories:\n{json.dumps(wrapped_memory.context.memory, indent=4)}
-            Question: {query}
-            """
-
-        class MemorySearchArgs(BaseModel):
-            query: str
-
-        # OpenAI Agents SDK doesn't support preprocessing MCP tool outputs natively.
-        memory_search_tool = FunctionTool(
-            name="search_conversation_session_memory",
-            description="Searches for memories in a specific conversation session.",
-            params_json_schema=MemorySearchArgs.model_json_schema(),
-            on_invoke_tool=functools.partial(
-                search_memories,
-                mcp_server,
-                f"group_{group_id}",
-                f"group_{group_id}",
-                users,
-                [],
-            ),
-        )
-
-        locomo_executor = Agent[Memory](
-            name="executor",
-            instructions=executor_instructions,
-            model=model,
-            model_settings=ModelSettings(max_tokens=2000, temperature=0.2, store=False),
-            hooks=LocomoPrefetches(),
-            tools=[memory_search_tool],
-        )
-
-        with trace("TRACE"):
-            try:
-                result = await Runner.run(
-                    locomo_executor,
-                    input=query,
-                    context=Memory(memory=[]),
-                    max_turns=30,
-                )
-                agent_trace = [
-                    {str(type(item).__name__): convert_for_json(item.raw_item)}
-                    for item in result.new_items
-                ]
-                out = {
-                    "response": result.final_output.strip(),
-                    "trace": agent_trace,
-                }
-                return out
-            except Exception:
-                traceback.print_exc()
-                out = {"response": "Error", "trace": "None"}
-                return out
+    with trace("TRACE"):
+        try:
+            result = await Runner.run(
+                locomo_executor,
+                input=query,
+                context=Memory(memory=[]),
+                max_turns=30,
+            )
+            agent_trace = [
+                {str(type(item).__name__): convert_for_json(item.raw_item)}
+                for item in result.new_items
+            ]
+            out = {
+                "response": result.final_output.strip(),
+                "trace": agent_trace,
+            }
+            return out
+        except Exception:
+            traceback.print_exc()
+            out = {"response": "Error", "trace": "None"}
+            return out
 
 
 def convert_for_json(obj: Any) -> Any:

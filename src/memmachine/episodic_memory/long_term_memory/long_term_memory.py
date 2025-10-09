@@ -51,26 +51,52 @@ class LongTermMemory:
         vector_graph_store_id = long_term_memory_config.get("vector_graph_store")
         vector_graph_store_config = storage_configs.get(vector_graph_store_id) or {}
 
-        if vector_graph_store_config.get("vendor_name") != "neo4j":
-            raise ValueError("Only Neo4j vector graph store is supported")
+        vendor_name = vector_graph_store_config.get("vendor_name")
+        if vendor_name not in {"neo4j", "qdrant"}:
+            raise ValueError("Only Neo4j and Qdrant vector graph stores are supported")
 
-        neo4j_host = vector_graph_store_config.get("host")
-        if not isinstance(neo4j_host, str):
-            raise TypeError("Neo4j host must be provided as a string")
+        if vendor_name == "neo4j":
+            neo4j_host = vector_graph_store_config.get("host")
+            if not isinstance(neo4j_host, str):
+                raise TypeError("Neo4j host must be provided as a string")
 
-        neo4j_port = vector_graph_store_config.get("port")
-        if not isinstance(neo4j_port, int):
-            raise TypeError("Neo4j port must be provided as an integer")
+            neo4j_port = vector_graph_store_config.get("port")
+            if not isinstance(neo4j_port, int):
+                raise TypeError("Neo4j port must be provided as an integer")
 
-        neo4j_uri = f"bolt://{neo4j_host}:{neo4j_port}"
+            neo4j_uri = f"bolt://{neo4j_host}:{neo4j_port}"
 
-        neo4j_username = vector_graph_store_config.get("user")
-        if not isinstance(neo4j_username, str):
-            raise TypeError("Neo4j username must be provided as a string")
+            neo4j_username = vector_graph_store_config.get("user")
+            if not isinstance(neo4j_username, str):
+                raise TypeError("Neo4j username must be provided as a string")
 
-        neo4j_password = vector_graph_store_config.get("password")
-        if not isinstance(neo4j_password, str):
-            raise TypeError("Neo4j password must be provided as a string")
+            neo4j_password = vector_graph_store_config.get("password")
+            if not isinstance(neo4j_password, str):
+                raise TypeError("Neo4j password must be provided as a string")
+
+            neo4j_force_exact_similarity_search = vector_graph_store_config.get(
+                "force_exact_similarity_search", False
+            )
+        elif vendor_name == "qdrant":
+            qdrant_url = vector_graph_store_config.get("url")
+            if not isinstance(qdrant_url, str):
+                raise TypeError("Qdrant URL must be provided as a string")
+
+            qdrant_api_key = vector_graph_store_config.get("api_key")
+            if not isinstance(qdrant_api_key, str):
+                raise TypeError("Qdrant API key must be provided as a string")
+
+            qdrant_timeout = vector_graph_store_config.get("timeout", 60.0)
+            if not isinstance(qdrant_timeout, (int, float)):
+                raise TypeError("Qdrant timeout must be provided as a number")
+
+            qdrant_vector_dimension = vector_graph_store_config.get(
+                "vector_dimension", 384
+            )
+            if not isinstance(qdrant_vector_dimension, int):
+                raise TypeError(
+                    "Qdrant vector dimension must be provided as an integer"
+                )
 
         # Configure derivative deriver
         derivative_deriver_name = long_term_memory_config.get(
@@ -184,11 +210,20 @@ class LongTermMemory:
             },
             vector_graph_store_id: {
                 "type": "vector_graph_store",
-                "name": "neo4j",
+                "name": vendor_name,
                 "config": {
-                    "uri": neo4j_uri,
-                    "username": neo4j_username,
-                    "password": neo4j_password,
+                    "uri": neo4j_uri if vendor_name == "neo4j" else None,
+                    "username": neo4j_username if vendor_name == "neo4j" else None,
+                    "password": neo4j_password if vendor_name == "neo4j" else None,
+                    "url": qdrant_url if vendor_name == "qdrant" else None,
+                    "api_key": qdrant_api_key if vendor_name == "qdrant" else None,
+                    "timeout": qdrant_timeout if vendor_name == "qdrant" else None,
+                    "vector_dimension": qdrant_vector_dimension
+                    if vendor_name == "qdrant"
+                    else None,
+                    "force_exact_similarity_search": neo4j_force_exact_similarity_search
+                    if vendor_name == "neo4j"
+                    else False,
                 },
             },
             "_metrics_factory": {
@@ -236,7 +271,7 @@ class LongTermMemory:
         declarative_memory_episodes = await self._declarative_memory.search(
             query,
             num_episodes_limit=num_episodes_limit,
-            filterable_properties=id_filter,
+            property_filter=id_filter,
         )
         return [
             Episode(
@@ -274,7 +309,7 @@ class LongTermMemory:
         self._declarative_memory.forget_all()
 
     async def forget_session(self):
-        await self._declarative_memory.forget_isolated_episodes(
+        await self._declarative_memory.forget_filtered_episodes(
             filterable_properties={
                 "group_id": self._memory_context.group_id,
                 "session_id": self._memory_context.session_id,

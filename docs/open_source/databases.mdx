@@ -16,7 +16,7 @@ Here's how they help:
 
 By providing this durable, organized, and accessible memory, databases empower MemMachine to deliver the ability for agents to **intelligently interact** with users, making every conversation truly personalized and informed.
 
-MemMachine, by default, utilizes the following Databases:
+MemMachine supports the following vector store databases for long-term memory:
 
 ## neo4j
 Neo4j is a leading **graph database**, which means it's specially designed to store and manage highly connected data. Instead of rows and columns, Neo4j works with three fundamental building blocks:
@@ -41,6 +41,14 @@ MemMachine leverages Neo4j's graph capabilities to build a robust and intelligen
 By using Neo4j, MemMachine ensures that its memory isn't just a collection of facts, but a deeply understood and interconnected knowledge base, empowering agents to interact with profound intelligence and context.
 
 For information on the table structures utilized by MemMachine in neo4j, please check out the Long-Term memory portion of our [Memory Types](./memory_types) section.
+
+## Qdrant
+
+[Qdrant](https://qdrant.tech/) is a high-performance **vector search engine** designed specifically for similarity search. Built with Rust, it provides excellent scalability and performance for storing and querying high-dimensional vectors.
+
+By using Qdrant, MemMachine provides a high-performance alternative for applications that prioritize vector similarity search and horizontal scaling capabilities.
+
+For detailed configuration and usage information, see our [Qdrant documentation](./qdrant).
 
 ## PostgreSQL
 
