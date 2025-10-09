@@ -30,7 +30,7 @@ You'll find a `bruno.json` file within this directory.
 
 We'll use the POST endpoint to store memories.
 
-![](img/bruno-set-memories.png)
+![](img/bruno-set-mem.png)
 
 ### Query the memories
 
