@@ -3,8 +3,8 @@ import os
 from datetime import datetime
 
 import requests
-from query_constructor import HealthAssistantQueryConstructor
 from fastapi import FastAPI
+from query_constructor import HealthAssistantQueryConstructor
 
 # Configuration
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")

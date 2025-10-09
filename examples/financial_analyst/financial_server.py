@@ -3,8 +3,8 @@ import os
 from datetime import datetime
 
 import requests
-from query_constructor import FinancialAnalystQueryConstructor
 from fastapi import FastAPI
+from query_constructor import FinancialAnalystQueryConstructor
 
 # Configuration
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
