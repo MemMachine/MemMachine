@@ -3,30 +3,27 @@ import os
 from datetime import datetime
 
 import requests
-from fastapi import FastAPI
 from query_constructor import HealthAssistantQueryConstructor
+from fastapi import FastAPI
 
 # Configuration
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
 HEALTH_PORT = int(os.getenv("HEALTH_PORT", "8000"))
 
-app = FastAPI(
-    title="Health Assistant Server", description="Health Assistant middleware"
-)
+app = FastAPI(title="Health Server", description="Simple middleware")
 
-health_constructor = HealthAssistantQueryConstructor()
+query_constructor = HealthAssistantQueryConstructor()
 
 
 @app.post("/memory")
 async def store_data(user_id: str, query: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
         }
-
         episode_data = {
             "session": session_data,
             "producer": user_id,
@@ -46,20 +43,19 @@ async def store_data(user_id: str, query: str):
         response.raise_for_status()
         return {"status": "success", "data": response.json()}
     except Exception:
-        logging.exception("Error occurred in /memory v1/memories")
-        return {"status": "error", "message": "Internal error in /memory v1/memories"}
+        logging.exception("Error occurred in /memory get_data")
+        return {"status": "error", "message": "Internal error in /memory get_data"}
 
 
 @app.get("/memory")
 async def get_data(query: str, user_id: str, timestamp: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
         }
-
         search_data = {
             "session": session_data,
             "query": query,
@@ -107,7 +103,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
             else:
                 context_str = str(episodic_memory)
 
-        formatted_query = health_constructor.create_query(
+        formatted_query = query_constructor.create_query(
             profile=profile_str, context=context_str, query=query
         )
 
@@ -115,7 +111,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "status": "success",
             "data": {"profile": profile_memory, "context": episodic_memory},
             "formatted_query": formatted_query,
-            "query_type": "health_analyst",
+            "query_type": "example",
         }
     except Exception:
         logging.exception("Error occurred in /memory get_data")
@@ -126,12 +122,11 @@ async def get_data(query: str, user_id: str, timestamp: str):
 async def store_and_search_data(user_id: str, query: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
         }
-
         episode_data = {
             "session": session_data,
             "producer": user_id,
@@ -193,7 +188,6 @@ async def store_and_search_data(user_id: str, query: str):
             else:
                 profile_str = str(profile_memory)
 
-        # Format context data (episodic memory)
         context_str = ""
         if episodic_memory:
             if isinstance(episodic_memory, list):
@@ -201,7 +195,7 @@ async def store_and_search_data(user_id: str, query: str):
             else:
                 context_str = str(episodic_memory)
 
-        formatted_response = health_constructor.create_query(
+        formatted_response = query_constructor.create_query(
             profile=profile_str, context=context_str, query=query
         )
 

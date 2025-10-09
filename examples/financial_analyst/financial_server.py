@@ -3,29 +3,27 @@ import os
 from datetime import datetime
 
 import requests
-from fastapi import FastAPI
 from query_constructor import FinancialAnalystQueryConstructor
+from fastapi import FastAPI
 
+# Configuration
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
-FINANCIAL_PORT = int(os.getenv("FINANCIAL_PORT", "8000"))
+FINANCIAL_SERVER_PORT = int(os.getenv("FINANCIAL_SERVER_PORT", "8000"))
 
-app = FastAPI(
-    title="Financial Analyst Server", description="Financial analysis middleware"
-)
+app = FastAPI(title="Financial Analyst Server", description="Simple middleware")
 
-financial_constructor = FinancialAnalystQueryConstructor()
+query_constructor = FinancialAnalystQueryConstructor()
 
 
 @app.post("/memory")
 async def store_data(user_id: str, query: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
         }
-
         episode_data = {
             "session": session_data,
             "producer": user_id,
@@ -45,23 +43,19 @@ async def store_data(user_id: str, query: str):
         response.raise_for_status()
         return {"status": "success", "data": response.json()}
     except Exception:
-        logging.exception("Error occurred in /v1/memories store_data")
-        return {
-            "status": "error",
-            "message": "Internal error in /v1/memories store_data",
-        }
+        logging.exception("Error occurred in /memory get_data")
+        return {"status": "error", "message": "Internal error in /memory get_data"}
 
 
 @app.get("/memory")
 async def get_data(query: str, user_id: str, timestamp: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
         }
-
         search_data = {
             "session": session_data,
             "query": query,
@@ -83,7 +77,10 @@ async def get_data(query: str, user_id: str, timestamp: str):
 
         if response.status_code != 200:
             logging.error(f"Backend returned {response.status_code}: {response.text}")
-            return {"status": "error", "message": "Failed to retrieve memory data"}
+            return {
+                "status": "error",
+                "message": "Failed to retrieve memory data",
+            }
 
         response_data = response.json()
         logging.debug(f"Response data: {response_data}")
@@ -106,7 +103,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
             else:
                 context_str = str(episodic_memory)
 
-        formatted_query = financial_constructor.create_query(
+        formatted_query = query_constructor.create_query(
             profile=profile_str, context=context_str, query=query
         )
 
@@ -114,23 +111,22 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "status": "success",
             "data": {"profile": profile_memory, "context": episodic_memory},
             "formatted_query": formatted_query,
-            "query_type": "financial_analyst",
+            "query_type": "example",
         }
     except Exception:
-        logging.exception("Error occurred in /v1/memories get_data")
-        return {"status": "error", "message": "Internal error in /v1/memories get_data"}
+        logging.exception("Error occurred in /memory get_data")
+        return {"status": "error", "message": "Internal error in /memory get_data"}
 
 
 @app.post("/memory/store-and-search")
 async def store_and_search_data(user_id: str, query: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
         }
-
         episode_data = {
             "session": session_data,
             "producer": user_id,
@@ -151,7 +147,10 @@ async def store_and_search_data(user_id: str, query: str):
         logging.debug(f"Store-and-search response status: {resp.status_code}")
         if resp.status_code != 200:
             logging.error(f"Store failed with {resp.status_code}: {resp.text}")
-            return {"status": "error", "message": "Failed to store memory data"}
+            return {
+                "status": "error",
+                "message": "Failed to store memory data",
+            }
 
         search_data = {
             "session": session_data,
@@ -169,7 +168,10 @@ async def store_and_search_data(user_id: str, query: str):
             logging.error(
                 f"Search failed with {search_resp.status_code}: {search_resp.text}"
             )
-            return {"status": "error", "message": "Failed to search memory data"}
+            return {
+                "status": "error",
+                "message": "Failed to search memory data",
+            }
 
         search_resp.raise_for_status()
 
@@ -193,7 +195,7 @@ async def store_and_search_data(user_id: str, query: str):
             else:
                 context_str = str(episodic_memory)
 
-        formatted_response = financial_constructor.create_query(
+        formatted_response = query_constructor.create_query(
             profile=profile_str, context=context_str, query=query
         )
 
@@ -214,4 +216,4 @@ async def store_and_search_data(user_id: str, query: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=FINANCIAL_PORT)
+    uvicorn.run(app, host="0.0.0.0", port=FINANCIAL_SERVER_PORT)
