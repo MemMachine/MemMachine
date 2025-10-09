@@ -21,6 +21,8 @@ class VectorGraphStoreBuilder(Builder):
         match name:
             case "neo4j":
                 pass
+            case "qdrant":
+                pass
 
         return dependency_ids
 
@@ -36,5 +38,12 @@ class VectorGraphStoreBuilder(Builder):
                 )
 
                 return Neo4jVectorGraphStore(Neo4jVectorGraphStoreConfig(**config))
+            case "qdrant":
+                from .qdrant_vector_graph_store import (
+                    QdrantVectorGraphStore,
+                    QdrantVectorGraphStoreConfig,
+                )
+
+                return QdrantVectorGraphStore(QdrantVectorGraphStoreConfig(**config))
             case _:
                 raise ValueError(f"Unknown VectorGraphStore name: {name}")
