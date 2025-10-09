@@ -28,6 +28,12 @@ You'll find a `bruno.json` file within this directory.
 
 ### Set Memories
 
+We'll use the POST endpoint to store memories.
+
+![](img/bruno-set-memories.png)
+
 ### Query the memories
+
+And the GET endpoint to get them. We'll also get a filled out context prompt.
 
 ![](img/bruno-get-memories.png)
