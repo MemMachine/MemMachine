@@ -12,7 +12,129 @@
       },
       "tags": [],
       "request": {
-        "url": "{{HOST}}/memory?user_id=christian&query=I had a headache this morning and took 200mg of ibuprofen",
+        "url": "{{HOST}}/memory?user_id=christian&query=In the evening I was thirsty and drank a gin tonic",
+        "method": "POST",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json",
+            "enabled": true
+          }
+        ],
+        "params": [
+          {
+            "name": "user_id",
+            "value": "christian",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "query",
+            "value": "In the evening I was thirsty and drank a gin tonic",
+            "type": "query",
+            "enabled": true
+          }
+        ],
+        "body": {
+          "mode": "none",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {
+          "req": [
+            {
+              "name": "HOST",
+              "value": "http://localhost:8001",
+              "enabled": true,
+              "local": false
+            }
+          ]
+        },
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    },
+    {
+      "type": "http",
+      "name": "getMemory",
+      "filename": "getMemory.bru",
+      "seq": 3,
+      "settings": {
+        "encodeUrl": true
+      },
+      "tags": [],
+      "request": {
+        "url": "{{HOST}}/memory?user_id=christian&query=what do you know about me?&timestamp=20251008",
+        "method": "GET",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/json",
+            "enabled": true
+          }
+        ],
+        "params": [
+          {
+            "name": "user_id",
+            "value": "christian",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "query",
+            "value": "what do you know about me?",
+            "type": "query",
+            "enabled": true
+          },
+          {
+            "name": "timestamp",
+            "value": "20251008",
+            "type": "query",
+            "enabled": true
+          }
+        ],
+        "body": {
+          "mode": "none",
+          "formUrlEncoded": [],
+          "multipartForm": [],
+          "file": []
+        },
+        "script": {},
+        "vars": {
+          "req": [
+            {
+              "name": "HOST",
+              "value": "http://localhost:8001",
+              "enabled": true,
+              "local": false
+            }
+          ]
+        },
+        "assertions": [],
+        "tests": "",
+        "docs": "",
+        "auth": {
+          "mode": "inherit"
+        }
+      }
+    },
+    {
+      "type": "http",
+      "name": "storeSearchMemory",
+      "filename": "storeSearchMemory.bru",
+      "seq": 4,
+      "settings": {
+        "encodeUrl": true
+      },
+      "tags": [],
+      "request": {
+        "url": "{{HOST}}/memory/store-and-search?user_id=christian&query=I had a headache this morning and took 200mg of ibuprofen",
         "method": "POST",
         "headers": [
           {

@@ -17,3 +17,11 @@ INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 ```
 
 Use the requests within Bruno.
+
+## Use Bruno
+
+### Set Memories
+
+### Query the memories
+
+![](img/bruno-get-memories.png)
