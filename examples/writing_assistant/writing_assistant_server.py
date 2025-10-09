@@ -77,7 +77,7 @@ async def store_data(user_id: str, query: str):
         logging.exception("Error occurred in /memory store_data")
         return {
             "status": "error",
-            "message": f"Internal error in /memory store_data: {str(e)}"
+            "message": f"Internal error in /memory store_data: {str(e)}",
         }
 
 
@@ -99,7 +99,9 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "filter": {"producer_id": user_id},
         }
 
-        logging.debug(f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search")
+        logging.debug(
+            f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search"
+        )
         logging.debug(f"Search data: {search_data}")
 
         response = requests.post(
@@ -163,7 +165,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
         logging.exception("Error occurred in /memory get_data")
         return {
             "status": "error",
-            "message": f"Internal error in /memory get_data: {str(e)}"
+            "message": f"Internal error in /memory get_data: {str(e)}",
         }
 
 
@@ -284,7 +286,7 @@ async def store_and_search_data(user_id: str, query: str):
         logging.exception("Error occurred in store_and_search_data")
         return {
             "status": "error",
-            "message": f"Internal error in store_and_search: {str(e)}"
+            "message": f"Internal error in store_and_search: {str(e)}",
         }
 
 
@@ -331,7 +333,7 @@ async def analyze_writing_style(user_id: str, query: str):
             )
             return {
                 "status": "error",
-                "message": "Failed to retrieve existing writing style data"
+                "message": "Failed to retrieve existing writing style data",
             }
 
         search_results = search_resp.json()
@@ -366,7 +368,7 @@ async def analyze_writing_style(user_id: str, query: str):
         logging.exception("Error occurred in analyze_writing_style")
         return {
             "status": "error",
-            "message": f"Internal error in analyze_writing_style: {str(e)}"
+            "message": f"Internal error in analyze_writing_style: {str(e)}",
         }
 
 
