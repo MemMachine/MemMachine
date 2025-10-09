@@ -1,10 +1,10 @@
-# Query heatlh assitant
+# Heatlh Assitant
 
-Download [Bruno](https://www.usebruno.com/).
+## Start MemMachine
 
-Click `import collection` in the burger menu at the top.
+Use the README at the top of the repository to start MemMachine.
 
-![](img/bruno-import.png)
+## Start Assistant
 
 Start the health assitant:
 
@@ -16,9 +16,14 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 ```
 
-Use the requests within Bruno.
 
-## Use Bruno
+## Bruno
+
+Download [Bruno](https://www.usebruno.com/).
+
+Click `import collection` in the burger menu at the top.
+
+![](img/bruno-import.png)
 
 ### Set Memories
 
