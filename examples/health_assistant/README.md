@@ -16,7 +16,6 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
 ```
 
-
 ## Bruno
 
 Download [Bruno](https://www.usebruno.com/).
@@ -24,6 +23,8 @@ Download [Bruno](https://www.usebruno.com/).
 Click `import collection` in the burger menu at the top.
 
 ![](img/bruno-import.png)
+
+You'll find a `bruno.json` file within this directory.
 
 ### Set Memories
 
