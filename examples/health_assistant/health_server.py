@@ -21,7 +21,7 @@ health_constructor = HealthAssistantQueryConstructor()
 async def store_data(user_id: str, query: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
@@ -54,7 +54,7 @@ async def store_data(user_id: str, query: str):
 async def get_data(query: str, user_id: str, timestamp: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
@@ -126,7 +126,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
 async def store_and_search_data(user_id: str, query: str):
     try:
         session_data = {
-            "group_id": None,
+            "group_id": user_id,
             "agent_id": ["assistant"],
             "user_id": [user_id],
             "session_id": f"session_{user_id}",
