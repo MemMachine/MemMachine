@@ -7,11 +7,13 @@ import asyncio
 import functools
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from datetime import datetime
 from string import Template
 from typing import Any, Self, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
@@ -35,66 +37,95 @@ from .related_episode_postulator import RelatedEpisodePostulator
 logger = logging.getLogger(__name__)
 
 
+class
+
+
+class Workflow(BaseModel):
+
+
+class DerivationWorkflow(BaseModel):
+    """
+      Each config contains:
+        - related_episode_postulator:
+          RelatedEpisodePostulator instance
+          used for assembling episode clusters.
+        - derivative_derivation_workflows:
+          List of workflow configs.
+          Each config contains:
+            - derivative_deriver:
+              DerivativeDeriver instance
+              used for deriving derivatives.
+            - derivative_mutation_workflows:
+              List of workflow configs.
+              Each config contains:
+                - derivative_mutator:
+                  DerivativeMutator instance
+                  used for mutating derivatives.
+    """
+    related_episode_postulator: RelatedEpisodePostulator
+    workflow_configs: Collection[Workflow]
+
+
+class DeclarativeMemoryConfig(BaseModel):
+    """
+    Configuration for DeclarativeMemory.
+
+    Attributes:
+    vector_graph_store (VectorGraphStore):
+        Vector graph store for storing and retrieving memories.
+    embedder (Embedder):
+        Embedder for creating embeddings.
+    reranker (Reranker):
+        Reranker for reranking search results.
+    related_episode_postulators (Collection[RelatedEpisodePostulator]):
+        Collection of RelatedEpisodePostulator instances
+        for connecting related episodes.
+    episode_metadata_template (str, optional):
+        Template string supporting $-substitutions
+        for augmenting episode content with contextual metadata
+        (default: "[$timestamp] $content").
+    query_derivative_deriver (DerivativeDeriver):
+        DerivativeDeriver instance
+        for deriving derivatives from queries.
+
+    derivation_workflows:
+      Mapping from episode types to collections of workflow configs.
+    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    vector_graph_store: VectorGraphStore
+    embedder: Embedder
+    reranker: Reranker
+    related_episode_postulators: Collection[RelatedEpisodePostulator]
+    episode_metadata_template: str = "[$timestamp] $content"
+    query_derivative_deriver: DerivativeDeriver
+    derivation_workflows: Mapping[str, Collection[
+        DerivationWorkflow
+    ]]
+
+
 class DeclarativeMemory:
     """
     Memory system for episodic and semantic memory.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: DeclarativeMemoryConfig):
         """
-        Initialize a DeclarativeMemory with the provided config.
+        Initialize a DeclarativeMemory
+        with the provided configuration.
 
         Args:
-            config (dict[str, Any]):
-                Configuration dictionary containing:
-                - vector_graph_store:
-                  VectorGraphStore instance
-                  for storing and retrieving memories.
-                - embedder:
-                  Embedder instance for similarity checks.
-                - reranker:
-                  Reranker instance for reranking search results.
-                - related_episode_postulators:
-                  List of RelatedEpisodePostulator instances
-                  for connecting related episodes.
-                - query_derivative_deriver:
-                  DerivativeDeriver instance
-                  for deriving derivatives from queries.
-                - derivation_workflows:
-                  Dict mapping episode types
-                  to lists of workflow configs.
-                  Each config contains:
-                    - related_episode_postulator:
-                      RelatedEpisodePostulator instance
-                      used for assembling episode clusters.
-                    - derivative_derivation_workflows:
-                      List of workflow configs.
-                      Each config contains:
-                        - derivative_deriver:
-                          DerivativeDeriver instance
-                          used for deriving derivatives.
-                        - derivative_mutation_workflows:
-                          List of workflow configs.
-                          Each config contains:
-                            - derivative_mutator:
-                              DerivativeMutator instance
-                              used for mutating derivatives.
-                - episode_metadata_template:
-                    Template string supporting $-substitutions
-                    (default: "[$timestamp] $content").
+            config (DeclarativeMemoryConfig):
+                Configuration for the declarative memory system.
         """
+        self._vector_graph_store: VectorGraphStore = config.vector_graph_store
+        self._embedder: Embedder = config.embedder
+        self._reranker: Reranker = config.reranker
+        self._related_episode_postulators: Collection[RelatedEpisodePostulator] = config.related_episode_postulators
 
-        self._vector_graph_store: VectorGraphStore = config["vector_graph_store"]
+        self._episode_metadata_template = Template(config.episode_metadata_template)
 
-        self._embedder: Embedder = config["embedder"]
-        self._reranker: Reranker = config["reranker"]
-
-        self._related_episode_postulators: list[RelatedEpisodePostulator] = config[
-            "related_episode_postulators"
-        ]
-        self._query_derivative_deriver: DerivativeDeriver = config[
-            "query_derivative_deriver"
-        ]
+        self._query_derivative_deriver: DerivativeDeriver = config.query_derivative_deriver
 
         def build_episode_cluster_assembly_workflow(
             config: dict[str, Any],
@@ -151,15 +182,11 @@ class DeclarativeMemory:
             ].items()
         }
 
-        self._episode_metadata_template = Template(
-            config.get("episode_metadata_template", "[$timestamp] $content")
-        )
-
     class Workflow:
         def __init__(
             self,
             executable: Callable[..., Awaitable],
-            subworkflows: list[Self] = [],
+            subworkflows: Collection[Self] | None = None,
             callback: Callable[..., Awaitable] | None = None,
         ):
             """
@@ -169,9 +196,9 @@ class DeclarativeMemory:
                 executable (Callable[..., Awaitable]):
                     An asynchronous callable
                     that performs the main operation of the workflow.
-                subworkflows (list[Workflow], optional):
-                    A list of subworkflows to execute
-                    on the result of the main operation (default: []).
+                subworkflows (Collection[Workflow] | None, optional):
+                    A collection of subworkflows to execute
+                    on the result of the main operation (default: None).
                 callback (Callable[..., Awaitable], optional):
                     An asynchronous callable that processes
                     the results of the main operation
@@ -195,15 +222,19 @@ class DeclarativeMemory:
             """
             execution_result = await self._executable(arguments)
 
-            subworkflow_results = await asyncio.gather(
-                *[
-                    subworkflow.execute(execution_result)
-                    for subworkflow in self._subworkflows
-                ]
+            subworkflow_results = (
+                await asyncio.gather(
+                    *(
+                        subworkflow.execute(execution_result)
+                        for subworkflow in self._subworkflows
+                    )
+                )
+                if self._subworkflows is not None
+                else None
             )
 
             if self._callback is not None:
-                if subworkflow_results:
+                if subworkflow_results is not None:
                     return await self._callback(execution_result, subworkflow_results)
                 else:
                     return await self._callback(execution_result)
@@ -254,7 +285,7 @@ class DeclarativeMemory:
     @staticmethod
     async def _mutate_derivatives(
         derivative_mutator: DerivativeMutator,
-        derivative_derivation_result: tuple[list[Derivative], EpisodeCluster],
+        derivative_derivation_result: tuple[Iterable[Derivative], EpisodeCluster],
     ) -> list[Derivative]:
         """
         Mutate derived derivatives.
@@ -277,15 +308,17 @@ class DeclarativeMemory:
 
     async def _process_derivative_mutation(
         self,
-        mutated_derivatives: list[Derivative],
+        mutated_derivatives: Iterable[Derivative],
     ) -> list[Node]:
         """
         Process the result of derivative mutation
         by embedding and creating nodes for the mutated derivatives.
         """
+        mutated_derivatives_list = list(mutated_derivatives)
+
         try:
             mutated_derivative_embeddings = await self._embedder.ingest_embed(
-                [derivative.content for derivative in mutated_derivatives],
+                [derivative.content for derivative in mutated_derivatives_list],
                 max_attempts=3,
             )
         except (ExternalServiceAPIError, ValueError, RuntimeError):
@@ -295,7 +328,6 @@ class DeclarativeMemory:
         mutated_derivative_nodes = [
             Node(
                 uuid=derivative.uuid,
-                labels={"Derivative"},
                 properties={
                     "content": derivative.content,
                     DeclarativeMemory._embedding_property_name(
@@ -311,19 +343,19 @@ class DeclarativeMemory:
                 },
             )
             for derivative, derivative_embedding in zip(
-                mutated_derivatives, mutated_derivative_embeddings
+                mutated_derivatives_list, mutated_derivative_embeddings
             )
         ]
         return mutated_derivative_nodes
 
     async def _process_derivative_derivation(
         self,
-        derived_derivatives: list[Derivative],
-        mutation_workflows_derivative_nodes: list[list[Node]],
+        derived_derivatives: Iterable[Derivative],
+        mutation_workflows_derivative_nodes: Iterable[Iterable[Node]],
     ) -> list[Node]:
         """
         Process the result of derivative derivation
-        by flattening the list of mutated derivative nodes.
+        by flattening the iterable of mutated derivative nodes.
         Do nothing with the unprocessed derived derivatives.
         """
         derivative_nodes = [
@@ -339,7 +371,7 @@ class DeclarativeMemory:
         self,
         episode_cluster: EpisodeCluster,
         derivation_workflows_derivative_nodes: list[list[Node]],
-    ) -> tuple[list[Node], list[Edge]]:
+    ) -> tuple[list[Node], list[Node], list[Edge], list[Edge]]:
         """
         Process the result of episode cluster assembly
         by creating nodes and edges
@@ -349,7 +381,6 @@ class DeclarativeMemory:
         # Create episode cluster nodes.
         episode_cluster_node = Node(
             uuid=episode_cluster.uuid,
-            labels={"EpisodeCluster"},
             properties=dict(
                 {
                     "timestamp": episode_cluster.timestamp,
@@ -369,7 +400,6 @@ class DeclarativeMemory:
                 uuid=uuid4(),
                 source_uuid=episode_cluster.uuid,
                 target_uuid=episode.uuid,
-                relation="CONTAINS",
             )
             for episode in episode_cluster.episodes
         ]
@@ -389,17 +419,16 @@ class DeclarativeMemory:
                 uuid=uuid4(),
                 source_uuid=derivative_node.uuid,
                 target_uuid=episode_cluster_node.uuid,
-                relation="DERIVED_FROM",
             )
             for derivative_node in derivative_nodes
         ]
 
-        nodes = [episode_cluster_node] + derivative_nodes
-        edges = (
-            episode_cluster_source_episodes_edges
-            + derivatives_source_episode_cluster_edges
+        return (
+            [episode_cluster_node],
+            derivative_nodes,
+            episode_cluster_source_episodes_edges,
+            derivatives_source_episode_cluster_edges,
         )
-        return nodes, edges
 
     async def add_episode(
         self,
@@ -413,7 +442,6 @@ class DeclarativeMemory:
         """
         episode_node = Node(
             uuid=episode.uuid,
-            labels={"Episode"},
             properties={
                 "episode_type": episode.episode_type,
                 "content_type": episode.content_type.value,
@@ -427,7 +455,7 @@ class DeclarativeMemory:
             },
         )
 
-        await self._vector_graph_store.add_nodes([episode_node])
+        await self._vector_graph_store.add_nodes("Episode", [episode_node])
 
         episode_type_derivation_workflows = self._derivation_workflows.get(
             episode.episode_type
@@ -439,18 +467,32 @@ class DeclarativeMemory:
             for derivation_workflow in episode_type_derivation_workflows
         ]
 
-        derivation_workflows_nodes, derivation_workflows_edges = zip(
-            *(await asyncio.gather(*derivation_workflow_tasks))
-        )
+        (
+            workflows_episode_cluster_nodes,
+            workflows_derivative_nodes,
+            workflows_episode_cluster_edges,
+            workflows_derivative_edges,
+        ) = zip(*(await asyncio.gather(*derivation_workflow_tasks)))
 
-        derivation_nodes = [
+        episode_cluster_nodes = [
             node
-            for workflow_nodes in derivation_workflows_nodes
+            for workflow_nodes in workflows_episode_cluster_nodes
             for node in workflow_nodes
         ]
-        derivation_edges = [
+        derivative_nodes = [
+            node
+            for workflow_nodes in workflows_derivative_nodes
+            for node in workflow_nodes
+        ]
+
+        episode_cluster_edges = [
             edge
-            for workflow_edges in derivation_workflows_edges
+            for workflow_edges in workflows_episode_cluster_edges
+            for edge in workflow_edges
+        ]
+        derivative_edges = [
+            edge
+            for workflow_edges in workflows_derivative_edges
             for edge in workflow_edges
         ]
 
@@ -473,21 +515,29 @@ class DeclarativeMemory:
                 uuid=uuid4(),
                 source_uuid=episode.uuid,
                 target_uuid=related_episode.uuid,
-                relation="RELATED_TO",
             )
             for related_episode in related_episodes
         ]
 
-        await self._vector_graph_store.add_nodes(derivation_nodes)
-        await self._vector_graph_store.add_edges(
-            derivation_edges + related_episode_edges
-        )
+        add_nodes_tasks = [
+            self._vector_graph_store.add_nodes("EpisodeCluster", episode_cluster_nodes),
+            self._vector_graph_store.add_nodes("Derivative", derivative_nodes),
+        ]
+
+        add_edges_tasks = [
+            self._vector_graph_store.add_edges("CONTAINS", episode_cluster_edges),
+            self._vector_graph_store.add_edges("DERIVED_FROM", derivative_edges),
+            self._vector_graph_store.add_edges("RELATED_TO", related_episode_edges),
+        ]
+
+        await asyncio.gather(*add_nodes_tasks)
+        await asyncio.gather(*add_edges_tasks)
 
     async def search(
         self,
         query: str,
         num_episodes_limit: int = 20,
-        property_filter: dict[str, FilterablePropertyValue] = {},
+        property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> list[Episode]:
         """
         Search declarative memory for episodes relevant to the query.
@@ -499,7 +549,7 @@ class DeclarativeMemory:
                 The maximum number
                 of episodes to return (default: 20).
             property_filter (
-                dict[str, FilterablePropertyValue], optional
+                Mapping[str, FilterablePropertyValue] | None, optional
             ):
                 Filterable property keys and values to use
                 for filtering episodes.
@@ -540,6 +590,7 @@ class DeclarativeMemory:
         # Search graph store for vector matches.
         search_similar_nodes_tasks = [
             self._vector_graph_store.search_similar_nodes(
+                collection="Derivative",
                 query_embedding=derivative_embedding,
                 embedding_property_name=(
                     DeclarativeMemory._embedding_property_name(
@@ -548,11 +599,12 @@ class DeclarativeMemory:
                     )
                 ),
                 similarity_metric=self._embedder.similarity_metric,
-                required_labels={"Derivative"},
                 required_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
-                },
+                }
+                if property_filter is not None
+                else None,
                 include_missing_properties=True,
             )
             for derivative_embedding in derivative_embeddings
@@ -567,15 +619,17 @@ class DeclarativeMemory:
         # Get source episode clusters of matched derivatives.
         search_derivatives_source_episode_cluster_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
+                collection="EpisodeCluster",
                 node_uuid=matched_derivative_node.uuid,
-                allowed_relations={"DERIVED_FROM"},
+                allowed_relations=["DERIVED_FROM"],
                 find_sources=False,
                 find_targets=True,
-                required_labels={"EpisodeCluster"},
                 required_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
-                },
+                }
+                if property_filter is not None
+                else None,
                 include_missing_properties=True,
             )
             for matched_derivative_node in matched_derivative_nodes
@@ -597,15 +651,17 @@ class DeclarativeMemory:
         # Get source episodes of matched episode clusters.
         search_episode_clusters_source_episode_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
+                collection="Episode",
                 node_uuid=matched_episode_cluster_node.uuid,
-                allowed_relations={"CONTAINS"},
+                allowed_relations=["CONTAINS"],
                 find_sources=False,
                 find_targets=True,
-                required_labels={"Episode"},
                 required_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
-                },
+                }
+                if property_filter is not None
+                else None,
             )
             for matched_episode_cluster_node in matched_episode_cluster_nodes
         ]
@@ -650,7 +706,7 @@ class DeclarativeMemory:
                     nuclear_episode_nodes,
                     episode_node_contexts,
                 ),
-                key=lambda pair: pair[0],
+                key=lambda triple: triple[0],
                 reverse=True,
             )
         ]
@@ -677,7 +733,7 @@ class DeclarativeMemory:
         self,
         nucleus_episode_node: Node,
         retrieval_depth_limit: int = 1,
-        property_filter: dict[str, FilterablePropertyValue] = {},
+        property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> set[Node]:
         """
         Expand the context of a nucleus episode node
@@ -690,15 +746,17 @@ class DeclarativeMemory:
         for _ in range(1, retrieval_depth_limit + 1):
             get_new_frontier_tasks = [
                 self._vector_graph_store.search_related_nodes(
+                    collection="Episode",
                     node_uuid=frontier_node.uuid,
                     find_sources=True,
                     find_targets=True,
                     limit=10,
-                    required_labels={"Episode"},
                     required_properties={
                         mangle_filterable_property_key(key): value
                         for key, value in property_filter.items()
-                    },
+                    }
+                    if property_filter is not None
+                    else None,
                 )
                 for frontier_node in frontier
             ]
@@ -719,7 +777,7 @@ class DeclarativeMemory:
         return retrieved_context
 
     async def _score_episode_node_contexts(
-        self, query: str, episode_node_contexts: list[set[Node]]
+        self, query: str, episode_node_contexts: Sequence[set[Node]]
     ) -> list[float]:
         """
         Score episode node contexts
@@ -776,7 +834,7 @@ class DeclarativeMemory:
 
     @staticmethod
     def _unify_anchored_episode_node_contexts(
-        anchored_episode_node_contexts: list[tuple[Node, set[Node]]],
+        anchored_episode_node_contexts: Sequence[tuple[Node, set[Node]]],
         num_episodes_limit: int,
     ) -> set[Node]:
         """
@@ -830,29 +888,54 @@ class DeclarativeMemory:
 
     async def forget_filtered_episodes(
         self,
-        property_filter: dict[str, FilterablePropertyValue] = {},
+        property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ):
         """
         Forget all episodes matching the given filterable properties
         and data derived from them.
+
+        Args:
+            property_filter (
+                Mapping[str, FilterablePropertyValue] | None, optional
+            ):
+                Filterable property keys and values to use
+                for filtering episodes.
+                If not provided, no filtering is applied.
         """
         matching_episode_nodes = await self._vector_graph_store.search_matching_nodes(
-            required_labels={"Episode"},
+            collection="Episode",
             required_properties={
                 mangle_filterable_property_key(key): value
                 for key, value in property_filter.items()
-            },
+            }
+            if property_filter is not None
+            else None,
         )
+
+        await self.forget_episodes_by_uuids(
+            [node.uuid for node in matching_episode_nodes]
+        )
+
+    async def forget_episodes_by_uuids(self, episode_uuids: Iterable[UUID]):
+        """
+        Forget all episodes with the given UUIDs
+        and data derived from them.
+
+        Args:
+            episode_uuids (Iterable[UUID]):
+                An iterable of episode UUIDs for episodes to forget.
+        """
+        episode_uuids_list = list(episode_uuids)
 
         search_related_episode_cluster_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
-                node_uuid=episode_node.uuid,
-                allowed_relations={"CONTAINS"},
-                required_labels={"EpisodeCluster"},
+                collection="EpisodeCluster",
+                node_uuid=episode_uuid,
+                allowed_relations=["CONTAINS"],
                 find_sources=True,
                 find_targets=False,
             )
-            for episode_node in matching_episode_nodes
+            for episode_uuid in episode_uuids_list
         ]
 
         episode_nodes_related_episode_cluster_nodes = await asyncio.gather(
@@ -870,9 +953,9 @@ class DeclarativeMemory:
 
         search_related_derivative_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
+                collection="Derivative",
                 node_uuid=episode_cluster_node.uuid,
-                allowed_relations={"DERIVED_FROM"},
-                required_labels={"Derivative"},
+                allowed_relations=["DERIVED_FROM"],
                 find_sources=True,
                 find_targets=False,
             )
@@ -892,12 +975,30 @@ class DeclarativeMemory:
             for derivative_node in (episode_cluster_node_related_derivative_nodes)
         ]
 
-        episode_uuids = [node.uuid for node in matching_episode_nodes]
         episode_cluster_uuids = [node.uuid for node in matching_episode_cluster_nodes]
         derivative_uuids = [node.uuid for node in matching_derivative_nodes]
 
-        node_uuids_to_delete = episode_uuids + episode_cluster_uuids + derivative_uuids
+        node_uuids_to_delete = (
+            episode_uuids_list + episode_cluster_uuids + derivative_uuids
+        )
         await self._vector_graph_store.delete_nodes(node_uuids_to_delete)
+
+    async def get_episodes_by_uuids(self, episode_uuids: Iterable[UUID]) -> list[Episode]:
+        """
+        Retrieve episodes with the given UUIDs.
+
+        Args:
+            episode_uuids (Iterable[UUID]):
+                An iterable of episode UUIDs for episodes to retrieve.
+        """
+        episode_uuids_list = list(episode_uuids)
+
+        matching_episode_nodes = await self._vector_graph_store.search_matching_nodes(
+            required_labels={"Episode"},
+            required_properties={"uuid": episode_uuids_list},
+        )
+
+        return DeclarativeMemory._episodes_from_episode_nodes(matching_episode_nodes)
 
     async def close(self):
         await self._vector_graph_store.close()
