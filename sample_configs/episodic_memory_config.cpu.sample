@@ -26,6 +26,19 @@ storage:
     user: neo4j
     password: <YOUR_PASSWORD_HERE>
 
+  profile_storage:
+    vendor_name: postgres
+    host: localhost
+    port: 5432
+    user: postgres
+    db_name: postgres
+
+
+profile_memory:
+  llm_model: testmodel
+  embedding_model: my_embedder_id
+  storage: profile_storage
+
 sessionMemory:
   model_name: testmodel
   message_capacity: 500
@@ -34,6 +47,7 @@ sessionMemory:
 
 embedder:
   my_embedder_id:
+    model_vendor: openai
     model_name: "text-embedding-3-small"
     api_key: <YOUR_API_KEY>
 
