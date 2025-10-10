@@ -109,6 +109,14 @@ def valid_query_payload():
 
 
 @pytest.fixture
+def query_payload_without_session():
+    """Provides a valid payload for query requests without session info."""
+    return {
+        "query": "test",
+    }
+
+
+@pytest.fixture
 def valid_delete_payload():
     """Provides a valid payload for DELETE requests."""
     return {
@@ -121,6 +129,40 @@ def valid_delete_payload():
     }
 
 
+@pytest.fixture
+def valid_session_headers():
+    """Provides valid headers representing a session."""
+    return {
+        "group-id": "group-hdr",
+        "session-id": "session-hdr",
+        "agent-id": "agent3,agent4",  # comma-separated values
+        "user-id": "user3,user4",
+    }
+
+
+@pytest.fixture
+def alias_session_headers():
+    """Provides valid headers using alias names for session fields."""
+    return {
+        "group-id": "group-alias",
+        "session-id": "session-alias",
+        "agent-id": "agent5,agent6",
+        "user-id": "user5,user6",
+    }
+
+
+@pytest.fixture
+def valid_post_payload_without_session():
+    """Provides a valid, complete payload for POST requests."""
+    return {
+        "producer": "user1",
+        "produced_for": "agent1",
+        "episode_content": "A valid memory string.",
+        "episode_type": "message",
+        "metadata": {"source": "test-suite"},
+    }
+
+
 # --- Tests for POST /v1/memories ---
 # (No changes needed to the test functions themselves)
 
@@ -128,6 +170,33 @@ def valid_delete_payload():
 def test_post_memories_valid_string_content(valid_post_payload):
     response = client.post("/v1/memories", json=valid_post_payload)
     assert response.status_code in (200, 201, 204)
+
+
+def test_post_memories_with_session_in_header(
+    valid_post_payload_without_session, valid_session_headers
+):
+    response = client.post(
+        "/v1/memories",
+        json=valid_post_payload_without_session,
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+
+
+def test_post_memories_with_session_in_alias_header(
+    valid_post_payload_without_session, alias_session_headers
+):
+    response = client.post(
+        "/v1/memories",
+        json=valid_post_payload_without_session,
+        headers=alias_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+
+
+def test_post_memories_without_session(valid_post_payload_without_session):
+    response = client.post("/v1/memories", json=valid_post_payload_without_session)
+    assert response.status_code == 422  # Should fail due to missing session info
 
 
 def test_post_episodic_memories_valid_string_content(valid_post_payload):
@@ -138,6 +207,24 @@ def test_post_episodic_memories_valid_string_content(valid_post_payload):
     assert response.status_code in (200, 201, 204)
 
 
+def test_post_episodic_memories_with_session_in_header(
+    valid_post_payload_without_session, valid_session_headers
+):
+    response = client.post(
+        "/v1/memories/episodic",
+        json=valid_post_payload_without_session,
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+
+
+def test_post_episodic_memories_without_session(valid_post_payload_without_session):
+    response = client.post(
+        "/v1/memories/episodic", json=valid_post_payload_without_session
+    )
+    assert response.status_code == 422  # Should fail due to missing session info
+
+
 def test_post_profile_memories_valid_string_content(valid_post_payload):
     """
     Test profile memory ingestion.
@@ -145,6 +232,26 @@ def test_post_profile_memories_valid_string_content(valid_post_payload):
     valid_post_payload["episode_type"] = "embedding"
     response = client.post("/v1/memories/profile", json=valid_post_payload)
     assert response.status_code in (200, 201, 204)
+
+
+def test_post_profile_memories_with_session_in_header(
+    valid_post_payload_without_session, valid_session_headers
+):
+    valid_post_payload_without_session["episode_type"] = "embedding"
+    response = client.post(
+        "/v1/memories/profile",
+        json=valid_post_payload_without_session,
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+
+
+def test_post_profile_memories_without_session(valid_post_payload_without_session):
+    valid_post_payload_without_session["episode_type"] = "embedding"
+    response = client.post(
+        "/v1/memories/profile", json=valid_post_payload_without_session
+    )
+    assert response.status_code == 422  # Should fail due to missing session info
 
 
 def test_post_memories_valid_list_content(valid_post_payload):
@@ -227,6 +334,26 @@ def test_memory_search_valid(valid_query_payload):
     assert "profile_memory" in rsp.keys()
 
 
+def test_memory_search_with_session_in_header(
+    query_payload_without_session, valid_session_headers
+):
+    response = client.post(
+        "/v1/memories/search",
+        json=query_payload_without_session,
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+    rsp = response.json()["content"]
+    assert len(rsp) == 2
+    assert "episodic_memory" in rsp.keys()
+    assert "profile_memory" in rsp.keys()
+
+
+def test_memory_search_without_session(query_payload_without_session):
+    response = client.post("/v1/memories/search", json=query_payload_without_session)
+    assert response.status_code == 422  # Should fail due to missing session info
+
+
 # --- Test episodic memory query /v1/memories/episodic/search ---
 def test_episodic_memory_search_valid(valid_query_payload):
     """
@@ -237,6 +364,27 @@ def test_episodic_memory_search_valid(valid_query_payload):
     rsp = response.json()["content"]
     assert len(rsp) == 1
     assert "episodic_memory" in rsp.keys()
+
+
+def test_episodic_memory_search_with_session_in_header(
+    query_payload_without_session, valid_session_headers
+):
+    response = client.post(
+        "/v1/memories/episodic/search",
+        json=query_payload_without_session,
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+    rsp = response.json()["content"]
+    assert len(rsp) == 1
+    assert "episodic_memory" in rsp.keys()
+
+
+def test_episodic_memory_search_without_session(query_payload_without_session):
+    response = client.post(
+        "/v1/memories/episodic/search", json=query_payload_without_session
+    )
+    assert response.status_code == 422  # Should fail due to missing session info
 
 
 # --- Test profile memory query /v1/memories/profile/search ---
@@ -251,6 +399,27 @@ def test_profile_memory_search_valid(valid_query_payload):
     assert "profile_memory" in rsp.keys()
 
 
+def test_profile_memory_search_with_session_in_header(
+    query_payload_without_session, valid_session_headers
+):
+    response = client.post(
+        "/v1/memories/profile/search",
+        json=query_payload_without_session,
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
+    rsp = response.json()["content"]
+    assert len(rsp) == 1
+    assert "profile_memory" in rsp.keys()
+
+
+def test_profile_memory_search_without_session(query_payload_without_session):
+    response = client.post(
+        "/v1/memories/profile/search", json=query_payload_without_session
+    )
+    assert response.status_code == 422  # Should fail due to missing session info
+
+
 # --- Tests for DELETE /v1/memories ---
 
 
@@ -262,6 +431,16 @@ def test_delete_memories_valid(valid_delete_payload):
 def test_delete_memories_missing_session():
     response = client.request("DELETE", "/v1/memories", json={})
     assert response.status_code == 422
+
+
+def test_delete_memories_with_session_in_header(valid_session_headers):
+    response = client.request(
+        "DELETE",
+        "/v1/memories",
+        json={},
+        headers=valid_session_headers,
+    )
+    assert response.status_code in (200, 201, 204)
 
 
 @pytest.mark.parametrize(

@@ -60,6 +60,7 @@ dev = [
 
 [tool.mypy]
 follow_untyped_imports = true
+exclude = ["venv/", ".venv/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
