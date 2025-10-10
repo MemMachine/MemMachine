@@ -31,6 +31,13 @@ class EmbedderBuilder(Builder):
         name: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> Embedder:
         match name:
+            case "amazon-bedrock":
+                from .amazon_bedrock_embedder import (
+                    AmazonBedrockEmbedder,
+                    AmazonBedrockEmbedderConfig,
+                )
+
+                return AmazonBedrockEmbedder(AmazonBedrockEmbedderConfig(**config))
             case "openai":
                 from .openai_embedder import OpenAIEmbedder
 
