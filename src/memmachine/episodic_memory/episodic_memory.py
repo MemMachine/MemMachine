@@ -79,7 +79,7 @@ class EpisodicMemory:
         if len(short_config) > 0 and short_config.get("enabled") != "false":
             model_name = short_config.get("model_name")
             if model_name is None or len(model_name) < 1:
-                raise ValueError("Invalid model name")
+                raise ValueError(f"Invalid model name: '{model_name}'")
 
             if model_config is None or model_config.get(model_name) is None:
                 raise ValueError("Invalid model configuration")
@@ -92,9 +92,9 @@ class EpisodicMemory:
             model_config["metrics_factory_id"] = "prometheus"
             metrics_injection = {}
             metrics_injection["prometheus"] = metrics_manager
-
+            vendor = model_config.get("model_vendor", "openai")
             llm_model = LanguageModelBuilder.build(
-                model_config.get("model_vendor", "openai"),
+                vendor,
                 model_config,
                 metrics_injection,
             )

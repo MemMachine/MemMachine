@@ -177,7 +177,25 @@ async def http_app_lifespan(application: FastAPI):
 
     # TODO switch to using builder initialization
     llm_model = OpenAILanguageModel({"api_key": api_key, "model": model})
-    embeddings = OpenAIEmbedder({"api_key": api_key})
+    ltm_config = yaml_config.get("long_term_memory", {})
+    embedder_key = ltm_config.get("embedder", None)
+    if embedder_key is None:
+        raise ValueError("No embedder defined in configuration file")
+    embedder_config = yaml_config.get("embedder", {})
+    embedder_def = embedder_config.get(embedder_key, None)
+    if embedder_def is None:
+        raise ValueError(
+            f"Embedder {embedder_key} not defined in configuration file"
+        )
+    embedder_model_name = embedder_def.get("model_name", "text-embedding-3-small")
+    embedder_base_url = embedder_def.get("base_url", "https://api.openai.com/v1")
+    embedder_model_vendor = embedder_def.get("model_vendor", "openai")
+    embeddings = OpenAIEmbedder({
+        "model_vendor": embedder_model_vendor,
+        "api_key": api_key,
+        "model_name": embedder_model_name,
+        "base_url": embedder_base_url,
+    })
 
     global profile_memory
     prompt_file = yaml_config.get("prompt", {}).get("profile", "profile_prompt")
@@ -874,6 +892,12 @@ async def start():
 
 def main():
     """Main entry point for the application."""
+    log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
+    log_format = os.getenv("LOG_FORMAT", "%(levelname)-7s %(message)s")
+    logging.basicConfig(
+        level=log_level,
+        format=log_format,
+    )
     # Load environment variables from .env file
     load_dotenv()
     # Run the asyncio event loop

@@ -113,7 +113,7 @@ class OpenAIEmbedder(Embedder):
         self._dimensions = dimensions
 
         self._client = openai.AsyncOpenAI(
-            api_key=api_key, base_url=config.get("base_url")
+            api_key=api_key, base_url=base_url
         )
 
         metrics_factory = config.get("metrics_factory")
@@ -121,12 +121,6 @@ class OpenAIEmbedder(Embedder):
             metrics_factory, MetricsFactory
         ):
             raise TypeError("Metrics factory must be an instance of MetricsFactory")
-
-        self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
-        if not isinstance(self._max_retry_interval_seconds, int):
-            raise TypeError("max_retry_interval_seconds must be an integer")
-        if self._max_retry_interval_seconds <= 0:
-            raise ValueError("max_retry_interval_seconds must be a positive integer")
 
         self._collect_metrics = False
         if metrics_factory is not None:
