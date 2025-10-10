@@ -71,11 +71,11 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
     async def postulate(self, episode: Episode) -> list[Episode]:
         previous_episode_nodes = (
             await self._vector_graph_store.search_directional_nodes(
+                collection="Episode",
                 by_property="timestamp",
                 start_at_value=episode.timestamp,
                 order_ascending=False,
                 limit=self._search_limit,
-                required_labels={"Episode"},
                 required_properties={
                     mangle_filterable_property_key(key): episode.filterable_properties[
                         key
