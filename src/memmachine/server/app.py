@@ -874,6 +874,12 @@ async def start():
 
 def main():
     """Main entry point for the application."""
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_format = os.getenv("LOG_FORMAT", "%(levelname)-7s %(message)s")
+    logging.basicConfig(
+        level=log_level,
+        format=log_format,
+    )
     # Load environment variables from .env file
     load_dotenv()
     # Run the asyncio event loop
