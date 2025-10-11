@@ -112,9 +112,7 @@ class OpenAIEmbedder(Embedder):
 
         self._dimensions = dimensions
 
-        self._client = openai.AsyncOpenAI(
-            api_key=api_key, base_url=config.get("base_url")
-        )
+        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=config.get("base_url"))
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(
