@@ -15,14 +15,14 @@ class Builder(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         """
         Get the set of dependency IDs
         required for building the resource.
 
         Args:
-            name (str):
-                The name of the resource to build.
+            variant (str):
+                The variant of the resource to build.
             config (dict[str, Any]):
                 The configuration dictionary for the resource.
 
@@ -35,16 +35,16 @@ class Builder(ABC):
 
     @staticmethod
     @abstractmethod
-    def build(name: str, config: dict[str, Any], injections: dict[str, Any]) -> Any:
+    def build(variant: str, config: dict[str, Any], injections: dict[str, Any]) -> Any:
         """
         Build the resource
-        based on its name,
+        based on its variant,
         configuration,
         and injected dependencies.
 
         Args:
-            name (str):
-                The name of the resource to build.
+            variant (str):
+                The variant of the resource to build.
             config (dict[str, Any]):
                 The configuration dictionary for the resource.
             injections (dict[str, Any]):

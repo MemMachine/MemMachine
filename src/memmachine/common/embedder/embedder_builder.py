@@ -16,10 +16,10 @@ class EmbedderBuilder(Builder):
     """
 
     @staticmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         dependency_ids: set[str] = set()
 
-        match name:
+        match variant:
             case "openai":
                 if "metrics_factory_id" in config:
                     dependency_ids.add(config["metrics_factory_id"])
@@ -28,9 +28,9 @@ class EmbedderBuilder(Builder):
 
     @staticmethod
     def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
+        variant: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> Embedder:
-        match name:
+        match variant:
             case "openai":
                 from .openai_embedder import OpenAIEmbedder
 
@@ -58,16 +58,11 @@ class EmbedderBuilder(Builder):
 
                 return OpenAIEmbedder(
                     {
-                        "model": config.get("model", "text-embedding-3-small"),
-                        "api_key": config["api_key"],
-                        "dimensions": config.get("dimensions"),
-                        "metrics_factory": injected_metrics_factory,
-                        "max_retry_interval_seconds": config.get(
-                            "max_retry_interval_seconds", 120
-                        ),
-                        "base_url": config.get("base_url"),
-                        "user_metrics_labels": config.get("user_metrics_labels", {}),
+                        key: value
+                        for key, value in config.items()
+                        if key != "metrics_factory_id"
                     }
+                    | {"metrics_factory": injected_metrics_factory}
                 )
             case _:
-                raise ValueError(f"Unknown Embedder name: {name}")
+                raise ValueError(f"Unknown Embedder variant: {variant}")

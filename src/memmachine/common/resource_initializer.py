@@ -1,5 +1,5 @@
 """
-Bootstrap initializer for building resources
+Resource initializer for building resources
 based on their definitions and dependencies.
 """
 
@@ -36,7 +36,7 @@ Each entry in resource_definitions should look like this:
 ```
 resource_id: {
     "type": "<TYPE>",
-    "name": "<NAME>",
+    "variant": "<VARIANT>",
     "config": {
         ... <CONFIGURATION> ...
     }
@@ -58,14 +58,17 @@ resource_builder_map: dict[str, type[Builder]] = {
 }
 
 
-class BootstrapInitializer:
+class ResourceInitializer:
     """
-    Bootstrap initializer for building resources
+    Resource initializer for building resources
     based on their definitions and dependencies.
     """
 
     @staticmethod
-    def initialize(resource_definitions: dict[str, Any]):
+    def initialize(
+        resource_definitions: dict[str, Any],
+        resource_cache: dict[str, Any] | None = None,
+    ):
         """
         Initialize resources
         based on their definitions and dependencies.
@@ -79,7 +82,7 @@ class BootstrapInitializer:
             resource_builder = resource_builder_map[resource_definition["type"]]
             resource_dependency_graph[resource_id] = (
                 resource_builder.get_dependency_ids(
-                    resource_definition["name"],
+                    resource_definition["variant"],
                     resource_definition["config"],
                 )
             )
@@ -139,14 +142,17 @@ class BootstrapInitializer:
 
         ordered_resource_ids = order_resources(resource_dependency_graph)
 
-        resources: dict[str, Any] = {}
+        resources = resource_cache.copy() if resource_cache is not None else {}
         for resource_id in ordered_resource_ids:
+            if resource_id in resources:
+                continue
+
             resource_definition = resource_definitions[resource_id]
 
             resource_builder = resource_builder_map[resource_definition["type"]]
 
             resources[resource_id] = resource_builder.build(
-                resource_definition["name"],
+                resource_definition["variant"],
                 resource_definition["config"],
                 resources,
             )
