@@ -11,10 +11,10 @@ It includes:
 """
 
 import asyncio
+import copy
 import logging
 import os
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, cast
 
@@ -27,10 +27,9 @@ from fastmcp import Context, FastMCP
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
-from memmachine.common.language_model.openai_language_model import (
-    OpenAILanguageModel,
-)
+from memmachine.common.embedder import EmbedderBuilder
+from memmachine.common.language_model import LanguageModelBuilder
+from memmachine.common.metrics_factory import MetricsFactoryBuilder
 from memmachine.episodic_memory.data_types import ContentType
 from memmachine.episodic_memory.episodic_memory import (
     AsyncEpisodicMemory,
@@ -113,37 +112,101 @@ episodic_memory: EpisodicMemoryManager | None = None
 # === Lifespan Management ===
 
 
-@dataclass
-class DBConfig:
-    """Database configuration model."""
+async def initialize_resource(
+    config_file: str,
+) -> tuple[EpisodicMemoryManager, ProfileMemory]:
+    """
+    This is a temporary solution to unify the ProfileMemory and Episodic Memory
+    configuration.
+    Initializes the ProfileMemory and EpisodicMemoryManager instances,
+    and establishes necessary connections (e.g., to the database).
+    These resources are cleaned up on shutdown.
+    Args:
+        config_file: The path to the configuration file.
+    Returns:
+        A tuple containing the EpisodicMemoryManager and ProfileMemory instances.
+    """
 
-    host: str | None
-    port: str | None
-    user: str | None
-    password: str | None
-    database: str | None
+    try:
+        yaml_config = yaml.safe_load(open(config_file, encoding="utf-8"))
+    except Exception as e:
+        raise e
 
-
-def get_db_config(yaml_config) -> DBConfig:
-    """Helper function to retrieve database configuration."""
-    db_host = os.getenv("POSTGRES_HOST")
-    db_port = os.getenv("POSTGRES_PORT")
-    db_user = os.getenv("POSTGRES_USER")
-    db_pass = os.getenv("POSTGRES_PASS")
-    db_name = os.getenv("POSTGRES_DB")
-    # get DB config from configuration file is available
+    # if the model is defined in the config, use it.
     profile_config = yaml_config.get("profile_memory", {})
+
+    # create LLM model from the configuration
+    model_config = yaml_config.get("model", {})
+
+    model_name = profile_config.get("llm_model")
+    if model_name is None:
+        raise ValueError("Model not configured in config file for profile memory")
+
+    model_def = model_config.get(model_name)
+    if model_def is None:
+        raise ValueError(f"Can not find definition of model{model_name}")
+
+    api_key = os.getenv("PROFILE_API_KEY")
+    if api_key is None:
+        api_key = "EMPTY"
+
+    profile_model = copy.deepcopy(model_def)
+    profile_model["api_key"] = api_key
+    metrics_manager = MetricsFactoryBuilder.build("prometheus", {}, {})
+    profile_model["metrics_factory_id"] = "prometheus"
+    metrics_injection = {}
+    metrics_injection["prometheus"] = metrics_manager
+    llm_model = LanguageModelBuilder.build(
+        profile_model.get("model_vendor"), profile_model, metrics_injection
+    )
+
+    # create embedder
+    embedders = yaml_config.get("embedder", {})
+    embedder_name = profile_config.get("embedding_model")
+    if embedder_name is None:
+        raise ValueError(
+            "Embedding model not configured in config file for profile memory"
+        )
+
+    embedder_def = embedders.get(embedder_name)
+    if embedder_def is None:
+        raise ValueError(f"Can not find definition of embedder {embedder_name}")
+
+    embedder_config = copy.deepcopy(embedder_def)
+    embedder_config["metrics_factory_id"] = "prometheus"
+    embedder_config["api_key"] = api_key
+
+    embeddings = EmbedderBuilder.build(
+        embedder_def.get("model_vendor", "openai"), embedder_config, metrics_injection
+    )
+
+    # Get the database configuration
+    # get DB config from configuration file is available
     db_config_name = profile_config.get("database")
-    if db_config_name is not None:
-        db_config = yaml_config.get("storage", {})
-        db_config = db_config.get(db_config_name)
-        if db_config is not None:
-            db_host = db_config.get("host", db_host)
-            db_port = db_config.get("port", db_port)
-            db_user = db_config.get("user", db_user)
-            db_pass = db_config.get("password", db_pass)
-            db_name = db_config.get("database", db_name)
-    return DBConfig(db_host, db_port, db_user, db_pass, db_name)
+    if db_config_name is None:
+        raise ValueError("Profile database not configured in config file")
+    db_config = yaml_config.get("storage", {})
+    db_config = db_config.get(db_config_name)
+    if db_config is None:
+        raise ValueError(f"Can not find configuration for database {db_config_name}")
+    db_pass = os.getenv("PROFILE_DB_PASSWORD")
+
+    prompt_file = profile_config.get("prompt", "profile_prompt")
+
+    profile_memory = ProfileMemory(
+        model=llm_model,
+        embeddings=embeddings,
+        db_config={
+            "host": db_config.get("host", "localhost"),
+            "port": db_config.get("port", 0),
+            "user": db_config.get("user", ""),
+            "password": db_pass,
+            "database": db_config.get("database", ""),
+        },
+        prompt_module=import_module(f".prompt.{prompt_file}", __package__),
+    )
+    episodic_memory = EpisodicMemoryManager.create_episodic_memory_manager(config_file)
+    return episodic_memory, profile_memory
 
 
 @asynccontextmanager
@@ -163,41 +226,10 @@ async def http_app_lifespan(application: FastAPI):
     except Exception as e:
         raise e
 
-    # if the model is defined in the config, use it.
-    profile_config = yaml_config.get("profile_memory", {})
-    model_config = yaml_config.get("model", {})
-    model_name = profile_config.get("model_name")
-    api_key = os.getenv("OPENAI_API_KEY")
-    model = "gpt-4.1-mini"
-    if model_name is not None:
-        model_def = model_config.get(model_name)
-        if model_def is not None:
-            api_key = model_def.get("api_key", api_key)
-            model = model_def.get("model_name", model)
-
-    # TODO switch to using builder initialization
-    llm_model = OpenAILanguageModel({"api_key": api_key, "model": model})
-    embeddings = OpenAIEmbedder({"api_key": api_key})
-
-    global profile_memory
-    prompt_file = yaml_config.get("prompt", {}).get("profile", "profile_prompt")
-
-    db_config = get_db_config(yaml_config)
-    profile_memory = ProfileMemory(
-        model=llm_model,
-        embeddings=embeddings,
-        db_config={
-            "host": db_config.host,
-            "port": db_config.port,
-            "user": db_config.user,
-            "password": db_config.password,
-            "database": db_config.database,
-        },
-        prompt_module=import_module(f".prompt.{prompt_file}", __package__),
-    )
     global episodic_memory
-    episodic_memory = EpisodicMemoryManager.create_episodic_memory_manager(config_file)
-    await profile_memory.startup()
+    global profile_memory
+    episodic_memory, profile_memory = await initialize_resource(yaml_config)
+    profile_memory.startup()
     yield
     await profile_memory.cleanup()
     await episodic_memory.shut_down()
