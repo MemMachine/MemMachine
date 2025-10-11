@@ -184,18 +184,18 @@ async def http_app_lifespan(application: FastAPI):
     embedder_config = yaml_config.get("embedder", {})
     embedder_def = embedder_config.get(embedder_key, None)
     if embedder_def is None:
-        raise ValueError(
-            f"Embedder {embedder_key} not defined in configuration file"
-        )
+        raise ValueError(f"Embedder {embedder_key} not defined in configuration file")
     embedder_model_name = embedder_def.get("model_name", "text-embedding-3-small")
     embedder_base_url = embedder_def.get("base_url", "https://api.openai.com/v1")
     embedder_model_vendor = embedder_def.get("model_vendor", "openai")
-    embeddings = OpenAIEmbedder({
-        "model_vendor": embedder_model_vendor,
-        "api_key": api_key,
-        "model_name": embedder_model_name,
-        "base_url": embedder_base_url,
-    })
+    embeddings = OpenAIEmbedder(
+        {
+            "model_vendor": embedder_model_vendor,
+            "api_key": api_key,
+            "model_name": embedder_model_name,
+            "base_url": embedder_base_url,
+        }
+    )
 
     global profile_memory
     prompt_file = yaml_config.get("prompt", {}).get("profile", "profile_prompt")
