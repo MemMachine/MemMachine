@@ -1,0 +1,11 @@
+model_list:
+  - model_name: qwen3:8b
+    litellm_params:
+      model: ollama/qwen3:8b
+      api_base: http://localhost:11434
+  - model_name: qwen3-embedding:0.6b
+    litellm_params:
+      model: ollama/qwen3-embedding:0.6b
+      api_base: http://localhost:11434
+litellm_settings:
+    drop_params: true

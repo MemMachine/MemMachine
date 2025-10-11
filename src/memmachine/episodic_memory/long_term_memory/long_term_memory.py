@@ -38,10 +38,15 @@ class LongTermMemory:
         embedder_id = long_term_memory_config.get("embedder")
         embedder_config = embedder_configs.get(embedder_id) or {}
 
+        embedder_model_vendor = embedder_config.get("model_vendor", "openai")
+        if not isinstance(embedder_model_vendor, str):
+            raise TypeError("Embedder model vendor must be provided as a string")
+        embedder_base_url = embedder_config.get("base_url", None)
+        if embedder_base_url is not None and not isinstance(embedder_base_url, str):
+            raise TypeError("Embedder base URL must be a string if provided")
         embedder_model_name = embedder_config.get("model_name")
         if not isinstance(embedder_model_name, str):
             raise TypeError("Embedder model name must be provided as a string")
-
         embedder_api_key = embedder_config.get("api_key")
         if not isinstance(embedder_api_key, str):
             raise TypeError("Embedder API key must be provided as a string")
@@ -179,11 +184,12 @@ class LongTermMemory:
             },
             embedder_id: {
                 "type": "embedder",
-                "name": "openai",
+                "name": embedder_model_vendor,
                 "config": {
-                    "model": embedder_model_name,
+                    "model_vendor": embedder_model_vendor,
+                    "model_name": embedder_model_name,
                     "api_key": embedder_api_key,
-                    "metrics_factory_id": "_metrics_factory",
+                    "base_url": embedder_base_url,
                 },
             },
             vector_graph_store_id: {
