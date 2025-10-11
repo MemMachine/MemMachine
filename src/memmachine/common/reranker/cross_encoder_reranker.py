@@ -4,8 +4,6 @@ Cross-encoder based reranker implementation.
 
 from typing import Any
 
-from sentence_transformers import CrossEncoder
-
 from .reranker import Reranker
 
 
@@ -15,7 +13,7 @@ class CrossEncoderReranker(Reranker):
     based on their relevance to the query.
     """
 
-    _cross_encoders: dict[str, CrossEncoder] = {}
+    _cross_encoders: dict[str, Any] = {}
 
     def __init__(self, config: dict[str, Any] = {}):
         """
@@ -35,6 +33,19 @@ class CrossEncoderReranker(Reranker):
 
         # TODO @edwinyyyu Remove: temporary fix for memory leak
         if model_name not in self._cross_encoders.keys():
+            # Import sentence_transformers only when needed
+            try:
+                from sentence_transformers import CrossEncoder
+            except ImportError as e:
+                raise ValueError(
+                    "sentence-transformers is required "
+                    "for CrossEncoderReranker. "
+                    "Please install it with "
+                    "`pip install sentence-transformers`, "
+                    "or by including GPU dependencies with "
+                    "`pip install memmachine[gpu]`."
+                ) from e
+            
             CrossEncoderReranker._cross_encoders[model_name] = CrossEncoder(model_name)
 
         self._cross_encoder = CrossEncoderReranker._cross_encoders[model_name]
