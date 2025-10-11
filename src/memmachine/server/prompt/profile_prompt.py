@@ -13,7 +13,7 @@ UPDATE_PROMPT = """
     - Assistant Response Preferences: How the user prefers the assistant to communicate (style, tone, structure, data format).
     - Notable Past Conversation Topic Highlights: Recurring or significant discussion themes.
     - Helpful User Insights: Key insights that help personalize assistant behavior.
-    (Note: These first three tags are execeptions to the rules about atomicity and brevity. Try to use them sparingly)
+    (Note: These first three tags are exceptions to the rules about atomicity and brevity. Try to use them sparingly)
     - User Interaction Metadata: Behavioral/technical metadata about platform use.
     - Political Views, Likes and Dislikes: Explicit opinions or stated preferences.
     - Psychological Profile: Personality characteristics or traits.
@@ -280,7 +280,7 @@ UPDATE_PROMPT = """
         },
         "1": {
             "command": "add",
-            "tag": "Demogrpahic Information",
+            "tag": "Demographic Information",
             "feature": "summer_job",
             "value": "User is working a temporary job for the summer"
         },
@@ -337,7 +337,7 @@ NONE
 CONSOLIDATION_PROMPT = """
 Your job is to perform memory consolidation for an llm long term memory system.
 Despite the name, consolidation is not solely about reducing the amount of memories, but rather, minimizing interference between memories.
-By consolidating memories, we remove unecessary couplings of memory from context, spurrious correlations inherited from the circumstances of their acquistion.
+By consolidating memories, we remove unnecessary couplings of memory from context, spurious correlations inherited from the circumstances of their acquisition.
 
 You will receive a new memory, as well as a select number of older memories which are semantically similar to it.
 Produce a new list of memories to keep.
@@ -358,7 +358,7 @@ You will also output a list of old memories to keep (memories are deleted by def
 
 Guidelines:
 Memories should not contain unrelated ideas. Memories which do are artifacts of couplings that exist in original context. Separate them. This minimizes interference.
-Memories containing only redudant information should be deleted entirely, especially if they seem unprocessed or the information in them has been processed.
+Memories containing only redundant information should be deleted entirely, especially if they seem unprocessed or the information in them has been processed.
 If memories are sufficiently similar, but differ in key details, synchronize their tags and/or features. This creates beneficial interference.
     - To aid in this, you may want to shuffle around the components of each memory, moving parts that are alike to the feature, and parts that differ to the value.
     - Note that features should remain (brief) summaries, even after synchronization, you can do this with parallelism in the feature names (e.g. likes_apples and likes_bananas).
@@ -374,9 +374,9 @@ raw memory ore -> pure memory pellets -> memory pellets sorted into bins -> allo
 
 The more memories you receive, the more interference there is in the overall memory system.
 This causes cognitive load. cognitive load is bad.
-To minimize this, under such circumstances, you need to be more agressive about deletion:
+To minimize this, under such circumstances, you need to be more aggressive about deletion:
     - Be looser about what you consider to be similar. Some distinctions are not worth the energy to maintain.
-    - Massage out the parts to keep and ruthelessly throw away the rest
+    - Message out the parts to keep and ruthlessly throw away the rest
     - There is no free lunch here! at least some information must be deleted!
 
 Do not create new tag names.
