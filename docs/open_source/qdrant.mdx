@@ -1,0 +1,80 @@
+---
+title: "Qdrant Vector Store"
+description: "Learn how to configure and use Qdrant as a vector store backend for MemMachine"
+---
+
+# Qdrant Vector Store
+
+MemMachine supports [Qdrant](https://qdrant.tech/) as a vector store backend for high-performance vector similarity search.
+
+## Configuration
+
+```yaml
+storage:
+  my_storage_id:
+    vendor_name: qdrant
+    url: http://localhost:6333
+    api_key: <YOUR_QDRANT_API_KEY>  # Optional for local development
+    timeout: 60.0                    # Default: 60.0 seconds
+    vector_dimension: 384            # Default: 384
+```
+
+## Running Qdrant
+
+### Local Development
+
+Run Qdrant locally using Docker:
+
+```bash
+docker run -p 6333:6333 qdrant/qdrant
+```
+
+### Production
+
+For production deployments, see the [Qdrant documentation](https://qdrant.tech/documentation/quick-start/).
+
+## Example Configuration
+
+Here's a complete example configuration using Qdrant:
+
+```yaml
+logging:
+  path: /tmp/memory_log
+  level: info
+
+long_term_memory:
+  derivative_deriver: sentence
+  metadata_prefix: "[$timestamp] $producer_id: "
+  embedder: my_embedder_id
+  reranker: my_reranker_id
+  vector_graph_store: my_storage_id
+
+storage:
+  my_storage_id:
+    vendor_name: qdrant
+    url: http://localhost:6333
+    api_key: <YOUR_QDRANT_API_KEY>
+    timeout: 60.0
+    vector_dimension: 384
+
+embedder:
+  my_embedder_id:
+    model_name: "text-embedding-3-small"
+    api_key: <YOUR_API_KEY>
+
+reranker:
+  my_reranker_id:
+    type: "rrf-hybrid"
+    reranker_ids:
+      - id_ranker_id
+      - bm_ranker_id
+  id_ranker_id:
+    type: "identity"
+  bm_ranker_id:
+    type: "bm25"
+```
+
+## Further Reading
+
+- [Qdrant Documentation](https://qdrant.tech/documentation/)
+- [Qdrant API Reference](https://api.qdrant.tech/)

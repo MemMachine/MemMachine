@@ -17,6 +17,7 @@ dependencies = [
     "prometheus-client>=0.22.1",
     "pydantic>=2.11.7",
     "pyyaml>=6.0.2",
+    "qdrant-client>=1.15.1",
     "rank-bm25>=0.2.2",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
