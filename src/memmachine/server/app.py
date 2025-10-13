@@ -136,6 +136,17 @@ async def initialize_resource(
     except Exception as e:
         raise e
 
+    def config_to_lowercase(data: Any) -> Any:
+        """Recursively converts all dictionary keys in a nested structure
+        to lowercase."""
+        if isinstance(data, dict):
+            return {k.lower(): config_to_lowercase(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [config_to_lowercase(i) for i in data]
+        return data
+
+    yaml_config = config_to_lowercase(yaml_config)
+
     # if the model is defined in the config, use it.
     profile_config = yaml_config.get("profile_memory", {})
 
