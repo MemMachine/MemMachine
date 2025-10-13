@@ -15,10 +15,10 @@ class DerivativeMutatorBuilder(Builder):
     """
 
     @staticmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         dependency_ids = set()
 
-        match name:
+        match variant:
             case "identity" | "metadata":
                 pass
             case "third-person-rewrite":
@@ -28,9 +28,9 @@ class DerivativeMutatorBuilder(Builder):
 
     @staticmethod
     def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
+        variant: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> DerivativeMutator:
-        match name:
+        match variant:
             case "identity":
                 from .identity_derivative_mutator import (
                     IdentityDerivativeMutator,
@@ -54,4 +54,4 @@ class DerivativeMutatorBuilder(Builder):
                 }
                 return ThirdPersonRewriteDerivativeMutator(populated_config)
             case _:
-                raise ValueError(f"Unknown DerivativeMutator name: {name}")
+                raise ValueError(f"Unknown DerivativeMutator variant: {variant}")

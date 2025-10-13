@@ -15,10 +15,10 @@ class MetricsFactoryBuilder(Builder):
     """
 
     @staticmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         dependency_ids: set[str] = set()
 
-        match name:
+        match variant:
             case "prometheus":
                 pass
 
@@ -26,9 +26,9 @@ class MetricsFactoryBuilder(Builder):
 
     @staticmethod
     def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
+        variant: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> MetricsFactory:
-        match name:
+        match variant:
             case "prometheus":
                 from .prometheus_metrics_factory import (
                     PrometheusMetricsFactory,
@@ -36,4 +36,4 @@ class MetricsFactoryBuilder(Builder):
 
                 return PrometheusMetricsFactory()
             case _:
-                raise ValueError(f"Unknown MetricsFactory name: {name}")
+                raise ValueError(f"Unknown MetricsFactory variant: {variant}")

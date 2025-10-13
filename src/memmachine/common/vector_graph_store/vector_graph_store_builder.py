@@ -15,10 +15,10 @@ class VectorGraphStoreBuilder(Builder):
     """
 
     @staticmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         dependency_ids: set[str] = set()
 
-        match name:
+        match variant:
             case "neo4j":
                 pass
 
@@ -26,9 +26,9 @@ class VectorGraphStoreBuilder(Builder):
 
     @staticmethod
     def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
+        variant: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> VectorGraphStore:
-        match name:
+        match variant:
             case "neo4j":
                 from .neo4j_vector_graph_store import (
                     Neo4jVectorGraphStore,
@@ -37,4 +37,4 @@ class VectorGraphStoreBuilder(Builder):
 
                 return Neo4jVectorGraphStore(Neo4jVectorGraphStoreConfig(**config))
             case _:
-                raise ValueError(f"Unknown VectorGraphStore name: {name}")
+                raise ValueError(f"Unknown VectorGraphStore variant: {variant}")

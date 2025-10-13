@@ -15,10 +15,10 @@ class RelatedEpisodePostulatorBuilder(Builder):
     """
 
     @staticmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         dependency_ids = set()
 
-        match name:
+        match variant:
             case "null":
                 pass
             case "previous":
@@ -28,9 +28,9 @@ class RelatedEpisodePostulatorBuilder(Builder):
 
     @staticmethod
     def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
+        variant: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> RelatedEpisodePostulator:
-        match name:
+        match variant:
             case "null":
                 from .null_related_episode_postulator import (
                     NullRelatedEpisodePostulator,
@@ -43,12 +43,10 @@ class RelatedEpisodePostulatorBuilder(Builder):
                 )
 
                 populated_config = {
-                    "vector_graph_store": injections[config["vector_graph_store_id"]],
-                    "search_limit": config.get("search_limit", 1),
-                    "filterable_property_keys": config.get(
-                        "filterable_property_keys", set()
-                    ),
-                }
+                    key: value
+                    for key, value in config.items()
+                    if key != "vector_graph_store_id"
+                } | {"vector_graph_store": injections[config["vector_graph_store_id"]]}
                 return PreviousRelatedEpisodePostulator(populated_config)
             case _:
-                raise ValueError(f"Unknown RelatedEpisodePostulator name: {name}")
+                raise ValueError(f"Unknown RelatedEpisodePostulator variant: {variant}")

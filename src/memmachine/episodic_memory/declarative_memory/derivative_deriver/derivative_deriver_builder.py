@@ -15,10 +15,10 @@ class DerivativeDeriverBuilder(Builder):
     """
 
     @staticmethod
-    def get_dependency_ids(name: str, config: dict[str, Any]) -> set[str]:
+    def get_dependency_ids(variant: str, config: dict[str, Any]) -> set[str]:
         dependency_ids: set[str] = set()
 
-        match name:
+        match variant:
             case "concatenation" | "identity" | "sentence":
                 pass
 
@@ -26,9 +26,9 @@ class DerivativeDeriverBuilder(Builder):
 
     @staticmethod
     def build(
-        name: str, config: dict[str, Any], injections: dict[str, Any]
+        variant: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> DerivativeDeriver:
-        match name:
+        match variant:
             case "concatenation":
                 from .concatenation_derivative_deriver import (
                     ConcatenationDerivativeDeriver,
@@ -51,4 +51,4 @@ class DerivativeDeriverBuilder(Builder):
                 populated_config = config
                 return SentenceDerivativeDeriver(populated_config)
             case _:
-                raise ValueError(f"Unknown DerivativeDeriver name: {name}")
+                raise ValueError(f"Unknown DerivativeDeriver variant: {variant}")
