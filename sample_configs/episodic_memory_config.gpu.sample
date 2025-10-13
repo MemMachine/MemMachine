@@ -10,7 +10,7 @@ long_term_memory:
   vector_graph_store: my_storage_id
 
 profile_memory:
-  model_name: testmodel
+  llm_model: testmodel
   embedding_model: my_embedder_id
   storage: profile_storage
   prompt: profile_prompt
