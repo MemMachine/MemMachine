@@ -1,41 +1,46 @@
 endpoints:
-        - name: MemMachine Neo4j
-          url: http://neo4j:7474
-          interval: 30s
-          method: GET
-          security:
-            basic:
-              username: neo4j
-              password-bcrypt-base64: 
-          conditions:
-            - "[STATUS] == 200"
-        - name: MemMachine /health
-          url: http://memmachine:8080/health
-          interval: 30s
-          method: GET
-          conditions:
-            - "[STATUS] == 200"
-        - name: MemMachine /v1/memory
-          url: http://memmachine:8080/v1/memories
-          interval: 60s
-          timeout: 30s
-          method: POST
-          body: |
-            {
-              "session": {
-                "group_id": "test-group",
-                "agent_id": ["test-agent"],
-                "user_id": ["test-user"],
-                "session_id": "gatus-health-check"
-              },
-              "producer": "test-user",
-              "produced_for": "test-user",
-              "episode_content": "Hello, this is a test message",
-              "episode_type": "text",
-              "metadata": {"test": true}
-            }
-          headers:
-            Content-Type: application/json
-          conditions:
-            - "[STATUS] == 200"
+    - name: MemMachine Neo4j
+      url: http://neo4j:7474
+      interval: 30s
+      method: GET
+      security:
+        basic:
+          username: neo4j
+          password-bcrypt-base64: 
+      conditions:
+        - "[STATUS] == 200"
+    - name: postgres
+      url: tcp://postgres:5432
+      interval: 30s
+      conditions:
+        - "[CONNECTED] == true"
+    - name: MemMachine /health
+      url: http://memmachine:8080/health
+      interval: 30s
+      method: GET
+      conditions:
+        - "[STATUS] == 200"
+    - name: MemMachine /v1/memory
+      url: http://memmachine:8080/v1/memories
+      interval: 60s
+      timeout: 30s
+      method: POST
+      body: |
+        {
+          "session": {
+            "group_id": "test-group",
+            "agent_id": ["test-agent"],
+            "user_id": ["test-user"],
+            "session_id": "gatus-health-check"
+          },
+          "producer": "test-user",
+          "produced_for": "test-user",
+          "episode_content": "Hello, this is a test message",
+          "episode_type": "text",
+          "metadata": {"test": true}
+        }
+      headers:
+        Content-Type: application/json
+      conditions:
+        - "[STATUS] == 200"
           
