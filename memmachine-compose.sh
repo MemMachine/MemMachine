@@ -197,7 +197,7 @@ set_openai_api_key() {
             fi
         fi
     fi
-    if [ grep -q "<YOUR_API_KEY>" configuration.yml ];then
+    if grep -q "<YOUR_API_KEY>" configuration.yml; then
         echo setting configuration.yml      
         safe_sed_inplace "s/api_key: .*$/api_key: $api_key/g" configuration.yml
         print_success "Set OPENAI_API_KEY in .env and configuration.yml"
