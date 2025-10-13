@@ -129,6 +129,10 @@ async def initialize_resource(
 
     try:
         yaml_config = yaml.safe_load(open(config_file, encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Config file {config_file} not found")
+    except yaml.YAMLError:
+        raise ValueError(f"Config file {config_file} is not valid YAML")
     except Exception as e:
         raise e
 
@@ -221,14 +225,10 @@ async def http_app_lifespan(application: FastAPI):
         app: The FastAPI application instance.
     """
     config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
-    try:
-        yaml_config = yaml.safe_load(open(config_file, encoding="utf-8"))
-    except Exception as e:
-        raise e
 
     global episodic_memory
     global profile_memory
-    episodic_memory, profile_memory = await initialize_resource(yaml_config)
+    episodic_memory, profile_memory = await initialize_resource(config_file)
     profile_memory.startup()
     yield
     await profile_memory.cleanup()
