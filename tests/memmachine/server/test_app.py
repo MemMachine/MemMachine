@@ -99,9 +99,6 @@ async def test_initialize_resource_success(
     Tests that initialize_resource successfully creates and returns
     EpisodicMemoryManager and ProfileMemory instances with correct configurations.
     """
-    # Set environment variables for API keys and passwords
-    monkeypatch.setenv("PROFILE_API_KEY", "fake-llm-key")
-    monkeypatch.setenv("PROFILE_DB_PASSWORD", "fake-db-pass")
 
     # Call the function under test
     episodic_mgr, profile_mem = await initialize_resource(mock_config_file)
@@ -124,14 +121,14 @@ async def test_initialize_resource_success(
     llm_builder_args = mock_dependencies["llm_builder"].build.call_args[0]
     assert llm_builder_args[0] == "openai"
     llm_builder_args = llm_builder_args[1]
-    assert llm_builder_args["api_key"] == "fake-llm-key"
+    assert llm_builder_args["api_key"] == "TEST_API_KEY_VAR"
     assert llm_builder_args["model_name"] == "gpt-3"
     assert llm_builder_args["metrics_factory_id"] == "prometheus"
 
     embedder_builder_args = mock_dependencies["embedder_builder"].build.call_args[0]
     assert embedder_builder_args[0] == "openai"
     embedder_builder_args = embedder_builder_args[1]
-    assert embedder_builder_args["api_key"] == "fake-llm-key"
+    assert embedder_builder_args["api_key"] == "TEST_EMBED_KEY_VAR"
     assert embedder_builder_args["metrics_factory_id"] == "prometheus"
     assert embedder_builder_args["model_name"] == "text-embedding-ada-002"
 
@@ -140,7 +137,7 @@ async def test_initialize_resource_success(
     assert db_config["host"] == "localhost"
     assert db_config["port"] == 5432
     assert db_config["user"] == "postgres"
-    assert db_config["password"] == "fake-db-pass"
+    assert db_config["password"] == "TEST_DB_PASS_VAR"
     assert db_config["database"] == "test_db"
 
     # You could add more specific assertions here to check the arguments

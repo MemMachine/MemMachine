@@ -161,12 +161,7 @@ async def initialize_resource(
     if model_def is None:
         raise ValueError(f"Can not find definition of model{model_name}")
 
-    api_key = os.getenv("PROFILE_API_KEY")
-    if api_key is None:
-        api_key = "EMPTY"
-
     profile_model = copy.deepcopy(model_def)
-    profile_model["api_key"] = api_key
     metrics_manager = MetricsFactoryBuilder.build("prometheus", {}, {})
     profile_model["metrics_factory_id"] = "prometheus"
     metrics_injection = {}
@@ -189,7 +184,6 @@ async def initialize_resource(
 
     embedder_config = copy.deepcopy(embedder_def)
     embedder_config["metrics_factory_id"] = "prometheus"
-    embedder_config["api_key"] = api_key
 
     embeddings = EmbedderBuilder.build(
         embedder_def.get("model_vendor", "openai"), embedder_config, metrics_injection
@@ -204,7 +198,6 @@ async def initialize_resource(
     db_config = db_config.get(db_config_name)
     if db_config is None:
         raise ValueError(f"Can not find configuration for database {db_config_name}")
-    db_pass = os.getenv("PROFILE_DB_PASSWORD")
 
     prompt_file = profile_config.get("prompt", "profile_prompt")
 
@@ -215,7 +208,7 @@ async def initialize_resource(
             "host": db_config.get("host", "localhost"),
             "port": db_config.get("port", 0),
             "user": db_config.get("user", ""),
-            "password": db_pass,
+            "password": db_config.get("password", ""),
             "database": db_config.get("database", ""),
         },
         prompt_module=import_module(f".prompt.{prompt_file}", __package__),
