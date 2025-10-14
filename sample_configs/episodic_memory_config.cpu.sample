@@ -32,14 +32,13 @@ storage:
     port: 5432
     user: postgres
     db_name: postgres
-
+    password: <YOUR_PASSWORD_HERE>
 
 profile_memory:
   llm_model: testmodel
   embedding_model: my_embedder_id
   database: profile_storage
   prompt: profile_prompt
-  password: <YOUR_PASSWORD_HERE>
 
 sessionMemory:
   model_name: testmodel
