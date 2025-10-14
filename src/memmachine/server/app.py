@@ -240,7 +240,7 @@ async def http_app_lifespan(application: FastAPI):
     global episodic_memory
     global profile_memory
     episodic_memory, profile_memory = await initialize_resource(config_file)
-    profile_memory.startup()
+    await profile_memory.startup()
     yield
     await profile_memory.cleanup()
     await episodic_memory.shut_down()
