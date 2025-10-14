@@ -38,6 +38,7 @@ sessionMemory:
   message_capacity: 500
   max_message_length: 16000
   max_token_num: 8000
+  password: <YOUR_PASSWORD_HERE>
 
 embedder:
   my_embedder_id:

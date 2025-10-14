@@ -39,6 +39,7 @@ profile_memory:
   embedding_model: my_embedder_id
   database: profile_storage
   prompt: profile_prompt
+  password: <YOUR_PASSWORD_HERE>
 
 sessionMemory:
   model_name: testmodel
