@@ -8,6 +8,12 @@
 
 </div>
 
+## Growing Community
+
+MemMachine is a growing community of builders and developers. Please help us grow by clicking the *Star* button above.
+
+<img src="https://app.repohistory.com/api/svg?repo=MemMachine/MemMachine&type=Date&background=0D1117&color=f86262" alt="Alt text" width="400"/>
+
 ## Universal memory layer for AI Agents
 
 Meet MemMachine, an open-source memory layer for advanced AI agents. It enables
