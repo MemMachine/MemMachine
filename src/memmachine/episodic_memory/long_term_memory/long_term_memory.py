@@ -47,7 +47,7 @@ class LongTermMemory:
             raise TypeError("Embedder API key must be provided as a string")
         embedder_base_url = embedder_config.get("base_url")
         embedder_dimensions = embedder_config.get("dimensions")
-        
+
         # Configure vector graph store
         storage_configs = config.get("storage") or {}
         vector_graph_store_id = long_term_memory_config.get("vector_graph_store")
