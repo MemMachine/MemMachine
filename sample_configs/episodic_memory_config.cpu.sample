@@ -37,7 +37,7 @@ storage:
 profile_memory:
   llm_model: testmodel
   embedding_model: my_embedder_id
-  storage: profile_storage
+  database: profile_storage
   prompt: profile_prompt
 
 sessionMemory:
