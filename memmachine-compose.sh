@@ -88,10 +88,6 @@ check_env_file() {
         if [ -f "sample_configs/env.dockercompose" ]; then
             cp sample_configs/env.dockercompose .env
             print_success "Created .env file from sample_configs/env.dockercompose"
-            print_warning "Please edit .env file with your configuration before continuing"
-            print_warning "Especially set your OPENAI_API_KEY"
-            print_info "Exiting script. Please edit .env file and re-run the script."
-            exit 0
         else
             print_error "sample_configs/env.dockercompose file not found. Please create .env file manually."
             exit 1
@@ -135,10 +131,6 @@ check_config_file() {
         if [ -f "$CONFIG_SOURCE" ]; then
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
-            print_warning "Please edit configuration.yml file with your configuration before continuing"
-            print_warning "Especially set your API keys and database credentials"
-            print_info "Exiting script. Please edit configuration.yml file and re-run the script."
-            exit 0
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
@@ -299,20 +291,37 @@ build_image() {
     local force="false"
     local gpu="false"
     local reply=""
+    local key=""
+    local value=""
 
     while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --gpu)
-                gpu="$2"
+        # This section splits the key and value if they are separated by an "=" sign
+        if [[ "$1" == --* ]]; then
+            if [[ "$1" == *=* ]]; then
+                key=$(echo "$1" | cut -d '=' -f 1)
+                value=$(echo "$1" | cut -d '=' -f 2-)
+                shift
+            else
+                key="$1"
+                value="$2"
                 shift 2
+            fi
+        else 
+            # If no leading "--", then this is not an option, so just use put the argument in $key
+            key="$1"
+            value=""
+            shift
+        fi
+
+        case "$key" in
+            --gpu)
+                gpu="$value"
                 ;;
             -f|--force)
                 force="true"
-                shift
                 ;;
             *)
-                name="$1"
-                shift
+                name="$key"
                 ;;
         esac
     done
