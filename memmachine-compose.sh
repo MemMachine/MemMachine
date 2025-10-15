@@ -10,6 +10,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 ## Function to run a command with a timeout
@@ -56,6 +57,10 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+print_prompt() {
+    echo -ne "${MAGENTA}[PROMPT]${NC} "
+}
+
 safe_sed_inplace() {
     if sed --version >/dev/null 2>&1; then
         # GNU/Linux sed
@@ -85,10 +90,10 @@ check_docker() {
 check_env_file() {
     if [ ! -f ".env" ]; then
         print_warning ".env file not found. Creating from template..."
+        sleep 1
         if [ -f "sample_configs/env.dockercompose" ]; then
             cp sample_configs/env.dockercompose .env
             print_success "Created .env file from sample_configs/env.dockercompose"
-            sleep 1
         else
             print_error "sample_configs/env.dockercompose file not found. Please create .env file manually."
             exit 1
@@ -98,6 +103,8 @@ check_env_file() {
     fi
 }
 
+# In lieu of yq, use awk to read over the configuration.yml file line-by-line,
+# and set the database credentials using the same environment variables as in docker-compose.yml
 set_config_defaults() {
     awk -v pg_user="${POSTGRES_USER:-memmachine}" \
         -v pg_db="${POSTGRES_DB:-memmachine}" \
@@ -106,7 +113,6 @@ set_config_defaults() {
         -v neo4j_pass="${NEO4J_PASSWORD:-neo4j_password}" '
 /vendor_name:/ {
   vendor = $2
-  next
 }
 
 vendor == "neo4j" && /host:/ { sub(/localhost/, "neo4j") }
@@ -125,8 +131,10 @@ vendor == "postgres" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, pg_pass) }
 check_config_file() {
     if [ ! -f "configuration.yml" ]; then
         print_warning "configuration.yml file not found. Creating from template..."
-        
+        sleep 1
+
         # Ask user for CPU or GPU configuration, defaulting to CPU
+        print_prompt
         read -p "Which configuration would you like to use for the Docker Image? (CPU/GPU) [CPU]: " config_type_input
         local config_type=$(echo "${config_type_input:-CPU}" | tr '[:lower:]' '[:upper:]')
 
@@ -155,7 +163,6 @@ check_config_file() {
         if [ -f "$CONFIG_SOURCE" ]; then
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
-            sleep 1
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
@@ -174,15 +181,15 @@ set_openai_api_key() {
     if [ -f ".env" ]; then
         source .env
         if [ -z "$OPENAI_API_KEY" ] ||  [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ] || grep -q "<YOUR_API_KEY>" configuration.yml ; then
+            print_prompt
             read -p "OPENAI_API_KEY is not set or is using placeholder value. Would you like to set your OpenAI API key? (y/N) " reply
             if [[ $reply =~ ^[Yy]$ ]]; then
+                print_prompt
                 read -sp "Enter your OpenAI API key: " api_key
                 echo setting .env
                 safe_sed_inplace "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$api_key/" .env
-                sleep 1
                 echo setting configuration.yml
                 safe_sed_inplace "s/api_key: .*$/api_key: $api_key/g" configuration.yml
-                sleep 1
                 print_success "Set OPENAI_API_KEY in .env and configuration.yml"
             fi
         fi
@@ -197,6 +204,7 @@ check_required_env() {
         if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ]; then
             print_warning "OPENAI_API_KEY is not set or is using placeholder value"
             print_warning "Please set your OpenAI API key in the .env file"
+            print_prompt
             read -p "Press Enter to continue anyway (some features may not work)..."
         else
             print_success "OPENAI_API_KEY is configured"
@@ -211,6 +219,7 @@ check_required_config() {
         if grep -q "api_key.*your_.*_api_key_here" configuration.yml || grep -q "api_key.*sk-example" configuration.yml || grep -q "api_key.*sk-test" configuration.yml; then
             print_warning "API key in configuration.yml appears to be a placeholder or example value"
             print_warning "Please set your actual API key in the configuration.yml file"
+            print_prompt
             read -p "Press Enter to continue anyway (some features may not work)..."
         else
             print_success "API key in configuration.yml appears to be configured"
@@ -220,6 +229,7 @@ check_required_config() {
         if grep -q "password.*password" configuration.yml && ! grep -q "password.*memmachine_password" configuration.yml; then
             print_warning "Database password in configuration.yml appears to be a placeholder"
             print_warning "Please set your actual database password in the configuration.yml file"
+            print_prompt
             read -p "Press Enter to continue anyway (some features may not work)..."
         else
             print_success "Database credentials in configuration.yml appear to be configured"
@@ -362,9 +372,10 @@ build_image() {
     fi
 
     if [[ "$force" == "false" ]]; then
-        read -p "Building $name with --build-arg GPU=$gpu (y/N): " -r reply
+        print_prompt
+        read -p "Building $name with '--build-arg GPU=$gpu' (y/N): " -r reply
     else
-        print_info "Building $name with --build-arg GPU=$gpu"
+        print_info "Building $name with '--build-arg GPU=$gpu'"
     fi
 
     if [[ $reply =~ ^[Yy]$ || $force == "true" ]]; then
@@ -422,6 +433,7 @@ case "${1:-}" in
         ;;
     "clean")
         print_warning "This will remove all data and volumes!"
+        print_prompt
         read -p "Are you sure? (y/N): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
