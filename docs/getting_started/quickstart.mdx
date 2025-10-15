@@ -273,7 +273,7 @@ You will receive a JSON response confirming the status of the deletion. A status
   <Tab title="PythonSDK" icon="python">
     Below is a short python script that demonstrates how to use both Episodic Memory and Profile Memory from the MemMachine Python SDK.
 
-    <Note>Make sure to have your `.env` file and `cfg.yml` configuration file set up as described in the installation steps.</Note>
+    <Note>Make sure to have your `.env` file and `config.yml` configuration file set up as described in the installation steps.</Note>
     
   ```python HelloWorld.py expandable
     from dotenv import load_dotenv
@@ -355,7 +355,7 @@ You will receive a JSON response confirming the status of the deletion. A status
 
 
   async def main():
-    await episodic_memory_test("cfg.yml")
+    await episodic_memory_test("config.yml")
     await profile_memory_test()
 
   if __name__ == "__main__":
