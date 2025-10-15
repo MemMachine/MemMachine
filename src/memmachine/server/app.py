@@ -41,6 +41,7 @@ from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
 
 logger = logging.getLogger(__name__)
 
@@ -329,17 +330,21 @@ async def initialize_resource(
 
     prompt_file = profile_config.get("prompt", "profile_prompt")
 
-    profile_memory = ProfileMemory(
-        model=llm_model,
-        embeddings=embeddings,
-        db_config={
+    profile_storage = AsyncPgProfileStorage.build_config(
+        {
             "host": db_config.get("host", "localhost"),
             "port": db_config.get("port", 0),
             "user": db_config.get("user", ""),
             "password": db_config.get("password", ""),
             "database": db_config.get("database", ""),
-        },
+        }
+    )
+
+    profile_memory = ProfileMemory(
+        model=llm_model,
+        embeddings=embeddings,
         prompt_module=import_module(f".prompt.{prompt_file}", __package__),
+        profile_storage=profile_storage,
     )
     episodic_memory = EpisodicMemoryManager.create_episodic_memory_manager(config_file)
     return episodic_memory, profile_memory

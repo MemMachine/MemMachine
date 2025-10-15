@@ -21,7 +21,6 @@ from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
 
-from .storage.asyncpg_profile import AsyncPgProfileStorage
 from .storage.storage_base import ProfileStorageBase
 from .util.lru_cache import LRUCache
 
@@ -177,27 +176,26 @@ class ProfileMemory:
         model: LanguageModel,
         embeddings: Embedder,
         prompt_module: ModuleType,
-        db_config: dict[str, Any] | None = None,
         max_cache_size=1000,
-        profile_storage: ProfileStorageBase | None = None,
+        profile_storage: ProfileStorageBase,
     ):
-        # pylint: disable=too-many-arguments
-        # pylint: disable=too-many-positional-arguments
-        # add model initialization
+        if model is None:
+            raise ValueError("model must be provided")
+        if embeddings is None:
+            raise ValueError("embeddings must be provided")
+        if prompt_module is None:
+            raise ValueError("prompt_module must be provided")
+        if profile_storage is None:
+            raise ValueError("profile_storage must be provided")
+
         self._model = model
         self._embeddings = embeddings
+        self._profile_storage = profile_storage
 
         self._max_cache_size = max_cache_size
         self._update_prompt = getattr(prompt_module, "UPDATE_PROMPT", "")
         self._consolidation_prompt = getattr(prompt_module, "CONSOLIDATION_PROMPT", "")
-        if profile_storage is None:
-            if db_config is None:
-                raise ValueError(
-                    "db_config must be provided if profile_storage is None"
-                )
-            self._profile_storage = AsyncPgProfileStorage.build_config(db_config)
-        else:
-            self._profile_storage = profile_storage
+
         self._update_interval = 1
         self._dirty_users: ProfileUpdateTrackerManager = ProfileUpdateTrackerManager(
             message_limit=self.PROFILE_UPDATE_MESSAGE_LIMIT,

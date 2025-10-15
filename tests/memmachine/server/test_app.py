@@ -133,7 +133,7 @@ async def test_initialize_resource_success(
     assert embedder_builder_args["model_name"] == "text-embedding-ada-002"
 
     _, profile_kwargs = mock_dependencies["profile_memory"].call_args
-    db_config = profile_kwargs["db_config"]
+    db_config = profile_kwargs["profile_storage"]._config
     assert db_config["host"] == "localhost"
     assert db_config["port"] == 5432
     assert db_config["user"] == "postgres"
