@@ -239,6 +239,8 @@ check_required_config() {
 
 # Pull and start services
 start_services() {
+    local memmachine_image_tmp="${ENV_MEMMACHINE_IMAGE:-}"
+
     print_info "Pulling and starting MemMachine services..."
     
     # Use docker-compose or docker compose based on what's available
@@ -247,10 +249,14 @@ start_services() {
     else
         COMPOSE_CMD="docker compose"
     fi
-    
+
+    # Unset the memmachine image temporarily; without this, 'docker compose pull' will attempt
+    # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
+    ENV_MEMMACHINE_IMAGE=""
     # Pull the latest images to ensure we are running the latest version
     print_info "Pulling latest images..."
     $COMPOSE_CMD pull
+    ENV_MEMMACHINE_IMAGE="${memmachine_image_tmp:-}"
 
     # Start services (override the image if specified in memmachine-compose.sh start <image>:<tag>)
     print_info "Starting containers..."
