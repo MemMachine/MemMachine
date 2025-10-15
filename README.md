@@ -12,7 +12,7 @@
 
 MemMachine is a growing community of builders and developers. Please help us grow by clicking the *Star* button above.
 
-<img src="https://app.repohistory.com/api/svg?repo=MemMachine/MemMachine&type=Date&background=0D1117&color=f86262" alt="Alt text" width="400"/>
+<img src="https://starchart.cc/MemMachine/MemMachine.svg?variant=light" alt="Alt text" height="300"/>
 
 ## Universal memory layer for AI Agents
 
