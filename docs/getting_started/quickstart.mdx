@@ -170,7 +170,7 @@ The simplest way to start is by checking for existing sessions. This is an MCP *
 **Command:**
 
 ```
-curl http://127.0.0.1:8080/mcp/sessions
+curl http://127.0.0.1:8080/v1/mcp/sessions
 ```
 
 **Expected Output:**
@@ -179,24 +179,29 @@ You will likely see an empty list since no sessions have been created yet.
 </Step>
 <Step title="Add a New Memory">
 
-This is where you'll use an MCP **tool** to create your first memory episode. The `mcp_add_session_memory` tool is invoked with a `POST` request to its dedicated endpoint.
+This is where you'll use an MCP **tool** to create your first memory episode. The `/v1/mcp/add_session_memory` tool is invoked with a `POST` request to its dedicated endpoint.
 
 **Command:**
 
 ```
-curl -X POST "http://127.0.0.1:8080/mcp/add_session_memory" \
--H "Content-Type: application/json" \
--d '{
+curl --request POST \
+  --url http://localhost:8080/v1/mcp/add_session_memory \
+  --header 'Content-Type: application/json' \
+  --data '{
   "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+    "group_id": "<string>",
+    "agent_id": [
+      "<string>"
+    ],
+    "user_id": [
+      "<string>"
+    ],
+    "session_id": "<string>"
   },
-  "producer": "test_user",
-  "produced_for": "test_agent",
-  "episode_content": "This is a simple test memory.",
-  "episode_type": "message",
+  "producer": "<string>",
+  "produced_for": "<string>",
+  "episode_content": "<string>",
+  "episode_type": "<string>",
   "metadata": {}
 }'
 ```
@@ -214,23 +219,28 @@ You will receive a JSON response confirming the status. A status of `0` indicate
 </Step>
 <Step title="Search for the Memory">
 
-Now that a memory has been added, let's use another MCP **tool** to find it. The `mcp_search_session_memory` tool is designed for this purpose.
+Now that a memory has been added, let's use another MCP **tool** to find it. The `/v1/mcp/search_session_memory` tool is designed for this purpose.
 
 **Command:**
 
 ```
-curl -X POST "http://127.0.0.1:8080/mcp/search_session_memory" \
--H "Content-Type: application/json" \
--d '{
+curl --request POST \
+  --url http://localhost:8080/v1/mcp/search_session_memory \
+  --header 'Content-Type: application/json' \
+  --data '{
   "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+    "group_id": "<string>",
+    "agent_id": [
+      "<string>"
+    ],
+    "user_id": [
+      "<string>"
+    ],
+    "session_id": "<string>"
   },
-  "query": "simple test memory",
+  "query": "<string>",
   "filter": {},
-  "limit": 5
+  "limit": 123
 }'
 ```
 
@@ -240,19 +250,24 @@ You should see a `200 OK` response containing the search results, including the 
 </Step>
 <Step title="Delete the Session Data">
 
-To clean up after your test, use the `mcp_delete_session_data` **tool**. This is a great way to ensure your database remains clean.
+To clean up after your test, use the `/v1/mcp/delete_session_data` **tool**. This is a great way to ensure your database remains clean.
 
 **Command:**
 
 ```
-curl -X POST "http://127.0.0.1:8080/mcp/delete_session_data" \
--H "Content-Type: application/json" \
--d '{
+curl --request POST \
+  --url http://localhost:8080/v1/mcp/delete_session_data \
+  --header 'Content-Type: application/json' \
+  --data '{
   "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+    "group_id": "<string>",
+    "agent_id": [
+      "<string>"
+    ],
+    "user_id": [
+      "<string>"
+    ],
+    "session_id": "<string>"
   }
 }'
 ```
@@ -273,7 +288,7 @@ You will receive a JSON response confirming the status of the deletion. A status
   <Tab title="PythonSDK" icon="python">
     Below is a short python script that demonstrates how to use both Episodic Memory and Profile Memory from the MemMachine Python SDK.
 
-    <Note>Make sure to have your `.env` file and `cfg.yml` configuration file set up as described in the installation steps.</Note>
+    <Note>If you used a method other than Docker Compose, be sure to have your `cfg.yml` configuration file set up as described in the [Install Guide](./install_guide.mdx).</Note>
     
   ```python HelloWorld.py expandable
     from dotenv import load_dotenv
@@ -375,13 +390,15 @@ You will receive a JSON response confirming the status of the deletion. A status
 
 #### Common Issues
 
-1. **Neo4j Connection Error**: Ensure the Neo4j host in `configuration.yml` is set to `memmachine-neo4j-custom` (not `localhost`)
+1. **Configuration File Names**: In some earlier versions of MemMachine, the configuration file within Docker Compose was named `configuration.yml`.  This name still works. However, the preferred name is now `cfg.yml`. 
 
-2. **OpenAI API Key Error**: Make sure you have a valid OpenAI API key and it's correctly set in both the `.env` file and `configuration.yml`
+2. **Neo4j Connection Error**: Ensure the Neo4j host in `cfg.yml` is set to `memmachine-neo4j-custom` (not `localhost`)
 
-3. **Port Access Issues**: If you can't access the API, ensure the MemMachine container is running on the `memmachine-network` and port 8080 is accessible
+3. **OpenAI API Key Error**: Make sure you have a valid OpenAI API key and it's correctly set in the `cfg.yml` file.
 
-4. **Container Network Issues**: Make sure both containers are on the same Docker network (`memmachine-network`)
+4. **Port Access Issues**: If you can't access the API, ensure the MemMachine container is running on the `memmachine-network` and port 8080 is accessible
+
+5. **Container Network Issues**: Make sure both containers are on the same Docker network (`memmachine-network`)
 
 #### Useful Commands
 
@@ -389,4 +406,3 @@ You will receive a JSON response confirming the status of the deletion. A status
 - View container logs: `docker logs <container_id>`
 - Stop containers: `docker stop <container_id>`
 - Remove containers: `docker rm <container_id>`
-- Check available API endpoints: `curl -s http://localhost:8080/openapi.json | jq '.paths | keys'
