@@ -88,6 +88,7 @@ check_env_file() {
         if [ -f "sample_configs/env.dockercompose" ]; then
             cp sample_configs/env.dockercompose .env
             print_success "Created .env file from sample_configs/env.dockercompose"
+            sleep 1
         else
             print_error "sample_configs/env.dockercompose file not found. Please create .env file manually."
             exit 1
@@ -95,6 +96,29 @@ check_env_file() {
     else
         print_success ".env file found"
     fi
+}
+
+set_config_defaults() {
+    awk -v pg_user="${POSTGRES_USER:-memmachine}" \
+        -v pg_db="${POSTGRES_DB:-memmachine}" \
+        -v pg_pass="${POSTGRES_PASS:-memmachine_password}" \
+        -v neo4j_user="${NEO4J_USER:-neo4j}" \
+        -v neo4j_pass="${NEO4J_PASSWORD:-neo4j_password}" '
+/vendor_name:/ {
+  vendor = $2
+  next
+}
+
+vendor == "neo4j" && /host:/ { sub(/localhost/, "neo4j") }
+vendor == "neo4j" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, neo4j_pass) }
+
+vendor == "postgres" && /host:/ { sub(/localhost/, "postgres") }
+vendor == "postgres" && /user:/ { sub(/postgres/, pg_user) }
+vendor == "postgres" && /db_name:/ { sub(/postgres/, pg_db) }
+vendor == "postgres" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, pg_pass) }
+
+{ print }
+' configuration.yml > configuration.yml.tmp && mv configuration.yml.tmp configuration.yml
 }
 
 # Check if configuration.yml file exists
@@ -131,10 +155,13 @@ check_config_file() {
         if [ -f "$CONFIG_SOURCE" ]; then
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
+            sleep 1
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
         fi
+
+        set_config_defaults
     else
         print_success "configuration.yml file found"
     fi
@@ -152,8 +179,10 @@ set_openai_api_key() {
                 read -sp "Enter your OpenAI API key: " api_key
                 echo setting .env
                 safe_sed_inplace "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$api_key/" .env
+                sleep 1
                 echo setting configuration.yml
                 safe_sed_inplace "s/api_key: .*$/api_key: $api_key/g" configuration.yml
+                sleep 1
                 print_success "Set OPENAI_API_KEY in .env and configuration.yml"
             fi
         fi
