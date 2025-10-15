@@ -63,7 +63,21 @@ services:
     restart: unless-stopped
     ports:
       - "${MEMORY_SERVER_PORT:-8080}:8080"
-    environment:      
+    environment:
+      # Database configuration
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-memmachine}
+      POSTGRES_PASS: ${POSTGRES_PASS:-memmachine_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
+      POSTGRES_DB: ${POSTGRES_DB:-memmachine}
+
+      # Neo4j configuration
+      NEO4J_HOST: ${NEO4J_HOST:-neo4j}
+      NEO4J_PORT: ${NEO4J_PORT:-7687}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_password}
+
       # Application configuration
       MEMORY_CONFIG: ${MEMORY_CONFIG:-/app/configuration.yml}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
