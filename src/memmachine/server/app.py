@@ -361,7 +361,7 @@ async def http_app_lifespan(application: FastAPI):
     Args:
         app: The FastAPI application instance.
     """
-    config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
+    config_file = os.getenv("MEMORY_CONFIG", "config.yml")
 
     global episodic_memory
     global profile_memory

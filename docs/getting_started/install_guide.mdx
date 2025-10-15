@@ -37,7 +37,7 @@ This is the recommended method for most users who want to add MemMachine to an e
 To create a python environment(if it does not already exist), you can use `venv` as follows:
 ```sh
 python -m venv memmachine-env
-source memmachine-env/bin/activate  # On Windows use `memmachine-env\Scripts\activate`
+source memmachine-env/bin/activate  # On Windows use `source memmachine-env/Scripts/activate`
 ```
 
 A. Run the following command in your terminal:
@@ -123,7 +123,7 @@ Create a file named `config.yml` in the same directory. This file configures the
 
 **CPU-only installations:** You can download this file from our GitHub repository as a template using the following curl command:
 ```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
+curl -o config.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
 ```
 Below is an example of what the CPU-only `config.yml` file should look like:
 
@@ -184,7 +184,7 @@ prompt:
 
 **GPU-enabled installations:** You can download this file from our GitHub repository as a template using the following curl command:
 ```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
+curl -o config.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
 ```
 Below is an example of what the GPU-enabled `config.yml` file should look like:
 

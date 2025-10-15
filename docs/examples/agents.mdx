@@ -98,14 +98,14 @@ Be sure to check out the [README file](https://github.com/MemMachine/MemMachine/
  For ease of management, instead of setting each environment variable individually in your terminal, you can create a `.env` file in the root directory of your project. This file will contain all the necessary environment variables for running the agents. Here's an example of what your `.env` file might look like:
 ``` bash
 #memmachine required environment variables
-POSTGRES_HOST="10.0.0.59"
+POSTGRES_HOST="YOUR_POSTGRES_HOST"
 POSTGRES_PORT="5432"
 POSTGRES_USER="postgres"
 POSTGRES_PASSWORD="strangehorsegreencoffee"
 POSTGRES_DB="your-postgres-db"
 PROFILE_DB="your-profile-db"
 
-MEMORY_CONFIG=/Users/<username>/Desktop/intelligent-memory/memmachine/src/cfg.yml
+MEMORY_CONFIG=/Users/<username>/Desktop/intelligent-memory/memmachine/src/config.yml
 
 LOG_LEVEL="DEBUG"
 LOG_FILE="test.txt"
