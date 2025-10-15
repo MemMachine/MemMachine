@@ -41,6 +41,7 @@ from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.profile_memory.prompt_provider import ProfilePrompt
 from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
 
 logger = logging.getLogger(__name__)
@@ -329,6 +330,8 @@ async def initialize_resource(
         raise ValueError(f"Can not find configuration for database {db_config_name}")
 
     prompt_file = profile_config.get("prompt", "profile_prompt")
+    prompt_module = import_module(f".prompt.{prompt_file}", __package__)
+    profile_prompt = ProfilePrompt.load_from_module(prompt_module)
 
     profile_storage = AsyncPgProfileStorage.build_config(
         {
@@ -343,8 +346,8 @@ async def initialize_resource(
     profile_memory = ProfileMemory(
         model=llm_model,
         embeddings=embeddings,
-        prompt_module=import_module(f".prompt.{prompt_file}", __package__),
         profile_storage=profile_storage,
+        prompt=profile_prompt,
     )
     episodic_memory = EpisodicMemoryManager.create_episodic_memory_manager(config_file)
     return episodic_memory, profile_memory
