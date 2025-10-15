@@ -1,0 +1,31 @@
+meta {
+  name: postMemories
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://localhost:8080/v1/memories
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+      "session": {
+        "group_id": "test-group",
+        "agent_id": ["test-agent"],
+        "user_id": ["test-user"],
+        "session_id": "test-session-123"
+      },
+      "producer": "test-user",
+      "produced_for": "test-user",
+      "episode_content": "Hello, this is a test message",
+      "episode_type": "text",
+      "metadata": {"test": true}
+  }
+}
