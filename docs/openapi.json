@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "http://localhost:8080/v1",
+      "url": "http://localhost:8080/",
       "description": "The base path for all standard RESTful API endpoints."
     }
   ],
@@ -17,12 +17,12 @@
       "description": "Standard RESTful API endpoints, typically consumed directly by applications and front-end clients for general memory management."
     },
     {
-      "name": "MCP Server APIs",
-      "description": "API endpoints exposed as tools and resources, primarily for use with an LLM via the MCP server/FastMCP implementation."
+      "name": "MCP Tools",
+      "description": "MCP endpoints exposed as tools and resources, primarily for use with an LLM via the MCP server/FastMCP implementation."
     }
   ],
   "paths": {
-    "/memories": {
+    "/v1/memories": {
       "post": {
         "tags": [
           "RESTful APIs"
@@ -79,7 +79,7 @@
         }
       }
     },
-    "/memories/episodic": {
+    "/v1/memories/episodic": {
       "post": {
         "tags": [
           "RESTful APIs"
@@ -110,7 +110,7 @@
         }
       }
     },
-    "/memories/profile": {
+    "/v1/memories/profile": {
       "post": {
         "tags": [
           "RESTful APIs"
@@ -135,7 +135,7 @@
         }
       }
     },
-    "/memories/search": {
+    "/v1/memories/search": {
       "post": {
         "tags": [
           "RESTful APIs"
@@ -170,7 +170,7 @@
         }
       }
     },
-    "/memories/episodic/search": {
+    "/v1/memories/episodic/search": {
       "post": {
         "tags": [
           "RESTful APIs"
@@ -205,7 +205,7 @@
         }
       }
     },
-    "/memories/profile/search": {
+    "/v1/memories/profile/search": {
       "post": {
         "tags": [
           "RESTful APIs"
@@ -237,7 +237,7 @@
         }
       }
     },
-    "/sessions": {
+    "/v1/sessions": {
       "get": {
         "tags": [
           "RESTful APIs"
@@ -259,7 +259,7 @@
         }
       }
     },
-    "/users/{user_id}/sessions": {
+    "/v1/users/{user_id}/sessions": {
       "get": {
         "tags": [
           "RESTful APIs"
@@ -292,7 +292,7 @@
         }
       }
     },
-    "/groups/{group_id}/sessions": {
+    "/v1/groups/{group_id}/sessions": {
       "get": {
         "tags": [
           "RESTful APIs"
@@ -325,7 +325,7 @@
         }
       }
     },
-    "/agents/{agent_id}/sessions": {
+    "/v1/agents/{agent_id}/sessions": {
       "get": {
         "tags": [
           "RESTful APIs"
@@ -427,7 +427,7 @@
     "/mcp/add_session_memory": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Add Memory (Unified)",
         "description": "Adds a memory episode directly using the full session data provided in the `NewEpisode` object to **both** episodic and profile memory. This is an LLM tool.",
@@ -473,7 +473,7 @@
     "/mcp/add_episodic_memory": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Add Episodic Memory",
         "description": "Adds a memory episode directly using the full session data provided in the `NewEpisode` object **only to episodic memory**. This is an LLM tool.",
@@ -519,7 +519,7 @@
     "/mcp/add_profile_memory": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Add Profile Memory",
         "description": "Adds a memory episode directly using the full session data provided in the `NewEpisode` object **only to profile memory**. This is an LLM tool.",
@@ -565,7 +565,7 @@
     "/mcp/search_episodic_memory": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Search Episodic Memory",
         "description": "Searches **only episodic memory** for the provided query using the full session data in the request body. This is an LLM tool.",
@@ -597,7 +597,7 @@
     "/mcp/search_profile_memory": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Search Profile Memory",
         "description": "Searches **only profile memory** for the provided query using the full session data in the request body. This is an LLM tool.",
@@ -629,7 +629,7 @@
     "/mcp/search_session_memory": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Search Memory (Unified)",
         "description": "Searches **both** episodic and profile memories for the provided query using the full session data in the request body. This is an LLM tool.",
@@ -661,7 +661,7 @@
     "/mcp/delete_session_data": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Delete Session Data (Self-Contained)",
         "description": "Deletes all data associated with the provided session data. This is an LLM tool.",
@@ -707,7 +707,7 @@
     "/mcp/delete_data": {
       "post": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Tool: Delete All Data (Contextual)",
         "description": "Deletes all data associated with the *currently active session* stored in the MCP context. This LLM tool does not require a request body.",
@@ -751,7 +751,7 @@
     "/mcp/sessions": {
       "get": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Resource: All Memory Sessions",
         "description": "Retrieves all memory sessions as an LLM resource.",
@@ -773,7 +773,7 @@
     "/mcp/users/{user_id}/sessions": {
       "get": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Resource: Get User Sessions",
         "description": "Retrieves all sessions for a specific user as an LLM resource.",
@@ -806,7 +806,7 @@
     "/mcp/groups/{group_id}/sessions": {
       "get": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Resource: Get Group Sessions",
         "description": "Retrieves all sessions for a specific group as an LLM resource.",
@@ -839,7 +839,7 @@
     "/mcp/agents/{agent_id}/sessions": {
       "get": {
         "tags": [
-          "MCP Server APIs"
+          "MCP Tools"
         ],
         "summary": "Resource: Get Agent Sessions",
         "description": "Retrieves all sessions for a specific agent as an LLM resource.",
