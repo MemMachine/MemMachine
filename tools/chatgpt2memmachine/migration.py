@@ -3,7 +3,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from openai import OpenAISummary
+from openai_summary import OpenAISummary
 from process_chat_history import (
     load_locomo,
     load_openai,
