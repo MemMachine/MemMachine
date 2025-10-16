@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from importlib import import_module
 
 import pytest
@@ -8,6 +9,7 @@ import pytest_asyncio
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import OpenAILanguageModel
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.profile_memory.prompt_provider import ProfilePrompt
 from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
 from tests.memmachine.profile_memory.storage.in_memory_profile_storage import (
     InMemoryProfileStorage,
@@ -16,8 +18,9 @@ from tests.memmachine.profile_memory.storage.in_memory_profile_storage import (
 
 @pytest.fixture
 def config():
+    open_api_key = os.environ.get("OPENAI_API_KEY")
     return {
-        "api_key": "",
+        "api_key": open_api_key,
         "llm_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
         "prompt_module": "writing_assistant_prompt",
@@ -56,27 +59,28 @@ def asyncpg_profile_storage():
 
 @pytest.fixture
 def storage():
-    return asyncpg_profile_storage()
+    return in_memory_profile_storage()
 
 
 @pytest.fixture
-def prompt_module(config):
-    return import_module(
+def prompt(config):
+    prompt_module = import_module(
         f"memmachine.server.prompt.{config['prompt_module']}", __package__
     )
+    return ProfilePrompt.load_from_module(prompt_module)
 
 
 @pytest_asyncio.fixture
 async def profile_memory(
     embedder,
     llm_model,
-    prompt_module,
+    prompt,
     storage,
 ):
     mem = ProfileMemory(
         model=llm_model,
         embeddings=embedder,
-        prompt_module=prompt_module,
+        prompt=prompt,
         profile_storage=storage,
     )
     await mem.startup()

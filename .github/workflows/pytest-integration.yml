@@ -1,0 +1,30 @@
+name: Run Python integration tests
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  integration-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        test-paths: [
+          "tests/memmachine/profile_memory/test_profile_memory_integration.py",
+        ]
+        os: [ubuntu-latest, ubuntu-24.04-arm ]
+        python-version: [ "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest version of uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Test ${{ matrix.test-paths }} with python ${{ matrix.python-version }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: uv run --frozen --all-extras pytest ${{ matrix.test-paths }} --manual-integration
