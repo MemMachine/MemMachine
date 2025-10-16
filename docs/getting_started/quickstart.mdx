@@ -23,12 +23,63 @@ This method is recommended for most users.
       Make sure that you have [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed on your machine.
   </Step>
   <Step title="Download MemMachine and Run the Script">
-      Download MemMachine.git from GitHub, navigate to the project directory, and run the `memmachine-compose.sh` script:
-        ```bash
-        $ git clone https://github.com/MemMachine/MemMachine.git
-        $ cd MemMachine
-        $ ./memmachine-compose.sh
-        ```
+      <Tabs>
+        <Tab title="Windows" icon="windows">
+          If you're using Windows, you can use Powershell.  If you are using WSL, see the Linux tab.
+          ```powershell
+          # One-block install for Windows PowerShell
+          $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/MemMachine/MemMachine/releases/latest"; `
+          $tarballUrl = $latestRelease.tarball_url; `
+          $destination = "MemMachine"; `
+          if (Test-Path $destination) { Remove-Item $destination -Recurse -Force }; `
+          New-Item -ItemType Directory -Force -Path $destination; `
+          Invoke-WebRequest -Uri $tarballUrl -OutFile "MemMachine-latest.tar.gz"; `
+          tar -xzf "MemMachine-latest.tar.gz" -C $destination --strip-components=1; `
+          Set-Location $destination; `
+          ./memmachine-compose.sh
+          ```
+        </Tab>
+        <Tab title="MacOS" icon="apple">
+          If you're using MacOS, you can use the built-in Terminal application to run the following commands.
+          ```bash
+          # Download the latest release tarball
+          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep "tarball_url" \
+            | cut -d '"' -f 4 \
+            | xargs curl -L -o MemMachine-latest.tar.gz
+
+          # Extract the release
+          tar -xzf MemMachine-latest.tar.gz
+
+          # Enter the folder (GitHub adds a hash to the folder name)
+          cd MemMachine-MemMachine-*
+
+          # Run the setup
+          ./memmachine-compose.sh
+          ```
+        </Tab>
+        <Tab title="Linux" icon="linux">
+          If you're using Linux, you can use the built-in Terminal application to run the following commands.
+          ```bash
+          # Download the latest release tarball
+          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep "tarball_url" \
+            | cut -d '"' -f 4 \
+            | xargs curl -L -o MemMachine-latest.tar.gz
+
+          # Extract the release
+          tar -xzf MemMachine-latest.tar.gz
+
+          # Enter the folder (GitHub adds a hash to the folder name)
+          cd MemMachine-MemMachine-*
+
+          # Run the setup
+          ./memmachine-compose.sh
+          ```
+          
+        </Tab>
+      </Tabs>
+
       That's it!  The script will walk you through all of the remaining steps and check the health of your memmachine installation and configuration.        
   </Step>
   <Step title="The MemMachine-compose.sh Script">
