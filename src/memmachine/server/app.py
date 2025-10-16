@@ -699,7 +699,7 @@ async def add_episodic_memory(
     episode: NewEpisode,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
-    """Adds a memory episode to both episodic memory.
+    """Adds a memory episode to episodic memory only.
 
     This endpoint first retrieves the appropriate episodic memory instance
     based on the session context (group, agent, user, session IDs). It then
