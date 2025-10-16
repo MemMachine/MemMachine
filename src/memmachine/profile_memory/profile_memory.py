@@ -450,8 +450,6 @@ class ProfileMemory:
             metadata: Metadata associated with the message, such as the
                      speaker.
             isolations: A dictionary for data isolation.
-            wait_consolidate: If true, wait for consolidation to finish
-                     before returning.
 
         Returns:
             A boolean indicating whether the consolidation process was awaited.

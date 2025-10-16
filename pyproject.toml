@@ -72,4 +72,5 @@ asyncio_default_test_loop_scope = "session"
 
 markers = [
     "integration: mark the test as an integration test",
+    "manual_integration: integration test that requires manual user setup"
 ]
