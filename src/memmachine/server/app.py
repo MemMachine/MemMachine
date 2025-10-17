@@ -1113,19 +1113,19 @@ def main():
     )
     # Load environment variables from .env file
     load_dotenv()
-    
+
     # Check if running in MCP stdio mode
     if len(sys.argv) > 1 and sys.argv[1] == "--mcp":
         # MCP stdio mode for Claude Desktop
         config_file = os.getenv("MEMORY_CONFIG", "configuration.yml")
-        
+
         async def run_mcp_server():
             """Initialize resources and run MCP server in the same event loop."""
             global episodic_memory, profile_memory
             episodic_memory, profile_memory = await initialize_resource(config_file)
             await profile_memory.startup()
             await mcp.run_stdio_async()
-        
+
         asyncio.run(run_mcp_server())
     else:
         # HTTP mode for REST API
