@@ -1112,8 +1112,36 @@ def main():
     )
     # Load environment variables from .env file
     load_dotenv()
-    # Run the asyncio event loop
-    asyncio.run(start())
+    
+    # Check if running in MCP stdio mode
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "--mcp":
+        # MCP stdio mode: initialize resources and run MCP server in same event loop
+        # This mode is used by Claude Desktop and other MCP clients
+        config_file = os.getenv("MEMORY_CONFIG", "configuration.yml")
+        
+        async def run_mcp_server():
+            """Initialize resources and run MCP server in the same event loop.
+            
+            This function ensures that AsyncPG connection pool and MCP server
+            run in the same event loop, preventing 'Future attached to different loop' errors.
+            """
+            global episodic_memory, profile_memory
+            # Initialize resources in the same event loop
+            episodic_memory, profile_memory = await initialize_resource(config_file)
+            await profile_memory.startup()
+            
+            # Run MCP server with stdio transport in the same event loop
+            # This prevents event loop conflicts that cause database connection issues
+            await mcp.run_stdio_async()
+        
+        # Run everything in a single event loop to avoid AsyncPG connection pool conflicts
+        asyncio.run(run_mcp_server())
+    else:
+        # HTTP mode: create FastAPI app and run uvicorn server
+        # This mode is used for REST API access and web applications
+        asyncio.run(start())
 
 
 if __name__ == "__main__":
