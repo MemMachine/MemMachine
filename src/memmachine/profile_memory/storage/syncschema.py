@@ -61,7 +61,6 @@ async def sync_to(database: str, host: str, port: str, user: str, password: str)
                 'host': host,
                 'port': port,
                 'user': user,
-                'password': '****',
                 'database': database,
             }
         }"

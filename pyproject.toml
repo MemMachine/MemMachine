@@ -55,7 +55,7 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "ruff>=0.13.2",
-    "testcontainers[neo4j]>=4.13.1",
+    "testcontainers[neo4j,postgres]>=4.13.1",
 ]
 
 [tool.mypy]
