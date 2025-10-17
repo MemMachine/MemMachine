@@ -5,6 +5,8 @@
 
 set -e
 
+set -x
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -349,7 +351,12 @@ build_image() {
             else
                 key="$1"
                 value="$2"
-                shift 2
+                if [[ "$#" -ge 2 ]]; then
+                    shift 2
+                else
+                    print_error "Missing value for argument: $1"
+                    exit 1
+                fi
             fi
         else 
             # If no leading "--", then this is not an option, so just use put the argument in $key
