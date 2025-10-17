@@ -25,16 +25,16 @@ This method is recommended for most users.
   <Step title="Download MemMachine and Run the Script">
       Download MemMachine.git from GitHub, navigate to the project directory, and run the `memmachine-compose.sh` script:
         ```bash
-        $ git clone https://github.com/MemMachine/MemMachine.git
-        $ cd MemMachine
-        $ ./memmachine-compose.sh
+        git clone https://github.com/MemMachine/MemMachine.git
+        cd MemMachine
+        ./memmachine-compose.sh
         ```
       That's it!  The script will walk you through all of the remaining steps and check the health of your memmachine installation and configuration.        
   </Step>
   <Step title="The MemMachine-compose.sh Script">
     The `MemMachine-compose.sh` script does more than simply install memmachine, although that is it's default behavior.  As the commands associated with this script (shown below) describe, it can be used for stopping, restarting, viewing logs, and cleaning up your memmachine installation.
     ```sh
-      $ ./memmachine-compose.sh --help
+      ./memmachine-compose.sh --help
       MemMachine Docker Startup Script
       
       Usage: ./memmachine-compose.sh [command]
