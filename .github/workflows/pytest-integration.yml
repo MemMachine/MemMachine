@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  group: integration-test-${{ github.event.pull_request.number || github.ref }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   integration-test:
     strategy:
