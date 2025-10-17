@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from typing import Optional
@@ -54,17 +55,50 @@ Response Format:
 """
 
     def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
+        self, query: str, profile: Optional[str] = None, context: Optional[str] = None
     ) -> str:
-        """Create a general chatbot query using the prompt template"""
+        """Create a chatbot query using the prompt template
+
+        Args:
+            query: The user's question (required)
+            profile: User profile information (optional)
+            context: Additional context like episodic memory (optional)
+
+        Returns:
+            Formatted query string with appropriate sections based on provided parameters
+        """
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
+
         profile_str = profile or ""
-        context_block = f"{context}\n\n" if context else ""
+        context_str = context or ""
+
+        # Handle context if it's a tuple or list (from episodic memory search)
+        if isinstance(context_str, tuple):
+            # Flatten tuple (short_episodes, long_episodes, summaries) into string
+            short_episodes, long_episodes, summaries = context_str
+            all_episodes = short_episodes + long_episodes
+            context_str = "\n".join([str(episode) for episode in all_episodes])
+        elif isinstance(context_str, list):
+            # Handle list of episodes directly
+            context_str = "\n".join([str(episode) for episode in context_str])
+
         current_date = datetime.now().strftime("%Y-%m-%d")
 
+        # Create a dynamic template based on what data is available
+        template = self.prompt_template
+
+
+        if not profile_str.strip():
+            template = re.sub(r'<PROFILE>\s*\{profile\}\s*</PROFILE>\s*\n?', '', template)
+
+        if not context_str.strip():
+            template = re.sub(r'<CONTEXT>\s*\{context_block\}\s*</CONTEXT>\s*\n?', '', template)
+
+        context_block = f"{context_str}\n\n" if context_str.strip() else ""
+
         try:
-            return self.prompt_template.format(
+            return template.format(
                 current_date=current_date,
                 profile=profile_str,
                 context_block=context_block,
@@ -72,5 +106,4 @@ Response Format:
             )
         except Exception as e:
             logger.error(f"Error creating chatbot query: {e}")
-            # Fallback to simple format
             return f"{profile_str}\n\n{context_block}{query}"

@@ -96,15 +96,8 @@ async def get_data(query: str, user_id: str, timestamp: str):
             else:
                 profile_str = str(profile_memory)
 
-        context_str = ""
-        if episodic_memory:
-            if isinstance(episodic_memory, list):
-                context_str = "\n".join([str(c) for c in episodic_memory])
-            else:
-                context_str = str(episodic_memory)
-
         formatted_query = query_constructor.create_query(
-            profile=profile_str, context=context_str, query=query
+            query=query, profile=profile_str, context=episodic_memory
         )
 
         return {
@@ -188,15 +181,8 @@ async def store_and_search_data(user_id: str, query: str):
             else:
                 profile_str = str(profile_memory)
 
-        context_str = ""
-        if episodic_memory:
-            if isinstance(episodic_memory, list):
-                context_str = "\n".join([str(c) for c in episodic_memory])
-            else:
-                context_str = str(episodic_memory)
-
         formatted_response = query_constructor.create_query(
-            profile=profile_str, context=context_str, query=query
+            query=query, profile=profile_str, context=episodic_memory
         )
 
         if profile_memory and episodic_memory:
@@ -211,6 +197,353 @@ async def store_and_search_data(user_id: str, query: str):
     except Exception:
         logging.exception("Error occurred in store_and_search_data")
         return {"status": "error", "message": "Internal error in store_and_search"}
+
+
+#### Use only Episodic Memory ####
+@app.post("/memory/episodic")
+async def store_episodic_data(user_id: str, query: str):
+    try:
+        session_data = {
+            "group_id": user_id,
+            "agent_id": ["assistant"],
+            "user_id": [user_id],
+            "session_id": f"session_{user_id}",
+        }
+        episode_data = {
+            "session": session_data,
+            "producer": user_id,
+            "produced_for": "assistant",
+            "episode_content": query,
+            "episode_type": "message",
+            "metadata": {
+                "speaker": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "type": "message",
+            },
+        }
+
+        response = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/episodic", json=episode_data, timeout=1000
+        )
+        response.raise_for_status()
+        return {"status": "success", "data": response.json()}
+    except Exception:
+        logging.exception("Error occurred in /memory get_data")
+        return {"status": "error", "message": "Internal error in /memory get_data"}
+
+@app.get("/memory/episodic/search")
+async def get_episodic_data(query: str, user_id: str, timestamp: str):
+    try:
+        session_data = {
+            "group_id": user_id,
+            "agent_id": ["assistant"],
+            "user_id": [user_id],
+            "session_id": f"session_{user_id}",
+        }
+        search_data = {
+            "session": session_data,
+            "query": query,
+            "limit": 5,
+            "filter": {"producer_id": user_id},
+        }
+
+        logging.debug(
+            f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/episodic/search"
+        )
+        logging.debug(f"Search data: {search_data}")
+
+        response = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/episodic/search", json=search_data, timeout=1000
+        )
+
+        logging.debug(f"Response status: {response.status_code}")
+        logging.debug(f"Response headers: {dict(response.headers)}")
+
+        if response.status_code != 200:
+            logging.error(f"Backend returned {response.status_code}: {response.text}")
+            return {
+                "status": "error",
+                "message": "Failed to retrieve memory data",
+            }
+
+        response_data = response.json()
+        logging.debug(f"Response data: {response_data}")
+
+        content = response_data.get("content", {})
+        episodic_memory = content.get("episodic_memory", [])
+
+        formatted_query = query_constructor.create_query(
+            query=query, context=episodic_memory
+        )
+
+        return {
+            "status": "success",
+            "data": {"context": episodic_memory},
+            "formatted_query": formatted_query,
+            "query_type": "example",
+        }
+    except Exception:
+        logging.exception("Error occurred in /memory/episodic get_data")
+        return {"status": "error", "message": "Internal error in /memory/episodic get_data"}
+
+
+@app.post("/memory/episodic/store-and-search")
+async def store_episodic_and_search_data(user_id: str, query: str):
+    try:
+        session_data = {
+            "group_id": user_id,
+            "agent_id": ["assistant"],
+            "user_id": [user_id],
+            "session_id": f"session_{user_id}",
+        }
+        episode_data = {
+            "session": session_data,
+            "producer": user_id,
+            "produced_for": "assistant",
+            "episode_content": query,
+            "episode_type": "message",
+            "metadata": {
+                "speaker": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "type": "message",
+            },
+        }
+
+        resp = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/episodic", json=episode_data, timeout=1000
+        )
+
+        logging.debug(f"Store-and-search response status: {resp.status_code}")
+        if resp.status_code != 200:
+            logging.error(f"Store failed with {resp.status_code}: {resp.text}")
+            return {
+                "status": "error",
+                "message": "Failed to store memory data",
+            }
+
+        search_data = {
+            "session": session_data,
+            "query": query,
+            "limit": 5,
+            "filter": {"producer_id": user_id},
+        }
+
+        search_resp = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/episodic/search", json=search_data, timeout=1000
+        )
+
+        logging.debug(f"Store-and-search response status: {search_resp.status_code}")
+        if search_resp.status_code != 200:
+            logging.error(
+                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            )
+            return {
+                "status": "error",
+                "message": "Failed to search memory data",
+            }
+
+        search_resp.raise_for_status()
+
+        search_results = search_resp.json()
+
+        content = search_results.get("content", {})
+        episodic_memory = content.get("episodic_memory", [])
+
+        formatted_response = query_constructor.create_query(
+            query=query, context=episodic_memory
+        )
+
+        return {
+            "status": "success",
+            "data": {"context": episodic_memory},
+            "formatted_query": formatted_response,
+            "query_type": "episodic_store_and_search",
+        }
+
+    except Exception:
+        logging.exception("Error occurred in store_episodic_and_search_data")
+        return {"status": "error", "message": "Internal error in store_episodic_and_search"}
+
+
+#### Use only Profile Memory ####
+@app.post("/memory/profile")
+async def store_profile_data(user_id: str, query: str):
+    try:
+        session_data = {
+            "group_id": user_id,
+            "agent_id": ["assistant"],
+            "user_id": [user_id],
+            "session_id": f"session_{user_id}",
+        }
+        episode_data = {
+            "session": session_data,
+            "producer": user_id,
+            "produced_for": "assistant",
+            "episode_content": query,
+            "episode_type": "message",
+            "metadata": {
+                "speaker": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "type": "message",
+            },
+        }
+
+        response = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/profile", json=episode_data, timeout=1000
+        )
+        response.raise_for_status()
+        return {"status": "success", "data": response.json()}
+    except Exception:
+        logging.exception("Error occurred in /memory/profile store_data")
+        return {"status": "error", "message": "Internal error in /memory/profile store_data"}
+
+
+@app.get("/memory/profile/search")
+async def get_profile_data(query: str, user_id: str, timestamp: str):
+    try:
+        session_data = {
+            "group_id": user_id,
+            "agent_id": ["assistant"],
+            "user_id": [user_id],
+            "session_id": f"session_{user_id}",
+        }
+        search_data = {
+            "session": session_data,
+            "query": query,
+            "limit": 5,
+            "filter": {"producer_id": user_id},
+        }
+
+        logging.debug(
+            f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/profile/search"
+        )
+        logging.debug(f"Search data: {search_data}")
+
+        response = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/profile/search", json=search_data, timeout=1000
+        )
+
+        logging.debug(f"Response status: {response.status_code}")
+        logging.debug(f"Response headers: {dict(response.headers)}")
+
+        if response.status_code != 200:
+            logging.error(f"Backend returned {response.status_code}: {response.text}")
+            return {
+                "status": "error",
+                "message": "Failed to retrieve profile memory data",
+            }
+
+        response_data = response.json()
+        logging.debug(f"Response data: {response_data}")
+
+        content = response_data.get("content", {})
+        profile_memory = content.get("profile_memory", [])
+
+        profile_str = ""
+        if profile_memory:
+            if isinstance(profile_memory, list):
+                profile_str = "\n".join([str(p) for p in profile_memory])
+            else:
+                profile_str = str(profile_memory)
+
+        formatted_query = query_constructor.create_query(
+            query=query, profile=profile_str
+        )
+
+        return {
+            "status": "success",
+            "data": {"profile": profile_memory},
+            "formatted_query": formatted_query,
+            "query_type": "profile",
+        }
+    except Exception:
+        logging.exception("Error occurred in /memory/profile get_data")
+        return {"status": "error", "message": "Internal error in /memory/profile get_data"}
+
+
+@app.post("/memory/profile/store-and-search")
+async def store_profile_and_search_data(user_id: str, query: str):
+    try:
+        session_data = {
+            "group_id": user_id,
+            "agent_id": ["assistant"],
+            "user_id": [user_id],
+            "session_id": f"session_{user_id}",
+        }
+        episode_data = {
+            "session": session_data,
+            "producer": user_id,
+            "produced_for": "assistant",
+            "episode_content": query,
+            "episode_type": "message",
+            "metadata": {
+                "speaker": user_id,
+                "timestamp": datetime.now().isoformat(),
+                "type": "message",
+            },
+        }
+
+        resp = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/profile", json=episode_data, timeout=1000
+        )
+
+        logging.debug(f"Store-and-search response status: {resp.status_code}")
+        if resp.status_code != 200:
+            logging.error(f"Store failed with {resp.status_code}: {resp.text}")
+            return {
+                "status": "error",
+                "message": "Failed to store profile memory data",
+            }
+
+        search_data = {
+            "session": session_data,
+            "query": query,
+            "limit": 5,
+            "filter": {"producer_id": user_id},
+        }
+
+        search_resp = requests.post(
+            f"{MEMORY_BACKEND_URL}/v1/memories/profile/search", json=search_data, timeout=1000
+        )
+
+        logging.debug(f"Store-and-search response status: {search_resp.status_code}")
+        if search_resp.status_code != 200:
+            logging.error(
+                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            )
+            return {
+                "status": "error",
+                "message": "Failed to search profile memory data",
+            }
+
+        search_resp.raise_for_status()
+
+        search_results = search_resp.json()
+
+        content = search_results.get("content", {})
+        profile_memory = content.get("profile_memory", [])
+
+        profile_str = ""
+        if profile_memory:
+            if isinstance(profile_memory, list):
+                profile_str = "\n".join([str(p) for p in profile_memory])
+            else:
+                profile_str = str(profile_memory)
+
+        formatted_response = query_constructor.create_query(
+            query=query, profile=profile_str
+        )
+
+        return {
+            "status": "success",
+            "data": {"profile": profile_memory},
+            "formatted_query": formatted_response,
+            "query_type": "profile_store_and_search",
+        }
+
+    except Exception:
+        logging.exception("Error occurred in store_profile_and_search_data")
+        return {"status": "error", "message": "Internal error in store_profile_and_search"}
 
 
 if __name__ == "__main__":
