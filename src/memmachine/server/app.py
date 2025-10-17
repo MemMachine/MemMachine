@@ -28,7 +28,7 @@ from fastapi.params import Depends
 from fastapi.responses import Response
 from fastmcp import Context, FastMCP
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from memmachine.common.embedder import EmbedderBuilder
 from memmachine.common.language_model import LanguageModelBuilder
@@ -48,14 +48,123 @@ from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStor
 logger = logging.getLogger(__name__)
 
 
+class AppConst:
+    """Constants for app and header key names."""
+
+    DEFAULT_GROUP_ID = "default"
+    """Default value for group id when not provided."""
+
+    DEFAULT_SESSION_ID = "default"
+    """Default value for session id when not provided."""
+
+    DEFAULT_USER_ID = "default"
+    """Default value for user id when not provided."""
+
+    DEFAULT_PRODUCER_ID = "default"
+    """Default value for producer id when not provided."""
+
+    DEFAULT_EPISODE_TYPE = "message"
+    """Default value for episode type when not provided."""
+
+    GROUP_ID_KEY = "group-id"
+    """Header key for group ID."""
+
+    SESSION_ID_KEY = "session-id"
+    """Header key for session ID."""
+
+    AGENT_ID_KEY = "agent-id"
+    """Header key for agent ID."""
+
+    USER_ID_KEY = "user-id"
+    """Header key for user ID."""
+
+    GROUP_ID_DOC = (
+        "Unique identifier for a group or shared context. "
+        "Used as the main filtering property. "
+        "For single-user use cases, this can be the same as `user_id`. "
+        "Defaults to `default` if not provided and user ids is empty. "
+        "Defaults to the first user id if user ids are provided."
+    )
+
+    AGENT_ID_DOC = (
+        "List of agent identifiers associated with this session. "
+        "Useful if multiple AI agents participate in the same context. "
+        "Defaults to `[]` if not provided."
+    )
+
+    USER_ID_DOC = (
+        "List of user identifiers participating in this session. "
+        "Used to isolate memories and data per user. "
+        "Defaults to `['default']` if not provided."
+    )
+
+    SESSION_ID_DOC = (
+        "Unique identifier for a specific session or conversation. "
+        "Can represent a chat thread, Slack channel, or conversation instance. "
+        "Should be unique per conversation to avoid data overlap. "
+        "Defaults 'default' if not provided and user ids is empty. "
+        "Defaults to the first `user_id` if user ids are provided."
+    )
+
+    PRODUCER_DOC = (
+        "Identifier of the entity producing the episode. "
+        "Default to the first `user_id` in the session if not provided. "
+        "Default to `default` if user_id is not available."
+    )
+
+    PRODUCER_FOR_DOC = "Identifier of the entity for whom the episode is produced."
+
+    EPISODE_CONTENT_DOC = "Content of the memory episode."
+
+    EPISODE_TYPE_DOC = "Type of the episode content (e.g., message)."
+
+    EPISODE_META_DOC = "Additional metadata for the episode."
+
+    GROUP_ID_EXAMPLES = ["group-1234", "project-alpha", "team-chat"]
+    AGENT_ID_EXAMPLES = ["crm", "healthcare", "sales", "agent-007"]
+    USER_ID_EXAMPLES = ["user-001", "alice@example.com"]
+    SESSION_ID_EXAMPLES = ["session-5678", "chat-thread-42", "conversation-abc"]
+    PRODUCER_EXAMPLES = ["chatbot", "user-1234", "agent-007"]
+    PRODUCER_FOR_EXAMPLES = ["user-1234", "team-alpha", "project-xyz"]
+    EPISODE_CONTENT_EXAMPLES = ["Met at the coffee shop to discuss project updates."]
+    EPISODE_TYPE_EXAMPLES = ["message"]
+    EPISODE_META_EXAMPLES = [{"mood": "happy", "location": "office"}]
+
+
 # Request session data
 class SessionData(BaseModel):
-    """Request model for session information."""
+    """Metadata used to organize and filter memory or conversation context.
 
-    group_id: str
-    agent_id: list[str] | None
-    user_id: list[str] | None
-    session_id: str
+    Each ID serves a different level of data separation:
+    - `group_id`: identifies a shared context (e.g., a group chat or project).
+    - `user_id`: identifies individual participants within the group.
+    - `agent_id`: identifies the AI agent(s) involved in the session.
+    - `session_id`: identifies a specific conversation thread or session.
+    """
+
+    group_id: str = Field(
+        default="",
+        description=AppConst.GROUP_ID_DOC,
+        examples=AppConst.GROUP_ID_EXAMPLES,
+    )
+
+    agent_id: list[str] = Field(
+        default=[],
+        description=AppConst.AGENT_ID_DOC,
+        examples=AppConst.AGENT_ID_EXAMPLES,
+    )
+
+    user_id: list[str] = Field(
+        default=[AppConst.DEFAULT_USER_ID],
+        description=AppConst.USER_ID_DOC,
+        examples=AppConst.USER_ID_EXAMPLES,
+    )
+
+    session_id: str = Field(
+        default="",
+        description=AppConst.SESSION_ID_DOC,
+        examples=AppConst.SESSION_ID_EXAMPLES,
+    )
 
     def merge(self, other: Self) -> None:
         """Merge another SessionData into this one in place.
@@ -64,7 +173,7 @@ class SessionData(BaseModel):
         - Overwrite string fields if the new value is set.
         """
 
-        def merge_lists(a: list[str] | None, b: list[str] | None) -> list[str] | None:
+        def merge_lists(a: list[str], b: list[str]) -> list[str]:
             if a and b:
                 return list(dict.fromkeys(a + b))  # preserve order & unique
             return a or b
@@ -78,11 +187,44 @@ class SessionData(BaseModel):
         self.agent_id = merge_lists(self.agent_id, other.agent_id)
         self.user_id = merge_lists(self.user_id, other.user_id)
 
+    def first_user_id(self) -> str:
+        """Returns the first user ID if available, else empty."""
+        return self.user_id[0] if self.user_id else AppConst.DEFAULT_USER_ID
+
+    @model_validator(mode="after")
+    def _set_default_group_id(self) -> Self:
+        """Defaults group_id to the first user_id if not set."""
+        if not self.group_id:
+            if len(self.user_id) == 0:
+                self.group_id = AppConst.DEFAULT_GROUP_ID
+            else:
+                self.group_id = self.first_user_id()
+        return self
+
+    @model_validator(mode="after")
+    def _set_default_session_id(self) -> Self:
+        """Defaults session_id to 'default' if not set."""
+        if not self.session_id:
+            if len(self.user_id) == 0:
+                self.session_id = AppConst.DEFAULT_SESSION_ID
+            else:
+                self.session_id = self.first_user_id()
+        return self
+
+    @model_validator(mode="after")
+    def _set_default_user_id(self) -> Self:
+        """Defaults user_id to ['default'] if not set."""
+        if len(self.user_id) == 0:
+            self.user_id = [AppConst.DEFAULT_USER_ID]
+        return self
+
     def is_valid(self) -> bool:
-        """Return True if the session data is invalid (both group_id and
-        session_id are empty), False otherwise.
+        """Returns True if the session data is valid.
+        *group_id*, *session_id* and *user_id* must be non-empty strings.
         """
-        return self.group_id != "" or self.session_id != ""
+        return (
+            self.group_id != "" and self.session_id != "" and self.first_user_id() != ""
+        )
 
 
 class RequestWithSession(BaseModel):
@@ -164,16 +306,66 @@ class RequestWithSession(BaseModel):
         self.merge_session(other)
         self.validate_session()
 
+    def update_response_session_header(self, response: Response | None) -> None:
+        """Update the response headers with the session data."""
+        if response is None:
+            return
+        sess = self.get_session()
+        if sess.group_id:
+            response.headers[AppConst.GROUP_ID_KEY] = sess.group_id
+        if sess.session_id:
+            response.headers[AppConst.SESSION_ID_KEY] = sess.session_id
+        if sess.agent_id:
+            response.headers[AppConst.AGENT_ID_KEY] = ",".join(sess.agent_id)
+        if sess.user_id:
+            response.headers[AppConst.USER_ID_KEY] = ",".join(sess.user_id)
+
 
 # === Request Models ===
 class NewEpisode(RequestWithSession):
     """Request model for adding a new memory episode."""
 
-    producer: str
-    produced_for: str
-    episode_content: str | list[float]
-    episode_type: str
-    metadata: dict[str, Any] | None
+    producer: str = Field(
+        default="",
+        description=AppConst.PRODUCER_DOC,
+        examples=AppConst.PRODUCER_EXAMPLES,
+    )
+
+    produced_for: str = Field(
+        default="",
+        description=AppConst.PRODUCER_FOR_DOC,
+        examples=AppConst.PRODUCER_FOR_EXAMPLES,
+    )
+
+    episode_content: str | list[float] = Field(
+        default="",
+        description=AppConst.EPISODE_CONTENT_DOC,
+        examples=AppConst.EPISODE_CONTENT_EXAMPLES,
+    )
+
+    episode_type: str = Field(
+        default=AppConst.DEFAULT_EPISODE_TYPE,
+        description=AppConst.EPISODE_TYPE_DOC,
+        examples=AppConst.EPISODE_TYPE_EXAMPLES,
+    )
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description=AppConst.EPISODE_META_DOC,
+        examples=AppConst.EPISODE_META_EXAMPLES,
+    )
+
+    @model_validator(mode="after")
+    def _set_default_producer_id(self) -> Self:
+        """Defaults session_id to 'default' if not set."""
+        if self.producer == "":
+            if self.session is not None:
+                user_id = self.session.first_user_id()
+                if user_id != "":
+                    self.producer = user_id
+        if self.producer == "":
+            self.session_id = AppConst.DEFAULT_PRODUCER_ID
+        return self
 
 
 class SearchQuery(RequestWithSession):
@@ -184,22 +376,40 @@ class SearchQuery(RequestWithSession):
     limit: int | None = None
 
 
-def _split_str_to_list(s: str | None) -> list[str] | None:
-    if s is None:
-        return None
+def _split_str_to_list(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip() != ""]
 
 
 async def _get_session_from_header(
-    group_id: str = Header(None, alias="group-id"),
-    session_id: str = Header(None, alias="session-id"),
-    agent_id: str | None = Header(None, alias="agent-id"),
-    user_id: str | None = Header(None, alias="user-id"),
+    group_id: str = Header(
+        AppConst.DEFAULT_GROUP_ID,
+        alias=AppConst.GROUP_ID_KEY,
+        description=AppConst.GROUP_ID_DOC,
+        examples=AppConst.GROUP_ID_EXAMPLES,
+    ),
+    session_id: str = Header(
+        AppConst.DEFAULT_SESSION_ID,
+        alias=AppConst.SESSION_ID_KEY,
+        description=AppConst.SESSION_ID_DOC,
+        examples=AppConst.SESSION_ID_EXAMPLES,
+    ),
+    agent_id: str = Header(
+        "",
+        alias=AppConst.AGENT_ID_KEY,
+        description=AppConst.AGENT_ID_DOC,
+        examples=AppConst.AGENT_ID_EXAMPLES,
+    ),
+    user_id: str = Header(
+        "",
+        alias=AppConst.USER_ID_KEY,
+        description=AppConst.USER_ID_DOC,
+        examples=AppConst.USER_ID_EXAMPLES,
+    ),
 ) -> SessionData:
     """Extract session data from headers and return a SessionData object."""
     return SessionData(
-        group_id=group_id or "",  # fill empty string if missing
-        session_id=session_id or "",  # fill empty string if missing
+        group_id=group_id,
+        session_id=session_id,
         agent_id=_split_str_to_list(agent_id),
         user_id=_split_str_to_list(user_id),
     )
@@ -626,6 +836,7 @@ async def mcp_get_agent_sessions(agent_id: str) -> AllSessionsResponse:
 @app.post("/v1/memories")
 async def add_memory(
     episode: NewEpisode,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
     """Adds a memory episode to both episodic and profile memory.
@@ -637,6 +848,7 @@ async def add_memory(
 
     Args:
         episode: The NewEpisode object containing the memory details.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
 
     Raises:
@@ -645,6 +857,7 @@ async def add_memory(
                        for the given context.
     """
     episode.merge_and_validate_session(session)
+    episode.update_response_session_header(response)
     await _add_memory(episode)
 
 
@@ -699,6 +912,7 @@ async def _add_memory(episode: NewEpisode):
 @app.post("/v1/memories/episodic")
 async def add_episodic_memory(
     episode: NewEpisode,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
     """Adds a memory episode to episodic memory only.
@@ -710,6 +924,7 @@ async def add_episodic_memory(
 
     Args:
         episode: The NewEpisode object containing the memory details.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
 
     Raises:
@@ -718,6 +933,7 @@ async def add_episodic_memory(
                        for the given context.
     """
     episode.merge_and_validate_session(session)
+    episode.update_response_session_header(response)
     await _add_episodic_memory(episode)
 
 
@@ -760,6 +976,7 @@ async def _add_episodic_memory(episode: NewEpisode):
 @app.post("/v1/memories/profile")
 async def add_profile_memory(
     episode: NewEpisode,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
     """Adds a memory episode to both profile memory.
@@ -771,6 +988,7 @@ async def add_profile_memory(
 
     Args:
         episode: The NewEpisode object containing the memory details.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
 
     Raises:
@@ -779,6 +997,7 @@ async def add_profile_memory(
                        for the given context.
     """
     episode.merge_and_validate_session(session)
+    episode.update_response_session_header(response)
     await _add_profile_memory(episode)
 
 
@@ -807,6 +1026,7 @@ async def _add_profile_memory(episode: NewEpisode):
 @app.post("/v1/memories/search")
 async def search_memory(
     q: SearchQuery,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ) -> SearchResult:
     """Searches for memories across both episodic and profile memory.
@@ -817,6 +1037,7 @@ async def search_memory(
 
     Args:
         q: The SearchQuery object containing the query and context.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
 
     Returns:
@@ -826,6 +1047,7 @@ async def search_memory(
         HTTPException: 404 if no matching episodic memory instance is found.
     """
     q.merge_and_validate_session(session)
+    q.update_response_session_header(response)
     return await _search_memory(q)
 
 
@@ -871,12 +1093,14 @@ async def _search_memory(q: SearchQuery) -> SearchResult:
 @app.post("/v1/memories/episodic/search")
 async def search_episodic_memory(
     q: SearchQuery,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ) -> SearchResult:
     """Searches for memories across both profile memory.
 
     Args:
         q: The SearchQuery object containing the query and context.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
 
     Returns:
@@ -886,6 +1110,7 @@ async def search_episodic_memory(
         HTTPException: 404 if no matching episodic memory instance is found.
     """
     q.merge_and_validate_session(session)
+    q.update_response_session_header(response)
     return await _search_episodic_memory(q)
 
 
@@ -914,12 +1139,14 @@ async def _search_episodic_memory(q: SearchQuery) -> SearchResult:
 @app.post("/v1/memories/profile/search")
 async def search_profile_memory(
     q: SearchQuery,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ) -> SearchResult:
     """Searches for memories across profile memory.
 
     Args:
         q: The SearchQuery object containing the query and context.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
 
     Returns:
@@ -929,6 +1156,7 @@ async def search_profile_memory(
         HTTPException: 404 if no matching episodic memory instance is found.
     """
     q.merge_and_validate_session(session)
+    q.update_response_session_header(response)
     return await _search_profile_memory(q)
 
 
@@ -956,15 +1184,18 @@ async def _search_profile_memory(q: SearchQuery) -> SearchResult:
 @app.delete("/v1/memories")
 async def delete_session_data(
     delete_req: DeleteDataRequest,
+    response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
     """
     Delete data for a particular session
     Args:
         delete_req: The DeleteDataRequest object containing the session info.
+        response: The HTTP response object to update headers.
         session: The session data from headers to merge with the request.
     """
     delete_req.merge_and_validate_session(session)
+    delete_req.update_response_session_header(response)
     await _delete_session_data(delete_req)
 
 
