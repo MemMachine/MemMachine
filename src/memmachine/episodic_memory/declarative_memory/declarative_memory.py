@@ -7,11 +7,11 @@ import asyncio
 import functools
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from datetime import datetime
 from string import Template
 from typing import Any, Self, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
@@ -159,7 +159,7 @@ class DeclarativeMemory:
         def __init__(
             self,
             executable: Callable[..., Awaitable],
-            subworkflows: list[Self] = [],
+            subworkflows: Collection[Self] | None = None,
             callback: Callable[..., Awaitable] | None = None,
         ):
             """
@@ -169,9 +169,9 @@ class DeclarativeMemory:
                 executable (Callable[..., Awaitable]):
                     An asynchronous callable
                     that performs the main operation of the workflow.
-                subworkflows (list[Workflow], optional):
-                    A list of subworkflows to execute
-                    on the result of the main operation (default: []).
+                subworkflows (Collection[Workflow] | None, optional):
+                    A collection of subworkflows to execute
+                    on the result of the main operation (default: None).
                 callback (Callable[..., Awaitable], optional):
                     An asynchronous callable that processes
                     the results of the main operation
@@ -195,15 +195,19 @@ class DeclarativeMemory:
             """
             execution_result = await self._executable(arguments)
 
-            subworkflow_results = await asyncio.gather(
-                *[
-                    subworkflow.execute(execution_result)
-                    for subworkflow in self._subworkflows
-                ]
+            subworkflow_results = (
+                await asyncio.gather(
+                    *(
+                        subworkflow.execute(execution_result)
+                        for subworkflow in self._subworkflows
+                    )
+                )
+                if self._subworkflows is not None
+                else None
             )
 
             if self._callback is not None:
-                if subworkflow_results:
+                if subworkflow_results is not None:
                     return await self._callback(execution_result, subworkflow_results)
                 else:
                     return await self._callback(execution_result)
@@ -254,7 +258,7 @@ class DeclarativeMemory:
     @staticmethod
     async def _mutate_derivatives(
         derivative_mutator: DerivativeMutator,
-        derivative_derivation_result: tuple[list[Derivative], EpisodeCluster],
+        derivative_derivation_result: tuple[Iterable[Derivative], EpisodeCluster],
     ) -> list[Derivative]:
         """
         Mutate derived derivatives.
@@ -277,15 +281,17 @@ class DeclarativeMemory:
 
     async def _process_derivative_mutation(
         self,
-        mutated_derivatives: list[Derivative],
+        mutated_derivatives: Iterable[Derivative],
     ) -> list[Node]:
         """
         Process the result of derivative mutation
         by embedding and creating nodes for the mutated derivatives.
         """
+        mutated_derivatives_list = list(mutated_derivatives)
+
         try:
             mutated_derivative_embeddings = await self._embedder.ingest_embed(
-                [derivative.content for derivative in mutated_derivatives],
+                [derivative.content for derivative in mutated_derivatives_list],
                 max_attempts=3,
             )
         except (ExternalServiceAPIError, ValueError, RuntimeError):
@@ -311,19 +317,19 @@ class DeclarativeMemory:
                 },
             )
             for derivative, derivative_embedding in zip(
-                mutated_derivatives, mutated_derivative_embeddings
+                mutated_derivatives_list, mutated_derivative_embeddings
             )
         ]
         return mutated_derivative_nodes
 
     async def _process_derivative_derivation(
         self,
-        derived_derivatives: list[Derivative],
-        mutation_workflows_derivative_nodes: list[list[Node]],
+        derived_derivatives: Iterable[Derivative],
+        mutation_workflows_derivative_nodes: Iterable[Iterable[Node]],
     ) -> list[Node]:
         """
         Process the result of derivative derivation
-        by flattening the list of mutated derivative nodes.
+        by flattening the iterable of mutated derivative nodes.
         Do nothing with the unprocessed derived derivatives.
         """
         derivative_nodes = [
@@ -487,7 +493,7 @@ class DeclarativeMemory:
         self,
         query: str,
         num_episodes_limit: int = 20,
-        property_filter: dict[str, FilterablePropertyValue] = {},
+        property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> list[Episode]:
         """
         Search declarative memory for episodes relevant to the query.
@@ -499,7 +505,7 @@ class DeclarativeMemory:
                 The maximum number
                 of episodes to return (default: 20).
             property_filter (
-                dict[str, FilterablePropertyValue], optional
+                Mapping[str, FilterablePropertyValue] | None, optional
             ):
                 Filterable property keys and values to use
                 for filtering episodes.
@@ -552,7 +558,9 @@ class DeclarativeMemory:
                 required_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
-                },
+                }
+                if property_filter is not None
+                else None,
                 include_missing_properties=True,
             )
             for derivative_embedding in derivative_embeddings
@@ -575,7 +583,9 @@ class DeclarativeMemory:
                 required_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
-                },
+                }
+                if property_filter is not None
+                else None,
                 include_missing_properties=True,
             )
             for matched_derivative_node in matched_derivative_nodes
@@ -605,7 +615,9 @@ class DeclarativeMemory:
                 required_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
-                },
+                }
+                if property_filter is not None
+                else None,
             )
             for matched_episode_cluster_node in matched_episode_cluster_nodes
         ]
@@ -677,7 +689,7 @@ class DeclarativeMemory:
         self,
         nucleus_episode_node: Node,
         retrieval_depth_limit: int = 1,
-        property_filter: dict[str, FilterablePropertyValue] = {},
+        property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> set[Node]:
         """
         Expand the context of a nucleus episode node
@@ -698,7 +710,9 @@ class DeclarativeMemory:
                     required_properties={
                         mangle_filterable_property_key(key): value
                         for key, value in property_filter.items()
-                    },
+                    }
+                    if property_filter is not None
+                    else None,
                 )
                 for frontier_node in frontier
             ]
@@ -719,7 +733,7 @@ class DeclarativeMemory:
         return retrieved_context
 
     async def _score_episode_node_contexts(
-        self, query: str, episode_node_contexts: list[set[Node]]
+        self, query: str, episode_node_contexts: Sequence[set[Node]]
     ) -> list[float]:
         """
         Score episode node contexts
@@ -776,7 +790,7 @@ class DeclarativeMemory:
 
     @staticmethod
     def _unify_anchored_episode_node_contexts(
-        anchored_episode_node_contexts: list[tuple[Node, set[Node]]],
+        anchored_episode_node_contexts: Sequence[tuple[Node, set[Node]]],
         num_episodes_limit: int,
     ) -> set[Node]:
         """
@@ -830,29 +844,54 @@ class DeclarativeMemory:
 
     async def forget_filtered_episodes(
         self,
-        property_filter: dict[str, FilterablePropertyValue] = {},
+        property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ):
         """
         Forget all episodes matching the given filterable properties
         and data derived from them.
+
+        Args:
+            property_filter (
+                Mapping[str, FilterablePropertyValue] | None, optional
+            ):
+                Filterable property keys and values to use
+                for filtering episodes.
+                If not provided, no filtering is applied.
         """
         matching_episode_nodes = await self._vector_graph_store.search_matching_nodes(
             required_labels={"Episode"},
             required_properties={
                 mangle_filterable_property_key(key): value
                 for key, value in property_filter.items()
-            },
+            }
+            if property_filter is not None
+            else None,
         )
+
+        await self.forget_episodes_by_uuids(
+            [node.uuid for node in matching_episode_nodes]
+        )
+
+    async def forget_episodes_by_uuids(self, episode_uuids: Iterable[UUID]):
+        """
+        Forget all episodes with the given UUIDs
+        and data derived from them.
+
+        Args:
+            episode_uuids (Iterable[UUID]):
+                An iterable of episode UUIDs for episodes to forget.
+        """
+        episode_uuids_list = list(episode_uuids)
 
         search_related_episode_cluster_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
-                node_uuid=episode_node.uuid,
+                node_uuid=episode_uuid,
                 allowed_relations={"CONTAINS"},
                 required_labels={"EpisodeCluster"},
                 find_sources=True,
                 find_targets=False,
             )
-            for episode_node in matching_episode_nodes
+            for episode_uuid in episode_uuids_list
         ]
 
         episode_nodes_related_episode_cluster_nodes = await asyncio.gather(
@@ -892,11 +931,12 @@ class DeclarativeMemory:
             for derivative_node in (episode_cluster_node_related_derivative_nodes)
         ]
 
-        episode_uuids = [node.uuid for node in matching_episode_nodes]
         episode_cluster_uuids = [node.uuid for node in matching_episode_cluster_nodes]
         derivative_uuids = [node.uuid for node in matching_derivative_nodes]
 
-        node_uuids_to_delete = episode_uuids + episode_cluster_uuids + derivative_uuids
+        node_uuids_to_delete = (
+            episode_uuids_list + episode_cluster_uuids + derivative_uuids
+        )
         await self._vector_graph_store.delete_nodes(node_uuids_to_delete)
 
     async def close(self):

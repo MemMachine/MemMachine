@@ -1,4 +1,6 @@
-from typing import Any
+from collections.abc import Iterable, Mapping
+from typing import Any, cast
+from uuid import UUID
 
 from memmachine.common.bootstrap_initializer import BootstrapInitializer
 
@@ -7,6 +9,7 @@ from ..declarative_memory.data_types import (
     ContentType as DeclarativeMemoryContentType,
 )
 from ..declarative_memory.data_types import Episode as DeclarativeMemoryEpisode
+from ..declarative_memory.declarative_memory import DeclarativeMemory
 
 supported_derivative_deriver_names = {"identity", "sentence"}
 
@@ -202,7 +205,7 @@ class LongTermMemory:
             resource_definitions | reranker_resource_definitions
         )
 
-        self._declarative_memory = resources.get("_declarative_memory")
+        self._declarative_memory: DeclarativeMemory = resources["_declarative_memory"]
 
     async def add_episode(self, episode: Episode):
         declarative_memory_episode = DeclarativeMemoryEpisode(
@@ -231,7 +234,7 @@ class LongTermMemory:
         self,
         query: str,
         num_episodes_limit: int,
-        id_filter: dict[str, str] = {},
+        id_filter: Mapping[str, str] | None = None,
     ):
         declarative_memory_episodes = await self._declarative_memory.search(
             query,
@@ -249,21 +252,29 @@ class LongTermMemory:
                 ),
                 content=declarative_memory_episode.content,
                 timestamp=declarative_memory_episode.timestamp,
-                group_id=declarative_memory_episode.filterable_properties.get(
-                    "group_id", ""
+                group_id=cast(
+                    str,
+                    declarative_memory_episode.filterable_properties.get(
+                        "group_id", ""
+                    ),
                 ),
-                session_id=declarative_memory_episode.filterable_properties.get(
-                    "session_id", ""
+                session_id=cast(
+                    str,
+                    declarative_memory_episode.filterable_properties.get(
+                        "session_id", ""
+                    ),
                 ),
-                producer_id=(
+                producer_id=cast(
+                    str,
                     declarative_memory_episode.filterable_properties.get(
                         "producer_id", ""
-                    )
+                    ),
                 ),
-                produced_for_id=(
+                produced_for_id=cast(
+                    str,
                     declarative_memory_episode.filterable_properties.get(
                         "produced_for_id", ""
-                    )
+                    ),
                 ),
                 user_metadata=declarative_memory_episode.user_metadata,
             )
@@ -280,6 +291,9 @@ class LongTermMemory:
                 "session_id": self._memory_context.session_id,
             }
         )
+
+    async def forget_episodes(self, episode_uuids: Iterable[UUID]):
+        await self._declarative_memory.forget_episodes_by_uuids(episode_uuids)
 
     async def close(self):
         await self._declarative_memory.close()
