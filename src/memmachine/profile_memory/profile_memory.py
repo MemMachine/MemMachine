@@ -481,7 +481,7 @@ class ProfileMemory:
                 await asyncio.sleep(self.PROFILE_UPDATE_INTERVAL_SEC)
                 continue
 
-            logger.info("Processing profile updates for users: %s", dirty_users)
+            logger.debug("Processing profile updates for users: %s", dirty_users)
             await asyncio.gather(
                 *[self._process_uningested_memories(user_id) for user_id in dirty_users]
             )

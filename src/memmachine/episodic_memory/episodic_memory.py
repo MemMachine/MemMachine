@@ -66,9 +66,6 @@ class EpisodicMemory:
             memory_context: The unique context for this memory instance.
         """
 
-        logger.info("Initializing EpisodicMemory with config: %s", config)
-        logger.info("Memory context: %s", memory_context)
-
         self._memory_context = memory_context
         self._manager = manager  # The manager that created this instance
         self._lock = asyncio.Lock()  # Lock for thread-safe operations

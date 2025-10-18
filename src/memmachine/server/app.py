@@ -317,8 +317,6 @@ async def initialize_resource(
     embedder_config = copy.deepcopy(embedder_def)
     embedder_config["metrics_factory_id"] = "prometheus"
 
-    logger.info("Building embedder with config: %s", embedder_config)
-
     embeddings = EmbedderBuilder.build(
         embedder_def.get("model_vendor", "openai"), embedder_config, metrics_injection
     )

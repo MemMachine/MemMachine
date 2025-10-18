@@ -59,8 +59,6 @@ class OpenAIEmbedder(Embedder):
         """
         super().__init__()
 
-        logger.debug("Initializing OpenAIEmbedder: config=%s", config)
-
         api_key = config.get("api_key")
         if not isinstance(api_key, str):
             raise TypeError("Embedder API key must be a string")
