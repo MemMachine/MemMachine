@@ -24,6 +24,7 @@ from .prompt_provider import ProfilePrompt
 from .storage.storage_base import ProfileStorageBase
 from .util.lru_cache import LRUCache
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -480,6 +481,7 @@ class ProfileMemory:
                 await asyncio.sleep(self.PROFILE_UPDATE_INTERVAL_SEC)
                 continue
 
+            logger.info("Processing profile updates for users: %s", dirty_users)
             await asyncio.gather(
                 *[self._process_uningested_memories(user_id) for user_id in dirty_users]
             )

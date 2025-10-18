@@ -139,6 +139,15 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         start_time = time.monotonic()
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
+            tools = tools or []
+            logger.debug(
+                "[call uuid: %s] Chat completions payload: model=%r, messages=%r, tools=%r, tool_choice=%r",
+                generate_response_call_uuid,
+                self._model,
+                input_prompts,
+                tools,
+                tool_choice,
+            )
             try:
                 response = await self._client.chat.completions.create(
                     model=self._model,
@@ -178,6 +187,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                 sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
                 continue
             except openai.OpenAIError as e:
+                logger.exception("OpenAIError occured", exc_info=e)
                 error_message = (
                     f"[call uuid: {generate_response_call_uuid}] "
                     "Giving up generating response "

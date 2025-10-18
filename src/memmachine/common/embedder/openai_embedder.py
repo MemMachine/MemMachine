@@ -59,6 +59,8 @@ class OpenAIEmbedder(Embedder):
         """
         super().__init__()
 
+        logger.debug("Initializing OpenAIEmbedder: config=%s", config)
+
         api_key = config.get("api_key")
         if not isinstance(api_key, str):
             raise TypeError("Embedder API key must be a string")
@@ -174,6 +176,9 @@ class OpenAIEmbedder(Embedder):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
+        for idx, input_text in enumerate(inputs):
+            logger.debug("input line:\t%d: %r", idx, input_text)
+
         inputs = [input.replace("\n", " ") if input else "\n" for input in inputs]
 
         embed_call_uuid = uuid4()
@@ -192,13 +197,20 @@ class OpenAIEmbedder(Embedder):
                     attempt,
                     max_attempts,
                 )
+                logger.debug("embed inputs: %s", inputs)
+                logger.debug("embed model: %s", self._model)
+                logger.debug("embed dimensions: %d", self._dimensions)
+                logger.debug("base url: %s", self._client.base_url)
                 response = (
                     await self._client.embeddings.create(
                         input=inputs,
                         model=self._model,
                         dimensions=self._dimensions,
                     )
-                    if self._model != "text-embedding-ada-002"
+                    if self._model not in [
+                        "text-embedding-ada-002",
+                        "/home/jovyan/models/e5-mistral-7b-instruct"
+                    ]
                     else await self._client.embeddings.create(
                         input=inputs,
                         model=self._model,
@@ -210,6 +222,7 @@ class OpenAIEmbedder(Embedder):
                 openai.APITimeoutError,
                 openai.APIConnectionError,
             ) as e:
+                logger.exception("RateLimitError|APITimeoutError|APIConnectionError", exc_info=e)
                 # Exception may be retried.
                 if attempt >= max_attempts:
                     error_message = (
@@ -235,6 +248,7 @@ class OpenAIEmbedder(Embedder):
                 sleep_seconds *= 2
                 continue
             except (openai.APIError, openai.OpenAIError) as e:
+                logger.exception("APIError|OpenAIError occurred", exc_info=e)
                 error_message = (
                     f"[call uuid: {embed_call_uuid}] "
                     "Giving up creating embeddings "

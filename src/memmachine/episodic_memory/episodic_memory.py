@@ -34,6 +34,8 @@ from .data_types import ContentType, Episode, MemoryContext
 from .long_term_memory.long_term_memory import LongTermMemory
 from .short_term_memory.session_memory import SessionMemory
 
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +65,10 @@ class EpisodicMemory:
                     instance.
             memory_context: The unique context for this memory instance.
         """
+
+        logger.info("Initializing EpisodicMemory with config: %s", config)
+        logger.info("Memory context: %s", memory_context)
+
         self._memory_context = memory_context
         self._manager = manager  # The manager that created this instance
         self._lock = asyncio.Lock()  # Lock for thread-safe operations
@@ -301,7 +307,7 @@ class EpisodicMemory:
                 return
 
             # If no more references, proceed with closing
-            logger.info("Closing context memory: %s", str(self._memory_context))
+            logger.debug("Closing context memory: %s", str(self._memory_context))
             tasks = []
             if self._session_memory:
                 tasks.append(self._session_memory.close())
