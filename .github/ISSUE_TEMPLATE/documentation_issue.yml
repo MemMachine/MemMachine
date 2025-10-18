@@ -1,7 +1,7 @@
 name: 📝 Documentation Issue
 description: Report a problem with the project documentation, such as a typo, outdated information, or a broken link.
 title: "[Docs]: "
-type: 'Bug'
+type: 'Documentation'
 
 body:
   - type: input
