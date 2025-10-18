@@ -45,6 +45,8 @@ from memmachine.profile_memory.profile_memory import ProfileMemory
 from memmachine.profile_memory.prompt_provider import ProfilePrompt
 from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
 
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -1109,7 +1111,9 @@ def main():
     """Main entry point for the application."""
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     log_format = os.getenv("LOG_FORMAT", "%(levelname)-7s %(message)s")
+    log_file = os.getenv("LOG_FILE", "memmachine_server.log")
     logging.basicConfig(
+        filename=log_file,
         level=log_level,
         format=log_format,
     )
