@@ -8,7 +8,7 @@ import asyncpg
 import numpy as np
 from pgvector.asyncpg import register_vector
 
-from memmachine.profile_memory.storage.storage_base import ProfileStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +40,14 @@ class RecordMapping(Mapping):
         return self._inner.values()
 
 
-class AsyncPgProfileStorage(ProfileStorageBase):
+class AsyncPgSemanticStorage(SemanticStorageBase):
     """
     asyncpg implementation for ProfileStorageBase
     """
 
     @staticmethod
-    def build_config(config: dict[str, Any]) -> ProfileStorageBase:
-        return AsyncPgProfileStorage(config)
+    def build_config(config: dict[str, Any]) -> SemanticStorageBase:
+        return AsyncPgSemanticStorage(config)
 
     def __init__(self, config: dict[str, Any]):
         self._pool = None

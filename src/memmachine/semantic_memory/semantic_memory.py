@@ -10,24 +10,24 @@ import asyncio
 import datetime
 import json
 import logging
-from itertools import accumulate, groupby, tee
-from typing import Any
+from itertools import groupby
+from typing import Any, Sequence
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
 
-from .prompt_provider import ProfilePrompt
-from .storage.storage_base import ProfileStorageBase
+from .prompt_provider import SemanticPrompt
+from .storage.storage_base import SemanticStorageBase
 from .util.lru_cache import LRUCache
 
 logger = logging.getLogger(__name__)
 
 
-class ProfileUpdateTracker:
+class SemanticUpdateTracker:
     """Tracks profile update activity for a user.
     When a user sends messages, this class keeps track of how many
     messages have been sent and when the first message was sent.
@@ -84,17 +84,17 @@ class ProfileUpdateTracker:
         return exceed_time_limit or exceed_msg_limit
 
 
-class ProfileUpdateTrackerManager:
+class SemanticUpdateTrackerManager:
     """Manages ProfileUpdateTracker instances for multiple users."""
 
     def __init__(self, message_limit: int, time_limit_sec: float):
-        self._trackers: dict[str, ProfileUpdateTracker] = {}
+        self._trackers: dict[str, SemanticUpdateTracker] = {}
         self._trackers_lock = asyncio.Lock()
         self._message_limit = message_limit
         self._time_limit_sec = time_limit_sec
 
-    def _new_tracker(self, user: str) -> ProfileUpdateTracker:
-        return ProfileUpdateTracker(
+    def _new_tracker(self, user: str) -> SemanticUpdateTracker:
+        return SemanticUpdateTracker(
             user=user,
             message_limit=self._message_limit,
             time_limit_sec=self._time_limit_sec,
@@ -123,97 +123,83 @@ class ProfileUpdateTrackerManager:
             return ret
 
 
-class ProfileMemory:
-    # pylint: disable=too-many-instance-attributes
-    """Manages and maintains user profiles based on conversation history.
+class SemanticMemoryParams(BaseModel):
+    model: InstanceOf[LanguageModel]
+    embeddings: InstanceOf[Embedder]
+    prompt: SemanticPrompt
+    semantic_storage: InstanceOf[SemanticStorageBase]
+    max_cache_size: int = 1000
 
-    This class uses a language model to intelligently extract, update, and
-    consolidate user profile information from conversations. It stores structured
-    profile data (features, values, tags) along with their vector embeddings in a
-    persistent database, allowing for efficient semantic search.
-
-    Key functionalities include:
-    - Ingesting conversation messages to update profiles.
-    - Consolidating and deduplicating profile entries to maintain accuracy and
-      conciseness.
-    - Providing CRUD operations for profile data.
-    - Performing semantic searches on user profiles.
-    - Caching frequently accessed profiles to improve performance.
-
-    The process is largely asynchronous, designed to work within an async
-    application.
-
-    Args:
-        model (LanguageModel): The language model for profile extraction.
-        embeddings (Embedder): The model for generating vector embeddings.
-        profile_storage (ProfileStorageBase): Connection to the profile database.
-        prompt (ProfilePrompt): The system prompts to be used.
-        max_cache_size (int, optional): Max size for the profile LRU cache.
-            Defaults to 1000.
-    """
-
-    PROFILE_UPDATE_INTERVAL_SEC = 2
-    """ Interval in seconds for profile updates. This controls how often the
+    feature_update_interval_sec: float = 2.0
+    """ Interval in seconds for feature updates. This controls how often the
     background task checks for dirty users and processes their
     conversation history to update profiles.
     """
 
-    PROFILE_UPDATE_MESSAGE_LIMIT = 5
-    """ Number of messages after which a profile update is triggered.
+    feature_update_message_limit: int = 5
+    """ Number of messages after which a feature update is triggered.
     If a user sends this many messages, their profile will be updated.
     """
 
-    PROFILE_UPDATE_TIME_LIMIT_SEC = 120.0
-    """ Time in seconds after which a profile update is triggered.
+    feature_update_time_limit_sec: float = 120.0
+    """ Time in seconds after which a feature update is triggered.
     If a user has sent messages and this much time has passed since
     the first message, their profile will be updated.
     """
 
+
+class SemanticMemory:
+    # pylint: disable=too-many-instance-attributes
+    """Manages and maintains user semantic features based on conversation history.
+
+    This class uses a language model to intelligently extract, update, and
+    consolidate user information from conversations. It stores structured
+    semantic data (features, values, tags) along with their vector embeddings in a
+    persistent database, allowing for efficient semantic search.
+
+    Key functionalities include:
+    - Ingesting conversation messages to update semantic features.
+    - Consolidating and deduplicating semantic entries to maintain accuracy and
+      conciseness.
+    - Providing CRUD operations for semantic data.
+    - Performing semantic searches on features.
+    - Caching frequently accessed features to improve performance.
+
+    The process is largely asynchronous, designed to work within an async
+    application.
+    """
+
     def __init__(
         self,
-        *,
-        model: LanguageModel,
-        embeddings: Embedder,
-        prompt: ProfilePrompt,
-        max_cache_size=1000,
-        profile_storage: ProfileStorageBase,
+        params: SemanticMemoryParams,
     ):
-        if model is None:
-            raise ValueError("model must be provided")
-        if embeddings is None:
-            raise ValueError("embeddings must be provided")
-        if prompt is None:
-            raise ValueError("prompt must be provided")
-        if profile_storage is None:
-            raise ValueError("profile_storage must be provided")
+        self._model = params.model
+        self._embeddings = params.embeddings
+        self._semantic_storage = params.semantic_storage
 
-        self._model = model
-        self._embeddings = embeddings
-        self._profile_storage = profile_storage
+        self._prompt = params.prompt
 
-        self._max_cache_size = max_cache_size
-
-        self._update_prompt = prompt.update_prompt
-        self._consolidation_prompt = prompt.consolidation_prompt
-
-        self._update_interval = 1
-        self._dirty_users: ProfileUpdateTrackerManager = ProfileUpdateTrackerManager(
-            message_limit=self.PROFILE_UPDATE_MESSAGE_LIMIT,
-            time_limit_sec=self.PROFILE_UPDATE_TIME_LIMIT_SEC,
+        self._dirty_users: SemanticUpdateTrackerManager = SemanticUpdateTrackerManager(
+            message_limit=params.feature_update_message_limit,
+            time_limit_sec=params.feature_update_time_limit_sec,
         )
+
+        self._background_ingestion_interval_sec = params.feature_update_interval_sec
+
         self._ingestion_task = asyncio.create_task(self._background_ingestion_task())
         self._is_shutting_down = False
-        self._profile_cache = LRUCache(self._max_cache_size)
+
+        self._profile_cache = LRUCache(params.max_cache_size)
 
     async def startup(self):
         """Initializes resources, such as the database connection pool."""
-        await self._profile_storage.startup()
+        await self._semantic_storage.startup()
 
     async def cleanup(self):
         """Releases resources, such as the database connection pool."""
         self._is_shutting_down = True
         await self._ingestion_task
-        await self._profile_storage.cleanup()
+        await self._semantic_storage.cleanup()
 
     # === CRUD ===
 
@@ -236,14 +222,14 @@ class ProfileMemory:
         profile = self._profile_cache.get((user_id, json.dumps(isolations)))
         if profile is not None:
             return profile
-        profile = await self._profile_storage.get_profile(user_id, isolations)
+        profile = await self._semantic_storage.get_profile(user_id, isolations)
         self._profile_cache.put((user_id, json.dumps(isolations)), profile)
         return profile
 
     async def delete_all(self):
         """Deletes all user profiles from the database and clears the cache."""
-        self._profile_cache = LRUCache(self._max_cache_size)
-        await self._profile_storage.delete_all()
+        await self._semantic_storage.delete_all()
+        self._profile_cache.clean()
 
     async def delete_user_profile(
         self,
@@ -259,7 +245,7 @@ class ProfileMemory:
         if isolations is None:
             isolations = {}
         self._profile_cache.erase((user_id, json.dumps(isolations)))
-        await self._profile_storage.delete_profile(user_id, isolations)
+        await self._semantic_storage.delete_profile(user_id, isolations)
 
     async def add_new_profile(
         self,
@@ -294,7 +280,7 @@ class ProfileMemory:
             citations = []
         self._profile_cache.erase((user_id, json.dumps(isolations)))
         emb = (await self._embeddings.ingest_embed([value]))[0]
-        await self._profile_storage.add_profile_feature(
+        await self._semantic_storage.add_profile_feature(
             user_id,
             feature,
             value,
@@ -328,46 +314,9 @@ class ProfileMemory:
         if isolations is None:
             isolations = {}
         self._profile_cache.erase((user_id, json.dumps(isolations)))
-        await self._profile_storage.delete_profile_feature(
+        await self._semantic_storage.delete_profile_feature(
             user_id, feature, tag, value, isolations
         )
-
-    def range_filter(
-        self, arr: list[tuple[float, Any]], max_range: float, max_std: float
-    ) -> list[Any]:
-        """
-        Filters a list of semantically searched entries based on similarity.
-
-        Finds the longest prefix of the list of entries returned by
-        semantic_search such that:
-         - The difference between max and min similarity is at most
-           `max_range`.
-         - The standard deviation of similarity scores is at most `max_std`.
-
-        Args:
-            arr: A list of tuples, where each tuple contains a similarity
-                score and the corresponding entry.
-            max_range: The maximum allowed range between the highest and lowest
-                similarity scores.
-            max_std: The maximum allowed standard deviation of similarity
-                     scores.
-
-        Returns:
-            A filtered list of entries.
-        """
-        if len(arr) == 0:
-            return []
-        new_min = arr[0][0] - max_range
-        k, v = zip(*arr)
-        k1, k2, _, k4 = tee(k, 4)
-        sums = accumulate(k1)
-        square_sums = accumulate(i * i for i in k2)
-        divs = range(1, len(arr) + 1)
-        take = max(
-            (d if ((sq - s * s / d) / d) ** 0.5 < max_std else -1)
-            for (s, sq, d) in zip(sums, square_sums, divs)
-        )
-        return [val for (f, val, _) in zip(k4, v, range(take)) if f > new_min]
 
     async def semantic_search(
         self,
@@ -393,43 +342,40 @@ class ProfileMemory:
         Returns:
             A list of matching profile entries, filtered by similarity scores.
         """
-        # TODO: cache this # pylint: disable=fixme
         if isolations is None:
             isolations = {}
         qemb = (await self._embeddings.search_embed([query]))[0]
-        candidates = await self._profile_storage.semantic_search(
+        candidates = await self._semantic_storage.semantic_search(
             user_id, np.array(qemb), k, min_cos, isolations
         )
         formatted = [(i["metadata"]["similarity_score"], i) for i in candidates]
-        return self.range_filter(formatted, max_range, max_std)
 
-    async def get_large_profile_sections(
-        self,
-        user_id: str,
-        thresh: int = 5,
-        isolations: dict[str, bool | int | float | str] | None = None,
-    ) -> list[list[dict[str, Any]]]:
-        """Retrieves profile sections with a large number of entries.
+        def range_filter(
+            arr: Sequence[tuple[float, object]], max_range: float, max_std: float
+        ) -> list[object]:
+            if not arr:
+                return []
 
-        A "section" is a group of profile entries with the same feature and
-        tag. This is used to find sections that may need consolidation.
+            first_f = arr[0][0]
+            new_min = first_f - max_range
 
-        Args:
-            user_id: The ID of the user.
-            thresh: The minimum number of entries for a section to be
-                considered "large".
-            isolations: A dictionary for data isolation.
+            s = 0.0
+            sq = 0.0
+            take = -1
+            for d, (f, _) in enumerate(arr, start=1):
+                s += f
+                sq += f * f
+                std = (
+                    (sq - (s * s) / d) / d
+                ) ** 0.5  # population stddev of prefix [0..d-1]
+                if std < max_std:
+                    take = d
 
-        Returns:
-            A list of large profile sections, where each section is a list of
-            profile entries.
-        """
-        # TODO: useless wrapper. delete? # pylint: disable=fixme
-        if isolations is None:
-            isolations = {}
-        return await self._profile_storage.get_large_profile_sections(
-            user_id, thresh, isolations
-        )
+            if take <= 0:
+                return []
+            return [val for (f, val) in arr[:take] if f > new_min]
+
+        return range_filter(formatted, max_range, max_std)
 
     # === Profile Ingestion ===
     async def add_persona_message(
@@ -454,9 +400,6 @@ class ProfileMemory:
         Returns:
             A boolean indicating whether the consolidation process was awaited.
         """
-        # TODO: add or adopt system for more general modifications of
-        # pylint: disable=fixme
-        # the message
         if metadata is None:
             metadata = {}
         if isolations is None:
@@ -465,19 +408,19 @@ class ProfileMemory:
         if "speaker" in metadata:
             content = f"{metadata['speaker']} sends '{content}'"
 
-        await self._profile_storage.add_history(user_id, content, metadata, isolations)
+        await self._semantic_storage.add_history(user_id, content, metadata, isolations)
 
         await self._dirty_users.mark_update(user_id)
 
     async def uningested_message_count(self):
-        return await self._profile_storage.get_uningested_history_messages_count()
+        return await self._semantic_storage.get_uningested_history_messages_count()
 
     async def _background_ingestion_task(self):
         while not self._is_shutting_down:
             dirty_users = await self._dirty_users.get_users_to_update()
 
             if len(dirty_users) == 0:
-                await asyncio.sleep(self.PROFILE_UPDATE_INTERVAL_SEC)
+                await asyncio.sleep(self._background_ingestion_interval_sec)
                 continue
 
             await asyncio.gather(
@@ -485,7 +428,7 @@ class ProfileMemory:
             )
 
     async def _get_isolation_grouped_memories(self, user_id: str):
-        rows = await self._profile_storage.get_history_messages_by_ingestion_status(
+        rows = await self._semantic_storage.get_history_messages_by_ingestion_status(
             user_id=user_id,
             k=100,
             is_ingested=False,
@@ -514,12 +457,12 @@ class ProfileMemory:
                 message = messages[i]
                 await self._update_user_profile_think(message)
                 mark_tasks.append(
-                    self._profile_storage.mark_messages_ingested([message["id"]])
+                    self._semantic_storage.mark_messages_ingested([message["id"]])
                 )
 
             await self._update_user_profile_think(messages[-1], wait_consolidate=True)
             mark_tasks.append(
-                self._profile_storage.mark_messages_ingested([messages[-1]["id"]])
+                self._semantic_storage.mark_messages_ingested([messages[-1]["id"]])
             )
             await asyncio.gather(*mark_tasks)
 
@@ -564,7 +507,7 @@ class ProfileMemory:
         # Use chain-of-thought to get entity profile update commands.
         try:
             response_text, _ = await self._model.generate_response(
-                system_prompt=self._update_prompt, user_prompt=user_prompt
+                system_prompt=self._prompt.update_prompt, user_prompt=user_prompt
             )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Eror when update profile: %s", str(e))
@@ -586,17 +529,16 @@ class ProfileMemory:
                 str(response_json),
                 str(e),
             )
-            profile_update_commands = {}
             return
-        finally:
-            logger.info(
-                "PROFILE MEMORY INGESTOR",
-                extra={
-                    "queries_to_ingest": memory_content,
-                    "thoughts": thinking,
-                    "outputs": profile_update_commands,
-                },
-            )
+
+        logger.info(
+            "PROFILE MEMORY INGESTOR",
+            extra={
+                "queries_to_ingest": memory_content,
+                "thoughts": thinking,
+                "outputs": profile_update_commands,
+            },
+        )
 
         # This should probably just be a list of commands
         # instead of a dictionary mapping
@@ -690,7 +632,7 @@ class ProfileMemory:
                 )
 
         if wait_consolidate:
-            s = await self.get_large_profile_sections(
+            s = await self._semantic_storage.get_large_profile_sections(
                 user_id, thresh=5, isolations=isolations
             )
             await asyncio.gather(
@@ -707,7 +649,7 @@ class ProfileMemory:
         """
         try:
             response_text, _ = await self._model.generate_response(
-                system_prompt=self._consolidation_prompt,
+                system_prompt=self._prompt.consolidation_prompt,
                 user_prompt=json.dumps(memories),
             )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
@@ -728,17 +670,16 @@ class ProfileMemory:
                 str(response_json),
                 str(e),
             )
-            updated_profile_entries = {}
             return
-        finally:
-            logger.info(
-                "PROFILE MEMORY CONSOLIDATOR",
-                extra={
-                    "receives": memories,
-                    "thoughts": thinking,
-                    "outputs": updated_profile_entries,
-                },
-            )
+
+        logger.info(
+            "PROFILE MEMORY CONSOLIDATOR",
+            extra={
+                "receives": memories,
+                "thoughts": thinking,
+                "outputs": updated_profile_entries,
+            },
+        )
 
         if not isinstance(updated_profile_entries, dict):
             logger.warning(
@@ -806,7 +747,7 @@ class ProfileMemory:
             for memory in memories:
                 if memory["metadata"]["id"] not in valid_keep_memories:
                     self._profile_cache.erase(user_id)
-                    await self._profile_storage.delete_profile_feature_by_id(
+                    await self._semantic_storage.delete_profile_feature_by_id(
                         memory["metadata"]["id"]
                     )
 
@@ -830,7 +771,7 @@ class ProfileMemory:
                 )
                 continue
 
-            associations = await self._profile_storage.get_all_citations_for_ids(
+            associations = await self._semantic_storage.get_all_citations_for_ids(
                 consolidate_memory.metadata.citations
             )
 

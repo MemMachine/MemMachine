@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from memmachine.profile_memory.storage.storage_base import ProfileStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
 
 
 @dataclass
@@ -36,7 +36,7 @@ class _HistoryEntry:
     ingested: bool = False
 
 
-class InMemoryProfileStorage(ProfileStorageBase):
+class InMemorySemanticStorage(SemanticStorageBase):
     """In-memory implementation of ``ProfileStorageBase`` used for testing."""
 
     def __init__(self):

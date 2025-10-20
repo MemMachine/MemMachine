@@ -2,14 +2,14 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from tests.memmachine.profile_memory.storage.in_memory_profile_storage import (
-    InMemoryProfileStorage,
+from tests.memmachine.semantic_memory.storage.in_memory_profile_storage import (
+    InMemorySemanticStorage,
 )
 
 
 @pytest_asyncio.fixture
 async def storage():
-    store = InMemoryProfileStorage()
+    store = InMemorySemanticStorage()
     await store.startup()
     yield store
     await store.delete_all()
@@ -17,7 +17,7 @@ async def storage():
 
 
 @pytest.mark.asyncio
-async def test_add_get_and_delete_profile_entries(storage: InMemoryProfileStorage):
+async def test_add_get_and_delete_profile_entries(storage: InMemorySemanticStorage):
     embed = np.array([1.0, 0.0], dtype=float)
 
     await storage.add_profile_feature(
@@ -73,7 +73,7 @@ async def test_add_get_and_delete_profile_entries(storage: InMemoryProfileStorag
 
 
 @pytest.mark.asyncio
-async def test_citation_helpers(storage: InMemoryProfileStorage):
+async def test_citation_helpers(storage: InMemorySemanticStorage):
     history = await storage.add_history(
         user_id="user",
         content="first interaction",
@@ -115,7 +115,7 @@ async def test_citation_helpers(storage: InMemoryProfileStorage):
 
 
 @pytest.mark.asyncio
-async def test_semantic_search_sorting_and_citations(storage: InMemoryProfileStorage):
+async def test_semantic_search_sorting_and_citations(storage: InMemorySemanticStorage):
     history = await storage.add_history(
         user_id="user",
         content="context note",
@@ -167,7 +167,7 @@ async def test_semantic_search_sorting_and_citations(storage: InMemoryProfileSto
 
 
 @pytest.mark.asyncio
-async def test_history_management(storage: InMemoryProfileStorage):
+async def test_history_management(storage: InMemorySemanticStorage):
     h1 = await storage.add_history(
         user_id="user",
         content="first",

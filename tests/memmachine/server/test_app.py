@@ -7,29 +7,38 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from memmachine.common.embedder import Embedder
+from memmachine.common.language_model import LanguageModel, LanguageModelBuilder
 from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
-from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.semantic_memory.semantic_memory import SemanticMemory
 from memmachine.server.app import initialize_resource
 
 
 @pytest.fixture
 def mock_dependencies(monkeypatch):
     """Mocks all external dependencies for initialize_resource."""
-    mock_llm_builder = MagicMock()
-    mock_embedder_builder = MagicMock()
+    mock_llm = MagicMock(spec=LanguageModel)
+    mock_embedder = MagicMock(spec=Embedder)
+
     mock_metrics_builder = MagicMock()
-    mock_profile_memory = MagicMock(spec=ProfileMemory)
+    mock_semantic_memory = MagicMock(spec=SemanticMemory)
     mock_episodic_manager = MagicMock(spec=EpisodicMemoryManager)
     mock_import_module = MagicMock()
+
+    mock_llm_builder = MagicMock(spec=LanguageModelBuilder)
+    mock_llm_builder.build.return_value = mock_llm
+
+    mock_embedder_builder = MagicMock()
+    mock_embedder_builder.build.return_value = mock_embedder
 
     monkeypatch.setattr("memmachine.server.app.LanguageModelBuilder", mock_llm_builder)
     monkeypatch.setattr("memmachine.server.app.EmbedderBuilder", mock_embedder_builder)
     monkeypatch.setattr(
         "memmachine.server.app.MetricsFactoryBuilder", mock_metrics_builder
     )
-    monkeypatch.setattr("memmachine.server.app.ProfileMemory", mock_profile_memory)
+    monkeypatch.setattr("memmachine.server.app.SemanticMemory", mock_semantic_memory)
     monkeypatch.setattr(
         "memmachine.server.app.EpisodicMemoryManager", mock_episodic_manager
     )
@@ -44,7 +53,7 @@ def mock_dependencies(monkeypatch):
         "llm_builder": mock_llm_builder,
         "embedder_builder": mock_embedder_builder,
         "metrics_builder": mock_metrics_builder,
-        "profile_memory": mock_profile_memory,
+        "semantic_memory": mock_semantic_memory,
         "episodic_manager": mock_episodic_manager,
         "import_module": mock_import_module,
     }
@@ -107,13 +116,13 @@ async def test_initialize_resource_success(
 
     # Assert that the correct instances were returned
     assert episodic_mgr == mock_dependencies["episodic_manager"]
-    assert profile_mem == mock_dependencies["profile_memory"].return_value
+    assert profile_mem == mock_dependencies["semantic_memory"].return_value
 
     # Verify that dependencies were called correctly
     mock_dependencies[
         "episodic_manager"
     ].create_episodic_memory_manager.assert_called_once_with(mock_config_file)
-    mock_dependencies["profile_memory"].assert_called_once()
+    mock_dependencies["semantic_memory"].assert_called_once()
 
     # Verify prompt module was imported
     mock_dependencies["import_module"].assert_called_with(
@@ -134,8 +143,8 @@ async def test_initialize_resource_success(
     assert embedder_builder_args["metrics_factory_id"] == "prometheus"
     assert embedder_builder_args["model_name"] == "text-embedding-ada-002"
 
-    _, profile_kwargs = mock_dependencies["profile_memory"].call_args
-    db_config = profile_kwargs["profile_storage"]._config
+    semantic_params = mock_dependencies["semantic_memory"].call_args.args[0]
+    db_config = semantic_params.semantic_storage._config
     assert db_config["host"] == "localhost"
     assert db_config["port"] == 5432
     assert db_config["user"] == "postgres"

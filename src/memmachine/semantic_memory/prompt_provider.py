@@ -3,7 +3,7 @@ from types import ModuleType
 
 
 @dataclass
-class ProfilePrompt:
+class SemanticPrompt:
     update_prompt: str
     consolidation_prompt: str
 
@@ -12,7 +12,7 @@ class ProfilePrompt:
         update_prompt = getattr(prompt_module, "UPDATE_PROMPT", "")
         consolidation_prompt = getattr(prompt_module, "CONSOLIDATION_PROMPT", "")
 
-        return ProfilePrompt(
+        return SemanticPrompt(
             update_prompt=update_prompt,
             consolidation_prompt=consolidation_prompt,
         )

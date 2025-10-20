@@ -4,15 +4,15 @@ from typing import Any, Mapping
 import numpy as np
 
 
-class ProfileStorageBase(ABC):
+class SemanticStorageBase(ABC):
     """
-    The base class for profile storage
+    The base class for Semantic storage
     """
 
     @abstractmethod
     async def startup(self):
         """
-        initializations for the profile storage,
+        initializations for the semantic storage,
         such as creating connection to the database
         """
         raise NotImplementedError
@@ -20,7 +20,7 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def cleanup(self):
         """
-        cleanup for the profile storage
+        cleanup for the semantic storage
         such as closing connection to the database
         """
         raise NotImplementedError
@@ -28,7 +28,7 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def delete_all(self):
         """
-        delete all profiles in the storage
+        delete all semantic features in the storage
         such as truncating the database table
         """
         raise NotImplementedError
