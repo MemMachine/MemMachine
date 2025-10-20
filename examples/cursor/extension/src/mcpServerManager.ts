@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { MCP_NAME, MCP_URL, AUTH_TOKEN } from './config';
+import { MCP_NAME, getAuthToken } from './config';
 
 export interface MCPServerConfig {
     name: string;
@@ -181,9 +181,9 @@ export class MCPServerManager {
     public async registerMemMachineServer(): Promise<boolean> {
         const MCPConfig: MCPServerConfig = {
             name: MCP_NAME,
-            url: MCP_URL,
+            url: '', // getMcpUrl(),
             headers: {
-                'Authorization': `Bearer ${AUTH_TOKEN}`
+                'Authorization': `Bearer ${getAuthToken()}`
             }
         };
         return await this.registerServer(MCPConfig);

@@ -50,9 +50,10 @@ docs/
 # Development files
 .eslintrc*
 .prettierrc*
-tsconfig.*.json
+# Keep essential build configs but exclude test config
+tsconfig.app.tsbuildinfo
+tsconfig.tsbuildinfo
 vitest.config.ts
-vite.config.ts
 
 # TypeScript
 *.tsbuildinfo

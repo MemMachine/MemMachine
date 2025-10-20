@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Entry point for the Cursor MCP Server.
+Entry point for the MemMachine Extension Server.
 
 This is the main entry point that can be run directly:
     python main.py
@@ -18,7 +18,7 @@ import logging
 import uvicorn
 
 from .app import create_custom_app
-from .config import CURSOR_MCP_PORT, MEMORY_BACKEND_URL
+from .settings import settings
 
 # =============================================================================
 # Logging Configuration
@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     logger.info("=" * 60)
-    logger.info("Starting Cursor MCP Server")
+    logger.info("Starting MemMachine Extension MCP Server")
     logger.info("=" * 60)
-    logger.info(f"Port: {CURSOR_MCP_PORT}")
-    logger.info(f"MemMachine Backend URL: {MEMORY_BACKEND_URL}")
+    logger.info(f"Port: {settings.server_port}")
+    logger.info(f"MemMachine Backend URL: {settings.mm_backend_url}")
     logger.info("=" * 60)
 
     # Create custom app with session management
@@ -50,6 +50,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=CURSOR_MCP_PORT,
+        port=settings.server_port,
         log_level="info"
     )

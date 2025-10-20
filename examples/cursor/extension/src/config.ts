@@ -15,26 +15,21 @@ export const API_ENDPOINTS = {
 
 
 // Extension Settings
-export function getMcpUrl(): string {
-    return vscode.workspace.getConfiguration('memmachine').get('mcpUrl', 'http://127.0.0.1:8001/mcp/');
-}
+// export function getMcpUrl(): string {
+//     return vscode.workspace.getConfiguration('memmachine').get('mcpUrl', 'http://ec2-18-223-182-61.us-east-2.compute.amazonaws.com:8001/mcp');
+// }
 
 export function getApiBaseUrl(): string {
-    return vscode.workspace.getConfiguration('memmachine').get('apiBaseUrl', 'http://127.0.0.1:8001');
+    return vscode.workspace.getConfiguration('memmachine').get('apiBaseUrl', 'http://ec2-18-223-182-61.us-east-2.compute.amazonaws.com:8001/api');
 }
 
 export function getAuthToken(): string {
-    return vscode.workspace.getConfiguration('memmachine').get('authToken', '**your-auth-token-here**');
+    return vscode.workspace.getConfiguration('memmachine').get('authToken', 'your-auth-token-here');
 }
-
-export const MCP_URL = getMcpUrl();
-export const API_BASE_URL = getApiBaseUrl();
-export const AUTH_TOKEN = getAuthToken();
-
 
 
 // Constants
 export const MCP_NAME = 'MemMachine';
-export const SESSION_PREFIX = 'CURSOR-PROJECT-';
+export const SESSION_PREFIX = 'PROJECT-';
 
 export const REFRESH_INTERVAL = 1000 * 30; // 30 seconds

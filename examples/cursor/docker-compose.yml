@@ -2,9 +2,11 @@ services:
   cursor-mcp-server:
     build: .
     container_name: cursor-mcp-server
+    ports:
+      - "8001:8001"
     environment:
       # MemMachine backend URL - update this to point to your actual MemMachine service
-      - MEMORY_BACKEND_URL=${MEMORY_BACKEND_URL:-http://host.docker.internal:8080}
+      - MEMORY_BACKEND_URL=${MEMORY_BACKEND_URL:-http://memmachine-app:8080}
       - CURSOR_MCP_PORT=8001
       - DATABASE_URL=sqlite:////app/data/bigmemory.db
       - VERIFY_SSL=false
@@ -21,6 +23,7 @@ services:
       start_period: 10s
     networks:
       - cursor-network
+      - memmachine-network
 
   web:
     build: ./web
@@ -38,6 +41,7 @@ services:
       start_period: 10s
     networks:
       - cursor-network
+      - memmachine-network
 
 volumes:
   mcp_data:
@@ -47,4 +51,6 @@ networks:
   cursor-network:
     driver: bridge
     name: cursor-network
+  memmachine-network:
+    external: true
 

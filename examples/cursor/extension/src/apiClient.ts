@@ -1,6 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
-import { getApiBaseUrl, API_ENDPOINTS, AUTH_TOKEN } from './config';
+import { getApiBaseUrl, getAuthToken, API_ENDPOINTS } from './config';
 
 export interface ApiResponse<T = any> {
     data: T;
@@ -15,10 +15,10 @@ export interface ApiError {
 }
 
 export class ApiClient {
-    private baseUrl: string;
+    private baseUrl?: string;
 
     constructor(baseUrl?: string) {
-        this.baseUrl = baseUrl || getApiBaseUrl();
+        this.baseUrl = baseUrl; // Allow override for testing, but default to hot updates
     }
 
     /**
@@ -35,21 +35,25 @@ export class ApiClient {
         const { method = 'GET', headers = {}, body } = options;
         
         return new Promise((resolve, reject) => {
-            const url = new URL(endpoint, this.baseUrl);
+            // Always get the latest base URL from configuration for hot updates
+            const currentBaseUrl = this.baseUrl ?? getApiBaseUrl();
             
+            // Fix: Properly join the base URL path with the endpoint
+            const baseUrlObj = new URL(currentBaseUrl + endpoint);
+
             const requestOptions = {
-                hostname: url.hostname,
-                port: url.port || (url.protocol === 'https:' ? 443 : 80),
-                path: url.pathname + url.search,
+                hostname: baseUrlObj.hostname,
+                port: baseUrlObj.port || (baseUrlObj.protocol === 'https:' ? 443 : 80),
+                path: baseUrlObj.pathname + baseUrlObj.search,
                 method,
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${AUTH_TOKEN}`,
+                    'Authorization': `Bearer ${getAuthToken()}`,
                     ...headers
                 }
             };
 
-            const protocol = url.protocol === 'https:' ? https : http;
+            const protocol = baseUrlObj.protocol === 'https:' ? https : http;
             
             const req = protocol.request(requestOptions, (res) => {
                 let data = '';
@@ -140,6 +144,7 @@ export class ApiClient {
     // Specific API methods
     async getEpisodicMemory(params?: Record<string, any>): Promise<ApiResponse> {
         const url = this.buildUrlWithParams(API_ENDPOINTS.EPISODIC_MEMORY, params);
+        console.log('getEpisodicMemory url:', url);
         return this.get(url);
     }
 

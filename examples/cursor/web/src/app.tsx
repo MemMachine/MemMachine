@@ -1,6 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import {toast} from  'sonner'
-import { LoginPage, SignupPage, HomePage } from './pages'
+import { LoginPage, SignupPage, HomePage, HelpPage } from './pages'
 import './app.css'
 import { UserProvider } from './contexts/UserContext'
 import useCatchError from '@/hooks/useCatchError';
@@ -30,9 +30,10 @@ function App() {
     <UserProvider>
       <MainLayout>
         <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/help" element={<HelpPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/signup" element={<SignupPage />} />
-          <Route path="/" element={<HomePage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </MainLayout>

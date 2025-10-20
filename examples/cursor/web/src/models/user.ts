@@ -20,11 +20,11 @@ export interface ILoginReq {
   password: string;
 }
 
-
 export interface IRegisterReq {
   username: string;
   password: string;
   email?: string;
+  invitationCode: string;
 }
 
 export interface IAuthResp extends IRespBase<IAuthRespData> {}

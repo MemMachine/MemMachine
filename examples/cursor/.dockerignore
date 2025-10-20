@@ -72,12 +72,8 @@ package-lock.json
 
 # Documentation
 *.md
+!README.md
 docs/
-
-# Development files
-test.sh
-test_search.sh
-test-date-formatter.js
 
 # Local data directory (will be mounted as volume, don't copy during build)
 data/

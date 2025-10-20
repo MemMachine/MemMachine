@@ -52,7 +52,7 @@ The following environment variables can be configured:
 
 ### Required
 - `MEMORY_BACKEND_URL`: URL of the MemMachine backend service
-  - For Docker: `http://host.docker.internal:8080` (to access host services)
+  - For Docker: `http://localhost:8080` (to access host services)
   - For production: `http://your-memmachine-service:8080`
 
 ### Optional
@@ -73,7 +73,7 @@ The `docker-compose.yml` file includes:
 ### Custom Environment File
 Create a `.env` file with your configuration:
 ```bash
-MEMORY_BACKEND_URL=http://host.docker.internal:8080
+MEMORY_BACKEND_URL=http://localhost:8080
 CURSOR_MCP_PORT=8001
 DEBUG=false
 ```
@@ -100,7 +100,6 @@ services:
     environment:
       - MEMORY_BACKEND_URL=http://your-memmachine-service:8080
       - DATABASE_URL=postgresql://user:pass@db:5432/mcpdb
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
     volumes:
       - mcp_data:/app/data
     restart: unless-stopped

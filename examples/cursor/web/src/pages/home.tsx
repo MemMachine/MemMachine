@@ -98,7 +98,6 @@ export default function Home() {
             </div>
           </CardContent>
         </Card>
-
        
         {/* Authentication Token Card */}
         <Card>

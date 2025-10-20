@@ -3,9 +3,8 @@
 import * as vscode from 'vscode';
 import { EpisodicMemoryTreeProvider } from './episodicMemoryTreeProvider';
 import { ProfileMemoryTreeProvider } from './profileMemoryTreeProvider';
-import { SessionListTreeProvider } from './sessionListTreeProvider';
 import { MCPServerManager } from './mcpServerManager';
-import { MCP_NAME, MCP_URL, AUTH_TOKEN, REFRESH_INTERVAL } from './config';
+import { MCP_NAME, getAuthToken, REFRESH_INTERVAL } from './config';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -35,24 +34,42 @@ export function activate(context: vscode.ExtensionContext) {
 		})
 	);
 
-	// Register the session list tree provider
-	const sessionListProvider = new SessionListTreeProvider();
-	context.subscriptions.push(
-		vscode.window.createTreeView('sessionListPanel', {
-			treeDataProvider: sessionListProvider
-		})
-	);
 
 	// Set up periodic refresh for episodic and profile memory panels
-	const refreshTimer = setInterval(() => {
-		episodicMemoryProvider.refresh();
-		profileMemoryProvider.refresh();
-	}, REFRESH_INTERVAL);
+	// const refreshTimer = setInterval(() => {
+	// 	episodicMemoryProvider.refresh();
+	// 	profileMemoryProvider.refresh();
+	// }, REFRESH_INTERVAL);
 
 	// Ensure timer is cleared when extension is deactivated
-	context.subscriptions.push({
-		dispose: () => clearInterval(refreshTimer)
+	// context.subscriptions.push({
+	// 	dispose: () => clearInterval(refreshTimer)
+	// });
+
+	// Listen for configuration changes to enable hot updates
+	const configChangeListener = vscode.workspace.onDidChangeConfiguration((event: vscode.ConfigurationChangeEvent) => {
+		if (event.affectsConfiguration('memmachine.mcpUrl') || 
+			event.affectsConfiguration('memmachine.apiBaseUrl') || 
+			event.affectsConfiguration('memmachine.authToken')) {
+			console.log('MemMachine configuration changed - hot update applied');
+			
+			// Refresh the data to use new configuration values
+			episodicMemoryProvider.refresh();
+			profileMemoryProvider.refresh();
+		    
+			// It doesn't work when the MCP need authentication
+			// mcpManager.unregisterServer(MCP_NAME).then(() => {
+			// 	return mcpManager.registerMemMachineServer();
+			// }).then(success => {
+			// 	if (!success) {
+			// 		console.log('MCP server re-registration skipped - auth token not configured');
+			// 	}
+			// }).catch(error => {
+			// 	console.error('Failed to re-register MCP server with new configuration:', error);
+			// });
+		}
 	});
+	context.subscriptions.push(configChangeListener);
 
 	console.log(`Periodic refresh enabled: refreshing memory panels every ${REFRESH_INTERVAL / 1000} seconds`);
 
@@ -66,7 +83,6 @@ export function activate(context: vscode.ExtensionContext) {
 	let refreshAllMemoriesDisposable = vscode.commands.registerCommand('memmachine.refreshAllMemories', () => {
 		episodicMemoryProvider.refresh();
 		profileMemoryProvider.refresh();
-		sessionListProvider.refresh();
 	});
 
 
@@ -89,38 +105,34 @@ export function activate(context: vscode.ExtensionContext) {
 		profileMemoryProvider.refresh();
 	});
 
-	// Register command to show session list panel
-	let showSessionListDisposable = vscode.commands.registerCommand('memmachine.showSessionList', () => {
-		// Focus on the session list view
-		vscode.commands.executeCommand('sessionListPanel.focus');
-	});
 
-	let refreshSessionListDisposable = vscode.commands.registerCommand('memmachine.refreshSessionList', () => {
-		sessionListProvider.refresh();
-	});
+	// // Register MCP server commands
+	// let registerMCPServerDisposable = vscode.commands.registerCommand('memmachine.registerMCPServer', async () => {
+	// 	const authToken = getAuthToken();
+		
+	// 	console.log('Manual MCP registration - auth token:', authToken ? `${authToken.substring(0, 10)}...` : 'null/undefined');
+		
+	// 	const success = await mcpManager.registerServer({
+	// 		name: MCP_NAME,
+	// 		url: getMcpUrl(),
+	// 		headers: {
+	// 			'Authorization': `Bearer ${authToken}`
+	// 		}
+	// 	});
 
-	console.log(`MCP_URL: ${MCP_URL}`);
-	// Register MCP server commands
-	let registerMCPServerDisposable = vscode.commands.registerCommand('memmachine.registerMCPServer', async () => {
-		const success = await mcpManager.registerServer({
-			name: MCP_NAME,
-			url: MCP_URL,
-			headers: {
-				'Authorization': `Bearer ${AUTH_TOKEN}`
-			}
-		});
+	// 	if (success) {
+	// 		vscode.window.showInformationMessage(`MCP server '${MCP_NAME}' registered successfully!`);
+	// 	} else {
+	// 		vscode.window.showErrorMessage(`Failed to register MCP server '${MCP_NAME}'. Check the console for details.`);
+	// 	}
+	// });
 
-		if (success) {
-			vscode.window.showInformationMessage(`MCP server '${MCP_NAME}' registered successfully!`);
-		}
-	});
-
-	let unregisterMCPServerDisposable = vscode.commands.registerCommand('memmachine.unregisterMCPServer', async () => {
-		const success = await mcpManager.unregisterServer(MCP_NAME);
-		if (success) {
-			vscode.window.showInformationMessage(`MCP server '${MCP_NAME}' unregistered successfully!`);
-		}
-	});
+	// let unregisterMCPServerDisposable = vscode.commands.registerCommand('memmachine.unregisterMCPServer', async () => {
+	// 	const success = await mcpManager.unregisterServer(MCP_NAME);
+	// 	if (success) {
+	// 		vscode.window.showInformationMessage(`MCP server '${MCP_NAME}' unregistered successfully!`);
+	// 	}
+	// });
 
 
 	context.subscriptions.push(
@@ -130,30 +142,36 @@ export function activate(context: vscode.ExtensionContext) {
 		clearEpisodicMemoryDisposable,
 		showProfileMemoryDisposable,
 		refreshProfileMemoryDisposable,
-		showSessionListDisposable,
-		refreshSessionListDisposable,
-		registerMCPServerDisposable,
-		unregisterMCPServerDisposable,
+		// registerMCPServerDisposable,
+		// unregisterMCPServerDisposable,
 	);
 
 	// Auto-register the default MemMachine server on extension activation
-	mcpManager.registerMemMachineServer().catch(error => {
-		console.error('Failed to auto-register default MemMachine server:', error);
-	});
+	// It doesn't work when the MCP need authentication
+	// mcpManager.registerMemMachineServer().then(success => {
+	// 	if (!success) {
+	// 		console.log('MCP server auto-registration failed');
+	// 	} else {
+	// 		console.log('MCP server auto-registration successful');
+	// 	}
+	// }).catch(error => {
+	// 	console.error('Failed to auto-register default MemMachine server:', error);
+	// });
 }
 
 // This method is called when your extension is deactivated
 export function deactivate() {
 	// Clean up MCP server connections
-	const mcpManager = MCPServerManager.getInstance();
-	const registeredServers = mcpManager.getRegisteredServers();
+	// It doesn't work when the MCP need authentication
+	// const mcpManager = MCPServerManager.getInstance();
+	// const registeredServers = mcpManager.getRegisteredServers();
 	
-	// Unregister all MCP servers
-	for (const server of registeredServers) {
-		mcpManager.unregisterServer(server.name).catch(error => {
-			console.error(`Failed to unregister MCP server ${server.name}:`, error);
-		});
-	}
+	// // Unregister all MCP servers
+	// for (const server of registeredServers) {
+	// 	mcpManager.unregisterServer(server.name).catch(error => {
+	// 		console.error(`Failed to unregister MCP server ${server.name}:`, error);
+	// 	});
+	// }
 	
-	console.log('MemMachine extension deactivated - MCP servers unregistered');
+	// console.log('MemMachine extension deactivated - MCP servers unregistered');
 }

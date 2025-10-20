@@ -30,11 +30,13 @@ dependencies = [
     "requests>=2.31.0",
     "pydantic>=2.0.0",
     "pydantic[email]>=2.0.0",
+    "pydantic-settings>=2.0.0",
     "uvicorn>=0.24.0",
     "fastapi>=0.100.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.0",
     "aiosqlite>=0.21.0",
+    "passlib>=1.7.4",
 ]
 
 [project.optional-dependencies]

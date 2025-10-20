@@ -7,15 +7,18 @@ from typing import Any, Dict, Optional
 
 import requests
 
-from .config import REQUEST_TIMEOUT
-from .schemas import DeleteRequest, MemoryEpisode, SearchQuery
+from ..schemas import DeleteRequest, MemoryEpisode, SearchQuery
+from ..settings import settings
 
 
 class MemMachineClient:
     """HTTP client for MemMachine API operations."""
 
     def __init__(
-        self, base_url: str, timeout: int = REQUEST_TIMEOUT, verify_ssl: bool = True
+        self,
+        base_url: str,
+        timeout: int = settings.request_timeout,
+        verify_ssl: bool = True,
     ):
         """Initialize the MemMachine client.
 
@@ -120,6 +123,31 @@ class MemMachineClient:
             method="POST", endpoint="/v1/memories/search", data=search_data.model_dump()
         )
 
+    # def get_episodic_memory(self, user_id: str) -> Dict[str, Any]:
+    #     """Get episodic memory from MemMachine.
+
+    #     Args:
+    #         episodic_data: Episodic memory data
+
+    #     Returns:
+    #         Episodic memory from the API
+    #     """
+    #     return self._make_request(
+    #         method="GET", endpoint="/v1/memories/episodic/search", data=episodic_data.model_dump()
+    #     )
+
+    def get_profile_memory(self, user_id: str, limit: int) -> Dict[str, Any]:
+        """Get profile memory from MemMachine.
+
+        Returns:
+            Profile memory from the API
+        """
+        return self._make_request(
+            method="GET",
+            endpoint="/v1/memories/profile/search",
+            params={"user_id": user_id, "limit": limit},
+        )
+
     def delete_session_memory(self, delete_data: DeleteRequest) -> Dict[str, Any]:
         """Delete all memories for a session.
 
@@ -146,3 +174,9 @@ class MemMachineClient:
         return self._make_request(
             method="GET", endpoint=f"/v1/users/{user_id}/sessions"
         )
+
+
+# Create the global client instance
+memmachine_client = MemMachineClient(
+    settings.mm_backend_url, verify_ssl=settings.verify_ssl
+)

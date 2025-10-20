@@ -32,9 +32,12 @@ const signupSchema = z.object({
   confirmPassword: z.string().min(6, {
     message: 'Please confirm your password.',
   }),
+  invitationCode: z.string().min(1, {
+    message: 'Invitation code is required.',
+  }),
 }).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ["confirmPassword"],
+  message: 'Passwords don\'t match',
+  path: ['confirmPassword'],
 })
 
 type SignupFormValues = z.infer<typeof signupSchema>
@@ -43,13 +46,13 @@ export default function Signup() {
   const { register, loading } = useUserContext()
   
   const form = useForm<SignupFormValues>({
-    // @ts-ignore - zodResolver version compatibility issue
     resolver: zodResolver(signupSchema),
     defaultValues: {
       username: '',
       email: '',
       password: '',
       confirmPassword: '',
+      invitationCode: '',
     },
   })
 
@@ -59,6 +62,7 @@ export default function Signup() {
       username: values.username,
       password: values.password,
       email: values.email || undefined,
+      invitationCode: values.invitationCode,
     }
     
     await register(registrationData)
@@ -105,6 +109,24 @@ export default function Signup() {
                         <Input
                           type="email"
                           placeholder="Enter your email"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                
+                <FormField
+                  control={form.control}
+                  name="invitationCode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Invitation Code</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="text"
+                          placeholder="Enter invitation code"
                           {...field}
                         />
                       </FormControl>

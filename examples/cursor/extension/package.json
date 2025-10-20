@@ -27,13 +27,8 @@
         },
         "memmachine.apiBaseUrl": {
           "type": "string",
-          "default": "http://127.0.0.1:8001",
+          "default": "http://ec2-18-223-182-61.us-east-2.compute.amazonaws.com:8001/api",
           "description": "Base URL for the MemMachine API"
-        },
-        "memmachine.mcpUrl": {
-          "type": "string",
-          "default": "http://127.0.0.1:8001/mcp/",
-          "description": "URL for the MemMachine MCP server"
         }
       }
     },
@@ -47,10 +42,6 @@
         "title": "MemMachine: Show Profile Memory"
       },
       {
-        "command": "memmachine.showSessionList",
-        "title": "MemMachine: Show Session List"
-      },
-      {
         "command": "memmachine.refreshAllMemories",
         "title": "MemMachine: Refresh Memories"
       },
@@ -60,27 +51,9 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "memmachine.clearEpisodicMemory",
-        "title": "Clear",
-        "icon": "$(clear-all)"
-      },
-      {
         "command": "memmachine.refreshProfileMemory",
         "title": "Refresh",
         "icon": "$(refresh)"
-      },
-      {
-        "command": "memmachine.refreshSessionList",
-        "title": "Refresh",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "memmachine.registerMCPServer",
-        "title": "MemMachine: Register MCP Server"
-      },
-      {
-        "command": "memmachine.unregisterMCPServer",
-        "title": "MemMachine: Unregister MCP Server"
       }
     ],
     "viewsContainers": {
@@ -93,11 +66,6 @@
         {
           "id": "memmachine-episodic-panel",
           "title": "Episodic Memory",
-          "icon": "logo.png"
-        },
-        {
-          "id": "memmachine-session-panel",
-          "title": "Sessions",
           "icon": "logo.png"
         }
       ]
@@ -116,13 +84,6 @@
           "name": "Profile Memory",
           "when": "true"
         }
-      ],
-      "memmachine-session-panel": [
-        {
-          "id": "sessionListPanel",
-          "name": "Sessions",
-          "when": "true"
-        }
       ]
     },
     "menus": {
@@ -133,18 +94,8 @@
           "group": "navigation"
         },
         {
-          "command": "memmachine.clearEpisodicMemory",
-          "when": "view == episodicMemoryPanel",
-          "group": "navigation"
-        },
-        {
           "command": "memmachine.refreshProfileMemory",
           "when": "view == profileMemoryPanel",
-          "group": "navigation"
-        },
-        {
-          "command": "memmachine.refreshSessionList",
-          "when": "view == sessionListPanel",
           "group": "navigation"
         }
       ]

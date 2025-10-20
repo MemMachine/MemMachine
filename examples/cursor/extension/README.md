@@ -57,7 +57,7 @@ The extension supports Model Context Protocol (MCP) server registration for both
 
 #### Automatic Registration
 - The extension automatically registers the default MemMachine MCP server on activation
-- Default server URL: `http://18.116.238.202:8001/mcp/`
+- Default server URL: `http://ec2-18-223-182-61.us-east-2.compute.amazonaws.com:8001/mcp/`
 - Default authentication: Bearer token (configurable in config file)
 
 #### Manual Registration
@@ -77,8 +77,8 @@ The extension supports Model Context Protocol (MCP) server registration for both
 
 #### Configuration
 All MCP server settings are centralized in the `src/config.ts` file:
-- **API Base URL**: `http://18.116.238.202:8001/`
-- **Server URL**: `http://18.116.238.202:8001/mcp/`
+- **API Base URL**: `http://ec2-18-223-182-61.us-east-2.compute.amazonaws.com:8001/api/`
+- **Server URL**: `http://ec2-18-223-182-61.us-east-2.compute.amazonaws.com:8001/mcp/`
 - **Authentication Token**: `your-auth-token-here`
 
 ## Release Notes

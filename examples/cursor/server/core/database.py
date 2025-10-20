@@ -10,20 +10,20 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from .config import DATABASE_URL, DEBUG
+from ..settings import settings
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # Create database engine
 engine = create_engine(
-    DATABASE_URL,
+    settings.database_url,
     poolclass=QueuePool,
     pool_size=10,
     max_overflow=10,
     pool_timeout=30,
     pool_pre_ping=True,  # Enable connection health checks
-    echo=DEBUG == "True",  # Log SQL queries in debug mode
+    echo=settings.debug,  # Log SQL queries in debug mode
 )
 
 # Create session factory
@@ -41,7 +41,7 @@ Base = declarative_base()
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """Set SQLite pragmas for better performance (if using SQLite)"""
-    if "sqlite" in DATABASE_URL:
+    if "sqlite" in settings.database_url:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
@@ -54,21 +54,6 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     except Exception as e:
         logger.error(f"Database session error: {e}")
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
-@contextmanager
-def get_db_transaction() -> Generator[Session, None, None]:
-    """Context manager for database transactions"""
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception as e:
-        logger.error(f"Transaction error: {e}")
         db.rollback()
         raise
     finally:
@@ -93,3 +78,31 @@ def close_db():
     except Exception as e:
         logger.error(f"Failed to close database connections: {e}")
         raise
+
+
+@contextmanager
+def get_db_transaction() -> Generator[Session, None, None]:
+    """Context manager for database transactions"""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception as e:
+        logger.error(f"Transaction error: {e}")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@contextmanager
+def get_db_session() -> Generator[Session, None, None]:
+    """Context manager for read-only database sessions"""
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception as e:
+        logger.error(f"Database session error: {e}")
+        raise
+    finally:
+        db.close()
