@@ -37,7 +37,7 @@ jobs:
 
       # Step 3: Install Mintlify CLI globally for docs validation
       - name: Install Mintlify CLI
-        run: npm i -g mint
+        run: npm install -g mint
 
       # Step 4: Ensure docs.json exists before proceeding
       - name: Check for docs.json
