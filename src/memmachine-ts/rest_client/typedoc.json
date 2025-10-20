@@ -1,0 +1,4 @@
+{
+  "entryPoints": ["./src/index.ts"],
+  "sourceLinkTemplate": "https://github.com/MemMachine/MemMachine/blob/main/{path}#L{line}"
+}

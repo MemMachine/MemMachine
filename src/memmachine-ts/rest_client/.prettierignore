@@ -1,0 +1,18 @@
+# Lock files
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Build output
+dist/
+coverage/
+docs/
+
+# Dependencies
+node_modules/
+
+# TypeScript declaration files
+*.d.ts
+
+# Minified files
+*.min.js
