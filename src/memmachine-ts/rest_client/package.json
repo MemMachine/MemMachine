@@ -1,0 +1,93 @@
+{
+  "name": "@memmachine/client",
+  "version": "0.0.1",
+  "description": "TypeScript client for MemMachine RESTful APIs",
+  "homepage": "https://memmachine.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MemMachine/MemMachine"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/index.d.ts"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "npm run clean && eslint . --ext .ts --fix && npx prettier --write . && npx tsup",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "npm run clean && prettier --write .",
+    "format:check": "npm run clean && prettier --check .",
+    "docs": "typedoc --options typedoc.json"
+  },
+  "tsup": {
+    "entry": [
+      "src/index.ts"
+    ],
+    "format": [
+      "cjs",
+      "esm"
+    ],
+    "dts": {
+      "resolve": true
+    },
+    "splitting": false,
+    "sourcemap": true,
+    "clean": true,
+    "treeshake": true,
+    "minify": false
+  },
+  "keywords": [
+    "memmachine",
+    "api",
+    "client",
+    "memory",
+    "llm",
+    "long-term-memory",
+    "ai"
+  ],
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.7.2",
+    "@typescript-eslint/eslint-plugin": "^8.46.1",
+    "@typescript-eslint/parser": "^8.46.1",
+    "eslint": "^9.38.0",
+    "eslint-plugin-import": "^2.32.0",
+    "jest": "^30.2.0",
+    "prettier": "^3.6.2",
+    "rimraf": "^6.0.1",
+    "ts-jest": "^29.4.5",
+    "ts-node": "^10.9.2",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.6",
+    "typedoc": "^0.28.14",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "axios": "^1.12.2",
+    "axios-retry": "^4.5.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -1,0 +1,257 @@
+import type { AxiosInstance } from 'axios'
+
+import { handleAPIError, MemMachineAPIError } from '@/errors'
+import type { ProjectContext } from '@/project'
+import type {
+  MemoryContext,
+  AddMemoryOptions,
+  MemoryType,
+  SearchMemoriesOptions,
+  SearchMemoriesResult,
+  AddMemoryResult,
+  ListMemoriesOptions
+} from './memmachine-memory.types'
+
+/**
+ * Provides methods to manage and interact with the memory in MemMachine.
+ *
+ * @remarks
+ * - Requires an AxiosInstance for making API requests.
+ * - Requires a ProjectContext to specify the project scope.
+ * - Supports adding and searching memories within a specified project and memory context.
+ *
+ * Features:
+ * - Add a new memory to MemMachine
+ * - Search for memories within MemMachine
+ * - Retrieve the current memory context
+ *
+ * @example
+ * ```typescript
+ * import MemMachineClient from '@memmachine/client'
+ *
+ * async function run() {
+ *   const client = new MemMachineClient({ api_key: 'your_api_key' })
+ *   const project = client.project({ org_id: 'your_org_id', project_id: 'your_project_id' })
+ *   const memory = project.memory()
+ *
+ *   // Add a memory
+ *   await memory.add('This is a simple memory', { episode_type: 'note' })
+ *
+ *   // Search memories
+ *   const result = await memory.search('Show a simple memory', { top_k: 5 })
+ *   console.dir(result, { depth: null })
+ *
+ *  // List memories
+ *  const listResult = await memory.list({ page_size: 5, page_num: 0 })
+ *  console.dir(listResult, { depth: null })
+ *
+ *   // Delete a memory
+ *   await memory.delete('memory_id', 'episodic')
+ *
+ *  // Get current memory context
+ *  const context = memory.getContext()
+ *  console.log(context)
+ * }
+ *
+ * run()
+ * ```
+ *
+ * @param client - AxiosInstance for API communication.
+ * @param projectContext - Options to configure the project context, see {@link ProjectContext}.
+ * @param memoryContext - Options to configure the memory context, see {@link MemoryContext}.
+ */
+export class MemMachineMemory {
+  client: AxiosInstance
+  projectContext: ProjectContext
+  memoryContext: MemoryContext
+
+  constructor(client: AxiosInstance, projectContext: ProjectContext, memoryContext?: MemoryContext) {
+    this.client = client
+    this.projectContext = projectContext
+    this.memoryContext = memoryContext ?? {}
+  }
+
+  /**
+   * Adds a new memory to MemMachine.
+   *
+   * @param content - The content of the memory to be added.
+   * @param options - Additional options for adding the memory.
+   * @returns A promise that resolves when the memory is successfully added.
+   * @throws {@link MemMachineAPIError} if the API request fails.
+   */
+  add(content: string, options?: AddMemoryOptions): Promise<AddMemoryResult> {
+    return this._addMemory(content, options)
+  }
+
+  /**
+   * Searches memories within MemMachine.
+   *
+   * @param query - The search query string.
+   * @param options - Additional options for searching memories.
+   * @returns A promise that resolves to the search results.
+   * @throws {@link MemMachineAPIError} if the API request fails.
+   */
+  search(query: string, options?: SearchMemoriesOptions): Promise<SearchMemoriesResult> {
+    return this._searchMemories(query, options)
+  }
+
+  /**
+   * Lists memories within MemMachine for the current project.
+   *
+   * @param options - Additional options for listing memories.
+   * @returns A promise that resolves to the search results.
+   * @throws {@link MemMachineAPIError} if the API request fails.
+   */
+  list(options?: ListMemoriesOptions): Promise<SearchMemoriesResult> {
+    return this._listMemories(options)
+  }
+
+  /**
+   * Deletes a memory from MemMachine.
+   *
+   * @param id - The unique identifier of the memory to be deleted.
+   * @param type - The type of memory to delete.
+   * @returns A promise that resolves when the memory is successfully deleted.
+   * @throws {@link MemMachineAPIError} if the API request fails.
+   */
+  delete(id: string, type: MemoryType): Promise<void> {
+    return this._deleteMemory(id, type)
+  }
+
+  /**
+   * Retrieves the current memory context.
+   *
+   * @returns The combined project and memory context.
+   */
+  getContext(): ProjectContext & MemoryContext {
+    return {
+      ...this.projectContext,
+      ...this.memoryContext
+    }
+  }
+
+  private async _addMemory(content: string, options?: AddMemoryOptions): Promise<AddMemoryResult> {
+    let {
+      producer,
+      role = 'user',
+      produced_for,
+      episode_type,
+      metadata = {},
+      types = ['episodic', 'semantic']
+    } = options ?? {}
+    const { user_id, agent_id } = this.memoryContext
+
+    if (!producer && (Array.isArray(user_id) ? user_id.length : user_id)) {
+      producer = Array.isArray(user_id) ? user_id[0] : user_id
+    }
+
+    if (!produced_for && (Array.isArray(agent_id) ? agent_id.length : agent_id)) {
+      produced_for = Array.isArray(agent_id) ? agent_id[0] : agent_id
+    }
+
+    const payload = {
+      ...this.projectContext,
+      messages: [
+        {
+          content,
+          producer: producer || 'user',
+          produced_for: produced_for || 'agent',
+          timestamp: new Date().toISOString(),
+          role,
+          metadata: {
+            ...metadata,
+            ...this.memoryContext,
+            user_id: Array.isArray(user_id) ? user_id.join(',') : user_id,
+            agent_id: Array.isArray(agent_id) ? agent_id.join(',') : agent_id,
+            episode_type
+          }
+        }
+      ],
+      types
+    }
+
+    try {
+      const response = await this.client.post('/memories', payload)
+      return response.data
+    } catch (error: unknown) {
+      handleAPIError(error, `Failed to add memory with payload: ${JSON.stringify(payload)}`)
+    }
+  }
+
+  private async _searchMemories(
+    query: string,
+    options?: SearchMemoriesOptions
+  ): Promise<SearchMemoriesResult> {
+    if (!query || !query.trim()) {
+      throw new MemMachineAPIError('Search query must be a non-empty string')
+    }
+
+    const { top_k = 10, filter = '', types = ['episodic', 'semantic'] } = options ?? {}
+
+    const payload = {
+      ...this.projectContext,
+      query,
+      top_k,
+      filter,
+      types
+    }
+
+    try {
+      const response = await this.client.post('/memories/search', payload)
+      return response.data
+    } catch (error: unknown) {
+      handleAPIError(error, `Failed to search memories with payload: ${JSON.stringify(payload)}`)
+    }
+  }
+
+  private async _listMemories(options?: ListMemoriesOptions): Promise<SearchMemoriesResult> {
+    const { page_size = 10, page_num = 0, filter = '', type = 'episodic' } = options ?? {}
+
+    const payload = {
+      ...this.projectContext,
+      page_size,
+      page_num,
+      filter,
+      type
+    }
+
+    try {
+      const response = await this.client.post('/memories/list', payload)
+      return response.data
+    } catch (error: unknown) {
+      handleAPIError(error, `Failed to list memories with payload: ${JSON.stringify(payload)}`)
+    }
+  }
+
+  private async _deleteMemory(id: string, memoryType: MemoryType): Promise<void> {
+    if (!id || !id.trim()) {
+      throw new MemMachineAPIError('Memory ID must be a non-empty string')
+    }
+
+    this._validateMemoryType(memoryType)
+
+    const urlMap: Record<MemoryType, string> = {
+      episodic: '/memories/episodic/delete',
+      semantic: '/memories/semantic/delete'
+    }
+
+    const payload = {
+      ...this.projectContext,
+      ...(memoryType === 'episodic' ? { episodic_id: id } : {}),
+      ...(memoryType === 'semantic' ? { semantic_id: id } : {})
+    }
+
+    try {
+      await this.client.post(urlMap[memoryType], payload)
+    } catch (error: unknown) {
+      handleAPIError(error, `Failed to delete ${memoryType} memory with payload: ${JSON.stringify(payload)}`)
+    }
+  }
+
+  private _validateMemoryType(type: MemoryType): void {
+    const validTypes: MemoryType[] = ['episodic', 'semantic']
+    if (!validTypes.includes(type)) {
+      throw new MemMachineAPIError(`Invalid memory type: ${type}. Valid types are: ${validTypes.join(', ')}`)
+    }
+  }
+}
