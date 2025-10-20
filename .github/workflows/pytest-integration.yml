@@ -29,6 +29,7 @@ jobs:
         # Each integration test is a separate job to allow for parallel execution
         test-paths: [
           "tests/memmachine/profile_memory/test_profile_memory_integration.py",
+          "tests/memmachine/common/vector_graph_store/test_neo4j_vector_graph_store.py",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
         python-version: [ "3.12", "3.13"]
@@ -44,4 +45,4 @@ jobs:
       - name: Test ${{ matrix.test-paths }} with python ${{ matrix.python-version }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: uv run --frozen --all-extras pytest ${{ matrix.test-paths }} --manual-integration
+        run: uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration

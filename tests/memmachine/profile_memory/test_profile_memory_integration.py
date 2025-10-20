@@ -168,7 +168,7 @@ class TestLongMemEvalIngestion:
         return long_mem_raw_question["answer"]
 
     @pytest.mark.asyncio
-    @pytest.mark.manual_integration
+    @pytest.mark.integration
     async def test_periodic_mem_eval(
         self,
         long_mem_convos,
