@@ -1,0 +1,50 @@
+services:
+  cursor-mcp-server:
+    build: .
+    container_name: cursor-mcp-server
+    environment:
+      # MemMachine backend URL - update this to point to your actual MemMachine service
+      - MEMORY_BACKEND_URL=${MEMORY_BACKEND_URL:-http://host.docker.internal:8080}
+      - CURSOR_MCP_PORT=8001
+      - DATABASE_URL=sqlite:////app/data/bigmemory.db
+      - VERIFY_SSL=false
+      - DEBUG=false
+    volumes:
+      # Persistent database storage
+      - mcp_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - cursor-network
+
+  web:
+    build: ./web
+    container_name: cursor-web-app
+    ports:
+      - "3000:80"
+    depends_on:
+      - cursor-mcp-server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - cursor-network
+
+volumes:
+  mcp_data:
+    driver: local
+
+networks:
+  cursor-network:
+    driver: bridge
+    name: cursor-network
+
