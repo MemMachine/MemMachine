@@ -140,6 +140,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
             try:
+                tools = tools or []
                 response = await self._client.chat.completions.create(
                     model=self._model,
                     messages=input_prompts,
