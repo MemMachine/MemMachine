@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cursor-mcp-server"
+version = "0.1.0"
+description = "MCP (Model Context Protocol) server for MemMachine integration with Cursor"
+readme = "README.md"
+requires-python = ">= 3.10"
+authors = [
+    {name = "MemMachine", email = "noreply@memmachine.ai"},
+]
+keywords = ["mcp", "cursor", "memmachine", "memory", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastmcp>=2.0.0",
+    "requests>=2.31.0",
+    "pydantic>=2.0.0",
+    "pydantic[email]>=2.0.0",
+    "uvicorn>=0.24.0",
+    "fastapi>=0.100.0",
+    "python-dotenv>=1.0.0",
+    "sqlalchemy>=2.0.0",
+    "aiosqlite>=0.21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/MemMachine/MemMachine"
+Repository = "https://github.com/MemMachine/MemMachine"
+Documentation = "https://github.com/MemMachine/MemMachine/tree/main/examples/cursor_mcp"
+Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+]

@@ -1,0 +1,178 @@
+{
+  "name": "memmachine",
+  "displayName": "MemMachine",
+  "description": "This is the extension for MemMachine, which lets you leverage its capabilities within the Cursor editor.",
+  "version": "0.0.4",
+  "publisher": "memverge",
+  "icon": "logo.png",
+  "engines": {
+    "vscode": "^1.93.0",
+    "cursor": "^0.40.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "MemMachine",
+      "properties": {
+        "memmachine.authToken": {
+          "type": "string",
+          "default": "your-auth-token-here",
+          "description": "Authentication token for MemMachine API"
+        },
+        "memmachine.apiBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8001",
+          "description": "Base URL for the MemMachine API"
+        },
+        "memmachine.mcpUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8001/mcp/",
+          "description": "URL for the MemMachine MCP server"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "memmachine.showEpisodicMemory",
+        "title": "MemMachine: Show Episodic Memory"
+      },
+      {
+        "command": "memmachine.showProfileMemory",
+        "title": "MemMachine: Show Profile Memory"
+      },
+      {
+        "command": "memmachine.showSessionList",
+        "title": "MemMachine: Show Session List"
+      },
+      {
+        "command": "memmachine.refreshAllMemories",
+        "title": "MemMachine: Refresh Memories"
+      },
+      {
+        "command": "memmachine.refreshEpisodicMemory",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "memmachine.clearEpisodicMemory",
+        "title": "Clear",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "memmachine.refreshProfileMemory",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "memmachine.refreshSessionList",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "memmachine.registerMCPServer",
+        "title": "MemMachine: Register MCP Server"
+      },
+      {
+        "command": "memmachine.unregisterMCPServer",
+        "title": "MemMachine: Unregister MCP Server"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "memmachine-profile-panel",
+          "title": "Profile Memory",
+          "icon": "logo.png"
+        },
+        {
+          "id": "memmachine-episodic-panel",
+          "title": "Episodic Memory",
+          "icon": "logo.png"
+        },
+        {
+          "id": "memmachine-session-panel",
+          "title": "Sessions",
+          "icon": "logo.png"
+        }
+      ]
+    },
+    "views": {
+      "memmachine-episodic-panel": [
+        {
+          "id": "episodicMemoryPanel",
+          "name": "Episodic Memory",
+          "when": "true"
+        }
+      ],
+      "memmachine-profile-panel": [
+        {
+          "id": "profileMemoryPanel",
+          "name": "Profile Memory",
+          "when": "true"
+        }
+      ],
+      "memmachine-session-panel": [
+        {
+          "id": "sessionListPanel",
+          "name": "Sessions",
+          "when": "true"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "memmachine.refreshEpisodicMemory",
+          "when": "view == episodicMemoryPanel",
+          "group": "navigation"
+        },
+        {
+          "command": "memmachine.clearEpisodicMemory",
+          "when": "view == episodicMemoryPanel",
+          "group": "navigation"
+        },
+        {
+          "command": "memmachine.refreshProfileMemory",
+          "when": "view == profileMemoryPanel",
+          "group": "navigation"
+        },
+        {
+          "command": "memmachine.refreshSessionList",
+          "when": "view == sessionListPanel",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.93.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "ts-loader": "^9.5.1",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.8"
+  }
+}
