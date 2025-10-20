@@ -15,7 +15,7 @@ on:
       - 'docs/**'
     branches: [ main ]
   release:
-
+    types: [published]
 jobs:
   build-docs:
     runs-on: ubuntu-latest
