@@ -1,0 +1,6 @@
+{
+    "group_id": "test_group",
+    "agent_id": ["test_agent"],
+    "user_id": ["test_user"],
+    "session_id": "session_123"
+}
