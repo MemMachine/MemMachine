@@ -149,7 +149,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                     args["tool_choice"] = (                 
                         tool_choice if tool_choice is not None else "auto"
                     )
-                response = await self._client.chat.completions.create(**arg)  # type: ignore
+                response = await self._client.chat.completions.create(**args)  # type: ignore
                 break
             except (
                 openai.RateLimitError,
