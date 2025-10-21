@@ -37,7 +37,7 @@ This is the recommended method for most users who want to add MemMachine to an e
 To create a python environment(if it does not already exist), you can use `venv` as follows:
 ```sh
 python -m venv memmachine-env
-source memmachine-env/bin/activate  # On Windows use `memmachine-env\Scripts\activate`
+source memmachine-env/bin/activate  # On Windows use `source memmachine-env/Scripts/activate`
 ```
 
 A. Run the following command in your terminal:
@@ -82,46 +82,17 @@ uv pip install .
 </Accordion>
 </AccordionGroup>
 </Step>
-<Step title="Create Your Configuration Files">
+<Step title="Create Your Configuration File - `cfg.yml`">
 
-MemMachine uses two files for configuration: a `.env` file for your database and API credentials and a `config.yml` file for the application's behavior.
+MemMachine uses a single configuration file, `cfg.yml` to provide login and options to it.
+
+Create a file named `cfg.yml` in the same directory that you plan on running memmachine from. This file configures the various models and storage options for MemMachine.
+
+There are two examples of `cfg.yml` files in the `sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.
 
 <AccordionGroup>
-<Accordion title="A. Create the `.env` file">
-
-Create a file named `.env` in the root of your project and add the following content.
-
+<Accordion title="CPU-Only Installations">
 You can download this file from our GitHub repository as a template using the following curl command:
-```sh
-curl -o .env https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/server_config.sample
-```
-Below is an example of what the `.env` file should look like:
-```sh expandable
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=YOUR_NEO4J_PASSWORD
-NEO4J_URI="bolt://localhost:7687"
-# Postgres database configuration
-POSTGRES_HOST=YOUR_POSTGRES_HOST
-POSTGRES_PORT=5432
-POSTGRES_USER=YOUR_POSTGRES_USER
-POSTGRES_PASSWORD=YOUR_POSTGRES_PASSWORD
-POSTGRES_DB=YOUR_POSTGRES_DATABASE
-MCP_BASE_URL==[http://127.0.0.1:8080](http://127.0.0.1:8080)
-GATEWAY_URL=http://localhost:8080
-FAST_MCP_LOG_LEVEL=INFO
-MEMORY_CONFIG=config.yml
-OPENAI_API_KEY="YOUR_VALID_OPENAI_API_KEY"
-```
-
-<Tip>Replace the placeholders (e.g., `YOUR_NEO4J_PASSWORD`) with your actual values.</Tip>
-</Accordion>
-<Accordion title="B. Create the `config.yml` file">
-
-Create a file named `config.yml` in the same directory. This file configures the various models and storage options for MemMachine.
-
-<Note> There are two examples of `config.yml` files in the `sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.</Note>
-
-**CPU-only installations:** You can download this file from our GitHub repository as a template using the following curl command:
 ```sh
 curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
 ```
@@ -156,6 +127,20 @@ storage:
     user: neo4j
     password: <YOUR_PASSWORD_HERE>
 
+  profile_storage:
+    vendor_name: postgres
+    host: localhost
+    port: 5432
+    user: postgres
+    db_name: postgres
+    password: <YOUR_PASSWORD_HERE>
+
+profile_memory:
+  llm_model: testmodel
+  embedding_model: my_embedder_id
+  database: profile_storage
+  prompt: profile_prompt
+
 sessionMemory:
   model_name: testmodel
   message_capacity: 500
@@ -164,6 +149,7 @@ sessionMemory:
 
 embedder:
   my_embedder_id:
+    model_vendor: openai
     model_name: "text-embedding-3-small"
     api_key: <YOUR_API_KEY>
 
@@ -179,10 +165,12 @@ reranker:
     type: "bm25"
 
 prompt:
-  profile: writing_assistant_prompt
+  profile: profile_prompt
 ```
-
-**GPU-enabled installations:** You can download this file from our GitHub repository as a template using the following curl command:
+<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
+</Accordion>
+<Accordion title="GPU-Enabled Installations">
+You can download this file from our GitHub repository as a template using the following curl command:
 ```sh
 curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
 ```
@@ -199,6 +187,13 @@ long_term_memory:
   embedder: my_embedder_id
   reranker: my_reranker_id
   vector_graph_store: my_storage_id
+
+profile_memory:
+  llm_model: testmodel
+  embedding_model: my_embedder_id
+  database: profile_storage
+  prompt: profile_prompt
+
 
 SessionDB:
   uri: sqlitetest.db
@@ -217,6 +212,14 @@ storage:
     user: neo4j
     password: <YOUR_PASSWORD_HERE>
 
+  profile_storage:
+    vendor_name: postgres
+    host: localhost
+    port: 5432
+    user: postgres
+    db_name: postgres
+    password: <YOUR_PASSWORD_HERE>
+
 sessionMemory:
   model_name: testmodel
   message_capacity: 500
@@ -225,6 +228,7 @@ sessionMemory:
 
 embedder:
   my_embedder_id:
+    model_vendor: openai
     model_name: "text-embedding-3-small"
     api_key: <YOUR_API_KEY>
 
@@ -244,11 +248,23 @@ reranker:
     model_name: "cross-encoder/qnli-electra-base"
 
 prompt:
-  profile: writing_assistant_prompt
+  profile: profile_prompt
 ```
-<Tip> Remember to replace the placeholders for your OpenAI API key and Neo4j password in this file as well.</Tip>
+<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
 </Accordion>
 </AccordionGroup>
+<Tip> 
+You can name this configuration file whatever you like, then pass it to MemMachine using the `MEMORY_CONFIG` environment variable, like in the following examples:
+
+ ```sh
+ export MEMORY_CONFIG="/home/steve/wibble.cfg" # Sets the config file name
+ memmachine # start memmachine
+ ```
+
+```sh
+MEMORY_CONFIG="/home/steve/wibble.cfg" memmachine #defines the variable and starts memmachine
+```
+</Tip>
 </Step>
 <Step title="Run MemMachine">
 

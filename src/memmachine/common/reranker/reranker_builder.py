@@ -33,6 +33,13 @@ class RerankerBuilder(Builder):
         name: str, config: dict[str, Any], injections: dict[str, Any]
     ) -> Reranker:
         match name:
+            case "amazon-bedrock":
+                from .amazon_bedrock_reranker import (
+                    AmazonBedrockReranker,
+                    AmazonBedrockRerankerConfig,
+                )
+
+                return AmazonBedrockReranker(AmazonBedrockRerankerConfig(**config))
             case "bm25":
                 from .bm25_reranker import BM25Reranker
 

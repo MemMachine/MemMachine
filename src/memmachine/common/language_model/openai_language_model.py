@@ -126,7 +126,7 @@ class OpenAILanguageModel(LanguageModel):
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, str] = "auto",
+        tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
         if max_attempts <= 0:
@@ -157,7 +157,7 @@ class OpenAILanguageModel(LanguageModel):
                     model=self._model,
                     input=input_prompts,
                     tools=tools,
-                    tool_choice=tool_choice,
+                    tool_choice=tool_choice if tool_choice is not None else "auto",
                 )  # type: ignore
                 break
             except (
@@ -207,31 +207,34 @@ class OpenAILanguageModel(LanguageModel):
             end_time - start_time,
         )
 
-        if self._collect_metrics and response.usage is not None:
-            self._input_tokens_usage_counter.increment(
-                value=response.usage.input_tokens,
-                labels=self._user_metrics_labels,
-            )
-            self._input_cached_tokens_usage_counter.increment(
-                value=response.usage.input_tokens_details.cached_tokens,
-                labels=self._user_metrics_labels,
-            )
-            self._output_tokens_usage_counter.increment(
-                value=response.usage.output_tokens,
-                labels=self._user_metrics_labels,
-            )
-            self._output_reasoning_tokens_usage_counter.increment(
-                value=response.usage.output_tokens_details.reasoning_tokens,
-                labels=self._user_metrics_labels,
-            )
-            self._total_tokens_usage_counter.increment(
-                value=response.usage.total_tokens,
-                labels=self._user_metrics_labels,
-            )
+        if self._collect_metrics:
+            if response.usage is not None:
+                self._input_tokens_usage_counter.increment(
+                    value=response.usage.input_tokens,
+                    labels=self._user_metrics_labels,
+                )
+                self._input_cached_tokens_usage_counter.increment(
+                    value=response.usage.input_tokens_details.cached_tokens,
+                    labels=self._user_metrics_labels,
+                )
+                self._output_tokens_usage_counter.increment(
+                    value=response.usage.output_tokens,
+                    labels=self._user_metrics_labels,
+                )
+                self._output_reasoning_tokens_usage_counter.increment(
+                    value=response.usage.output_tokens_details.reasoning_tokens,
+                    labels=self._user_metrics_labels,
+                )
+                self._total_tokens_usage_counter.increment(
+                    value=response.usage.total_tokens,
+                    labels=self._user_metrics_labels,
+                )
+
             self._latency_summary.observe(
                 value=end_time - start_time,
                 labels=self._user_metrics_labels,
             )
+
         if response.output is None:
             return (response.output_text or "", [])
 

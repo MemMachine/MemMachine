@@ -10,6 +10,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 ## Function to run a command with a timeout
@@ -56,6 +57,10 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+print_prompt() {
+    echo -ne "${MAGENTA}[PROMPT]${NC} "
+}
+
 safe_sed_inplace() {
     if sed --version >/dev/null 2>&1; then
         # GNU/Linux sed
@@ -85,13 +90,10 @@ check_docker() {
 check_env_file() {
     if [ ! -f ".env" ]; then
         print_warning ".env file not found. Creating from template..."
+        sleep 1
         if [ -f "sample_configs/env.dockercompose" ]; then
             cp sample_configs/env.dockercompose .env
             print_success "Created .env file from sample_configs/env.dockercompose"
-            print_warning "Please edit .env file with your configuration before continuing"
-            print_warning "Especially set your OPENAI_API_KEY"
-            print_info "Exiting script. Please edit .env file and re-run the script."
-            exit 0
         else
             print_error "sample_configs/env.dockercompose file not found. Please create .env file manually."
             exit 1
@@ -101,12 +103,38 @@ check_env_file() {
     fi
 }
 
+# In lieu of yq, use awk to read over the configuration.yml file line-by-line,
+# and set the database credentials using the same environment variables as in docker-compose.yml
+set_config_defaults() {
+    awk -v pg_user="${POSTGRES_USER:-memmachine}" \
+        -v pg_db="${POSTGRES_DB:-memmachine}" \
+        -v pg_pass="${POSTGRES_PASS:-memmachine_password}" \
+        -v neo4j_user="${NEO4J_USER:-neo4j}" \
+        -v neo4j_pass="${NEO4J_PASSWORD:-neo4j_password}" '
+/vendor_name:/ {
+  vendor = $2
+}
+
+vendor == "neo4j" && /host:/ { sub(/localhost/, "neo4j") }
+vendor == "neo4j" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, neo4j_pass) }
+
+vendor == "postgres" && /host:/ { sub(/localhost/, "postgres") }
+vendor == "postgres" && /user:/ { sub(/postgres/, pg_user) }
+vendor == "postgres" && /db_name:/ { sub(/postgres/, pg_db) }
+vendor == "postgres" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, pg_pass) }
+
+{ print }
+' configuration.yml > configuration.yml.tmp && mv configuration.yml.tmp configuration.yml
+}
+
 # Check if configuration.yml file exists
 check_config_file() {
     if [ ! -f "configuration.yml" ]; then
         print_warning "configuration.yml file not found. Creating from template..."
-        
+        sleep 1
+
         # Ask user for CPU or GPU configuration, defaulting to CPU
+        print_prompt
         read -p "Which configuration would you like to use for the Docker Image? (CPU/GPU) [CPU]: " config_type_input
         local config_type=$(echo "${config_type_input:-CPU}" | tr '[:lower:]' '[:upper:]')
 
@@ -135,14 +163,12 @@ check_config_file() {
         if [ -f "$CONFIG_SOURCE" ]; then
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
-            print_warning "Please edit configuration.yml file with your configuration before continuing"
-            print_warning "Especially set your API keys and database credentials"
-            print_info "Exiting script. Please edit configuration.yml file and re-run the script."
-            exit 0
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
         fi
+
+        set_config_defaults
     else
         print_success "configuration.yml file found"
     fi
@@ -155,8 +181,10 @@ set_openai_api_key() {
     if [ -f ".env" ]; then
         source .env
         if [ -z "$OPENAI_API_KEY" ] ||  [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ] || grep -q "<YOUR_API_KEY>" configuration.yml ; then
+            print_prompt
             read -p "OPENAI_API_KEY is not set or is using placeholder value. Would you like to set your OpenAI API key? (y/N) " reply
             if [[ $reply =~ ^[Yy]$ ]]; then
+                print_prompt
                 read -sp "Enter your OpenAI API key: " api_key
                 echo setting .env
                 safe_sed_inplace "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$api_key/" .env
@@ -176,6 +204,7 @@ check_required_env() {
         if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ]; then
             print_warning "OPENAI_API_KEY is not set or is using placeholder value"
             print_warning "Please set your OpenAI API key in the .env file"
+            print_prompt
             read -p "Press Enter to continue anyway (some features may not work)..."
         else
             print_success "OPENAI_API_KEY is configured"
@@ -190,6 +219,7 @@ check_required_config() {
         if grep -q "api_key.*your_.*_api_key_here" configuration.yml || grep -q "api_key.*sk-example" configuration.yml || grep -q "api_key.*sk-test" configuration.yml; then
             print_warning "API key in configuration.yml appears to be a placeholder or example value"
             print_warning "Please set your actual API key in the configuration.yml file"
+            print_prompt
             read -p "Press Enter to continue anyway (some features may not work)..."
         else
             print_success "API key in configuration.yml appears to be configured"
@@ -199,6 +229,7 @@ check_required_config() {
         if grep -q "password.*password" configuration.yml && ! grep -q "password.*memmachine_password" configuration.yml; then
             print_warning "Database password in configuration.yml appears to be a placeholder"
             print_warning "Please set your actual database password in the configuration.yml file"
+            print_prompt
             read -p "Press Enter to continue anyway (some features may not work)..."
         else
             print_success "Database credentials in configuration.yml appear to be configured"
@@ -208,6 +239,8 @@ check_required_config() {
 
 # Pull and start services
 start_services() {
+    local memmachine_image_tmp="${ENV_MEMMACHINE_IMAGE:-}"
+
     print_info "Pulling and starting MemMachine services..."
     
     # Use docker-compose or docker compose based on what's available
@@ -216,10 +249,14 @@ start_services() {
     else
         COMPOSE_CMD="docker compose"
     fi
-    
+
+    # Unset the memmachine image temporarily; without this, 'docker compose pull' will attempt
+    # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
+    ENV_MEMMACHINE_IMAGE=""
     # Pull the latest images to ensure we are running the latest version
     print_info "Pulling latest images..."
     $COMPOSE_CMD pull
+    ENV_MEMMACHINE_IMAGE="${memmachine_image_tmp:-}"
 
     # Start services (override the image if specified in memmachine-compose.sh start <image>:<tag>)
     print_info "Starting containers..."
@@ -299,20 +336,42 @@ build_image() {
     local force="false"
     local gpu="false"
     local reply=""
+    local key=""
+    local value=""
 
     while [[ $# -gt 0 ]]; do
-        case "$1" in
+        # This section splits the key and value if they are separated by an "=" sign
+        if [[ "$1" == --* ]]; then
+            if [[ "$1" == *=* ]]; then
+                key=$(echo "$1" | cut -d '=' -f 1)
+                value=$(echo "$1" | cut -d '=' -f 2-)
+                shift
+            else
+                key="$1"
+                value="$2"
+                if [[ "$#" -ge 2 ]]; then
+                    shift 2
+                else
+                    print_error "Missing value for argument: $1"
+                    exit 1
+                fi
+            fi
+        else 
+            # If no leading "--", then this is not an option, so just use put the argument in $key
+            key="$1"
+            value=""
+            shift
+        fi
+
+        case "$key" in
             --gpu)
-                gpu="$2"
-                shift 2
+                gpu="$value"
                 ;;
             -f|--force)
                 force="true"
-                shift
                 ;;
             *)
-                name="$1"
-                shift
+                name="$key"
                 ;;
         esac
     done
@@ -324,9 +383,10 @@ build_image() {
     fi
 
     if [[ "$force" == "false" ]]; then
-        read -p "Building $name with --build-arg GPU=$gpu (y/N): " -r reply
+        print_prompt
+        read -p "Building $name with '--build-arg GPU=$gpu' (y/N): " -r reply
     else
-        print_info "Building $name with --build-arg GPU=$gpu"
+        print_info "Building $name with '--build-arg GPU=$gpu'"
     fi
 
     if [[ $reply =~ ^[Yy]$ || $force == "true" ]]; then
@@ -384,6 +444,7 @@ case "${1:-}" in
         ;;
     "clean")
         print_warning "This will remove all data and volumes!"
+        print_prompt
         read -p "Are you sure? (y/N): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then

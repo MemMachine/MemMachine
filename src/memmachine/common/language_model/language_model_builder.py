@@ -84,5 +84,22 @@ class LanguageModelBuilder(Builder):
                     }
                 )
 
+            case "amazon-bedrock":
+                from .amazon_bedrock_language_model import (
+                    AmazonBedrockLanguageModel,
+                    AmazonBedrockLanguageModelConfig,
+                )
+
+                return AmazonBedrockLanguageModel(
+                    AmazonBedrockLanguageModelConfig(
+                        **{
+                            key: value
+                            for key, value in config.items()
+                            if key != "metrics_factory_id"
+                        }
+                        | {"metrics_factory": get_metrics_factory(config)}
+                    )
+                )
+
             case _:
                 raise ValueError(f"Unknown LanguageModel name: {name}")

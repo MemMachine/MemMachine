@@ -23,8 +23,10 @@ storage:
 
 embedder:
   my_embedder_id:
-    model_name: "text-embedding-3-small"
-    api_key: <OPENAI_API_KEY>
+    name: "openai"
+    config:
+      model_name: "text-embedding-3-small"
+      api_key: <OPENAI_API_KEY>
 
 reranker:
   my_reranker_id:

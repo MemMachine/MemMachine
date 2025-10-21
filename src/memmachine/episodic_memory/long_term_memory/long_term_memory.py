@@ -38,14 +38,6 @@ class LongTermMemory:
         embedder_id = long_term_memory_config.get("embedder")
         embedder_config = embedder_configs.get(embedder_id) or {}
 
-        embedder_model_name = embedder_config.get("model_name")
-        if not isinstance(embedder_model_name, str):
-            raise TypeError("Embedder model name must be provided as a string")
-
-        embedder_api_key = embedder_config.get("api_key")
-        if not isinstance(embedder_api_key, str):
-            raise TypeError("Embedder API key must be provided as a string")
-
         # Configure vector graph store
         storage_configs = config.get("storage") or {}
         vector_graph_store_id = long_term_memory_config.get("vector_graph_store")
@@ -108,7 +100,11 @@ class LongTermMemory:
             reranker_id: {
                 "type": "reranker",
                 "name": reranker_config.get("type"),
-                "config": reranker_config,
+                "config": {
+                    key: value
+                    for key, value in reranker_config.items()
+                    if key != "type"
+                },
             }
             for reranker_id, reranker_config in reranker_configs.items()
         }
@@ -182,12 +178,8 @@ class LongTermMemory:
             },
             embedder_id: {
                 "type": "embedder",
-                "name": "openai",
-                "config": {
-                    "model": embedder_model_name,
-                    "api_key": embedder_api_key,
-                    "metrics_factory_id": "_metrics_factory",
-                },
+                "name": embedder_config["name"],
+                "config": embedder_config["config"],
             },
             vector_graph_store_id: {
                 "type": "vector_graph_store",
@@ -199,7 +191,7 @@ class LongTermMemory:
                     "force_exact_similarity_search": neo4j_force_exact_similarity_search,
                 },
             },
-            "_metrics_factory": {
+            "metrics_factory": {
                 "type": "metrics_factory",
                 "name": "prometheus",
                 "config": {},
@@ -283,7 +275,7 @@ class LongTermMemory:
 
     async def forget_session(self):
         await self._declarative_memory.forget_filtered_episodes(
-            filterable_properties={
+            property_filter={
                 "group_id": self._memory_context.group_id,
                 "session_id": self._memory_context.session_id,
             }

@@ -49,7 +49,8 @@ class OpenAIEmbedder(Embedder):
                 - user_metrics_labels (dict[str, str], optional):
                   Labels to attach to the collected metrics.
                 - max_retry_interval_seconds(int, optional):
-                  Maximal retry interval in seconds.
+                  Maximal retry interval in seconds
+                  (default: 120).
 
         Raises:
             ValueError:
@@ -229,7 +230,9 @@ class OpenAIEmbedder(Embedder):
                     attempt,
                     type(e).__name__,
                 )
-                await asyncio.sleep(sleep_seconds)
+                await asyncio.sleep(
+                    min(sleep_seconds, self._max_retry_interval_seconds)
+                )
                 sleep_seconds *= 2
                 continue
             except (openai.APIError, openai.OpenAIError) as e:

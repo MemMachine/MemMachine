@@ -90,11 +90,12 @@ class EpisodicMemory:
             TODO: support different metrics and make it configurable
             """
             model_config["metrics_factory_id"] = "prometheus"
+            model_vendor = model_config.pop("model_vendor")
             metrics_injection = {}
             metrics_injection["prometheus"] = metrics_manager
 
             llm_model = LanguageModelBuilder.build(
-                model_config.get("model_vendor", "openai"),
+                model_vendor,
                 model_config,
                 metrics_injection,
             )

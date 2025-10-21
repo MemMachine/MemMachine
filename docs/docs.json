@@ -8,10 +8,10 @@
     "dark": "#a8bacb"
   },
   "integrations": {
-    "ga4": {
-        "measurementId": "G-ED9JCR55CL"
-    }
-  },
+  "gtm": {
+    "tagId": "GTM-WDX7ZBC7"
+  }
+},
   "favicon": "favicon.ico",
   "navigation": {
     "tabs": [

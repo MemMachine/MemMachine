@@ -10,6 +10,7 @@ It includes:
   connections and memory managers.
 """
 
+import argparse
 import asyncio
 import copy
 import logging
@@ -41,6 +42,7 @@ from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.profile_memory.prompt_provider import ProfilePrompt
 from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
 
 logger = logging.getLogger(__name__)
@@ -295,27 +297,29 @@ async def initialize_resource(
     profile_model["metrics_factory_id"] = "prometheus"
     metrics_injection = {}
     metrics_injection["prometheus"] = metrics_manager
+    model_vendor = profile_model.pop("model_vendor")
     llm_model = LanguageModelBuilder.build(
-        profile_model.get("model_vendor"), profile_model, metrics_injection
+        model_vendor, profile_model, metrics_injection
     )
 
     # create embedder
     embedders = yaml_config.get("embedder", {})
-    embedder_name = profile_config.get("embedding_model")
-    if embedder_name is None:
+    embedder_id = profile_config.get("embedding_model")
+    if embedder_id is None:
         raise ValueError(
             "Embedding model not configured in config file for profile memory"
         )
 
-    embedder_def = embedders.get(embedder_name)
+    embedder_def = embedders.get(embedder_id)
     if embedder_def is None:
-        raise ValueError(f"Can not find definition of embedder {embedder_name}")
+        raise ValueError(f"Can not find definition of embedder {embedder_id}")
 
-    embedder_config = copy.deepcopy(embedder_def)
-    embedder_config["metrics_factory_id"] = "prometheus"
+    embedder_config = copy.deepcopy(embedder_def["config"])
+    if embedder_def["name"] == "openai":
+        embedder_config["metrics_factory_id"] = "prometheus"
 
     embeddings = EmbedderBuilder.build(
-        embedder_def.get("model_vendor", "openai"), embedder_config, metrics_injection
+        embedder_def["name"], embedder_config, metrics_injection
     )
 
     # Get the database configuration
@@ -329,6 +333,8 @@ async def initialize_resource(
         raise ValueError(f"Can not find configuration for database {db_config_name}")
 
     prompt_file = profile_config.get("prompt", "profile_prompt")
+    prompt_module = import_module(f".prompt.{prompt_file}", __package__)
+    profile_prompt = ProfilePrompt.load_from_module(prompt_module)
 
     profile_storage = AsyncPgProfileStorage.build_config(
         {
@@ -343,8 +349,8 @@ async def initialize_resource(
     profile_memory = ProfileMemory(
         model=llm_model,
         embeddings=embeddings,
-        prompt_module=import_module(f".prompt.{prompt_file}", __package__),
         profile_storage=profile_storage,
+        prompt=profile_prompt,
     )
     episodic_memory = EpisodicMemoryManager.create_episodic_memory_manager(config_file)
     return episodic_memory, profile_memory
@@ -696,7 +702,7 @@ async def add_episodic_memory(
     episode: NewEpisode,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
-    """Adds a memory episode to both episodic memory.
+    """Adds a memory episode to episodic memory only.
 
     This endpoint first retrieves the appropriate episodic memory instance
     based on the session context (group, agent, user, session IDs). It then
@@ -1109,8 +1115,36 @@ def main():
     )
     # Load environment variables from .env file
     load_dotenv()
-    # Run the asyncio event loop
-    asyncio.run(start())
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="MemMachine server")
+    parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Run in MCP stdio mode",
+    )
+    args = parser.parse_args()
+
+    if args.stdio:
+        # MCP stdio mode
+        config_file = os.getenv("MEMORY_CONFIG", "configuration.yml")
+
+        async def run_mcp_server():
+            """Initialize resources and run MCP server in the same event loop."""
+            global episodic_memory, profile_memory
+            try:
+                episodic_memory, profile_memory = await initialize_resource(config_file)
+                await profile_memory.startup()
+                await mcp.run_stdio_async()
+            finally:
+                # Clean up resources when server stops
+                if profile_memory:
+                    await profile_memory.cleanup()
+
+        asyncio.run(run_mcp_server())
+    else:
+        # HTTP mode for REST API
+        asyncio.run(start())
 
 
 if __name__ == "__main__":

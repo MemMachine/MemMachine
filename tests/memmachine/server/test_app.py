@@ -69,9 +69,11 @@ def mock_config_file(tmp_path):
         },
         "embedder": {
             "test_embedder": {
-                "model_vendor": "openai",
-                "model_name": "text-embedding-ada-002",
-                "api_key": "TEST_EMBED_KEY_VAR",
+                "name": "openai",
+                "config": {
+                    "model_name": "text-embedding-ada-002",
+                    "api_key": "TEST_EMBED_KEY_VAR",
+                },
             }
         },
         "storage": {
