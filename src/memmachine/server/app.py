@@ -877,47 +877,8 @@ async def _add_memory(episode: NewEpisode):
     Internal function.  Shared by both REST API and MCP API
 
     See the docstring for add_memory() for details."""
-    session = episode.get_session()
-    group_id = session.group_id
-    inst: EpisodicMemory | None = await cast(
-        EpisodicMemoryManager, episodic_memory
-    ).get_episodic_memory_instance(
-        group_id=group_id if group_id is not None else "",
-        agent_id=session.agent_id,
-        user_id=session.user_id,
-        session_id=session.session_id,
-    )
-    if inst is None:
-        raise episode.new_404_not_found_error("unable to find episodic memory")
-    async with AsyncEpisodicMemory(inst) as inst:
-        success = await inst.add_memory_episode(
-            producer=episode.producer,
-            produced_for=episode.produced_for,
-            episode_content=episode.episode_content,
-            episode_type=episode.episode_type,
-            content_type=ContentType.STRING,
-            metadata=episode.metadata,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail=f"""either {episode.producer} or {episode.produced_for}
-                        is not in {session.user_id}
-                        or {session.agent_id}""",
-            )
-
-        ctx = inst.get_memory_context()
-        await cast(ProfileMemory, profile_memory).add_persona_message(
-            str(episode.episode_content),
-            episode.metadata if episode.metadata is not None else {},
-            {
-                "group_id": ctx.group_id,
-                "session_id": ctx.session_id,
-                "producer": episode.producer,
-                "produced_for": episode.produced_for,
-            },
-            user_id=episode.producer,
-        )
+    await _add_episodic_memory(episode)
+    await _add_profile_memory(episode)
 
 
 @app.post("/v1/memories/episodic")

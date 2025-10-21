@@ -494,4 +494,16 @@ class AsyncEpisodicMemory:
         Decrements the reference count of the managed EpisodicMemory instance,
         triggering its closure if the count reaches zero.
         """
-        await self.episodic_memory_instance.close()
+        try:
+            await self.episodic_memory_instance.close()
+        except Exception as e:
+            # Don’t let cleanup errors shadow the main error
+            ctx = self.episodic_memory_instance.get_memory_context()
+            logger.error(
+                "failed to close episodic memory with "
+                f"session id: {ctx.session_id}, "
+                f"group id: {ctx.group_id}, "
+                f"user id: {ctx.user_id}, "
+                f"agent id: {ctx.agent_id}, "
+                f"error: {str(e)}"
+            )
