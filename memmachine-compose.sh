@@ -107,8 +107,8 @@ check_env_file() {
 # and set the database credentials using the same environment variables as in docker-compose.yml
 set_config_defaults() {
     awk -v pg_user="${POSTGRES_USER:-memmachine}" \
+        -v pg_pass="${POSTGRES_PASSWORD:-memmachine_password}" \
         -v pg_db="${POSTGRES_DB:-memmachine}" \
-        -v pg_pass="${POSTGRES_PASS:-memmachine_password}" \
         -v neo4j_user="${NEO4J_USER:-neo4j}" \
         -v neo4j_pass="${NEO4J_PASSWORD:-neo4j_password}" '
 /vendor_name:/ {
