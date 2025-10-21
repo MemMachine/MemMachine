@@ -32,7 +32,7 @@ jobs:
           "tests/memmachine/common/vector_graph_store/test_neo4j_vector_graph_store.py",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
-        python-version: [ "3.12", "3.13"]
+        python-version: [ "3.12", "3.13", "3.14" ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
