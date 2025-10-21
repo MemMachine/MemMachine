@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
-      POSTGRES_PASSWORD: ${POSTGRES_PASS:-memmachine_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -68,7 +68,6 @@ services:
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
-      POSTGRES_PASS: ${POSTGRES_PASS:-memmachine_password}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
 

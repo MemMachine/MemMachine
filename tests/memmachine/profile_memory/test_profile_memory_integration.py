@@ -1,23 +1,25 @@
 import asyncio
 import json
+import os
 from importlib import import_module
 
 import pytest
 import pytest_asyncio
+from testcontainers.postgres import PostgresContainer
 
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine.common.language_model.openai_language_model import OpenAILanguageModel
 from memmachine.profile_memory.profile_memory import ProfileMemory
+from memmachine.profile_memory.prompt_provider import ProfilePrompt
 from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
-from tests.memmachine.profile_memory.storage.in_memory_profile_storage import (
-    InMemoryProfileStorage,
-)
+from memmachine.profile_memory.storage.syncschema import sync_to as setup_pg_schema
 
 
 @pytest.fixture
 def config():
+    open_api_key = os.environ.get("OPENAI_API_KEY")
     return {
-        "api_key": "",
+        "api_key": open_api_key,
         "llm_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
         "prompt_module": "writing_assistant_prompt",
@@ -38,45 +40,67 @@ def llm_model(config):
     )
 
 
-def in_memory_profile_storage():
-    return InMemoryProfileStorage()
+@pytest.fixture(scope="session")
+def pg_container():
+    with PostgresContainer("pgvector/pgvector:pg16") as container:
+        yield container
 
 
-def asyncpg_profile_storage():
-    return AsyncPgProfileStorage(
-        {
-            "host": "localhost",
-            "port": 5432,
-            "database": "memmachine",
-            "user": "memmachine",
-            "password": "memmachine_password",
-        }
+@pytest_asyncio.fixture(scope="session")
+async def pg_server(pg_container):
+    host = pg_container.get_container_host_ip()
+    port = int(pg_container.get_exposed_port(5432))
+    database = pg_container.dbname
+    user = pg_container.username
+    password = pg_container.password
+
+    await setup_pg_schema(
+        database=database,
+        host=host,
+        port=f"{port}",
+        user=user,
+        password=password,
     )
 
+    yield {
+        "host": host,
+        "port": port,
+        "user": user,
+        "password": password,
+        "database": database,
+    }
+
 
 @pytest.fixture
-def storage():
-    return asyncpg_profile_storage()
+def asyncpg_profile_storage(pg_server):
+    storage = AsyncPgProfileStorage(pg_server)
+    yield storage
 
 
 @pytest.fixture
-def prompt_module(config):
-    return import_module(
+def storage(asyncpg_profile_storage):
+    return asyncpg_profile_storage
+
+
+@pytest.fixture
+def prompt(config):
+    prompt_module = import_module(
         f"memmachine.server.prompt.{config['prompt_module']}", __package__
     )
+    return ProfilePrompt.load_from_module(prompt_module)
 
 
 @pytest_asyncio.fixture
 async def profile_memory(
     embedder,
     llm_model,
-    prompt_module,
+    prompt,
     storage,
 ):
     mem = ProfileMemory(
         model=llm_model,
         embeddings=embedder,
-        prompt_module=prompt_module,
+        prompt=prompt,
         profile_storage=storage,
     )
     await mem.startup()
@@ -144,7 +168,7 @@ class TestLongMemEvalIngestion:
         return long_mem_raw_question["answer"]
 
     @pytest.mark.asyncio
-    @pytest.mark.manual_integration
+    @pytest.mark.integration
     async def test_periodic_mem_eval(
         self,
         long_mem_convos,

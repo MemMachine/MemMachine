@@ -79,8 +79,8 @@ class SessionData(BaseModel):
         self.user_id = merge_lists(self.user_id, other.user_id)
 
     def is_valid(self) -> bool:
-        """Return True if the session data is invalid (both group_id and
-        session_id are empty), False otherwise.
+        """Return False if the session data is invalid (both group_id and
+        session_id are empty), True otherwise.
         """
         return self.group_id != "" or self.session_id != ""
 
@@ -145,7 +145,7 @@ class RequestWithSession(BaseModel):
                 [
                     {
                         "loc": ["header", "session"],
-                        "msg": "group_id or user_id cannot be empty",
+                        "msg": "group_id or session_id cannot be empty",
                         "type": "value_error.missing",
                     }
                 ]

@@ -406,7 +406,7 @@ You will receive a JSON response confirming the status of the deletion. A status
             "host": os.getenv("POSTGRES_HOST"),
             "port": os.getenv("POSTGRES_PORT"),
             "user": os.getenv("POSTGRES_USER"),
-            "password": os.getenv("POSTGRES_PASS"),
+            "password": os.getenv("POSTGRES_PASSWORD"),
             "database": os.getenv("POSTGRES_DB"),
         },
         prompt_module=import_module(".prompt.profile_prompt", __package__),

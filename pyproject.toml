@@ -57,7 +57,7 @@ dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "ruff>=0.13.2",
-    "testcontainers[neo4j]>=4.13.1",
+    "testcontainers[neo4j,postgres]>=4.13.1",
 ]
 
 [tool.mypy]
@@ -74,5 +74,4 @@ asyncio_default_test_loop_scope = "session"
 
 markers = [
     "integration: mark the test as an integration test",
-    "manual_integration: integration test that requires manual user setup"
 ]
