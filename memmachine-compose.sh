@@ -25,17 +25,18 @@ timeout() {
     # Start a background sleep that will kill the command
     (
         sleep "$duration"
-        kill -0 "$cmd_pid" 2>/dev/null && kill -TERM "$cmd_pid"
+        kill -0 "$cmd_pid" 2>/dev/null && kill -TERM "$cmd_pid" 2>/dev/null
     ) &
 
     local watchdog_pid=$!
 
-    # Wait for the command to finish
-    wait "$cmd_pid"
+    # Wait for the command to finish and suppress termination messages
+    wait "$cmd_pid" 2>/dev/null
     local status=$?
 
-    # Clean up watchdog if command finished early
-    kill -TERM "$watchdog_pid" 2>/dev/null
+    # Clean up watchdog if command finished early - suppress termination message
+    kill -TERM "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
 
     return $status
 }

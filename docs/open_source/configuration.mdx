@@ -5,11 +5,8 @@ icon: "gear"
 ---
 ## Configuring MemMachine
 
-MemMachine has two primary files that are required for operation:
- - `config.yaml` - This file contains the configuration settings for MemMachine's Episodic Memory, including database connections, model settings, and memory parameters.
- - `.env` - This file is used to store environment variables for the MemMachine Server Configuration, such as API keys and sensitive information that should not be hardcoded in the configuration file.
+MemMachine has one primary file that is used for configuration, `cfg.yml`.
 
-### Episodic Memory Configuration (`config.yaml`)
 Understanding Configuration Settings
 You can customize your application's settings with two types of configuration: **Global** and **Local**.
  - **Global Configuration** acts as the ***default*** setting for all your applications. Think of it as your standard setup that everything uses unless told otherwise.  This file should reside in your Project root directory.
@@ -17,13 +14,29 @@ You can customize your application's settings with two types of configuration: *
 
 When a local configuration is present, it will take priority and override the global settings, so you can easily make temporary changes without affecting your main setup. The only exception to this is for plugin configurations, which always use the global settings.
 
-You can set up both types of configuration using a YAML file.
+You can set up both types of configuration in the `cfg.yml` file using YAML syntax. Below, we will explore the various configuration options available to you.
 
-#### Tailor MemMachine to Your Needs
+## Tailor MemMachine to Your Needs
 
 Check out the following configuration options, an example of how to set, where to set, and a link to more information about the variable options.
 
-#### Long-Term Memory
+<AccordionGroup>
+  <Accordion title="Logging">
+
+Logging parameters manage the path and level of logging desired.
+| Parameter              | Required? | Default       | Description                                                  |
+| ---------------------- | --------- | ----------------- | -------------------------------------------------------- |
+| `path`                 | No        | `/tmp/memory_log` | Sets the path and file name where logging will be kept.  |
+| `level`                | No        | `info`            | Choice between three levels: info, debug, or error       |
+
+An example of these parameters in a config file would look like the following:
+```YAML
+logging:
+  path: /tmp/memory_log
+  level: info #| debug | error
+```
+</Accordion>
+<Accordion title="Long-Term Memory">
 
 Parameters that pertain to Long-Term memory settings.
 | Parameter                     | Required? | Default       | Description                                                  |
@@ -38,13 +51,115 @@ An example of these parameters in a config file would look like the following:
 ```YAML
 long_term_memory:
   derivative_deriver: sentence
-  metadata_derivative_format: "[{user_metadata[source_timestamp]}] {isolation_properties[producer_id]}: {content}"
+  metadata_prefix: "[$timestamp] $producer_id: "
   embedder: my_embedder_id
   reranker: my_reranker_id
   vector_graph_store: my_storage_id
 ```
+</Accordion>
+<Accordion title="Profile Memory">
 
-#### Session Memory
+Parameters that pertain to Profile memory settings.
+| Parameter                     | Required? | Default           | Description                                                    |
+| ----------------------------- | --------- | ----------------- | -------------------------------------------------------------- |
+| `llm_model`                   | Yes       | testmodel         | The language model for profile extraction.                     |
+| `embedding_model`             | Yes       | N/A               | The model for generating vector embeddings for profile memory. |
+| `database`                    | Yes       | `profile_storage` | Connection to the profile database.  Passing this default allows you to establish all other variables within that subsection.|
+| `prompt`                      | Yes       | `profile_prompt`. | The system prompts to be used for profile memory.              |
+
+
+```YAML
+profile_memory:
+  llm_model: testmodel
+  embedding_model: my_embedder_id
+  database: profile_storage
+  prompt: profile_prompt
+```
+</Accordion>
+<Accordion title="SessionDB">
+There is only one parameter for SessionDB, which is the connection URI.
+| Parameter                     | Required? | Default              | Description                                                    |
+| ----------------------------- | --------- | -------------------- | -------------------------------------------------------------- |
+| `uri`                         | Yes       | sqlitetest.db        | A configuration dictionary containing the database connection URI. If this field is blank, MemMachine will create an SQLitetest.db. |               |
+
+An example of these parameters in a config file would look like the following:
+```YAML
+SessionDB:
+  uri: sqlitetest.db
+```
+</Accordion>
+<Accordion title="Model">
+
+The model parameters are used to establish the LLM model to be used with MemMachine.  
+
+<Note> The 'another_model_id` can be any unique identifier you choose. Just be sure you use that unique identifier when referencing the model elsewhere in your configuration.  Example holds AWS Bedrock required configuration information </Note>
+| Parameter                     | Required? | Default           | Description                                                       |
+| ----------------------------- | --------- | ----------------- | ----------------------------------------------------------------- |
+| `testmodel`                   | Yes       |  `testmodel`      | This is the default configuration ID for MemMachine using openai. |
+| `model_vendor`                | Yes       | 'openai'          | The vendor of the model (e.g., `openai`, `amazon-bedrock`).       |
+| `model_name`                  | Yes       | "gpt-4o-mini"     | The name of the model to use (e.g., `gpt-4o-mini`).               |
+| `api_key`                     | Yes       |  N/A              | Only required if using openai, required if using default set up   |
+| `another_model_id`            | No        | `another_model_id`| Unique identifier for another model configuration.                |  
+| `region`                      | No        | N/A               | The AWS region for the Bedrock model (e.g., `us-west-2`).         |
+| `aws_access_key_id`           | No        | N/A               | The AWS access key ID for Bedrock authentication.                 |
+| `aws_secret_access_key`       | No        | N/A               | The AWS secret access key for Bedrock authentication.             |
+
+An example of these parameters in a config file would look like the following:
+```YAML
+Model:
+  testmodel:
+    model_vendor: openai
+    model_name: "gpt-4o-mini"
+    api_key: <YOUR_API_KEY>
+  another_model_id:
+    model_vendor: "amazon-bedrock"
+    region: "us-west-2"
+    aws_access_key_id: <AWS_ACCESS_KEY_ID>
+    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+    model_id: "openai.gpt-oss-20b-1:0"
+```
+</Accordion>
+<Accordion title="Storage">
+Parameters that pertain to Storage settings.
+
+The Storage database that can be chosen for our Memory to use. You need to set parameters for both `my_storage_id` and `profile_storage` to use different databases for long-term memory and profile memory respectively.
+<Note> Only the Neo4j graph database is supported at this time for Storage (Episodic Memory) and  POSTGRESS for Profile Memory. </Note>
+
+| Parameter                         | Required? | Default       | Description                                                  |
+| --------------------------------- | --------- | ------------- | ------------------------------------------------------------ |
+| `<ID>.vendor_name`                | Yes        | neo4j        | The name of the database vendor to use (e.g., `neo4j`).      |
+| `<ID>.host`                       | Yes        | localhost    | The hostname or IP address of the database server.           |
+| `<ID>.port`                       | Yes        | 7687         | The port number for the database connection.                 |
+| `<ID>.user`                       | Yes        | N/A          | The username for database authentication.                    |
+| `<ID>.password`                   | Yes        | N/A          | The password for database authentication.                    |
+| `profile_storage`                 | Yes        | N/A          | The configuration for the profile database using Postgres.   |  
+| `<ID>.vendor_name`                | Yes        | postgres     | The name of the database vendor to use for profile storage.  |
+| `<ID>.host`                       | Yes        | localhost    | The hostname or IP address of the profile database server.   |
+| `<ID>.port`                       | Yes        | 5432         | The port number for the profile database connection.         |
+| `<ID>.user`                       | Yes        | postgres     | The username for profile database authentication.            |
+| `<ID>.db_name`                    | Yes        | postgres     | The name of the profile database.                            |
+| `<ID>.password`                   | Yes        | N/A          | The password for profile database authentication.            |
+
+
+```YAML
+storage:
+  my_storage_id:
+    vendor_name: neo4j
+    host: localhost
+    port: 7687
+    user: neo4j
+    password: <YOUR_PASSWORD_HERE>
+
+  profile_storage:
+    vendor_name: postgres
+    host: localhost
+    port: 5432
+    user: postgres
+    db_name: postgres
+    password: <YOUR_PASSWORD_HERE>
+```
+</Accordion>
+<Accordion title="Session Memory">
 
 | Parameter                       | Required? | Default       | Description                                                  |
 | ------------------------------- | --------- | ------------- | ------------------------------------------------------------ |
@@ -55,90 +170,71 @@ long_term_memory:
 
 An example of these parameters in a config file would look like the following:
 ```YAML
-sessionmemory:
-  model_name: my_model_id
+sessionMemory:
+  model_name: testmodel
   message_capacity: 500
   max_message_length: 16000
   max_token_num: 8000
 ```
+</Accordion>
 
-#### Sessiondb
-
-| Parameter                            | Required? | Default       | Description                                                  |
-| ------------------------------------ | --------- | ------------- | ------------------------------------------------------------ |
-| `uri`                                | Yes       | sqlitetest.db | The connection URI for the session database. Defaults to an in-memory SQLite database for testing. |
-
-An example of these parameters in a config file would look like the following:
-```YAML
-sessiondb:
-  uri: sqlitetest.db
-```
-
-#### LLM Model
-
-The LLM Model to be used with the memory system.
-
-| Parameter                               | Required? | Default       | Description                                                  |
-| --------------------------------------- | --------- | ------------- | ------------------------------------------------------------ |
-| `<ID>.model_name`                       | Yes       | N/A           | The name of a large language model to use (e.g., `gpt-4o-mini`). |
-| `<ID>.api_key`                          | No        | N/A           | The API key for the specified model.                         |
-
-An example of these parameters in a config file would look like the following:
-```YAML
-model:
-  my_model_id:
-    model_name: "gpt-4o-mini"
-    api_key: <YOUR_API_KEY>
-```
-
-#### Storage
-
-The Storage database that can be chosen for our Memory to use. 
-<Note> Only graph database is supported at this time </Note>
-
-| Parameter                         | Required? | Default       | Description                                                  |
-| --------------------------------- | --------- | ------------- | ------------------------------------------------------------ |
-| `<ID>.vendor_name`                | No        | neo4j         | The name of the database vendor to use (e.g., `neo4j`).      |
-| `<ID>.host`                       | No        | localhost     | The hostname or IP address of the database server.           |
-| `<ID>.port`                       | No        | 7687          | The port number for the database connection.                 |
-| `<ID>.user`                       | No        | N/A           | The username for database authentication.                    |
-| `<ID>.password`                   | No        | N/A           | The password for database authentication.                    |
-
-An example of these parameters in a config file would look like the following:
-```YAML
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
-```
-
-#### Embedder
+<Accordion title="Embedder">
 
 The Embedder model that we choose to use.
+<Note> `aws_embedder_id` parameters are only required for AWS Bedrock embedding models. The default, `my_embedder_id`, is set up for OpenAI embedding models. </Note>
+
 | Parameter                            | Required? | Default       | Description                                                  |
 | ------------------------------------ | --------- | ------------- | ------------------------------------------------------------ |
-| `<ID>.model_vendor`                  | Yes       | N/A           | The name of an embedding model to use (e.g., `text-embedding-3-small`). |
-| `<ID>.api_key`                       | No        | N/A           | The API key for the specified embedding model.               |
-| `<ID>.type`                          | No        | N/A           | The type of reranker (e.g., `rrf-hybrid`, `identity`, `bm25`, `cross-encoder`). |
-| `<ID>.reranker_ids`                  | No        | N/A           | A list of other reranker IDs to combine for hybrid reranking. |
-| `<ID>.model_name`                    | Yes       | N/A           | The name of a model to use for cross-encoder reranking (e.g., `cross-encoder/qnli-electra-base`). |
+| `my_ebedder_id`                      | No        | N/A           | Tag for your default embedder.  Use if using OpenAI.         |
+| `<ID>.name`                          | No        | openai        | The vendor name of your embedder.                            |
+| `<ID>.model_name`                    | No        | "text-embedding-3-small" | The model type of your embedder.  Should be by the vendor designated in `name`. |
+| `<ID>.api_key`                       | No        | N/A           | Your API Key for use with OpenAI                             |
+| `aws_embedder_id`                    | No        | N/A           | Tag should you choose to use AWS Bedrock for your Embedder.  |
+| `<ID>.name`                          | No        | 'amazon-bedrock' | The vendor name of your embedder.                         |
+| `<ID>.region`                        | No        | N/A           | The AWS region for the Bedrock embedder (e.g., `us-west-2`). |
+| `<ID>.aws_access_key_id`             | No        | N/A           | The AWS access key ID for Bedrock authentication.            |
+| `<ID>.aws_secret_access_key`         | No        | N/A           | The AWS secret access key for Bedrock authentication.        |
+| `<ID>.model_id`                      | No        | N/A           | The Bedrock model ID to use for embeddings.                  |
+| `<ID>.similarity_metric`             | No        | "cosine"      | | The similarity metric to use for embedding comparisons (e.g., `cosine`, `euclidean`). |
 
 An example of these parameters in a config file would look like the following:
 ```YAML
 embedder:
   my_embedder_id:
-    model_name: "text-embedding-3-small"
-    api_key: <YOUR_API_KEY>
+    name: openai
+    config:
+      model_name: "text-embedding-3-small"
+      api_key: <YOUR_API_KEY>
+  aws_embedder_id:
+    name: 'amazon-bedrock'
+    config:
+      region: "us-west-2"
+      aws_access_key_id: <AWS_ACCESS_KEY_ID>
+      aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+      model_id: "amazon.titan-embed-text-v2:0"
+      similarity_metric: "cosine"
 ```
+</Accordion>
+<Accordion title="Reranker">
+Parameters to set for the chosen Reranker.
+<Note> `aws_reranker_id` parameters are only required for AWS Bedrock reranking models. If you choose to use AWS Bedrock for your reranker, be sure to list it under your `reranker_ids` and define it appropriately.</Note>
 
-#### Reranker
-Parameters to set for the chosen Reranker
+<Info> The `ce_ranker_id` is for use only on systems that have GPUs</Info>
+
 | Parameter                            | Required? | Default       | Description                                                  |
 | ------------------------------------ | --------- | ------------- | ------------------------------------------------------------ |
-| `type`                               | Yes       | `rrf-hybrid`  | The type of reranker you choose to use.
+| `my_reranker_id`                     | Yes       | N/A           | This tag defines the rerankers you wish to use.              |
+| `<ID>.type`                          | Yes       | N/A           | The type of reranker to use (e.g., `rrf-hybrid`, `identity`, `bm25`, `cross-encoder`, `amazon-bedrock`). |
+| `<ID>.reranker_ids`                  | Yes       | N/A           | A list of reranker IDs to be used in the hybrid reranker.    |
+| `id_ranker_id`                       | No        | N/A           | An identity reranker configuration.                             |
+| `bm_ranker_id`                       | No        | N/A           | A BM25 reranker configuration.                                 |
+| `ce_ranker_id`                       | No        | "cross-encoder" | A cross-encoder reranker configuration.                        |
+| `<ID>.model_name`                    | No        | N/A           | The model name for the cross-encoder reranker.               |
+| `aws_reranker_id`                    | No        | N/A           | Tag should you choose to use AWS Bedrock for your Reranker.  |
+| `<ID>.region`                        | No        | N/A           | The AWS region for the Bedrock reranker (e.g., `us-west-2`). |
+| `<ID>.aws_access_key_id`             | No        | N/A           | The AWS access key ID for Bedrock authentication.            |
+| `<ID>.aws_secret_access_key`         | No        | N/A           | The AWS secret access key for Bedrock authentication.        |
+| `<ID>.model_id`                      | No        | N/A           | The Bedrock model ID to use for reranking.                  |
 
 An example of these parameters in a config file would look like the following:
 ```YAML
@@ -156,116 +252,12 @@ reranker:
   ce_ranker_id:
     type: "cross-encoder"
     model_name: "cross-encoder/qnli-electra-base"
+  aws_reranker_id:
+    type: "amazon-bedrock"
+    region: "us-west-2"
+    aws_access_key_id: <AWS_ACCESS_KEY_ID>
+    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+    model_id: "amazon.rerank-v1:0"
 ```
-
-#### Example Config.YAML File
-
-Below is a complete example of the `Config.YAML` file that you can use for default settings when deploying MemMachine.  This example comes with the MemMachine package within the [`samples` directory](sample/episodic_memory_config.sample).
-
-```YAML
-long_term_memory:
-  derivative_deriver: sentence
-  metadata_derivative_format: "[{user_metadata[source_timestamp]}] {isolation_properties[producer_id]}: {content}"
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
-
-sessiondb:
-  uri: sqlitetest.db
-
-model:
-  my_model_id:
-    model_name: "gpt-4o-mini"
-    api_key: <YOUR_API_KEY>
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
-
-sessionmemory:
-  model_name: my_model_id
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
-
-embedder:
-  my_embedder_id:
-    model_name: "text-embedding-3-small"
-    api_key: <YOUR_API_KEY>
-
-reranker:
-  my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-      - ce_ranker_id
-  id_ranker_id:
-    type: "identity"
-  bm_ranker_id:
-    type: "bm25"
-  ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
-```
-
-### MemMachine Server Configuration (`.env`)
-
-To get the MemMachine Server up and running, we use a simple `.env` file to manage configuration settings. This approach keeps sensitive information—like database credentials and service URLs—separate from the core codebase. This guide explains each of the required variables.
-
-**File Location:**
-
-This file should be saved as `.env` and placed in the same directory as your `app.py` file.
-
-**Reference File:**
-
-```
-# This configuration file should be named as .env
-# It must be located under the same directory as the app.py
-POSTGRES_HOST="10.0.0.59"
-POSTGRES_PORT="5432"
-POSTGRES_USER="postgres"
-POSTGRES_PASSWORD="YOUR PASSWORD"
-POSTGRES_DB="DBNAME"
-MCP_BASE_URL=[http://127.0.0.1:8080](http://127.0.0.1:8080)
-GATEWAY_URL=http://localhost:8080
-FAST_MCP_LOG_LEVEL=INFO
-MEMORY_CONFIG="Configuration file of memory"
-```
-
-#### Variable Definitions
-
-Here is a breakdown of each variable in your `.env` file:
-
-- **`POSTGRES_HOST`**
-  - **Purpose:** Specifies the network address (IP address or hostname) of your PostgreSQL database server.
-  - **Example:** `"10.0.0.59"` refers to a specific IP on your network.
-- **`POSTGRES_PORT`**
-  - **Purpose:** The port number on which the PostgreSQL server is listening for connections. The default port is `5432`.
-  - **Example:** `"5432"`
-- **`POSTGRES_USER`**
-  - **Purpose:** The username used to authenticate with the PostgreSQL database.
-  - **Example:** `"postgres"`
-- **`POSTGRES_PASSWORD`**
-  - **Purpose:** The password for the specified PostgreSQL user. **Important:** Replace `"YOUR PASSWORD"` with your actual, secure password.
-  - **Example:** `"my_s3cr3t_p@ssw0rd"`
-- **`POSTGRES_DB`**
-  - **Purpose:** The name of the specific database you want to connect to on the PostgreSQL server.
-  - **Example:** `"memmachine_db"`
-- **`MCP_BASE_URL`**
-  - **Purpose:** The base URL for the Model Content Protocol (MCP) service. This is used for internal communication within your MemMachine services.
-  - **Example:** `"http://127.0.0.1:8080"` is a common local development address.
-- **`GATEWAY_URL`**
-  - **Purpose:** The URL for the public-facing gateway or reverse proxy that routes traffic to your API.
-  - **Example:** `"http://localhost:8080"`
-- **`FAST_MCP_LOG_LEVEL`**
-  - **Purpose:** Sets the logging level for the Fast MCP module. This controls the verbosity of the log output. Common levels include `INFO`, `DEBUG`, `WARNING`, `ERROR`, and `CRITICAL`.
-  - **Example:** `INFO` provides general information without excessive detail.
-- **`MEMORY_CONFIG`**
-  - **Purpose:** This variable should point to the file path of your memory configuration file, which defines how MemMachine's memory components are structured and initialized.
-  - **Example:** `"config/memory_config.yaml"`
-
-You can copy and paste the code above to create your own `.env` file, making sure to replace placeholder values with your actual configuration details. The same file is also included in the MemMachine package within the [`samples` directory](sample/server_config.sample).
+</Accordion>
+</AccordionGroup>
