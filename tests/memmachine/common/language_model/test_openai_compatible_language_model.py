@@ -45,6 +45,18 @@ def mock_metrics_factory():
 
 
 @pytest.fixture
+def mock_tool_call_impl():
+    """Fixture for a mocked tool call."""
+
+    class MockToolCall(
+        MagicMock, openai.types.chat.ChatCompletionMessageFunctionToolCall
+    ):
+        pass
+
+    return MockToolCall()
+
+
+@pytest.fixture
 def minimal_config():
     """Fixture for a minimal valid configuration."""
     return {"api_key": "test_api_key", "model": "test-model"}
@@ -194,16 +206,26 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
 @patch(
     "memmachine.common.language_model.openai_compatible_language_model.openai.AsyncOpenAI"
 )
-async def test_generate_response_with_tool_calls(mock_async_openai, minimal_config):
+async def test_generate_response_with_tool_calls(
+    mock_async_openai, minimal_config, mock_tool_call_impl
+):
     """Test a successful call that returns tool calls."""
-    mock_tool_call = MagicMock()
+    mock_tool_call = mock_tool_call_impl()
     mock_tool_call.id = "call_123"
     mock_tool_call.function.name = "get_weather"
     mock_tool_call.function.arguments = '{"location": "Boston"}'
 
+    invalid_mock_tool_call = MagicMock()
+    invalid_mock_tool_call.id = "invalid_call_123"
+    invalid_mock_tool_call.function.name = "get_weather"
+    invalid_mock_tool_call.function.arguments = '{"location": "Boston"}'
+
     mock_response = MagicMock()
     mock_response.choices[0].message.content = None
-    mock_response.choices[0].message.tool_calls = [mock_tool_call]
+    mock_response.choices[0].message.tool_calls = [
+        mock_tool_call,
+        invalid_mock_tool_call,
+    ]
     mock_response.usage = None
 
     mock_client = AsyncMock()
@@ -213,7 +235,7 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
     lm = OpenAICompatibleLanguageModel(minimal_config)
     content, tool_calls = await lm.generate_response()
 
-    assert content is None
+    assert content == ""
     assert tool_calls == [
         {
             "call_id": "call_123",
@@ -230,10 +252,10 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
     "memmachine.common.language_model.openai_compatible_language_model.openai.AsyncOpenAI"
 )
 async def test_generate_response_tool_call_json_error(
-    mock_async_openai, minimal_config
+    mock_async_openai, minimal_config, mock_tool_call_impl
 ):
     """Test handling of invalid JSON in tool call arguments."""
-    mock_tool_call = MagicMock()
+    mock_tool_call = mock_tool_call_impl()
     mock_tool_call.id = "call_123"
     mock_tool_call.function.name = "get_weather"
     mock_tool_call.function.arguments = '{"location": "Boston",}'

@@ -213,19 +213,29 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         try:
             if response.choices[0].message.tool_calls:
                 for tool_call in response.choices[0].message.tool_calls:
-                    function_calls_arguments.append(
-                        {
-                            "call_id": tool_call.id,
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": json.loads(tool_call.function.arguments),
-                            },
-                        }
-                    )
+                    if isinstance(
+                        tool_call,
+                        openai.types.chat.ChatCompletionMessageFunctionToolCall,
+                    ):
+                        function_calls_arguments.append(
+                            {
+                                "call_id": tool_call.id,
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": json.loads(
+                                        tool_call.function.arguments
+                                    ),
+                                },
+                            }
+                        )
+                    else:
+                        logger.info(
+                            "Unsupported tool call type: %s", type(tool_call).__name__
+                        )
         except json.JSONDecodeError as e:
             raise ValueError("JSON decode error") from e
 
         return (
-            response.choices[0].message.content,
+            response.choices[0].message.content or "",
             function_calls_arguments,
         )
