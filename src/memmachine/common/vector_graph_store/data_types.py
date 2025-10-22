@@ -25,7 +25,6 @@ Property = (
 @dataclass(kw_only=True)
 class Node:
     uuid: UUID
-    labels: set[str] = field(default_factory=set)
     properties: dict[str, Property] = field(default_factory=dict)
 
     def __eq__(self, other):
@@ -42,7 +41,6 @@ class Edge:
     uuid: UUID
     source_uuid: UUID
     target_uuid: UUID
-    relation: str = "RELATED_TO"
     properties: dict[str, Property] = field(default_factory=dict)
 
     def __eq__(self, other):
