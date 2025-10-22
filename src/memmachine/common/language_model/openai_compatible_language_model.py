@@ -146,7 +146,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                 }
                 if tools:
                     args["tools"] = tools
-                    args["tool_choice"] = (                 
+                    args["tool_choice"] = (
                         tool_choice if tool_choice is not None else "auto"
                     )
                 response = await self._client.chat.completions.create(**args)  # type: ignore
