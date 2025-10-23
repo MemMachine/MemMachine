@@ -32,23 +32,26 @@ class DerivativeDeriverBuilder(Builder):
             case "concatenation":
                 from .concatenation_derivative_deriver import (
                     ConcatenationDerivativeDeriver,
+                    ConcatenationDerivativeDeriverParams,
                 )
 
-                populated_config = config
-                return ConcatenationDerivativeDeriver(populated_config)
+                concatenation_params = ConcatenationDerivativeDeriverParams(**config)
+                return ConcatenationDerivativeDeriver(concatenation_params)
             case "identity":
                 from .identity_derivative_deriver import (
                     IdentityDerivativeDeriver,
+                    IdentityDerivativeDeriverParams,
                 )
 
-                populated_config = config
-                return IdentityDerivativeDeriver(populated_config)
+                identity_params = IdentityDerivativeDeriverParams(**config)
+                return IdentityDerivativeDeriver(identity_params)
             case "sentence":
                 from .sentence_derivative_deriver import (
                     SentenceDerivativeDeriver,
+                    SentenceDerivativeDeriverParams,
                 )
 
-                populated_config = config
-                return SentenceDerivativeDeriver(populated_config)
+                sentence_params = SentenceDerivativeDeriverParams(**config)
+                return SentenceDerivativeDeriver(sentence_params)
             case _:
                 raise ValueError(f"Unknown DerivativeDeriver name: {name}")

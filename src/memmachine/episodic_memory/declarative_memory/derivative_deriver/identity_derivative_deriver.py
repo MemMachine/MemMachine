@@ -3,11 +3,28 @@ A derivative deriver that creates derivatives
 identical to the episodes in the episode cluster.
 """
 
-from typing import Any
 from uuid import uuid4
+
+from pydantic import Field
 
 from ..data_types import Derivative, EpisodeCluster
 from .derivative_deriver import DerivativeDeriver
+
+
+class IdentityDerivativeDeriverParams:
+    """
+    Parameters for IdentityDerivativeDeriver.
+
+    Attributes:
+        derivative_type (str):
+            The type to assign to the derived derivatives
+            (default: "identity").
+    """
+
+    derivative_type: str = Field(
+        "identity",
+        description="The type to assign to the derived derivatives",
+    )
 
 
 class IdentityDerivativeDeriver(DerivativeDeriver):
@@ -16,21 +33,18 @@ class IdentityDerivativeDeriver(DerivativeDeriver):
     identical to the episodes in the episode cluster.
     """
 
-    def __init__(self, config: dict[str, Any] = {}):
+    def __init__(self, params: IdentityDerivativeDeriverParams):
         """
         Initialize an IdentityDerivativeDeriver
-        with the provided configuration.
+        with the provided parameters.
 
         Args:
-            config (dict[str, Any], optional):
-                Configuration dictionary containing:
-                - derivative_type (str, optional):
-                  The type to assign
-                  to the derived derivatives (default: "identity").
+            params (IdentityDerivativeDeriverParams):
+                Parameters for the IdentityDerivativeDeriver.
         """
         super().__init__()
 
-        self._derivative_type = config.get("derivative_type", "identity")
+        self._derivative_type = params.derivative_type
 
     async def derive(self, episode_cluster: EpisodeCluster) -> list[Derivative]:
         return [

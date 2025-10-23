@@ -40,18 +40,25 @@ class DerivativeMutatorBuilder(Builder):
             case "metadata":
                 from .metadata_derivative_mutator import (
                     MetadataDerivativeMutator,
+                    MetadataDerivativeMutatorParams,
                 )
 
-                populated_config = config
-                return MetadataDerivativeMutator(populated_config)
-            case "third-person-rewrite":
-                from .third_person_rewrite_derivative_mutator import (
-                    ThirdPersonRewriteDerivativeMutator,
+                metadata_params = MetadataDerivativeMutatorParams(**config)
+                return MetadataDerivativeMutator(metadata_params)
+            case "language-model":
+                from .language_model_derivative_mutator import (
+                    DEFAULT_REWRITE_SYSTEM_PROMPT,
+                    LanguageModelDerivativeMutator,
+                    LanguageModelDerivativeMutatorParams,
                 )
 
-                populated_config = {
-                    "language_model": injections[config["language_model_id"]],
-                }
-                return ThirdPersonRewriteDerivativeMutator(populated_config)
+                language_model_params = LanguageModelDerivativeMutatorParams(
+                    language_model=injections[config["language_model_id"]],
+                    rewrite_system_prompt=config.get(
+                        "rewrite_system_prompt",
+                        DEFAULT_REWRITE_SYSTEM_PROMPT,
+                    ),
+                )
+                return LanguageModelDerivativeMutator(language_model_params)
             case _:
                 raise ValueError(f"Unknown DerivativeMutator name: {name}")

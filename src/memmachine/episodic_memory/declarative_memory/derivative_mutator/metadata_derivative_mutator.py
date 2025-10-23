@@ -7,11 +7,32 @@ by embedding metadata directly into the derivative content.
 """
 
 from string import Template
-from typing import Any
 from uuid import uuid4
+
+from pydantic import BaseModel, Field
 
 from ..data_types import Derivative, EpisodeCluster
 from .derivative_mutator import DerivativeMutator
+
+
+class MetadataDerivativeMutatorParams(BaseModel):
+    """
+    Parameters for MetadataDerivativeMutator.
+
+    Attributes:
+        template (str):
+            Template string supporting $-substitutions
+            for augmenting derivative content with metadata
+            (default: "[$timestamp] $content").
+    """
+
+    template: str = Field(
+        default="[$timestamp] $content",
+        description=(
+            "Template string supporting $-substitutions "
+            "for augmenting derivative content with metadata"
+        ),
+    )
 
 
 class MetadataDerivativeMutator(DerivativeMutator):
@@ -20,21 +41,18 @@ class MetadataDerivativeMutator(DerivativeMutator):
     of the original derivative.
     """
 
-    def __init__(self, config: dict[str, Any] = {}):
+    def __init__(self, params: MetadataDerivativeMutatorParams):
         """
         Initialize a MetadataDerivativeMutator
-        with the provided configuration.
+        with the provided parameters.
 
         Args:
-            config (dict[str, Any]):
-                Configuration dictionary containing:
-                - template (str, optional):
-                    Template string supporting $-substitutions
-                    (default: "[$timestamp] $content").
+            params (MetadataDerivativeMutatorParams):
+                Parameters for the MetadataDerivativeMutator.
         """
         super().__init__()
 
-        self._template = Template(config.get("template", "[$timestamp] $content"))
+        self._template = Template(params.template)
 
     async def mutate(
         self,
