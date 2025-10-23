@@ -69,7 +69,7 @@ class EmbedderBuilder(Builder):
 
                 return OpenAIEmbedder(
                     {
-                        "model": config.get("model_name", "text-embedding-3-small"),
+                        "model": config.get("model", "text-embedding-3-small"),
                         "api_key": config["api_key"],
                         "dimensions": config.get("dimensions"),
                         "metrics_factory": injected_metrics_factory,
@@ -88,7 +88,7 @@ class EmbedderBuilder(Builder):
                     SentenceTransformerEmbedderParams,
                 )
 
-                model_name = config.get("model_name")
+                model_name = config.get("model")
                 if model_name is None:
                     raise ValueError(
                         "model_name must be provided for sentence-transformer"
