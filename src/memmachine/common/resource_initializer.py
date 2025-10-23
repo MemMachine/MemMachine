@@ -1,5 +1,5 @@
 """
-Bootstrap initializer for building resources
+Resource initializer for building resources
 based on their definitions and dependencies.
 """
 
@@ -58,18 +58,24 @@ resource_builder_map: dict[str, type[Builder]] = {
 }
 
 
-class BootstrapInitializer:
+class ResourceInitializer:
     """
-    Bootstrap initializer for building resources
+    Resource initializer for building resources
     based on their definitions and dependencies.
     """
 
     @staticmethod
-    def initialize(resource_definitions: dict[str, Any]):
+    def initialize(
+        resource_definitions: dict[str, Any],
+        resource_cache: dict[str, Any] | None = None,
+    ):
         """
         Initialize resources
         based on their definitions and dependencies.
         """
+        if resource_cache is None:
+            resource_cache = {}
+
         resource_dependency_graph = {}
 
         for (
@@ -105,15 +111,21 @@ class BootstrapInitializer:
                 dependency_ids,
             ) in resource_dependency_graph.items():
                 for dependency_id in dependency_ids:
-                    if dependency_id not in resource_dependency_graph.keys():
+                    # Check that the dependency exists in either the resource definitions or the resource cache.
+                    if (
+                        dependency_id not in resource_dependency_graph.keys()
+                        and dependency_id not in resource_cache.keys()
+                    ):
                         raise ValueError(
                             f"Dependency {dependency_id} "
                             f"for resource {resource_id} "
-                            "not found in resource definitions"
+                            "found in neither resource definitions not resource cache"
                         )
 
-                    dependency_counts[resource_id] += 1
-                    dependent_resource_ids[dependency_id].add(resource_id)
+                    # Only count depdencies that have not been initialized yet.
+                    if dependency_id in resource_dependency_graph.keys():
+                        dependency_counts[resource_id] += 1
+                        dependent_resource_ids[dependency_id].add(resource_id)
 
             queue = deque(
                 [
@@ -139,16 +151,21 @@ class BootstrapInitializer:
 
         ordered_resource_ids = order_resources(resource_dependency_graph)
 
-        resources: dict[str, Any] = {}
+        initialized_resources: dict[str, Any] = {}
         for resource_id in ordered_resource_ids:
+            if resource_id in resource_cache:
+                continue
+
             resource_definition = resource_definitions[resource_id]
 
             resource_builder = resource_builder_map[resource_definition["type"]]
 
-            resources[resource_id] = resource_builder.build(
+            initialized_resource = resource_builder.build(
                 resource_definition["name"],
                 resource_definition["config"],
-                resources,
+                injections=resource_cache | initialized_resources,
             )
 
-        return resources
+            initialized_resources[resource_id] = initialized_resource
+
+        return initialized_resources

@@ -1,21 +1,13 @@
-from typing import Any
+from typing import Any, cast
 
-from memmachine.common.bootstrap_initializer import BootstrapInitializer
+from memmachine.common.resource_initializer import ResourceInitializer
 
 from ..data_types import ContentType, Episode, MemoryContext
 from ..declarative_memory.data_types import (
     ContentType as DeclarativeMemoryContentType,
 )
 from ..declarative_memory.data_types import Episode as DeclarativeMemoryEpisode
-
-supported_derivative_deriver_names = {"identity", "sentence"}
-
-supported_reranker_names = {
-    "identity",
-    "bm25",
-    "cross-encoder",
-    "rrf-hybrid",
-}
+from ..declarative_memory.declarative_memory_builder import DeclarativeMemoryBuilder
 
 content_type_to_declarative_memory_content_type_map = {
     ContentType.STRING: DeclarativeMemoryContentType.STRING,
@@ -27,6 +19,8 @@ declarative_memory_content_type_to_content_type_map = {
 
 
 class LongTermMemory:
+    _shared_resources: dict[str, Any] = {}
+
     def __init__(self, config: dict[str, Any], memory_context: MemoryContext):
         self._memory_context = memory_context
         long_term_memory_config = config.get("long_term_memory") or {}
@@ -35,12 +29,12 @@ class LongTermMemory:
 
         # Configure embedder
         embedder_configs = config.get("embedder") or {}
-        embedder_id = long_term_memory_config.get("embedder")
-        embedder_config = embedder_configs.get(embedder_id) or {}
+        embedder_id = long_term_memory_config["embedder"]
+        embedder_def = embedder_configs.get(embedder_id) or {}
 
         # Configure vector graph store
         storage_configs = config.get("storage") or {}
-        vector_graph_store_id = long_term_memory_config.get("vector_graph_store")
+        vector_graph_store_id = long_term_memory_config["vector_graph_store"]
         vector_graph_store_config = storage_configs.get(vector_graph_store_id) or {}
 
         if vector_graph_store_config.get("vendor_name") != "neo4j":
@@ -75,10 +69,6 @@ class LongTermMemory:
         derivative_deriver_name = long_term_memory_config.get(
             "derivative_deriver", "sentence"
         )
-        if derivative_deriver_name not in supported_derivative_deriver_names:
-            raise ValueError(
-                f"Unsupported derivative deriver name: {derivative_deriver_name}"
-            )
 
         # Configure metadata derivative mutator
         metadata_prefix = long_term_memory_config.get(
@@ -96,6 +86,18 @@ class LongTermMemory:
         if not isinstance(reranker_configs, dict):
             raise TypeError("Reranker configs must be a dictionary")
 
+        embedder_resource_definitions = (
+            {
+                embedder_id: {
+                    "type": "embedder",
+                    "name": embedder_def["name"],
+                    "config": embedder_def["config"],
+                }
+            }
+            if embedder_id not in LongTermMemory._shared_resources
+            else {}
+        )
+
         reranker_resource_definitions = {
             reranker_id: {
                 "type": "reranker",
@@ -107,9 +109,29 @@ class LongTermMemory:
                 },
             }
             for reranker_id, reranker_config in reranker_configs.items()
+            if reranker_id not in LongTermMemory._shared_resources
         }
 
         reranker_id = long_term_memory_config.get("reranker")
+
+        vector_graph_store_resource_definitions = (
+            {
+                vector_graph_store_id: {
+                    "type": "vector_graph_store",
+                    "name": "neo4j",
+                    "config": {
+                        "uri": neo4j_uri,
+                        "username": neo4j_username,
+                        "password": neo4j_password,
+                        "force_exact_similarity_search": (
+                            neo4j_force_exact_similarity_search
+                        ),
+                    },
+                }
+            }
+            if vector_graph_store_id not in LongTermMemory._shared_resources
+            else {}
+        )
 
         derivation_workflow_definition = {
             "related_episode_postulator_id": ("_null_related_episode_postulator"),
@@ -126,23 +148,6 @@ class LongTermMemory:
         }
 
         resource_definitions = {
-            "_declarative_memory": {
-                "type": "declarative_memory",
-                "name": "declarative_memory",
-                "config": {
-                    "vector_graph_store_id": vector_graph_store_id,
-                    "embedder_id": embedder_id,
-                    "reranker_id": reranker_id,
-                    "query_derivative_deriver_id": "_query_derivative_deriver",
-                    "related_episode_postulator_ids": [
-                        "_previous_related_episode_postulator"
-                    ],
-                    "derivation_workflows": {
-                        "default": [derivation_workflow_definition],
-                    },
-                    "episode_metadata_template": episode_metadata_template,
-                },
-            },
             "_previous_related_episode_postulator": {
                 "type": "related_episode_postulator",
                 "name": "previous",
@@ -176,21 +181,6 @@ class LongTermMemory:
                 "name": "null",
                 "config": {},
             },
-            embedder_id: {
-                "type": "embedder",
-                "name": embedder_config["name"],
-                "config": embedder_config["config"],
-            },
-            vector_graph_store_id: {
-                "type": "vector_graph_store",
-                "name": "neo4j",
-                "config": {
-                    "uri": neo4j_uri,
-                    "username": neo4j_username,
-                    "password": neo4j_password,
-                    "force_exact_similarity_search": neo4j_force_exact_similarity_search,
-                },
-            },
             "metrics_factory": {
                 "type": "metrics_factory",
                 "name": "prometheus",
@@ -198,11 +188,46 @@ class LongTermMemory:
             },
         }
 
-        resources = BootstrapInitializer.initialize(
-            resource_definitions | reranker_resource_definitions
+        resources = ResourceInitializer.initialize(
+            resource_definitions
+            | embedder_resource_definitions
+            | reranker_resource_definitions
+            | vector_graph_store_resource_definitions,
+            LongTermMemory._shared_resources,
         )
 
-        self._declarative_memory = resources.get("_declarative_memory")
+        combined_resources = resources | LongTermMemory._shared_resources
+
+        self._declarative_memory = DeclarativeMemoryBuilder.build(
+            name="default",
+            config={
+                "vector_graph_store_id": vector_graph_store_id,
+                "embedder_id": embedder_id,
+                "reranker_id": reranker_id,
+                "query_derivative_deriver_id": "_query_derivative_deriver",
+                "related_episode_postulator_ids": [
+                    "_previous_related_episode_postulator"
+                ],
+                "derivation_workflows": {
+                    "default": [derivation_workflow_definition],
+                },
+                "episode_metadata_template": episode_metadata_template,
+            },
+            injections=combined_resources,
+        )
+
+        LongTermMemory._shared_resources.update(
+            {
+                embedder_id: combined_resources[embedder_id],
+                vector_graph_store_id: combined_resources[vector_graph_store_id],
+            }
+        )
+        LongTermMemory._shared_resources.update(
+            {
+                reranker_id: combined_resources[reranker_id]
+                for reranker_id in reranker_resource_definitions.keys()
+            }
+        )
 
     async def add_episode(self, episode: Episode):
         declarative_memory_episode = DeclarativeMemoryEpisode(
@@ -236,7 +261,7 @@ class LongTermMemory:
         declarative_memory_episodes = await self._declarative_memory.search(
             query,
             num_episodes_limit=num_episodes_limit,
-            property_filter=id_filter,
+            property_filter=dict(id_filter),
         )
         return [
             Episode(
@@ -249,21 +274,29 @@ class LongTermMemory:
                 ),
                 content=declarative_memory_episode.content,
                 timestamp=declarative_memory_episode.timestamp,
-                group_id=declarative_memory_episode.filterable_properties.get(
-                    "group_id", ""
+                group_id=cast(
+                    str,
+                    declarative_memory_episode.filterable_properties.get(
+                        "group_id", ""
+                    ),
                 ),
-                session_id=declarative_memory_episode.filterable_properties.get(
-                    "session_id", ""
+                session_id=cast(
+                    str,
+                    declarative_memory_episode.filterable_properties.get(
+                        "session_id", ""
+                    ),
                 ),
-                producer_id=(
+                producer_id=cast(
+                    str,
                     declarative_memory_episode.filterable_properties.get(
                         "producer_id", ""
-                    )
+                    ),
                 ),
-                produced_for_id=(
+                produced_for_id=cast(
+                    str,
                     declarative_memory_episode.filterable_properties.get(
                         "produced_for_id", ""
-                    )
+                    ),
                 ),
                 user_metadata=declarative_memory_episode.user_metadata,
             )
@@ -280,6 +313,3 @@ class LongTermMemory:
                 "session_id": self._memory_context.session_id,
             }
         )
-
-    async def close(self):
-        await self._declarative_memory.close()

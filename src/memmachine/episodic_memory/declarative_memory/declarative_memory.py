@@ -899,9 +899,6 @@ class DeclarativeMemory:
         node_uuids_to_delete = episode_uuids + episode_cluster_uuids + derivative_uuids
         await self._vector_graph_store.delete_nodes(node_uuids_to_delete)
 
-    async def close(self):
-        await self._vector_graph_store.close()
-
     @staticmethod
     def _episodes_from_episode_nodes(
         episode_nodes: list[Node],

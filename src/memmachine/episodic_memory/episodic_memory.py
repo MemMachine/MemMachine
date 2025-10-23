@@ -306,8 +306,6 @@ class EpisodicMemory:
             tasks = []
             if self._session_memory:
                 tasks.append(self._session_memory.close())
-            if self._long_term_memory:
-                tasks.append(self._long_term_memory.close())
             await asyncio.gather(
                 *tasks,
             )

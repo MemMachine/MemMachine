@@ -34,7 +34,7 @@ class CrossEncoderReranker(Reranker):
         model_name = config.get("model_name", "cross-encoder/ms-marco-MiniLM-L6-v2")
 
         # TODO @edwinyyyu Remove: temporary fix for memory leak
-        if model_name not in self._cross_encoders.keys():
+        if model_name not in CrossEncoderReranker._cross_encoders.keys():
             CrossEncoderReranker._cross_encoders[model_name] = CrossEncoder(model_name)
 
         self._cross_encoder = CrossEncoderReranker._cross_encoders[model_name]

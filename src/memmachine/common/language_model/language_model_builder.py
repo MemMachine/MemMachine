@@ -58,7 +58,7 @@ class LanguageModelBuilder(Builder):
 
                 return OpenAILanguageModel(
                     {
-                        "model": config.get("model", "gpt-5-nano"),
+                        "model": config.get("model_name", "gpt-5-nano"),
                         "api_key": config["api_key"],
                         "metrics_factory": get_metrics_factory(config),
                         "user_metrics_labels": config.get("user_metrics_labels", {}),
@@ -73,7 +73,7 @@ class LanguageModelBuilder(Builder):
 
                 return OpenAICompatibleLanguageModel(
                     {
-                        "model": config.get("model"),
+                        "model": config.get("model_name"),
                         "api_key": config.get("api_key", "EMPTY"),
                         "base_url": config.get("base_url"),
                         "metrics_factory": get_metrics_factory(config),
