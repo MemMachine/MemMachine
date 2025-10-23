@@ -3,13 +3,29 @@ Abstract base class for a language model.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, get_type_hints
 
+from memmachine.common.data_types import SessionDataProtocol
 
 class LanguageModel(ABC):
     """
     Abstract base class for a language model.
     """
+
+    def __init__(self):
+        """Initialize the language model with an empty metrics labels dict."""
+        # Instance variable for metrics labels, managed by base class
+        self._user_metrics_labels: dict[str, str] = {}
+        self._collect_metrics = False
+
+    def set_default_user_metrics_labels(self, user_metrics_labels: dict[str, str] | None = None):
+        """Set the default user metrics labels."""
+        if user_metrics_labels is not None and not isinstance(user_metrics_labels, dict):
+            raise TypeError("user_metrics_labels must be a dictionary")
+        self._user_metrics_labels = user_metrics_labels or {}
+        # Unpack the SessionDataProtocol field names, and merge them with the user-provided labels
+        # This is done dynamically because the session data fields are subject to change
+        self._user_metrics_labels.update({name: None for name in get_type_hints(SessionDataProtocol)})
 
     @abstractmethod
     async def generate_response(
@@ -19,6 +35,7 @@ class LanguageModel(ABC):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
+        session_data: SessionDataProtocol | None = None,
     ) -> tuple[str, Any]:
         """
         Generate a response based on the provided prompts and tools.

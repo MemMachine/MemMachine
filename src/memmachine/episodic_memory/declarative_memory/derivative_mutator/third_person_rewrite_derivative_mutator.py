@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 from memmachine.common.language_model.language_model import LanguageModel
+from memmachine.common.utils import extract_metrics_labels_from_isolations
 
 from ..data_types import ContentType, Derivative, EpisodeCluster
 from .derivative_mutator import DerivativeMutator
@@ -70,6 +71,10 @@ class ThirdPersonRewriteDerivativeMutator(DerivativeMutator):
                 "type": "function",
                 "name": "submit_rewritten_derivative_content",
             },
+            session_data=extract_metrics_labels_from_isolations(
+                isolations=source_episode_cluster.filterable_properties,
+                default_user_id="",
+            )
         )
 
         rewritten_derivative_content = [
