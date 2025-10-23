@@ -196,7 +196,9 @@ def test_post_memories_with_session_in_alias_header(
 
 def test_post_memories_without_session(valid_post_payload_without_session):
     response = client.post("/v1/memories", json=valid_post_payload_without_session)
-    assert response.status_code == 422  # Should fail due to missing session info
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 def test_post_episodic_memories_valid_string_content(valid_post_payload):
@@ -222,7 +224,9 @@ def test_post_episodic_memories_without_session(valid_post_payload_without_sessi
     response = client.post(
         "/v1/memories/episodic", json=valid_post_payload_without_session
     )
-    assert response.status_code == 422  # Should fail due to missing session info
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 def test_post_profile_memories_valid_string_content(valid_post_payload):
@@ -251,7 +255,9 @@ def test_post_profile_memories_without_session(valid_post_payload_without_sessio
     response = client.post(
         "/v1/memories/profile", json=valid_post_payload_without_session
     )
-    assert response.status_code == 422  # Should fail due to missing session info
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 def test_post_memories_valid_list_content(valid_post_payload):
@@ -268,9 +274,7 @@ def test_post_memories_valid_list_content(valid_post_payload):
 def test_post_memories_missing_required_field(valid_post_payload, missing_field):
     del valid_post_payload[missing_field]
     response = client.post("/v1/memories", json=valid_post_payload)
-    assert response.status_code == 422, (
-        f"Should fail with missing field: {missing_field}"
-    )
+    assert response.status_code == 200, f"should not fail without {missing_field}"
 
 
 @pytest.mark.parametrize(
@@ -281,8 +285,8 @@ def test_post_memories_missing_nested_session_field(
 ):
     del valid_post_payload["session"][missing_session_field]
     response = client.post("/v1/memories", json=valid_post_payload)
-    assert response.status_code == 422, (
-        f"Should fail with missing session field: {missing_session_field}"
+    assert response.status_code == 200, (
+        f"Should not fail with missing {missing_session_field}"
     )
 
 
@@ -316,7 +320,7 @@ def test_post_memories_boundary_empty_values(valid_post_payload):
 
 
 def test_post_memories_null_metadata(valid_post_payload):
-    valid_post_payload["metadata"] = None
+    del valid_post_payload["metadata"]
     response = client.post("/v1/memories", json=valid_post_payload)
     assert response.status_code in (200, 201, 204)
 
@@ -351,7 +355,9 @@ def test_memory_search_with_session_in_header(
 
 def test_memory_search_without_session(query_payload_without_session):
     response = client.post("/v1/memories/search", json=query_payload_without_session)
-    assert response.status_code == 422  # Should fail due to missing session info
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 # --- Test episodic memory query /v1/memories/episodic/search ---
@@ -384,7 +390,9 @@ def test_episodic_memory_search_without_session(query_payload_without_session):
     response = client.post(
         "/v1/memories/episodic/search", json=query_payload_without_session
     )
-    assert response.status_code == 422  # Should fail due to missing session info
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 # --- Test profile memory query /v1/memories/profile/search ---
@@ -417,7 +425,9 @@ def test_profile_memory_search_without_session(query_payload_without_session):
     response = client.post(
         "/v1/memories/profile/search", json=query_payload_without_session
     )
-    assert response.status_code == 422  # Should fail due to missing session info
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 # --- Tests for DELETE /v1/memories ---
@@ -430,7 +440,9 @@ def test_delete_memories_valid(valid_delete_payload):
 
 def test_delete_memories_missing_session():
     response = client.request("DELETE", "/v1/memories", json={})
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.headers["session-id"] == "default"
+    assert response.headers["group-id"] == "default"
 
 
 def test_delete_memories_with_session_in_header(valid_session_headers):
@@ -451,8 +463,8 @@ def test_delete_memories_missing_nested_session_field(
 ):
     del valid_delete_payload["session"][missing_session_field]
     response = client.request("DELETE", "/v1/memories", json=valid_delete_payload)
-    assert response.status_code == 422, (
-        f"Should fail with missing session field: {missing_session_field}"
+    assert response.status_code == 200, (
+        f"Should not fail with missing session field: {missing_session_field}"
     )
 
 

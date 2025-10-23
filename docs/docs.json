@@ -8,10 +8,10 @@
     "dark": "#a8bacb"
   },
   "integrations": {
-  "gtm": {
-    "tagId": "GTM-WDX7ZBC7"
-  }
-},
+    "gtm": {
+      "tagId": "GTM-WDX7ZBC7"
+    }
+  },
   "favicon": "favicon.ico",
   "navigation": {
     "tabs": [
@@ -53,32 +53,32 @@
       {
         "tab": "API Reference",
         "groups": [
-         {
-           "group": "Introduction",
-           "pages": [
-             "api_reference/intro"
-            ]
-          }, 
-        {
-           "group": "PythonSDK",
-           "pages": [
-             "api_reference/python/episodic_memory",
-             "api_reference/python/episodic_memory_manager",
-             "api_reference/python/memory_types",
-             "api_reference/python/profile_memory"
+          {
+            "group": "Introduction",
+            "pages": [
+              "api_reference/intro"
             ]
           },
-        {
-          "group": "API Reference",
-          "openapi": "openapi.json",
-          "playground": {
-            "display": "interactive"
+          {
+            "group": "PythonSDK",
+            "pages": [
+              "api_reference/python/episodic_memory",
+              "api_reference/python/episodic_memory_manager",
+              "api_reference/python/memory_types",
+              "api_reference/python/profile_memory"
+            ]
           },
-          "examples": {
-          "languages": ["python"],
-          "defaults": "required"
+          {
+            "group": "API Reference",
+            "openapi": "openapi.json",
+            "playground": {
+              "display": "interactive"
+            },
+            "examples": {
+              "languages": ["python"],
+              "defaults": "required"
+            }
           }
-        }
         ]
       },
       {
@@ -151,5 +151,8 @@
       "x": "https://x.com/memmachine",
       "github": "https://github.com/memmachine"
     }
-  }
+  },
+  "ignore": [
+    ".cursor"
+  ]
 }
