@@ -67,7 +67,7 @@ def mock_memory_managers(monkeypatch):
 
     # 5. Apply all patches to the app module.
     monkeypatch.setattr(app_module, "episodic_memory", DummyEpisodicMemoryManager())
-    monkeypatch.setattr(app_module, "profile_memory", DummyProfileMemory())
+    monkeypatch.setattr(app_module, "semantic_memory", DummyProfileMemory())
     # This is the crucial fix: patch the name in the module where it's looked
     # up.
     monkeypatch.setattr(app_module, "AsyncEpisodicMemory", MockAsyncEpisodicMemory)

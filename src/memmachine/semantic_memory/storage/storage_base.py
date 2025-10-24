@@ -1,18 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from datetime import datetime
+from typing import Any, Mapping, Optional
 
 import numpy as np
 
 
-class ProfileStorageBase(ABC):
+class SemanticStorageBase(ABC):
     """
-    The base class for profile storage
+    The base class for Semantic storage
     """
 
     @abstractmethod
     async def startup(self):
         """
-        initializations for the profile storage,
+        initializations for the semantic storage,
         such as creating connection to the database
         """
         raise NotImplementedError
@@ -20,7 +21,7 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def cleanup(self):
         """
-        cleanup for the profile storage
+        cleanup for the semantic storage
         such as closing connection to the database
         """
         raise NotImplementedError
@@ -28,124 +29,126 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def delete_all(self):
         """
-        delete all profiles in the storage
+        delete all semantic features in the storage
         such as truncating the database table
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def get_profile(
+    async def get_set_features(
         self,
-        user_id: str,
-        isolations: dict[str, bool | int | float | str] | None = None,
+        *,
+        set_id: str,
+        semantic_type_id: Optional[str] = None,
+        tag: Optional[str] = None,
     ) -> dict[str, Any]:
         """
-        Get profile by id
-        Return: A list of KV for eatch feature and value.
+        Get feature set by user id
+        Return: A list of KV for each feature and value.
            The value is an array with: feature value, feature tag and deleted, update time, create time and delete time.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_profile(
+    async def delete_feature_set(
         self,
-        user_id: str,
-        isolations: dict[str, bool | int | float | str] | None = None,
+        *,
+        set_id: str,
+        semantic_type_id: Optional[str] = None,
+        tag: Optional[str] = None,
     ):
         """
-        Delete all the profile by id
+        Delete all the features by id
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def add_profile_feature(
+    async def add_feature(
         self,
-        user_id: str,
+        *,
+        set_id: str,
+        semantic_type_id: str,
         feature: str,
         value: str,
         tag: str,
         embedding: np.ndarray,
         metadata: dict[str, Any] | None = None,
-        isolations: dict[str, bool | int | float | str] | None = None,
         citations: list[int] | None = None,
-    ):
+    ) -> int:
         """
-        Add a new feature to the profile.
+        Add a new feature to the user.
         """
         raise NotImplementedError
 
     @abstractmethod
     async def semantic_search(
         self,
-        user_id: str,
+        *,
+        set_id: str,
         qemb: np.ndarray,
         k: int,
         min_cos: float,
-        isolations: dict[str, bool | int | float | str] | None = None,
         include_citations: bool = False,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_profile_feature_by_id(self, pid: int):
+    async def delete_features(self, feature_ids: list[int]):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_all_citations_for_ids(
-        self, pids: list[int]
-    ) -> list[tuple[int, dict[str, bool | int | float | str]]]:
+    async def get_all_citations_for_ids(self, feature_ids: list[int]) -> list[int]:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_profile_feature(
+    async def delete_feature_with_filter(
         self,
-        user_id: str,
+        *,
+        set_id: str,
+        semantic_type_id: str,
         feature: str,
         tag: str,
-        value: str | None = None,
-        isolations: dict[str, bool | int | float | str] | None = None,
     ):
         """
-        Delete a feature from the profile with the key from the given user
+        Delete a feature from the user
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def get_large_profile_sections(
+    async def get_large_feature_sections(
         self,
-        user_id: str,
+        set_id: str,
         thresh: int,
-        isolations: dict[str, bool | int | float | str] | None = None,
     ) -> list[list[dict[str, Any]]]:
         """
-        get sections of profile with at least thresh entries
+        get feature sets with at least thresh entries
         """
         raise NotImplementedError
 
     @abstractmethod
     async def add_history(
         self,
-        user_id: str,
+        set_id: str,
         content: str,
         metadata: dict[str, str] | None = None,
-        isolations: dict[str, bool | int | float | str] | None = None,
     ) -> Mapping[str, Any]:
         raise NotImplementedError
 
     @abstractmethod
     async def delete_history(
         self,
-        user_id: str,
-        start_time: int = 0,
-        end_time: int = 0,
-        isolations: dict[str, bool | int | float | str] | None = None,
+        *,
+        set_id: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ):
         raise NotImplementedError
 
     @abstractmethod
     async def get_history_messages_by_ingestion_status(
         self,
-        user_id: str,
+        *,
+        set_id: str,
         k: int = 0,
         is_ingested: bool = False,
     ) -> list[Mapping[str, Any]]:
@@ -165,6 +168,7 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def mark_messages_ingested(
         self,
+        *,
         ids: list[int],
     ) -> None:
         """
@@ -175,18 +179,9 @@ class ProfileStorageBase(ABC):
     @abstractmethod
     async def get_history_message(
         self,
-        user_id: str,
-        start_time: int = 0,
-        end_time: int = 0,
-        isolations: dict[str, bool | int | float | str] | None = None,
+        *,
+        set_id: str,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> list[str]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def purge_history(
-        self,
-        user_id: str,
-        start_time: int = 0,
-        isolations: dict[str, bool | int | float | str] | None = None,
-    ):
         raise NotImplementedError
