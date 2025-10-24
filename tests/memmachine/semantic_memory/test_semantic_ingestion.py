@@ -15,7 +15,7 @@ def duplicate_features():
             tag="food",
             feature="favorite_food",
             value="peperoni pizza",
-        )
+        ),
     ]
 
 

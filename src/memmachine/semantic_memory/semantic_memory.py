@@ -400,7 +400,6 @@ class SemanticMemoryManager:
                 case _:
                     logger.error("Command with unknown action: %s", command.command)
 
-
     async def _store_consolidated_memory(self, *, memory: SemanticFeature, set_id: str):
         # TODO: Validate that this association citation logic is correct.
 

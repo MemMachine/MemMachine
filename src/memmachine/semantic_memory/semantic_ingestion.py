@@ -2,7 +2,13 @@ import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel, ValidationError, field_validator, validate_call, InstanceOf
+from pydantic import (
+    BaseModel,
+    InstanceOf,
+    ValidationError,
+    field_validator,
+    validate_call,
+)
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.language_model import LanguageModel

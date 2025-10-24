@@ -24,9 +24,11 @@ def pytest_collection_modifyitems(config, items):
             if "integration" in item.keywords:
                 item.add_marker(skip_integration)
 
+
 @pytest.fixture
 def mock_llm_model():
     return create_autospec(LanguageModel, instance=True)
+
 
 @pytest.fixture
 def mock_llm_embedder():

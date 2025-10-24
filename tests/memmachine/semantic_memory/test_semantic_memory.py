@@ -13,7 +13,6 @@ from memmachine.semantic_memory.semantic_memory import (
 )
 from memmachine.semantic_memory.semantic_prompt import SemanticPrompt
 from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
-from tests.memmachine.common.reranker.fake_embedder import FakeEmbedder
 from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import (
     InMemorySemanticStorage,
 )
@@ -51,8 +50,8 @@ def storage():
 
 @pytest_asyncio.fixture
 async def semantic_memory(
-        llm_embedder: Embedder,
-        llm_model: LanguageModel,
+    llm_embedder: Embedder,
+    llm_model: LanguageModel,
     mock_prompt: SemanticPrompt,
     storage: SemanticStorageBase,
 ):
@@ -229,7 +228,9 @@ async def test_add_persona_message_with_speaker_metadata(semantic_memory):
 
 
 @pytest_asyncio.fixture
-async def mock_persona_think_response(llm_model, semantic_memory: SemanticMemoryManager):
+async def mock_persona_think_response(
+    llm_model, semantic_memory: SemanticMemoryManager
+):
     llm_model.generate_response.return_value = (
         """{
       "1": {

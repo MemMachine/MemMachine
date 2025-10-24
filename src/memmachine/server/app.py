@@ -41,11 +41,11 @@ from memmachine.episodic_memory.episodic_memory import (
 from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
-from memmachine.semantic_memory.semantic_prompt import SemanticPrompt
 from memmachine.semantic_memory.semantic_memory import (
     SemanticMemoryManager,
     SemanticMemoryManagerParams,
 )
+from memmachine.semantic_memory.semantic_prompt import SemanticPrompt
 from memmachine.semantic_memory.storage.asyncpg_profile import AsyncPgSemanticStorage
 
 logger = logging.getLogger(__name__)
