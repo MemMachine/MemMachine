@@ -9,7 +9,6 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -18,18 +17,8 @@ from ..settings import settings
 
 logger = logging.getLogger(__name__)
 
-class TokenData(BaseModel):
-    """Token data schema"""
-
-    username: Optional[str] = None
-    user_id: Optional[str] = None
-    is_superuser: bool = False
-    exp: Optional[datetime] = None
-
-
 # Security scheme
 security = HTTPBearer()
-
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create JWT access token"""
@@ -48,39 +37,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def verify_token(token: str) -> TokenData:
-    """Verify JWT token and return token data"""
-    try:
-        payload = jwt.decode(
-            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
-        )
-        username: str = payload.get("sub")
-        user_id: str = payload.get("user_id")
-        is_superuser: bool = payload.get("is_superuser", False)
-        exp: int = payload.get("exp")
-
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        token_data = TokenData(
-            username=username,
-            user_id=user_id,
-            is_superuser=is_superuser,
-            exp=datetime.fromtimestamp(exp) if exp else None,
-        )
-        return token_data
-
-    except JWTError as e:
-        logger.error(f"JWT verification failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+def verify_token(token: str) -> Optional[dict]:
+    """Verify and decode a JWT token."""
+    payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    return payload
 
 
 async def get_current_user(
@@ -89,11 +49,20 @@ async def get_current_user(
 ) -> User:
     """Get current user from JWT token"""
     token = credentials.credentials
-    token_data = verify_token(token)
+
+    try:
+        token_data = verify_token(token)
+    except JWTError as e:
+        logger.error(f"JWT verification failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     user = (
         db.query(User)
-        .filter(User.username == token_data.username, User.is_active)
+        .filter(User.username == token_data["sub"], User.is_active)
         .first()
     )
 

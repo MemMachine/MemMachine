@@ -2,7 +2,8 @@
 Models for the MemMachine Extension MCP Server.
 """
 
-from .user import User
+from .oauth import AccessToken, AuthorizationCode, OAuthClient
 from .token import Token
+from .user import User
 
-__all__ = ["User", "Token"]
+__all__ = ["AccessToken", "AuthorizationCode", "OAuthClient", "Token", "User"]

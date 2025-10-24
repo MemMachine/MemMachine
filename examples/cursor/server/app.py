@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-from .api import auth_router, memory_router, misc_router
+from .api import auth_router, memory_router, misc_router, well_known_router, oauth_router
 from .core.database import close_db, init_db
 from .mcp.app import mcp_app
 from .middleware import LoggingMiddleware
@@ -55,8 +55,11 @@ def create_custom_app() -> FastAPI:
     app.add_middleware(LoggingMiddleware)
 
     # Include all the modular routers with their respective prefixes
+    app.include_router(well_known_router, tags=["well-known"])
+
     app.include_router(misc_router, prefix="/api", tags=["misc"])
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+    app.include_router(oauth_router,prefix="/api/oauth", tags=["oauth"])
     app.include_router(memory_router, prefix="/api/memory", tags=["memory"])
 
     # Mount the MCP server

@@ -37,6 +37,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "aiosqlite>=0.21.0",
     "passlib>=1.7.4",
+    "python-jose[cryptography]>=3.3.0",
 ]
 
 [project.optional-dependencies]
