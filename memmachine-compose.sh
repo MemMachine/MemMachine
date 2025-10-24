@@ -104,6 +104,43 @@ check_env_file() {
     fi
 }
 
+# Configure models based on selected provider
+configure_models_for_provider() {
+    local provider="$1"
+    
+    print_info "Configuring models for $provider provider..."
+    
+    case "$provider" in
+        "OPENAI")
+            # Configure for OpenAI - use openai_model and openai_embedder
+            safe_sed_inplace 's/embedder: .*/embedder: openai_embedder/' configuration.yml
+            safe_sed_inplace 's/llm_model: .*/llm_model: openai_model/' configuration.yml
+            safe_sed_inplace 's/embedding_model: .*/embedding_model: openai_embedder/' configuration.yml
+            safe_sed_inplace 's/model_name: .*/model_name: openai_model/' configuration.yml
+            print_success "Configured for OpenAI provider"
+            ;;
+        "BEDROCK")
+            # Configure for Bedrock - use bedrock_model and aws_embedder_id
+            safe_sed_inplace 's/embedder: .*/embedder: aws_embedder_id/' configuration.yml
+            safe_sed_inplace 's/llm_model: .*/llm_model: aws_model/' configuration.yml
+            safe_sed_inplace 's/embedding_model: .*/embedding_model: aws_embedder_id/' configuration.yml
+            safe_sed_inplace 's/model_name: .*/model_name: aws_model/' configuration.yml
+            print_success "Configured for Bedrock provider"
+            ;;
+        "OLLAMA")
+            # Configure for Ollama - use ollama_model and ollama_embedder
+            safe_sed_inplace 's/embedder: .*/embedder: ollama_embedder/' configuration.yml
+            safe_sed_inplace 's/llm_model: .*/llm_model: ollama_model/' configuration.yml
+            safe_sed_inplace 's/embedding_model: .*/embedding_model: ollama_embedder/' configuration.yml
+            safe_sed_inplace 's/model_name: .*/model_name: ollama_model/' configuration.yml
+            print_success "Configured for Ollama provider"
+            ;;
+        *)
+            print_warning "Unknown provider: $provider. Using default OpenAI configuration."
+            ;;
+    esac
+}
+
 # In lieu of yq, use awk to read over the configuration.yml file line-by-line,
 # and set the database credentials using the same environment variables as in docker-compose.yml
 set_config_defaults() {
@@ -153,6 +190,19 @@ check_config_file() {
             MEMMACHINE_IMAGE="memmachine/memmachine:latest-cpu"
         fi
 
+        # Ask user for provider path (OpenAI, Bedrock, or Ollama)
+        print_prompt
+        read -p "Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: " provider_input
+        local provider=$(echo "${provider_input:-OpenAI}" | tr '[:lower:]' '[:upper:]')
+        
+        # Validate provider selection
+        if [[ "$provider" != "OPENAI" && "$provider" != "BEDROCK" && "$provider" != "OLLAMA" ]]; then
+            print_warning "Invalid provider selection: $provider. Defaulting to OpenAI."
+            provider="OPENAI"
+        fi
+        
+        print_info "Selected provider: $provider"
+
         # Update .env file with the selected image
         if [ -f ".env" ]; then
             # Remove existing MEMMACHINE_IMAGE from .env if it exists
@@ -164,6 +214,9 @@ check_config_file() {
         if [ -f "$CONFIG_SOURCE" ]; then
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
+            
+            # Configure models based on selected provider
+            configure_models_for_provider "$provider"
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
@@ -175,24 +228,90 @@ check_config_file() {
     fi
 }
 
-# Prompt user if they would like to set their OpenAI API key; then set it in the .env file and configuration.yml file
-set_openai_api_key() {
+# Prompt user if they would like to set their API keys based on provider; then set it in the .env file and configuration.yml file
+set_provider_api_keys() {
     local api_key=""
+    local aws_access_key=""
+    local aws_secret_key=""
+    local aws_region=""
+    local model_id=""
+    local base_url=""
     local reply=""
+    
     if [ -f ".env" ]; then
         source .env
-        if [ -z "$OPENAI_API_KEY" ] ||  [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ] || grep -q "<YOUR_API_KEY>" configuration.yml ; then
-            print_prompt
-            read -p "OPENAI_API_KEY is not set or is using placeholder value. Would you like to set your OpenAI API key? (y/N) " reply
-            if [[ $reply =~ ^[Yy]$ ]]; then
+        
+        # Get the actual model being used from configuration
+        local llm_model=$(grep "llm_model:" configuration.yml | awk '{print $2}' | tr -d ' ')
+        local embedder_model=$(grep "embedding_model:" configuration.yml | awk '{print $2}' | tr -d ' ')
+        
+        # Configure OpenAI if selected
+        if [[ "$llm_model" == "openai_model" ]] || [[ "$embedder_model" == "openai_embedder" ]]; then
+            if grep -q "<YOUR_API_KEY>" configuration.yml; then
                 print_prompt
-                read -sp "Enter your OpenAI API key: " api_key
-                echo setting .env
-                safe_sed_inplace "s/OPENAI_API_KEY=.*/OPENAI_API_KEY=$api_key/" .env
-                echo setting configuration.yml
-                safe_sed_inplace "s/api_key: .*$/api_key: $api_key/g" configuration.yml
-                print_success "Set OPENAI_API_KEY in .env and configuration.yml"
+                read -p "OpenAI API key is not set. Would you like to set your OpenAI API key? (y/N) " reply
+                if [[ $reply =~ ^[Yy]$ ]]; then
+                    print_prompt
+                    read -sp "Enter your OpenAI API key: " api_key
+                    echo
+                    # Use different delimiters to avoid conflicts with special characters
+                    safe_sed_inplace "s|OPENAI_API_KEY=.*|OPENAI_API_KEY=$api_key|" .env
+                    safe_sed_inplace "s|api_key: <YOUR_API_KEY>|api_key: $api_key|g" configuration.yml
+                    print_success "Set OPENAI_API_KEY in .env and configuration.yml"
+                fi
+            else
+                print_success "OpenAI API key appears to be configured"
             fi
+        fi
+        
+        # Configure Bedrock if selected
+        if [[ "$llm_model" == "aws_model" ]] || [[ "$embedder_model" == "aws_embedder_id" ]]; then
+            if grep -q "<AWS_ACCESS_KEY_ID>" configuration.yml || grep -q "<AWS_SECRET_ACCESS_KEY>" configuration.yml; then
+                print_prompt
+                read -p "AWS credentials are not set. Would you like to set your AWS credentials for Bedrock? (y/N) " reply
+                if [[ $reply =~ ^[Yy]$ ]]; then
+                    print_prompt
+                    read -sp "Enter your AWS Access Key ID: " aws_access_key
+                    echo
+                    print_prompt
+                    read -sp "Enter your AWS Secret Access Key: " aws_secret_key
+                    echo
+                    print_prompt
+                    read -p "Enter your AWS Region [us-west-2]: " aws_region
+                    aws_region=${aws_region:-us-west-2}
+                    print_prompt
+                    read -p "Enter your Bedrock Model ID [openai.gpt-oss-20b-1:0]: " model_id
+                    model_id=${model_id:-openai.gpt-oss-20b-1:0}
+                    
+                    # Use different delimiters to avoid conflicts with special characters
+                    safe_sed_inplace "s|aws_access_key_id: <AWS_ACCESS_KEY_ID>|aws_access_key_id: $aws_access_key|g" configuration.yml
+                    safe_sed_inplace "s|aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>|aws_secret_access_key: $aws_secret_key|g" configuration.yml
+                    safe_sed_inplace "s|region: .*|region: \"$aws_region\"|g" configuration.yml
+                    safe_sed_inplace "s|model_id: .*|model_id: \"$model_id\"|g" configuration.yml
+                    print_success "Set AWS credentials and configuration in configuration.yml"
+                fi
+            else
+                print_success "AWS credentials appear to be configured"
+            fi
+        fi
+        
+        # Configure Ollama if selected
+        if [[ "$llm_model" == "ollama_model" ]] || [[ "$embedder_model" == "ollama_embedder" ]]; then
+            print_prompt
+            read -p "Ollama base URL [http://host.docker.internal:11434/v1]: " base_url
+            base_url=${base_url:-http://host.docker.internal:11434/v1}
+            
+            safe_sed_inplace "s|base_url: .*|base_url: \"$base_url\"|g" configuration.yml
+            print_success "Set Ollama base URL: $base_url"
+            
+            # Ask for model selection
+            print_prompt
+            read -p "Which Ollama model would you like to use? [llama3]: " ollama_model
+            ollama_model=${ollama_model:-llama3}
+            
+            # Update the model in the configuration
+            safe_sed_inplace "s|model: \".*\"|model: \"$ollama_model\"|g" configuration.yml
+            print_success "Set Ollama model: $ollama_model"
         fi
     fi
 }
@@ -202,13 +321,41 @@ check_required_env() {
     if [ -f ".env" ]; then
         source .env
         
-        if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ]; then
-            print_warning "OPENAI_API_KEY is not set or is using placeholder value"
-            print_warning "Please set your OpenAI API key in the .env file"
-            print_prompt
-            read -p "Press Enter to continue anyway (some features may not work)..."
-        else
-            print_success "OPENAI_API_KEY is configured"
+        # Get the actual model being used from configuration
+        local llm_model=$(grep "llm_model:" configuration.yml | awk '{print $2}' | tr -d ' ')
+        local embedder_model=$(grep "embedding_model:" configuration.yml | awk '{print $2}' | tr -d ' ')
+        
+        # Check OpenAI API key if OpenAI is configured
+        if [[ "$llm_model" == "openai_model" ]] || [[ "$embedder_model" == "openai_embedder" ]]; then
+            if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ]; then
+                print_warning "OPENAI_API_KEY is not set or is using placeholder value"
+                print_warning "Please set your OpenAI API key in the .env file"
+                print_prompt
+                read -p "Press Enter to continue anyway (some features may not work)..."
+            else
+                print_success "OPENAI_API_KEY is configured"
+            fi
+        fi
+        
+        # Check AWS credentials if Bedrock is configured
+        if [[ "$llm_model" == "aws_model" ]] || [[ "$embedder_model" == "aws_embedder_id" ]]; then
+            if grep -q "<AWS_ACCESS_KEY_ID>" configuration.yml || grep -q "<AWS_SECRET_ACCESS_KEY>" configuration.yml; then
+                print_warning "AWS credentials are not set or are using placeholder values"
+                print_warning "Please set your AWS credentials in the configuration.yml file"
+                print_prompt
+                read -p "Press Enter to continue anyway (some features may not work)..."
+            else
+                print_success "AWS credentials appear to be configured"
+            fi
+        fi
+        
+        # Check Ollama configuration
+        if [[ "$llm_model" == "ollama_model" ]] || [[ "$embedder_model" == "ollama_embedder" ]]; then
+            if grep -q "base_url: \"http://host.docker.internal:11434/v1\"" configuration.yml; then
+                print_success "Ollama configuration detected with default base URL"
+            else
+                print_success "Ollama configuration detected with custom base URL"
+            fi
         fi
     fi
 }
@@ -407,7 +554,7 @@ main() {
     check_docker
     check_env_file
     check_config_file
-    set_openai_api_key
+    set_provider_api_keys
     check_required_env
     check_required_config
     start_services
@@ -477,6 +624,19 @@ case "${1:-}" in
         echo "  clean                                                  Remove all services and data"
         echo "  build [<image>:<tag>] [--gpu true/false] [-f|--force]  Build a custom MemMachine image"
         echo "  help                                                   Show this help message"
+        echo ""
+        echo "Provider Options:"
+        echo "  OpenAI    - Uses OpenAI's GPT models and text-embedding-3-small"
+        echo "             Requires: OpenAI API key"
+        echo "  Bedrock   - Uses AWS Bedrock models (Claude, Titan embeddings)"
+        echo "             Requires: AWS Access Key ID, Secret Key, Region, Model ID"
+        echo "  Ollama    - Uses local Ollama models (Llama3, nomic-embed-text)"
+        echo "             Requires: Base URL (default: http://host.docker.internal:11434/v1)"
+        echo ""
+        echo "Features:"
+        echo "  ProfileMemory - Intelligent user profiling and memory management"
+        echo "  Episodic Memory - Context-aware memory storage and retrieval"
+        echo "  Multi-provider support - Choose your preferred AI provider"
         echo ""
         ;;
     "")

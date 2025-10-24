@@ -1,0 +1,66 @@
+# This workflow validates documentation and OpenAPI specs on pushes, pull requests, and releases.
+name: Docs Validation Check
+
+permissions:
+  contents: read  # Allows workflow to read repository contents
+
+on:
+  # Trigger workflow on changes to docs/ in main branch, PRs to main, and releases
+  push:
+    paths:
+      - 'docs/**'
+    branches: [ main ]
+  pull_request:
+    paths:
+      - 'docs/**'
+    branches: [ main ]
+  release:
+    types: [published]
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # Continue running all matrix jobs even if one fails
+      matrix:
+        node-version: [18, 20, 22]  # Test against multiple Node.js versions
+
+    steps:
+      # Step 1: Checkout the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Set up Node.js for the current matrix version
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # Step 3: Install Mintlify CLI globally for docs validation
+      - name: Install Mintlify CLI
+        run: npm install -g mint
+
+      # Step 4: Ensure docs.json exists before proceeding
+      - name: Check for docs.json
+        run: |
+          if [ ! -f docs/docs.json ]; then
+            echo "::error file=docs/docs.json::docs.json not found! Docs validation cannot proceed."
+            exit 1
+          fi
+
+      # Step 5: Ensure openapi.json exists before proceeding
+      - name: Check for openapi.json
+        run: |
+          if [ ! -f docs/openapi.json ]; then
+            echo "::error file=docs/openapi.json::openapi.json not found! OpenAPI validation cannot proceed."
+            exit 1
+          fi
+
+      # Step 6: Run Mintlify CLI to check for broken links in documentation
+      - name: Mintlify - Check for broken links
+        run: mint broken-links
+        working-directory: docs
+
+      # Step 7: Run Mintlify CLI to validate the OpenAPI specification
+      - name: Mintlify - Validate OpenAPI spec
+        run: mint openapi-check openapi.json
+        working-directory: docs
