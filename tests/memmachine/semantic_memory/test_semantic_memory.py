@@ -1,7 +1,6 @@
 """Unit tests for the profile_memory module."""
 
 import asyncio
-from unittest.mock import create_autospec
 
 import pytest
 import pytest_asyncio
@@ -14,7 +13,7 @@ from memmachine.semantic_memory.semantic_memory import (
 )
 from memmachine.semantic_memory.semantic_prompt import SemanticPrompt
 from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
-from tests.memmachine.common.reranker.test_embedder_reranker import FakeEmbedder
+from tests.memmachine.common.reranker.fake_embedder import FakeEmbedder
 from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import (
     InMemorySemanticStorage,
 )
@@ -24,15 +23,13 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-def mock_embedder():
-    embedder = FakeEmbedder()
-    yield embedder
+def llm_embedder(mock_llm_embedder):
+    return mock_llm_embedder
 
 
 @pytest.fixture
-def mock_llm():
-    languange_model = create_autospec(LanguageModel, instance=True)
-    yield languange_model
+def llm_model(mock_llm_model):
+    return mock_llm_model
 
 
 @pytest.fixture
@@ -54,14 +51,14 @@ def storage():
 
 @pytest_asyncio.fixture
 async def semantic_memory(
-    mock_embedder: Embedder,
-    mock_llm: LanguageModel,
+        llm_embedder: Embedder,
+        llm_model: LanguageModel,
     mock_prompt: SemanticPrompt,
     storage: SemanticStorageBase,
 ):
     params = SemanticMemoryManagerParams(
-        model=mock_llm,
-        embeddings=mock_embedder,
+        model=llm_model,
+        embeddings=llm_embedder,
         prompt=mock_prompt,
         semantic_storage=storage,
         feature_update_interval_sec=0.1,
@@ -232,8 +229,8 @@ async def test_add_persona_message_with_speaker_metadata(semantic_memory):
 
 
 @pytest_asyncio.fixture
-async def mock_persona_think_response(mock_llm, semantic_memory: SemanticMemoryManager):
-    mock_llm.generate_response.return_value = (
+async def mock_persona_think_response(llm_model, semantic_memory: SemanticMemoryManager):
+    llm_model.generate_response.return_value = (
         """{
       "1": {
         "command": "add",

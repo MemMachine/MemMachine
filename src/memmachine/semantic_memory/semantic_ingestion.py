@@ -10,7 +10,7 @@ from memmachine.common.language_model import LanguageModel
 logger = logging.getLogger(__name__)
 
 
-class SemanticMemory(BaseModel):
+class SemanticFeature(BaseModel):
     class Metadata(BaseModel):
         citations: list[int] | None = None
         id: int | None = None
@@ -18,7 +18,7 @@ class SemanticMemory(BaseModel):
     tag: str
     feature: str
     value: str
-    metadata: Metadata
+    metadata: Metadata = Metadata()
 
 
 class SemanticCommand(BaseModel):
@@ -144,12 +144,12 @@ async def llm_feature_update(
 
 
 class SemanticConsolidateMemoryRes(BaseModel):
-    consolidate_memories: list[SemanticMemory]
+    consolidate_memories: list[SemanticFeature]
     keep_memories: list[int] | None
 
     @field_validator("consolidate_memories", mode="before")
     @classmethod
-    def _filter_and_validate_memories(cls, v: Any) -> list[SemanticMemory]:
+    def _filter_and_validate_memories(cls, v: Any) -> list[SemanticFeature]:
         if v is None:
             return []
         if not isinstance(v, list):
@@ -160,10 +160,10 @@ class SemanticConsolidateMemoryRes(BaseModel):
             )
             return []
 
-        cleaned: list[SemanticMemory] = []
+        cleaned: list[SemanticFeature] = []
         for i, item in enumerate(v):
             try:
-                cleaned.append(SemanticMemory.model_validate(item))
+                cleaned.append(SemanticFeature.model_validate(item))
             except ValidationError as e:
                 logger.warning(
                     "Dropping invalid memory at index %d. Error: %s. Item: %r",
@@ -198,7 +198,7 @@ class SemanticConsolidateMemoryRes(BaseModel):
 
 @validate_call
 async def llm_consolidate_features(
-    memories: list[SemanticMemory],
+    memories: list[SemanticFeature],
     model: InstanceOf[LanguageModel],
     consolidate_prompt: str,
 ) -> SemanticConsolidateMemoryRes | None:

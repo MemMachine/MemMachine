@@ -1,5 +1,10 @@
 # conftest.py
+from unittest.mock import create_autospec
+
 import pytest
+
+from memmachine.common.language_model import LanguageModel
+from tests.memmachine.common.reranker.fake_embedder import FakeEmbedder
 
 
 def pytest_addoption(parser):
@@ -18,3 +23,11 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "integration" in item.keywords:
                 item.add_marker(skip_integration)
+
+@pytest.fixture
+def mock_llm_model():
+    return create_autospec(LanguageModel, instance=True)
+
+@pytest.fixture
+def mock_llm_embedder():
+    return FakeEmbedder()

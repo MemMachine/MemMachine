@@ -18,7 +18,7 @@ from memmachine.common.language_model.language_model import LanguageModel
 
 from .semantic_ingestion import (
     SemanticCommand,
-    SemanticMemory,
+    SemanticFeature,
     llm_consolidate_features,
     llm_feature_update,
 )
@@ -399,11 +399,9 @@ class SemanticMemoryManager:
                     )
                 case _:
                     logger.error("Command with unknown action: %s", command.command)
-                    raise ValueError(
-                        "Command with unknown action: " + str(command.command)
-                    )
 
-    async def _store_consolidated_memory(self, *, memory: SemanticMemory, set_id: str):
+
+    async def _store_consolidated_memory(self, *, memory: SemanticFeature, set_id: str):
         # TODO: Validate that this association citation logic is correct.
 
         if memory.metadata.citations is None:
@@ -439,7 +437,7 @@ class SemanticMemoryManager:
         await asyncio.gather(
             *[
                 self._deduplicate_features(
-                    set_id, [SemanticMemory(**memories) for memories in section]
+                    set_id, [SemanticFeature(**memories) for memories in section]
                 )
                 for section in s
             ]
@@ -448,7 +446,7 @@ class SemanticMemoryManager:
     async def _deduplicate_features(
         self,
         set_id: str,
-        memories: list[SemanticMemory],
+        memories: list[SemanticFeature],
     ):
         """
         sends a list of features to a llm to consolidate
