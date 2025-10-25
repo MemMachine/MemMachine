@@ -1,0 +1,131 @@
+---
+title: "Semantic Memory Design"
+description: "Architecture and operational plan for the semantic memory subsystem"
+icon: "database"
+---
+
+# Overview
+
+## Purpose
+
+This document captures the design of the Semantic Memory subsystem that
+extracts, stores, and retrieves long-lived semantic features for agents.
+Knowledge is extracted using an LLM, where given a set of facts and a new piece of information,
+a LLM is used to extract new facts and modify existing facts.
+This is done through a series of `add`, `update`, and `delete` commands produced by the LLM.
+
+## Problem Statement
+
+Agents build context by accumulating structured facts across sessions.
+These facts must be derived from unstructured interaction history,
+normalized into a consistent schema, stored with citations, and exposed
+through fast semantic search. The system needs to scale across many
+feature sets, minimize redundant information, and deliver low-latency
+responses while coordinating asynchronous ingestion.
+
+## Goals
+
+- Automate feature extraction and consolidation from conversational
+  history using LLM reasoning steps.
+- Provide CRUD and search APIs that surface curated semantic memories
+  with caching for hot sets.
+- Run ingestion in the background without blocking the calling agent and
+  surface observability hooks for backlog visibility.
+
+
+## Key Use Cases
+
+1. Persist semantic features for a user persona while ingesting chat
+   transcripts in near real time.
+2. Run semantic search over a persona to enrich downstream prompts,
+   allowing for personalized messages.
+3. Deduplicate overlapping memories when LLM-generated features exceed a
+   configurable threshold.
+
+# High-Level Architecture
+
+```
+Agent -> SemanticMemoryManager -> SemanticStorageBase
+                 |             ↘
+                 |              -> SemanticMemoryType
+                                            |          ↘
+                                            |            -> LanguageModel prompts (update/consolidate)
+                 |             ↘
+                 |              -> embeddings + vector db
+                 ↘
+          Background ingestion + consolidation loop
+```
+
+The `SemanticMemoryManager` orchestrates ingestion, storage, search, and
+caching. It collaborates with:
+
+- `SemanticStorageBase` implementations that persist features and
+  history.
+- `SemanticMemoryType` implementations that manage feature sets and
+  consolidation.
+- `Embedder` instances that create embeddings for new features and
+  search queries.
+- A `LanguageModel` that executes prompts for feature updates and
+  consolidation.
+- An in-memory `LRUCache` for low-latency reads of frequently accessed
+  feature sets.
+- A background task that polls for dirty sets and processes un-ingested
+  history.
+
+When a new message is received, the `SemanticMemoryManager` stores it in
+the history database. Then after certain triggers are met the message
+will be ingested in the background. The `SemanticMemoryManager` will
+then invoke each `SemanticMemoryType` to update its feature set.
+
+To update a feature set, the feature set and the prompt associated with
+a `SemanticMemoryType` are sent to the `LanguageModel`. The LLM
+produces a list of `SemanticCommand`s that are applied to the feature
+set.
+
+Then when a search is being conducted with a query, the `SemanticMemoryManager`
+will look up the query in the cache. If it is not found, it will invoke
+the `Embedder` to create an embedding for the query. Then it will
+invoke the `LanguageModel` to produce a list of `SemanticCommand`s that
+are applied to the feature set.
+
+## Data Model
+
+- **Feature Entry** – `(set_id, memory_type, feature, value, tag, embedding, metadata,
+  citations)` tuples persisted by the storage backend. Metadata tracks
+  provenance, timestamps, and arbitrary annotations.
+- **History Message** – conversational snippets stored per set with an
+  ingestion flag to avoid duplicate processing.
+- **Semantic Commands** – structured add/delete directives returned by
+  the update prompt and validated before application.
+- **Semantic Memories** – typed objects used when consolidating duplicate
+  features and determining which rows to keep.
+
+## Ingestion Flow
+
+1. **Message Capture** – `add_persona_message` stores the raw content and
+   marks the set as dirty for later processing. The optional `speaker`
+   metadata is folded into the text for better grounding.
+2. **Dirty-Set Tracking** – `SemanticUpdateTrackerManager` counts
+   messages and elapsed time per set to decide when updates should run.
+3. **Background Loop** – `_background_ingestion_task` wakes on a fixed
+   interval, gathers all sets that crossed thresholds, and processes each
+   concurrently.
+4. **LLM Feature Update** – `_update_set_features_think` retrieves the
+   latest features, invokes `llm_feature_update`, and applies each
+   update command produced by the LLM.
+5. **Marking Progress** – message IDs that were processed are marked as
+   ingested in storage to prevent re-processing.
+
+## Consolidation Flow
+
+- `_consolidate_memories_if_applicable` asks storage for sections that
+  exceed the `consolidation_threshold` and dispatches each to
+  `_deduplicate_features`.
+- `llm_consolidate_features` returns `keep_memories` plus new aggregated
+  memories. Existing entries not referenced in `keep_memories` are
+  deleted, and consolidated memories are written back with merged
+  citations.
+- Cache entries for the set are invalidated whenever consolidation
+  mutates the feature set to keep reads consistent.
+
+
