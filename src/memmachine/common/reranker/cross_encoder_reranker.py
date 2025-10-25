@@ -2,11 +2,26 @@
 Cross-encoder based reranker implementation.
 """
 
-from typing import Any
+import asyncio
 
+from pydantic import BaseModel, Field, InstanceOf
 from sentence_transformers import CrossEncoder
 
 from .reranker import Reranker
+
+
+class CrossEncoderRerankerParams(BaseModel):
+    """
+    Parameters for CrossEncoderReranker.
+
+    Attributes:
+        reranker_model (CrossEncoder):
+            The cross-encoder model to use for reranking.
+    """
+
+    cross_encoder: InstanceOf[CrossEncoder] = Field(
+        ..., description="The cross-encoder model to use for reranking"
+    )
 
 
 class CrossEncoderReranker(Reranker):
@@ -15,35 +30,25 @@ class CrossEncoderReranker(Reranker):
     based on their relevance to the query.
     """
 
-    _cross_encoders: dict[str, CrossEncoder] = {}
-
-    def __init__(self, config: dict[str, Any] = {}):
+    def __init__(self, params: CrossEncoderRerankerParams):
         """
         Initialize a CrossEncoderReranker
-        with the provided configuration.
+        with the provided parameters.
 
         Args:
-            config (dict[str, Any], optional):
-                Configuration dictionary containing:
-                - model_name (str, optional):
-                    Name of the pre-trained cross-encoder model to use
-                    (default: "cross-encoder/ms-marco-MiniLM-L6-v2").
+            params (CrossEncoderRerankerParams):
+                Parameters for the CrossEncoderReranker.
         """
         super().__init__()
 
-        model_name = config.get("model_name", "cross-encoder/ms-marco-MiniLM-L6-v2")
-
-        # TODO @edwinyyyu Remove: temporary fix for memory leak
-        if model_name not in CrossEncoderReranker._cross_encoders.keys():
-            CrossEncoderReranker._cross_encoders[model_name] = CrossEncoder(model_name)
-
-        self._cross_encoder = CrossEncoderReranker._cross_encoders[model_name]
+        self._cross_encoder = params.cross_encoder
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         scores = [
             float(score)
-            for score in self._cross_encoder.predict(
-                [(query, candidate) for candidate in candidates]
+            for score in await asyncio.to_thread(
+                self._cross_encoder.predict,
+                [(query, candidate) for candidate in candidates],
             )
         ]
         return scores

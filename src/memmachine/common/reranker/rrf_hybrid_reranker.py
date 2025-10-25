@@ -3,9 +3,28 @@ RRF hybrid reranker implementation.
 """
 
 import asyncio
-from typing import Any
+from collections import defaultdict
+
+from pydantic import BaseModel, Field, InstanceOf
 
 from .reranker import Reranker
+
+
+class RRFHybridRerankerParams(BaseModel):
+    """
+    Parameters for RRFHybridReranker.
+
+    Attributes:
+        rerankers (list[Reranker]):
+            List of rerankers to combine.
+        k (int):
+            The k parameter for Reciprocal Rank Fusion (default: 60).
+    """
+
+    rerankers: list[InstanceOf[Reranker]] = Field(
+        ..., description="List of rerankers to combine", min_length=1
+    )
+    k: int = Field(60, description="The k parameter for Reciprocal Rank Fusion", ge=0)
 
 
 class RRFHybridReranker(Reranker):
@@ -14,74 +33,31 @@ class RRFHybridReranker(Reranker):
     using Reciprocal Rank Fusion (RRF).
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, params: RRFHybridRerankerParams):
         """
-        Initialize a RRFHybridReranker with the provided configuration.
+        Initialize a RRFHybridReranker with the provided parameters.
 
         Args:
-            config (dict[str, Any]):
-                Configuration dictionary containing:
-                - rerankers (list[Reranker]):
-                    List of reranker instances to combine.
-                - k (int, optional):
-                    The k parameter for RRF (default: 60).
-
-        Raises:
-            ValueError:
-                If configuration argument values are missing or invalid.
-            TypeError:
-                If configuration argument values are of incorrect type.
+            params (RRFHybridRerankerParams):
+                Parameters for the RRFHybridReranker.
         """
         super().__init__()
 
-        self._rerankers = config.get("rerankers", [])
-        if not isinstance(self._rerankers, list):
-            raise TypeError("Rerankers must be provided in a list")
-        if not all(isinstance(reranker, Reranker) for reranker in self._rerankers):
-            raise TypeError("All items in rerankers list must be Reranker instances")
-        if len(self._rerankers) == 0:
-            raise ValueError("At least one reranker must be provided")
-
-        self._k = config.get("k", 60)
-        if not isinstance(self._k, int) or self._k < 0:
-            raise ValueError("k must be a nonnegative integer")
+        self._rerankers = params.rerankers
+        self._k = params.k
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
-        score_tasks = [
-            reranker.score(query, candidates) for reranker in self._rerankers
+        rerank_tasks = [
+            reranker.rerank(query, candidates) for reranker in self._rerankers
         ]
-        score_lists = await asyncio.gather(*score_tasks)
+        rankings = await asyncio.gather(*rerank_tasks)
 
-        rank_lists = [
-            RRFHybridReranker._get_ranks(score_list) for score_list in score_lists
-        ]
+        score_map: defaultdict[str, float] = defaultdict(float)
 
-        scores = [
-            sum(
-                [1 / (self._k + rank_list[candidate_index]) for rank_list in rank_lists]
-            )
-            for candidate_index in range(len(candidates))
-        ]
+        for ranking in rankings:
+            for rank, candidate in enumerate(ranking, start=1):
+                score_map[candidate] += 1 / (self._k + rank)
+
+        scores = [score_map[candidate] for candidate in candidates]
+
         return scores
-
-    @staticmethod
-    def _get_ranks(scores: list[float]) -> list[int]:
-        """
-        Convert a list of scores into ranks,
-        with rank 1 being the highest score.
-
-        Args:
-            scores (list[float]):
-                List of scores to convert to ranks.
-
-        Returns:
-            list[int]:
-                List of ranks corresponding to the input scores.
-        """
-        n = len(scores)
-        sorted_indices = sorted(range(n), key=lambda index: scores[index], reverse=True)
-        ranks = [0] * n
-        for rank, index in enumerate(sorted_indices):
-            ranks[index] = rank + 1
-
-        return ranks
