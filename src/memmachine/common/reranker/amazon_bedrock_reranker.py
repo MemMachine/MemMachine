@@ -8,8 +8,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-import boto3
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field
 
 from memmachine.common.data_types import ExternalServiceAPIError
 
@@ -18,17 +17,16 @@ from .reranker import Reranker
 logger = logging.getLogger(__name__)
 
 
-class AmazonBedrockRerankerConfig(BaseModel):
+class AmazonBedrockRerankerParams(BaseModel):
     """
-    Configuration for AmazonBedrockReranker.
+    Parameters for AmazonBedrockReranker.
 
     Attributes:
+        client (Any):
+            Boto3 Agents for Amazon Bedrock Runtime client
+            to use for making API calls.
         region (str):
-            AWS region where Bedrock is hosted.
-        aws_access_key_id (SecretStr):
-            AWS access key ID for authentication.
-        aws_secret_access_key (SecretStr):
-            AWS secret access key for authentication.
+            AWS region where the Bedrock model is hosted.
         model_id (str):
             ID of the Bedrock model to use for reranking
             (e.g. 'amazon.rerank-v1:0', 'cohere.rerank-v3-5:0').
@@ -38,27 +36,28 @@ class AmazonBedrockRerankerConfig(BaseModel):
             (default: {}).
     """
 
+    client: Any = Field(
+        ...,
+        description=(
+            "Boto3 Agents for Amazon Bedrock Runtime client to use for making API calls"
+        ),
+    )
     region: str = Field(
-        "us-west-2",
-        description="AWS region where Bedrock is hosted.",
-    )
-    aws_access_key_id: SecretStr = Field(
-        description=("AWS access key ID for authentication."),
-    )
-    aws_secret_access_key: SecretStr = Field(
-        description=("AWS secret access key for authentication."),
+        ...,
+        description="AWS region where the Bedrock model is hosted",
     )
     model_id: str = Field(
+        ...,
         description=(
             "ID of the Bedrock model to use for reranking "
-            "(e.g. 'amazon.rerank-v1:0', 'cohere.rerank-v3-5:0')."
+            "(e.g. 'amazon.rerank-v1:0', 'cohere.rerank-v3-5:0')"
         ),
     )
     additional_model_request_fields: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "Keys are request fields for the model "
-            "and values are values for those fields."
+            "and values are values for those fields"
         ),
     )
 
@@ -69,33 +68,26 @@ class AmazonBedrockReranker(Reranker):
     to score relevance of candidates to a query.
     """
 
-    def __init__(self, config: AmazonBedrockRerankerConfig):
+    def __init__(self, params: AmazonBedrockRerankerParams):
         """
         Initialize an AmazonBedrockReranker
-        with the provided configuration.
+        with the provided parameters.
         See https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_Rerank.html
 
         Args:
-            config (AmazonBedrockRerankerConfig):
+            params (AmazonBedrockRerankerParams):
                 Configuration for the reranker.
         """
         super().__init__()
 
-        region = config.region
-        aws_access_key_id = config.aws_access_key_id
-        aws_secret_access_key = config.aws_secret_access_key
-        additional_model_request_fields = config.additional_model_request_fields
+        self._client = params.client
 
-        self._model_id = config.model_id
+        additional_model_request_fields = params.additional_model_request_fields
 
-        self._client = boto3.client(
-            "bedrock-agent-runtime",
-            region_name=region,
-            aws_access_key_id=aws_access_key_id.get_secret_value(),
-            aws_secret_access_key=aws_secret_access_key.get_secret_value(),
+        self._model_id = params.model_id
+        model_arn = (
+            f"arn:aws:bedrock:{params.region}::foundation-model/{self._model_id}"
         )
-
-        model_arn = f"arn:aws:bedrock:{region}::foundation-model/{self._model_id}"
 
         self._model_configuration = {
             "additionalModelRequestFields": additional_model_request_fields,
