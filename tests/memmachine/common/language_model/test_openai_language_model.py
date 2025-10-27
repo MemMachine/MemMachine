@@ -82,7 +82,9 @@ def test_init_success(mock_async_openai, minimal_config):
 def test_init_with_full_config(mock_async_openai, full_config):
     """Test successful initialization with all optional parameters."""
     OpenAILanguageModel(full_config)
-    mock_async_openai.assert_called_once_with(api_key="test_api_key", default_headers={})
+    mock_async_openai.assert_called_once_with(
+        api_key="test_api_key", default_headers={}
+    )
 
 
 def test_init_missing_model():
