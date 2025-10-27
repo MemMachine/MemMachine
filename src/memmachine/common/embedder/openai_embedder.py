@@ -71,10 +71,10 @@ class OpenAIEmbedder(Embedder):
         self._model = model
 
         temp_client = openai.OpenAI(api_key=api_key, base_url=config.get("base_url"))
-        defHeaders={}
+        defHeaders = {}
         if config.get("bearer_token"):
-            defHeaders["Authorization"]=f"Bearer {config.get('bearer_token')}"
-        
+            defHeaders["Authorization"] = f"Bearer {config.get('bearer_token')}"
+
         # https://platform.openai.com/docs/guides/embeddings#embedding-models
         dimensions = config.get("dimensions")
         if dimensions is None:
@@ -97,7 +97,7 @@ class OpenAIEmbedder(Embedder):
                     input="\n",
                     model=self._model,
                     dimensions=dimensions,
-                    extra_headers=defHeaders
+                    extra_headers=defHeaders,
                 )
                 self._use_dimensions_parameter = True
             except openai.OpenAIError:
@@ -113,7 +113,9 @@ class OpenAIEmbedder(Embedder):
                 )
 
         self._dimensions = dimensions
-        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=config.get("base_url"),default_headers=defHeaders)
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key, base_url=config.get("base_url"), default_headers=defHeaders
+        )
 
         metrics_factory = config.get("metrics_factory")
         if metrics_factory is not None and not isinstance(
