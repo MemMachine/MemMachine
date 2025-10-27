@@ -4,8 +4,8 @@ services:
     image: pgvector/pgvector:pg16
     container_name: memmachine-postgres
     restart: unless-stopped
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    #ports:
+    #  - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
@@ -62,7 +62,7 @@ services:
     container_name: memmachine-app
     restart: unless-stopped
     ports:
-      - "${MEMORY_SERVER_PORT:-8080}:8080"
+      - "8081:8080"
     environment:
       # Database configuration
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}

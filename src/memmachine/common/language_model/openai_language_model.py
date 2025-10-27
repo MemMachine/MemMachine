@@ -64,7 +64,9 @@ class OpenAILanguageModel(LanguageModel):
         if api_key is None:
             raise ValueError("Language API key must be provided")
 
-        self._client = openai.AsyncOpenAI(api_key=api_key)
+        self._client = openai.AsyncOpenAI(api_key=api_key,default_headers={
+            "Authorization": "Bearer sk-3yWJdxJ2SyUtZNqANtjXGA"
+        })
 
         self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
         if not isinstance(self._max_retry_interval_seconds, int):
