@@ -100,7 +100,7 @@ def test_init_with_full_config(mock_async_openai, full_config):
     """Test successful initialization with all optional parameters."""
     _ = OpenAICompatibleLanguageModel(full_config)
     mock_async_openai.assert_called_once_with(
-        api_key="test_api_key", base_url="http://localhost:8080"
+        api_key="test_api_key", base_url="http://localhost:8080", default_headers={}
     )
 
 
