@@ -91,8 +91,7 @@ def max_retry_interval_seconds_config():
 def test_init_success(mock_async_openai, minimal_config):
     """Test successful initialization."""
     OpenAICompatibleLanguageModel(minimal_config)
-    mock_async_openai.assert_called_once_with(api_key="test_api_key", base_url=None)
-
+    mock_async_openai.assert_called_once_with(api_key="test_api_key", base_url=None, default_headers={})
 
 @patch(
     "memmachine.common.language_model.openai_compatible_language_model.openai.AsyncOpenAI"
