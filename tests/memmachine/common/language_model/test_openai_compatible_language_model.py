@@ -95,6 +95,7 @@ def test_init_success(mock_async_openai, minimal_config):
         api_key="test_api_key", base_url=None, default_headers={}
     )
 
+
 @patch(
     "memmachine.common.language_model.openai_compatible_language_model.openai.AsyncOpenAI"
 )
