@@ -59,7 +59,7 @@ print_error() {
 }
 
 print_prompt() {
-    echo -ne "${MAGENTA}[PROMPT]${NC} "
+    echo -ne "${MAGENTA}[PROMPT]${NC} " >&2
 }
 
 safe_sed_inplace() {
@@ -70,6 +70,14 @@ safe_sed_inplace() {
         # BSD/macOS sed
         sed -i '' "$1" "$2"
     fi
+}
+
+# Function to escape special characters for sed
+escape_for_sed() {
+    # Remove newlines and carriage returns first
+    local cleaned=$(echo "$1" | tr -d '\n\r')
+    # Escape special regex characters
+    echo "$cleaned" | sed 's/[[\.*^$()+?{|]/\\&/g' | sed 's/\\/\\\\/g'
 }
 
 # Check if Docker is installed
@@ -104,9 +112,79 @@ check_env_file() {
     fi
 }
 
+# Prompt user for LLM model selection based on provider
+select_llm_model() {
+    local provider="$1"
+    local llm_model=""
+    
+    case "$provider" in
+        "OPENAI")
+            print_prompt
+            read -p "Which OpenAI LLM model would you like to use? [gpt-4o-mini]: " llm_model
+            llm_model=${llm_model:-gpt-4o-mini}
+            print_success "Selected OpenAI LLM model: $llm_model" >&2
+            ;;
+        "BEDROCK")
+            print_prompt
+            read -p "Which AWS Bedrock LLM model would you like to use? [openai.gpt-oss-20b-1:0]: " llm_model
+            llm_model=${llm_model:-openai.gpt-oss-20b-1:0}
+            print_success "Selected AWS Bedrock LLM model: $llm_model" >&2
+            ;;
+        "OLLAMA")
+            print_prompt
+            read -p "Which Ollama LLM model would you like to use? [llama3]: " llm_model
+            llm_model=${llm_model:-llama3}
+            print_success "Selected Ollama LLM model: $llm_model" >&2
+            ;;
+        *)
+            print_warning "Unknown provider: $provider. Using default LLM model." >&2
+            llm_model="gpt-4o-mini"
+            ;;
+    esac
+    
+    echo "$llm_model"
+}
+
+# Prompt user for embedding model selection based on provider
+select_embedding_model() {
+    local provider="$1"
+    local embedding_model=""
+    
+    case "$provider" in
+        "OPENAI")
+            print_prompt
+            read -p "Which OpenAI embedding model would you like to use? [text-embedding-3-small]: " embedding_model
+            embedding_model=${embedding_model:-text-embedding-3-small}
+            print_success "Selected OpenAI embedding model: $embedding_model" >&2
+            ;;
+        "BEDROCK")
+            print_prompt
+            read -p "Which AWS Bedrock embedding model would you like to use? [amazon.titan-embed-text-v2:0]: " embedding_model
+            embedding_model=${embedding_model:-amazon.titan-embed-text-v2:0}
+            print_success "Selected AWS Bedrock embedding model: $embedding_model" >&2
+            ;;
+        "OLLAMA")
+            print_prompt
+            read -p "Which Ollama embedding model would you like to use? [nomic-embed-text]: " embedding_model
+            embedding_model=${embedding_model:-nomic-embed-text}
+            print_success "Selected Ollama embedding model: $embedding_model" >&2
+            ;;
+        *)
+            print_warning "Unknown provider: $provider. Using default embedding model." >&2
+            embedding_model="text-embedding-3-small"
+            ;;
+    esac
+    
+    echo "$embedding_model"
+}
+
 # Configure models based on selected provider
 configure_models_for_provider() {
     local provider="$1"
+    local llm_model="$2"
+    local embedding_model="$3"
+    local escaped_llm_model=$(escape_for_sed "$llm_model")
+    local escaped_embedding_model=$(escape_for_sed "$embedding_model")
     
     print_info "Configuring models for $provider provider..."
     
@@ -117,7 +195,11 @@ configure_models_for_provider() {
             safe_sed_inplace 's/llm_model: .*/llm_model: openai_model/' configuration.yml
             safe_sed_inplace 's/embedding_model: .*/embedding_model: openai_embedder/' configuration.yml
             safe_sed_inplace 's/model_name: .*/model_name: openai_model/' configuration.yml
-            print_success "Configured for OpenAI provider"
+            # Update only the OpenAI LLM model
+            safe_sed_inplace "/openai_model:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
+            # Update only the OpenAI embedder model
+            safe_sed_inplace "/openai_embedder:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
+            print_success "Configured for OpenAI provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         "BEDROCK")
             # Configure for Bedrock - use bedrock_model and aws_embedder_id
@@ -125,7 +207,11 @@ configure_models_for_provider() {
             safe_sed_inplace 's/llm_model: .*/llm_model: aws_model/' configuration.yml
             safe_sed_inplace 's/embedding_model: .*/embedding_model: aws_embedder_id/' configuration.yml
             safe_sed_inplace 's/model_name: .*/model_name: aws_model/' configuration.yml
-            print_success "Configured for Bedrock provider"
+            # Update only the AWS LLM model
+            safe_sed_inplace "/aws_model:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model_id: \".*\"|model_id: \"$escaped_llm_model\"|" configuration.yml
+            # Update only the AWS embedder model
+            safe_sed_inplace "/aws_embedder_id:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model_id: \".*\"|model_id: \"$escaped_embedding_model\"|" configuration.yml
+            print_success "Configured for Bedrock provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         "OLLAMA")
             # Configure for Ollama - use ollama_model and ollama_embedder
@@ -133,7 +219,11 @@ configure_models_for_provider() {
             safe_sed_inplace 's/llm_model: .*/llm_model: ollama_model/' configuration.yml
             safe_sed_inplace 's/embedding_model: .*/embedding_model: ollama_embedder/' configuration.yml
             safe_sed_inplace 's/model_name: .*/model_name: ollama_model/' configuration.yml
-            print_success "Configured for Ollama provider"
+            # Update only the Ollama LLM model
+            safe_sed_inplace "/ollama_model:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
+            # Update only the Ollama embedder model
+            safe_sed_inplace "/ollama_embedder:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
+            print_success "Configured for Ollama provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         *)
             print_warning "Unknown provider: $provider. Using default OpenAI configuration."
@@ -193,11 +283,17 @@ check_config_file() {
         # Ask user for provider path (OpenAI, Bedrock, or Ollama)
         print_prompt
         read -p "Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: " provider_input
-        local provider=$(echo "${provider_input:-OpenAI}" | tr '[:lower:]' '[:upper:]')
+        # Clean the input and set default
+        provider_input=$(echo "${provider_input:-OpenAI}" | tr -d '\n\r' | tr '[:lower:]' '[:upper:]')
+        local provider="$provider_input"
+        
+        # Debug output (remove in production)
+        # echo "DEBUG: Raw input: '${provider_input:-OpenAI}'"
+        # echo "DEBUG: Processed provider: '$provider'"
         
         # Validate provider selection
         if [[ "$provider" != "OPENAI" && "$provider" != "BEDROCK" && "$provider" != "OLLAMA" ]]; then
-            print_warning "Invalid provider selection: $provider. Defaulting to OpenAI."
+            print_warning "Invalid provider selection: '$provider'. Defaulting to OpenAI."
             provider="OPENAI"
         fi
         
@@ -215,8 +311,14 @@ check_config_file() {
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
             
+            # Ask user for LLM model selection
+            local selected_llm_model=$(select_llm_model "$provider")
+            
+            # Ask user for embedding model selection
+            local selected_embedding_model=$(select_embedding_model "$provider")
+            
             # Configure models based on selected provider
-            configure_models_for_provider "$provider"
+            configure_models_for_provider "$provider" "$selected_llm_model" "$selected_embedding_model"
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
@@ -279,15 +381,11 @@ set_provider_api_keys() {
                     print_prompt
                     read -p "Enter your AWS Region [us-west-2]: " aws_region
                     aws_region=${aws_region:-us-west-2}
-                    print_prompt
-                    read -p "Enter your Bedrock Model ID [openai.gpt-oss-20b-1:0]: " model_id
-                    model_id=${model_id:-openai.gpt-oss-20b-1:0}
                     
                     # Use different delimiters to avoid conflicts with special characters
                     safe_sed_inplace "s|aws_access_key_id: <AWS_ACCESS_KEY_ID>|aws_access_key_id: $aws_access_key|g" configuration.yml
                     safe_sed_inplace "s|aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>|aws_secret_access_key: $aws_secret_key|g" configuration.yml
                     safe_sed_inplace "s|region: .*|region: \"$aws_region\"|g" configuration.yml
-                    safe_sed_inplace "s|model_id: .*|model_id: \"$model_id\"|g" configuration.yml
                     print_success "Set AWS credentials and configuration in configuration.yml"
                 fi
             else
@@ -303,15 +401,6 @@ set_provider_api_keys() {
             
             safe_sed_inplace "s|base_url: .*|base_url: \"$base_url\"|g" configuration.yml
             print_success "Set Ollama base URL: $base_url"
-            
-            # Ask for model selection
-            print_prompt
-            read -p "Which Ollama model would you like to use? [llama3]: " ollama_model
-            ollama_model=${ollama_model:-llama3}
-            
-            # Update the model in the configuration
-            safe_sed_inplace "s|model: \".*\"|model: \"$ollama_model\"|g" configuration.yml
-            print_success "Set Ollama model: $ollama_model"
         fi
     fi
 }
@@ -626,11 +715,17 @@ case "${1:-}" in
         echo "  help                                                   Show this help message"
         echo ""
         echo "Provider Options:"
-        echo "  OpenAI    - Uses OpenAI's GPT models and text-embedding-3-small"
+        echo "  OpenAI    - Uses OpenAI's GPT models and embedding models"
+        echo "             Default LLM: gpt-4o-mini"
+        echo "             Default embedding: text-embedding-3-small"
         echo "             Requires: OpenAI API key"
-        echo "  Bedrock   - Uses AWS Bedrock models (Claude, Titan embeddings)"
+        echo "  Bedrock   - Uses AWS Bedrock models"
+        echo "             Default LLM: openai.gpt-oss-20b-1:0"
+        echo "             Default embedding: amazon.titan-embed-text-v2:0"
         echo "             Requires: AWS Access Key ID, Secret Key, Region, Model ID"
-        echo "  Ollama    - Uses local Ollama models (Llama3, nomic-embed-text)"
+        echo "  Ollama    - Uses local Ollama models"
+        echo "             Default LLM: llama3"
+        echo "             Default embedding: nomic-embed-text"
         echo "             Requires: Base URL (default: http://host.docker.internal:11434/v1)"
         echo ""
         echo "Features:"
