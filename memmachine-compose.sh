@@ -287,10 +287,6 @@ check_config_file() {
         provider_input=$(echo "${provider_input:-OpenAI}" | tr -d '\n\r' | tr '[:lower:]' '[:upper:]')
         local provider="$provider_input"
         
-        # Debug output (remove in production)
-        # echo "DEBUG: Raw input: '${provider_input:-OpenAI}'"
-        # echo "DEBUG: Processed provider: '$provider'"
-        
         # Validate provider selection
         if [[ "$provider" != "OPENAI" && "$provider" != "BEDROCK" && "$provider" != "OLLAMA" ]]; then
             print_warning "Invalid provider selection: '$provider'. Defaulting to OpenAI."
@@ -311,10 +307,10 @@ check_config_file() {
             cp "$CONFIG_SOURCE" configuration.yml
             print_success "Created configuration.yml file from $CONFIG_SOURCE"
             
-            # Ask user for LLM model selection
+            # LLM model selection
             local selected_llm_model=$(select_llm_model "$provider")
             
-            # Ask user for embedding model selection
+            # embedding model selection
             local selected_embedding_model=$(select_embedding_model "$provider")
             
             # Configure models based on selected provider
