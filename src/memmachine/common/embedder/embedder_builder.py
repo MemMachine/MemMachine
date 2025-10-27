@@ -77,6 +77,7 @@ class EmbedderBuilder(Builder):
                             "max_retry_interval_seconds", 120
                         ),
                         "base_url": config.get("base_url"),
+                        "bearer_token": config.get("bearer_token"),
                         "user_metrics_labels": config.get("user_metrics_labels", {}),
                     }
                 )

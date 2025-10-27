@@ -75,10 +75,10 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                     raise ValueError(f"Invalid base URL: {base_url}")
             except ValueError as e:
                 raise ValueError(f"Invalid base URL: {base_url}") from e
-
-        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers={
-            "Authorization": "Bearer sk-3yWJdxJ2SyUtZNqANtjXGA"
-        })
+        defHeaders={}
+        if config.get("bearer_token"):
+            defHeaders["Authorization"]=f"Bearer {config.get('bearer_token')}"
+        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url, default_headers=defHeaders)
 
         self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
         if not isinstance(self._max_retry_interval_seconds, int):
