@@ -140,12 +140,16 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
             try:
-                response = await self._client.chat.completions.create(
-                    model=self._model,
-                    messages=input_prompts,
-                    tools=tools,
-                    tool_choice=tool_choice if tool_choice is not None else "auto",
-                )  # type: ignore
+                args = {
+                    "model": self._model,
+                    "messages": input_prompts,
+                }
+                if tools:
+                    args["tools"] = tools
+                    args["tool_choice"] = (
+                        tool_choice if tool_choice is not None else "auto"
+                    )
+                response = await self._client.chat.completions.create(**args)  # type: ignore
                 break
             except (
                 openai.RateLimitError,
