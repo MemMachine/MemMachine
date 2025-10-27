@@ -62,15 +62,14 @@ services:
     container_name: memmachine-app
     restart: unless-stopped
     ports:
-      - "8081:8080"
+      - "${MEMORY_SERVER_PORT:-8080}:8080"
     environment:
       # Database configuration
-      POSTGRES_HOST: memmachine-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: memmachine
-      POSTGRES_PASS: ${POSTGRES_PASS:-memmachine_password}
-      POSTGRES_PASSWORD: memmachine_password
-      POSTGRES_DB: memmachine
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-memmachine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
+      POSTGRES_DB: ${POSTGRES_DB:-memmachine}
 
       # Neo4j configuration
       NEO4J_HOST: ${NEO4J_HOST:-neo4j}
