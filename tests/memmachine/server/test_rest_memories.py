@@ -144,10 +144,10 @@ def valid_session_headers():
 def alias_session_headers():
     """Provides valid headers using alias names for session fields."""
     return {
-        "group-id": "group-alias",
-        "session-id": "session-alias",
-        "agent-id": "agent5,agent6",
-        "user-id": "user5,user6",
+        "group_id": "group-alias",
+        "session_id": "session-alias",
+        "agent_id": "agent5,agent6",
+        "user_id": "user5,user6",
     }
 
 
