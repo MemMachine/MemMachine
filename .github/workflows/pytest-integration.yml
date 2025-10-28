@@ -30,6 +30,8 @@ jobs:
         test-paths: [
           "tests/memmachine/profile_memory/test_profile_memory_integration.py",
           "tests/memmachine/common/vector_graph_store/test_neo4j_vector_graph_store.py",
+          "tests/memmachine/rest_client/test_client.py",
+          "tests/memmachine/rest_client/test_memory.py",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
         python-version: [ "3.12", "3.13", "3.14" ]
@@ -45,4 +47,11 @@ jobs:
       - name: Test ${{ matrix.test-paths }} with python ${{ matrix.python-version }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration
+        run: |
+          if [[ "${{ matrix.test-paths }}" == tests/memmachine/rest_client/* ]]; then
+            # Unit tests for rest_client don't need integration marker
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }}
+          else
+            # Integration tests require integration marker
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration
+          fi
