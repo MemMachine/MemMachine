@@ -43,3 +43,19 @@ def async_locked(func):
             return await func(*args, **kwargs)
 
     return wrapper
+
+
+def get_default_headers(bearer_token: str) -> dict[str, str]:
+            """
+            Generate default headers for API requests based on configuration.
+            
+            Args:
+                bearer_token: the bearer token to use for authorization.
+                
+            Returns:
+                dict[str, str]: Dictionary of default headers
+            """
+            headers = {}
+            if bearer_token:
+                headers["Authorization"] = f"Bearer {bearer_token}"
+            return headers

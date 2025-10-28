@@ -12,6 +12,7 @@ import openai
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine.common.utils import get_default_headers 
 
 from .data_types import SimilarityMetric
 from .embedder import Embedder
@@ -71,10 +72,7 @@ class OpenAIEmbedder(Embedder):
         self._model = model
 
         temp_client = openai.OpenAI(api_key=api_key, base_url=config.get("base_url"))
-        defHeaders = {}
-        if config.get("bearer_token"):
-            defHeaders["Authorization"] = f"Bearer {config.get('bearer_token')}"
-
+        defHeaders = get_default_headers(config.get("bearer_token"))
         # https://platform.openai.com/docs/guides/embeddings#embedding-models
         dimensions = config.get("dimensions")
         if dimensions is None:
