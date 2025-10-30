@@ -475,13 +475,19 @@ class ProfileMemory:
     async def _background_ingestion_task(self):
         while not self._is_shutting_down:
             dirty_users = await self._dirty_users.get_users_to_update()
-            logger.debug("ProfileMemory - Background task checking for dirty users: %s", dirty_users)
+            logger.debug(
+                "ProfileMemory - Background task checking for dirty users: %s",
+                dirty_users,
+            )
 
             if len(dirty_users) == 0:
                 await asyncio.sleep(self.PROFILE_UPDATE_INTERVAL_SEC)
                 continue
 
-            logger.debug("ProfileMemory - Processing uningested memories for users: %s", dirty_users)
+            logger.debug(
+                "ProfileMemory - Processing uningested memories for users: %s",
+                dirty_users,
+            )
             await asyncio.gather(
                 *[self._process_uningested_memories(user_id) for user_id in dirty_users]
             )
@@ -504,9 +510,15 @@ class ProfileMemory:
         self,
         user_id: str,
     ):
-        logger.debug("ProfileMemory - Processing uningested memories for user: %s", user_id)
+        logger.debug(
+            "ProfileMemory - Processing uningested memories for user: %s", user_id
+        )
         message_isolation_groups = await self._get_isolation_grouped_memories(user_id)
-        logger.debug("ProfileMemory - Found %d message isolation groups for user %s", len(message_isolation_groups), user_id)
+        logger.debug(
+            "ProfileMemory - Found %d message isolation groups for user %s",
+            len(message_isolation_groups),
+            user_id,
+        )
 
         async def process_messages(messages):
             if len(messages) == 0:
@@ -518,13 +530,18 @@ class ProfileMemory:
 
             for i in range(0, len(messages) - 1):
                 message = messages[i]
-                logger.debug("ProfileMemory - Processing message %d for user %s", i, user_id)
+                logger.debug(
+                    "ProfileMemory - Processing message %d for user %s", i, user_id
+                )
                 await self._update_user_profile_think(message)
                 mark_tasks.append(
                     self._profile_storage.mark_messages_ingested([message["id"]])
                 )
 
-            logger.debug("ProfileMemory - Processing last message with consolidation for user %s", user_id)
+            logger.debug(
+                "ProfileMemory - Processing last message with consolidation for user %s",
+                user_id,
+            )
             await self._update_user_profile_think(messages[-1], wait_consolidate=True)
             mark_tasks.append(
                 self._profile_storage.mark_messages_ingested([messages[-1]["id"]])
@@ -570,13 +587,21 @@ class ProfileMemory:
             memory_content=memory_content,
         )
         # Use chain-of-thought to get entity profile update commands.
-        logger.debug("ProfileMemory - Calling LLM for profile update with user_id: %s", user_id)
+        logger.debug(
+            "ProfileMemory - Calling LLM for profile update with user_id: %s", user_id
+        )
         try:
             response_text, _ = await self._model.generate_response(
                 system_prompt=self._update_prompt, user_prompt=user_prompt
             )
-            logger.debug("ProfileMemory - LLM response received for user_id: %s", user_id)
-            logger.debug("ProfileMemory - Raw LLM response for user_id %s: %s", user_id, response_text)
+            logger.debug(
+                "ProfileMemory - LLM response received for user_id: %s", user_id
+            )
+            logger.debug(
+                "ProfileMemory - Raw LLM response for user_id %s: %s",
+                user_id,
+                response_text,
+            )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Error when update profile: %s", str(e))
             return
@@ -588,9 +613,9 @@ class ProfileMemory:
 
         # Strategy 1: Look for <think> tags
         if "<think>" in response_text and "</think>" in response_text:
-            thinking, _, response_json = response_text.removeprefix("<think>").rpartition(
-                "</think>"
-            )
+            thinking, _, response_json = response_text.removeprefix(
+                "<think>"
+            ).rpartition("</think>")
             thinking = thinking.strip()
         # Strategy 2: Look for JSON objects in the response
         else:
@@ -599,13 +624,13 @@ class ProfileMemory:
 
             # Look for JSON objects wrapped in various tags
             json_patterns = [
-                r'<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>',
-                r'<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>',
-                r'<profile>\s*(\{.*?\})\s*</profile>',
-                r'<json>\s*(\{.*?\})\s*</json>',
-                r'```json\s*(\{.*?\})\s*```',
-                r'```\s*(\{.*?\})\s*```',
-                r'<think>\s*(\{.*?\})\s*</think>'
+                r"<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>",
+                r"<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>",
+                r"<profile>\s*(\{.*?\})\s*</profile>",
+                r"<json>\s*(\{.*?\})\s*</json>",
+                r"```json\s*(\{.*?\})\s*```",
+                r"```\s*(\{.*?\})\s*```",
+                r"<think>\s*(\{.*?\})\s*</think>",
             ]
 
             response_json = ""
@@ -618,7 +643,9 @@ class ProfileMemory:
             # If no tagged JSON found, try to find JSON at the end of the response
             if not response_json:
                 # Look for the last JSON object in the response
-                json_match = re.search(r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})', response_text)
+                json_match = re.search(
+                    r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", response_text
+                )
                 if json_match:
                     response_json = json_match.group(1).strip()
                 else:
@@ -628,35 +655,41 @@ class ProfileMemory:
         # Clean up common JSON syntax issues
         if response_json:
             # Remove invalid syntax like "... (other tags remain the same)"
-            response_json = re.sub(r'\.\.\.\s*\([^)]*\)', '', response_json)
+            response_json = re.sub(r"\.\.\.\s*\([^)]*\)", "", response_json)
             # Remove trailing commas before closing braces
-            response_json = re.sub(r',(\s*[}\]])', r'\1', response_json)
+            response_json = re.sub(r",(\s*[}\]])", r"\1", response_json)
 
             # Fix common LLM JSON formatting issues
             # Fix unquoted property names (e.g., tag: "value" -> "tag": "value")
-            response_json = re.sub(r'(\w+):\s*', r'"\1": ', response_json)
+            response_json = re.sub(r"(\w+):\s*", r'"\1": ', response_json)
 
             # Fix single quotes to double quotes
             response_json = re.sub(r"'([^']*)'", r'"\1"', response_json)
 
             # Fix backticks to double quotes
-            response_json = re.sub(r'`([^`]*)`', r'"\1"', response_json)
+            response_json = re.sub(r"`([^`]*)`", r'"\1"', response_json)
 
             # Fix incomplete JSON structures (e.g., missing closing braces)
-            open_braces = response_json.count('{')
-            close_braces = response_json.count('}')
+            open_braces = response_json.count("{")
+            close_braces = response_json.count("}")
             if open_braces > close_braces:
-                response_json += '}' * (open_braces - close_braces)
+                response_json += "}" * (open_braces - close_braces)
 
             # Remove any remaining invalid characters
             response_json = response_json.strip()
 
-        logger.debug("ProfileMemory - Extracted JSON for user %s: %s", user_id, response_json)
+        logger.debug(
+            "ProfileMemory - Extracted JSON for user %s: %s", user_id, response_json
+        )
 
         # TODO: These really should not be raw data structures.
         try:
             profile_update_commands = json.loads(response_json)
-            logger.debug("ProfileMemory - Successfully parsed JSON for user %s: %s", user_id, profile_update_commands)
+            logger.debug(
+                "ProfileMemory - Successfully parsed JSON for user %s: %s",
+                user_id,
+                profile_update_commands,
+            )
         except ValueError as e:
             logger.warning(
                 "Unable to load language model output '%s' as JSON, Error %s. "
@@ -680,7 +713,7 @@ class ProfileMemory:
                         escape_next = False
                         continue
 
-                    if char == '\\':
+                    if char == "\\":
                         escape_next = True
                         current_json += char
                         continue
@@ -691,18 +724,24 @@ class ProfileMemory:
                     current_json += char
 
                     if not in_string:
-                        if char == '{':
+                        if char == "{":
                             brace_count += 1
-                        elif char == '}':
+                        elif char == "}":
                             brace_count -= 1
                             if brace_count == 0 and current_json.strip():
                                 # Found a complete JSON object
                                 try:
                                     obj = json.loads(current_json.strip())
                                     json_objects.append(obj)
-                                except (json.JSONDecodeError, ValueError) as decode_error:
+                                except (
+                                    json.JSONDecodeError,
+                                    ValueError,
+                                ) as decode_error:
                                     # Ignore malformed JSON fragments; continue scanning
-                                    logger.debug("Skipping invalid JSON object during extraction: %s", str(decode_error))
+                                    logger.debug(
+                                        "Skipping invalid JSON object during extraction: %s",
+                                        str(decode_error),
+                                    )
                                 current_json = ""
 
                 if json_objects:
@@ -714,9 +753,15 @@ class ProfileMemory:
                                 combined_json[f"{i}_{key}"] = value
 
                     profile_update_commands = combined_json
-                    logger.debug("ProfileMemory - Successfully extracted JSON from malformed response for user %s: %s", user_id, profile_update_commands)
+                    logger.debug(
+                        "ProfileMemory - Successfully extracted JSON from malformed response for user %s: %s",
+                        user_id,
+                        profile_update_commands,
+                    )
                 else:
-                    logger.warning("Could not extract valid JSON from malformed response. Proceeding with no profile update commands.")
+                    logger.warning(
+                        "Could not extract valid JSON from malformed response. Proceeding with no profile update commands."
+                    )
                     profile_update_commands = {}
                     return
 
@@ -724,7 +769,7 @@ class ProfileMemory:
                 logger.warning(
                     "Failed to extract JSON from malformed response. Error: %s. "
                     "Proceeding with no profile update commands.",
-                    str(extraction_error)
+                    str(extraction_error),
                 )
                 profile_update_commands = {}
                 return
@@ -803,10 +848,18 @@ class ProfileMemory:
 
             valid_commands.append(command)
 
-        logger.debug("ProfileMemory - Executing %d valid commands for user %s", len(valid_commands), user_id)
+        logger.debug(
+            "ProfileMemory - Executing %d valid commands for user %s",
+            len(valid_commands),
+            user_id,
+        )
         for command in valid_commands:
             if command["command"] == "add":
-                logger.debug("ProfileMemory - Adding profile feature for user %s: %s", user_id, command)
+                logger.debug(
+                    "ProfileMemory - Adding profile feature for user %s: %s",
+                    user_id,
+                    command,
+                )
                 await self.add_new_profile(
                     user_id,
                     command["feature"],
@@ -816,10 +869,17 @@ class ProfileMemory:
                     isolations=isolations,
                     # metadata=metadata
                 )
-                logger.debug("ProfileMemory - Successfully added profile feature for user %s", user_id)
+                logger.debug(
+                    "ProfileMemory - Successfully added profile feature for user %s",
+                    user_id,
+                )
             elif command["command"] == "delete":
                 value = command["value"] if "value" in command else None
-                logger.debug("ProfileMemory - Deleting profile feature for user %s: %s", user_id, command)
+                logger.debug(
+                    "ProfileMemory - Deleting profile feature for user %s: %s",
+                    user_id,
+                    command,
+                )
                 await self.delete_user_profile_feature(
                     user_id,
                     command["feature"],
@@ -854,7 +914,9 @@ class ProfileMemory:
                 system_prompt=self._consolidation_prompt,
                 user_prompt=json.dumps(memories),
             )
-            logger.debug("ProfileMemory - Raw LLM response for consolidation: %s", response_text)
+            logger.debug(
+                "ProfileMemory - Raw LLM response for consolidation: %s", response_text
+            )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Model Error when deduplicate profile: %s", str(e))
             return
@@ -866,9 +928,9 @@ class ProfileMemory:
 
         # Strategy 1: Look for <think> tags
         if "<think>" in response_text and "</think>" in response_text:
-            thinking, _, response_json = response_text.removeprefix("<think>").rpartition(
-                "</think>"
-            )
+            thinking, _, response_json = response_text.removeprefix(
+                "<think>"
+            ).rpartition("</think>")
             thinking = thinking.strip()
         # Strategy 2: Look for JSON objects in the response
         else:
@@ -877,13 +939,13 @@ class ProfileMemory:
 
             # Look for JSON objects wrapped in various tags
             json_patterns = [
-                r'<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>',
-                r'<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>',
-                r'<profile>\s*(\{.*?\})\s*</profile>',
-                r'<json>\s*(\{.*?\})\s*</json>',
-                r'```json\s*(\{.*?\})\s*```',
-                r'```\s*(\{.*?\})\s*```',
-                r'<think>\s*(\{.*?\})\s*</think>'
+                r"<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>",
+                r"<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>",
+                r"<profile>\s*(\{.*?\})\s*</profile>",
+                r"<json>\s*(\{.*?\})\s*</json>",
+                r"```json\s*(\{.*?\})\s*```",
+                r"```\s*(\{.*?\})\s*```",
+                r"<think>\s*(\{.*?\})\s*</think>",
             ]
 
             response_json = ""
@@ -896,7 +958,9 @@ class ProfileMemory:
             # If no tagged JSON found, try to find JSON at the end of the response
             if not response_json:
                 # Look for the last JSON object in the response
-                json_match = re.search(r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})', response_text)
+                json_match = re.search(
+                    r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", response_text
+                )
                 if json_match:
                     response_json = json_match.group(1).strip()
                 else:
@@ -906,33 +970,38 @@ class ProfileMemory:
         # Clean up common JSON syntax issues
         if response_json:
             # Remove invalid syntax like "... (other tags remain the same)"
-            response_json = re.sub(r'\.\.\.\s*\([^)]*\)', '', response_json)
+            response_json = re.sub(r"\.\.\.\s*\([^)]*\)", "", response_json)
             # Remove trailing commas before closing braces
-            response_json = re.sub(r',(\s*[}\]])', r'\1', response_json)
+            response_json = re.sub(r",(\s*[}\]])", r"\1", response_json)
 
             # Fix common LLM JSON formatting issues
             # Fix unquoted property names (e.g., tag: "value" -> "tag": "value")
-            response_json = re.sub(r'(\w+):\s*', r'"\1": ', response_json)
+            response_json = re.sub(r"(\w+):\s*", r'"\1": ', response_json)
 
             # Fix single quotes to double quotes
             response_json = re.sub(r"'([^']*)'", r'"\1"', response_json)
 
             # Fix backticks to double quotes
-            response_json = re.sub(r'`([^`]*)`', r'"\1"', response_json)
+            response_json = re.sub(r"`([^`]*)`", r'"\1"', response_json)
 
             # Fix incomplete JSON structures (e.g., missing closing braces)
-            open_braces = response_json.count('{')
-            close_braces = response_json.count('}')
+            open_braces = response_json.count("{")
+            close_braces = response_json.count("}")
             if open_braces > close_braces:
-                response_json += '}' * (open_braces - close_braces)
+                response_json += "}" * (open_braces - close_braces)
 
             # Remove any remaining invalid characters
             response_json = response_json.strip()
 
-        logger.debug("ProfileMemory - Extracted JSON for consolidation: %s", response_json)
+        logger.debug(
+            "ProfileMemory - Extracted JSON for consolidation: %s", response_json
+        )
         try:
             updated_profile_entries = json.loads(response_json)
-            logger.debug("ProfileMemory - Successfully parsed JSON for consolidation: %s", updated_profile_entries)
+            logger.debug(
+                "ProfileMemory - Successfully parsed JSON for consolidation: %s",
+                updated_profile_entries,
+            )
         except ValueError as e:
             logger.warning(
                 "Unable to load language model output '%s' as JSON, Error %s",
