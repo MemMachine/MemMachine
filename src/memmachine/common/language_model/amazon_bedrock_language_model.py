@@ -12,7 +12,7 @@ import boto3
 import botocore
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SessionData
 from memmachine.common.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
@@ -230,6 +230,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
             self._user_metrics_labels = config.user_metrics_labels or {}
             if not isinstance(self._user_metrics_labels, dict):
                 raise TypeError("user_metrics_labels must be a dictionary")
+            self._set_session_metrics_labels()
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
@@ -271,6 +272,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
+        session_data: SessionData | None = None,
     ) -> tuple[str, Any]:
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
@@ -349,33 +351,34 @@ class AmazonBedrockLanguageModel(LanguageModel):
 
         end_time = time.monotonic()
 
-        if self._collect_metrics:
-            if (response_usage := response.get("usage")) is not None:
-                self._input_tokens_usage_counter.increment(
-                    value=response_usage.get("inputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._output_tokens_usage_counter.increment(
-                    value=response_usage.get("outputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._total_tokens_usage_counter.increment(
-                    value=response_usage.get("totalTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._cache_read_input_tokens_usage_counter.increment(
-                    response_usage.get("cacheReadInputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._cache_read_input_tokens_usage_counter.increment(
-                    response_usage.get("cacheWriteInputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
+        if self._collect_metrics and session_data is not None:
+            for labels in session_data.generate_all_combinations():
+                if (response_usage := response.get("usage")) is not None:
+                    self._input_tokens_usage_counter.increment(
+                        value=response_usage.get("inputTokens", 0),
+                        labels=self._user_metrics_labels | labels,
+                    )
+                    self._output_tokens_usage_counter.increment(
+                        value=response_usage.get("outputTokens", 0),
+                        labels=self._user_metrics_labels | labels,
+                    )
+                    self._total_tokens_usage_counter.increment(
+                        value=response_usage.get("totalTokens", 0),
+                        labels=self._user_metrics_labels | labels,
+                    )
+                    self._cache_read_input_tokens_usage_counter.increment(
+                        response_usage.get("cacheReadInputTokens", 0),
+                        labels=self._user_metrics_labels | labels,
+                    )
+                    self._cache_read_input_tokens_usage_counter.increment(
+                        response_usage.get("cacheWriteInputTokens", 0),
+                        labels=self._user_metrics_labels | labels,
+                    )
 
-            self._latency_summary.observe(
-                value=end_time - start_time,
-                labels=self._user_metrics_labels,
-            )
+                self._latency_summary.observe(
+                    value=end_time - start_time,
+                    labels=self._user_metrics_labels | labels,
+                )
 
         text_block_strings = []
         function_calls_arguments = []

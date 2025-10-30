@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
+from memmachine.common.utils import isolations_to_session_data
 
 from .prompt_provider import ProfilePrompt
 from .storage.storage_base import ProfileStorageBase
@@ -564,7 +565,12 @@ class ProfileMemory:
         # Use chain-of-thought to get entity profile update commands.
         try:
             response_text, _ = await self._model.generate_response(
-                system_prompt=self._update_prompt, user_prompt=user_prompt
+                system_prompt=self._update_prompt,
+                user_prompt=user_prompt,
+                session_data=isolations_to_session_data(
+                    isolations=isolations,
+                    default_user_id=user_id,
+                ),
             )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Eror when update profile: %s", str(e))
@@ -694,13 +700,17 @@ class ProfileMemory:
                 user_id, thresh=5, isolations=isolations
             )
             await asyncio.gather(
-                *[self._deduplicate_profile(user_id, section) for section in s]
+                *[
+                    self._deduplicate_profile(user_id, section, isolations)
+                    for section in s
+                ]
             )
 
     async def _deduplicate_profile(
         self,
         user_id: str,
         memories: list[dict[str, Any]],
+        isolations: dict[str, bool | int | float | str] | None = None,
     ):
         """
         sends a list of features to an llm to consolidated
@@ -709,6 +719,10 @@ class ProfileMemory:
             response_text, _ = await self._model.generate_response(
                 system_prompt=self._consolidation_prompt,
                 user_prompt=json.dumps(memories),
+                session_data=isolations_to_session_data(
+                    isolations=isolations,
+                    default_user_id=user_id,
+                ),
             )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Model Error when deduplicate profile: %s", str(e))

@@ -3,13 +3,27 @@ Abstract base class for a language model.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import fields
 from typing import Any
+
+from memmachine.common.data_types import SessionData
 
 
 class LanguageModel(ABC):
     """
     Abstract base class for a language model.
     """
+
+    def __init__(self):
+        """Initialize the language model with an empty metrics labels dict."""
+        # Instance variable for metrics labels, managed by base class
+        self._user_metrics_labels: dict[str, str] = {}
+
+    def _set_session_metrics_labels(self):
+        """Append the SessionData field names to the user metrics labels."""
+        self._user_metrics_labels.update(
+            {session_data_field.name: "" for session_data_field in fields(SessionData)}
+        )
 
     @abstractmethod
     async def generate_response(
@@ -19,6 +33,7 @@ class LanguageModel(ABC):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
+        session_data: SessionData | None = None,
     ) -> tuple[str, Any]:
         """
         Generate a response based on the provided prompts and tools.

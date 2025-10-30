@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import openai
 import pytest
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SessionData
 from memmachine.common.language_model.openai_compatible_language_model import (
     OpenAICompatibleLanguageModel,
 )
@@ -409,11 +409,20 @@ async def test_metrics_collection(mock_async_openai, full_config):
     mock_client.chat.completions.create.return_value = mock_response
     mock_async_openai.return_value = mock_client
 
+    mock_session_data = SessionData(
+        group_id="test-group",
+        user_id=["test-user"],
+        session_id="test-session",
+        agent_id=["test-agent"],
+    )
+
     lm = OpenAICompatibleLanguageModel(full_config)
-    await lm.generate_response()
+    await lm.generate_response(session_data=mock_session_data)
 
     metrics_factory = full_config["metrics_factory"]
     labels = full_config["user_metrics_labels"]
+    for combination in mock_session_data.generate_all_combinations():
+        labels = labels | combination
 
     input_counter = metrics_factory.get_counter("test", "test")
     output_counter = metrics_factory.get_counter("test", "test")

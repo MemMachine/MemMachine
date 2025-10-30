@@ -14,6 +14,7 @@ import logging
 from collections import deque
 
 from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.utils import memory_context_to_session_data
 
 from ..data_types import Episode, MemoryContext
 
@@ -183,8 +184,11 @@ class SessionMemory:
             msg = self._summary_user_prompt.format(
                 episodes=episode_content, summary=self._summary
             )
+            # Generate the summary
             result = await self._model.generate_response(
-                system_prompt=self._summary_system_prompt, user_prompt=msg
+                system_prompt=self._summary_system_prompt,
+                user_prompt=msg,
+                session_data=memory_context_to_session_data(self._memory_context),
             )
             self._summary = result[0]
             logger.debug("Summary: %s\n", self._summary)

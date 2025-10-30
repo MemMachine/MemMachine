@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import openai
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SessionData
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
@@ -93,9 +93,10 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         self._collect_metrics = False
         if metrics_factory is not None:
             self._collect_metrics = True
-            self._user_metrics_labels = config.get("user_metrics_labels", {})
+            self._user_metrics_labels = config.get("user_metrics_labels") or {}
             if not isinstance(self._user_metrics_labels, dict):
                 raise TypeError("user_metrics_labels must be a dictionary")
+            self._set_session_metrics_labels()
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
@@ -126,6 +127,7 @@ class OpenAICompatibleLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
+        session_data: SessionData | None = None,
     ) -> tuple[str, Any]:
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
@@ -193,25 +195,26 @@ class OpenAICompatibleLanguageModel(LanguageModel):
 
         end_time = time.monotonic()
 
-        if self._collect_metrics:
-            if response.usage is not None:
-                self._input_tokens_usage_counter.increment(
-                    value=response.usage.prompt_tokens,
-                    labels=self._user_metrics_labels,
-                )
-                self._output_tokens_usage_counter.increment(
-                    value=response.usage.completion_tokens,
-                    labels=self._user_metrics_labels,
-                )
-                self._total_tokens_usage_counter.increment(
-                    value=response.usage.total_tokens,
-                    labels=self._user_metrics_labels,
-                )
+        if self._collect_metrics and session_data is not None:
+            for labels in session_data.generate_all_combinations():
+                if response.usage is not None:
+                    self._input_tokens_usage_counter.increment(
+                        value=response.usage.prompt_tokens,
+                        labels=self._user_metrics_labels | labels,
+                    )
+                    self._output_tokens_usage_counter.increment(
+                        value=response.usage.completion_tokens,
+                        labels=self._user_metrics_labels | labels,
+                    )
+                    self._total_tokens_usage_counter.increment(
+                        value=response.usage.total_tokens,
+                        labels=self._user_metrics_labels | labels,
+                    )
 
-            self._latency_summary.observe(
-                value=end_time - start_time,
-                labels=self._user_metrics_labels,
-            )
+                self._latency_summary.observe(
+                    value=end_time - start_time,
+                    labels=self._user_metrics_labels | labels,
+                )
 
         function_calls_arguments = []
         try:
