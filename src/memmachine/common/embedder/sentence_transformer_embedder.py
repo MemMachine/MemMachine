@@ -118,6 +118,7 @@ class SentenceTransformerEmbedder(Embedder):
                 self._sentence_transformer.encode,
                 inputs,
                 prompt_name=prompt_name,
+                show_progress_bar=False,
             )
         except Exception as e:
             # Exception may not be retried.

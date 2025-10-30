@@ -12,10 +12,10 @@ from collections.abc import Awaitable, Collection, Mapping
 from typing import Any, cast
 from uuid import UUID
 
-from neo4j import AsyncDriver, AsyncGraphDatabase
+from neo4j import AsyncDriver
 from neo4j.graph import Node as Neo4jNode
 from neo4j.time import DateTime as Neo4jDateTime
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.embedder import SimilarityMetric
 from memmachine.common.utils import async_locked, async_with
@@ -26,51 +26,30 @@ from .vector_graph_store import VectorGraphStore
 logger = logging.getLogger(__name__)
 
 
-class Neo4jVectorGraphStoreConfig(BaseModel):
+class Neo4jVectorGraphStoreParams(BaseModel):
     """
-    Configuration for Neo4jVectorGraphStore.
+    Parameters for Neo4jVectorGraphStore.
 
     Attributes:
-        uri (str | None):
-            Neo4j connection URI.
-        username (str | None):
-            Neo4j username.
-        password (pydantic.SecretStr | None):
-            Neo4j password.
+        driver (neo4j.AsyncDriver):
+            Async Neo4j driver instance.
         max_concurrent_transactions (int):
             Maximum number of concurrent transactions
             (default: 100).
         force_exact_similarity_search (bool):
             Whether to force exact similarity search.
             (default: False).
-        driver (neo4j.AsyncGraphDatabase | None):
-            Custom Neo4j driver instance.
-            If provided: uri, username, and password are ignored.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    uri: str | None = Field(None, description="Neo4j connection URI")
-    username: str | None = Field(None, description="Neo4j username")
-    password: SecretStr | None = Field(None, description="Neo4j password")
+    driver: InstanceOf[AsyncDriver] = Field(
+        ..., description="Async Neo4j driver instance"
+    )
     max_concurrent_transactions: int = Field(
         100, description="Maximum number of concurrent transactions", gt=0
     )
     force_exact_similarity_search: bool = Field(
         False, description="Whether to force exact similarity search"
     )
-    driver: AsyncDriver | None = Field(None, description="Custom Neo4j driver instance")
-
-    @model_validator(mode="after")
-    def check_driver_or_connection_info(self):
-        if self.driver is None:
-            if self.uri is None:
-                raise ValueError("Either Neo4j driver or URI must be provided")
-            if self.username is None:
-                raise ValueError("Either Neo4j driver or username must be provided")
-            if self.password is None:
-                raise ValueError("Either Neo4j driver or password must be provided")
-        return self
 
 
 # https://neo4j.com/developer/kb/protecting-against-cypher-injection
@@ -81,28 +60,21 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     Asynchronous Neo4j-based implementation of VectorGraphStore.
     """
 
-    def __init__(self, config: Neo4jVectorGraphStoreConfig):
+    def __init__(self, params: Neo4jVectorGraphStoreParams):
         """
         Initialize a Neo4jVectorGraphStore
-        with the provided configuration.
+        with the provided parameters.
 
         Args:
-            config (Neo4jVectorGraphStoreConfig):
-                Configuration for the vector graph store.
+            params (Neo4jVectorGraphStoreParams):
+                Parameters for the Neo4jVectorGraphStore.
         """
         super().__init__()
 
-        driver = config.driver
-        if driver is None:
-            uri = cast(str, config.uri)
-            username = cast(str, config.username)
-            password = cast(SecretStr, config.password).get_secret_value()
-            self._driver = AsyncGraphDatabase.driver(uri, auth=(username, password))
-        else:
-            self._driver = cast(AsyncDriver, driver)
+        self._driver = params.driver
 
-        self._semaphore = asyncio.Semaphore(config.max_concurrent_transactions)
-        self._force_exact_similarity_search = config.force_exact_similarity_search
+        self._semaphore = asyncio.Semaphore(params.max_concurrent_transactions)
+        self._force_exact_similarity_search = params.force_exact_similarity_search
 
         self._vector_index_name_cache: set[str] = set()
 

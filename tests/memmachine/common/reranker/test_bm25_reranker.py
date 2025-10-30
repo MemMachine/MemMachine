@@ -1,13 +1,19 @@
+import re
+
 import pytest
 
 from memmachine import setup_nltk
-from memmachine.common.reranker.bm25_reranker import BM25Reranker
+from memmachine.common.reranker.bm25_reranker import BM25Reranker, BM25RerankerParams
 
 
 @pytest.fixture
 def reranker():
     setup_nltk()
-    return BM25Reranker()
+    return BM25Reranker(
+        BM25RerankerParams(
+            tokenize=lambda text: re.sub(r"\W+", " ", text).lower().split()
+        )
+    )
 
 
 @pytest.fixture(params=["Are tomatoes fruits?", ""])
@@ -39,7 +45,7 @@ async def test_score(reranker, query, candidates):
 async def test_score_values(reranker):
     query = "What is the capital of France?"
     candidates = [
-        "The Eiffel Tower is in Paris.",
+        "Hello, world!",
         "Berlin is the capital of Germany.",
         "Paris is the capital of France.",
     ]
@@ -48,11 +54,3 @@ async def test_score_values(reranker):
 
     assert scores == sorted(scores)
     assert scores != reversed(scores)
-
-
-def test_invalid_languages():
-    with pytest.raises(ValueError):
-        BM25Reranker(config={"languages": "invalid_language"})
-
-    with pytest.raises(ValueError):
-        BM25Reranker(config={"languages": ["english", "invalid_language"]})

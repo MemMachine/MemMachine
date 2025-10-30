@@ -18,17 +18,17 @@
 set -euo pipefail
 
 # --- Configuration ---
-readonly SCRIPT_NAME="build-local.sh"
+readonly SCRIPT_NAME="build-docker.sh"
 readonly IMAGE_NAME="memmachine/memmachine"
 readonly BUILDER_NAME="memmachine_builder"
 
 # --- Helper Functions for Colored Output ---
 if tput setaf 1 >&/dev/null; then
-    readonly COLOR_RESET="\e[0m"
-    readonly COLOR_RED="\e[31m"
-    readonly COLOR_GREEN="\e[32m"
-    readonly COLOR_YELLOW="\e[33m"
-    readonly COLOR_BLUE="\e[34m"
+    readonly COLOR_RESET="$(tput sgr0)"
+    readonly COLOR_RED="$(tput setaf 1)"
+    readonly COLOR_GREEN="$(tput setaf 2)"
+    readonly COLOR_YELLOW="$(tput setaf 3)"
+    readonly COLOR_BLUE="$(tput setaf 4)"
 else
     readonly COLOR_RESET=""
     readonly COLOR_RED=""
@@ -37,9 +37,9 @@ else
     readonly COLOR_BLUE=""
 fi
 
-msg() { echo -e "${COLOR_BLUE}==>${COLOR_RESET} ${COLOR_YELLOW}$1${COLOR_RESET}"; }
-success() { echo -e "${COLOR_BLUE}==>${COLOR_RESET} ${COLOR_GREEN}$1${COLOR_RESET}"; }
-error() { echo -e "${COLOR_RED}ERROR:${COLOR_RESET} $1" >&2; exit 1; }
+msg() { echo "${COLOR_BLUE}==>${COLOR_RESET} ${COLOR_YELLOW}$1${COLOR_RESET}"; }
+success() { echo "${COLOR_BLUE}==>${COLOR_RESET} ${COLOR_GREEN}$1${COLOR_RESET}"; }
+error() { echo "${COLOR_RED}ERROR:${COLOR_RESET} $1" >&2; exit 1; }
 
 # --- Script Functions ---
 
@@ -209,7 +209,8 @@ print_summary_and_confirm() {
 
 build_image() {
     local build_type="$1"
-    msg "Preparing to build ${build_type^^} image..."
+    local build_type_upper=$(echo "$build_type" | tr '[:lower:]' '[:upper:]')
+    msg "Preparing to build ${build_type_upper} image..."
     local build_args=""; if [[ "$build_type" == "gpu" ]]; then build_args="--build-arg GPU=true"; fi
 
     local docker_tags=(); docker_tags+=("--tag" "${IMAGE_NAME}:${VERSION}-${build_type}")
@@ -227,13 +228,13 @@ build_image() {
     fi
 
     # shellcheck disable=SC2086
-    docker buildx build --platform "${PLATFORMS}" ${build_args} "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build for ${build_type^^} failed."
+    docker buildx build --platform "${PLATFORMS}" ${build_args} "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build for ${build_type_upper} failed."
 
     if [[ "$ACTION" == "Local Build" ]]; then
-        success "${build_type^^} image built successfully!"
+        success "${build_type_upper} image built successfully!"
         msg "To test it, run: docker run -it --rm ${IMAGE_NAME}:${VERSION}-${build_type} bash"
     else
-        success "${build_type^^} image build and push completed successfully!"
+        success "${build_type_upper} image build and push completed successfully!"
     fi
 }
 

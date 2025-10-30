@@ -22,7 +22,7 @@ from typing import Any, Self, cast
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Depends
 from fastapi.responses import Response
@@ -155,7 +155,7 @@ class SessionData(BaseModel):
     )
 
     user_id: list[str] = Field(
-        default=[AppConst.DEFAULT_USER_ID],
+        default=[],
         description=AppConst.USER_ID_DOC,
         examples=AppConst.USER_ID_EXAMPLES,
     )
@@ -180,11 +180,14 @@ class SessionData(BaseModel):
                 ret = a or b
             return sorted(ret)
 
-        if other.group_id:
+        if other.group_id and other.group_id != AppConst.DEFAULT_GROUP_ID:
             self.group_id = other.group_id
 
-        if other.session_id:
+        if other.session_id and other.session_id != AppConst.DEFAULT_SESSION_ID:
             self.session_id = other.session_id
+
+        if other.user_id == [AppConst.DEFAULT_USER_ID]:
+            other.user_id = []
 
         self.agent_id = merge_lists(self.agent_id, other.agent_id)
         self.user_id = merge_lists(self.user_id, other.user_id)
@@ -224,7 +227,7 @@ class SessionData(BaseModel):
     @model_validator(mode="after")
     def _set_default_user_id(self) -> Self:
         """Defaults user_id to ['default'] if not set."""
-        if len(self.user_id) == 0:
+        if len(self.user_id) == 0 and len(self.agent_id) == 0:
             self.user_id = [AppConst.DEFAULT_USER_ID]
         else:
             self.user_id = sorted(self.user_id)
@@ -391,6 +394,7 @@ def _split_str_to_list(s: str) -> list[str]:
 
 
 async def _get_session_from_header(
+    request: Request,
     group_id: str = Header(
         AppConst.DEFAULT_GROUP_ID,
         alias=AppConst.GROUP_ID_KEY,
@@ -417,6 +421,23 @@ async def _get_session_from_header(
     ),
 ) -> SessionData:
     """Extract session data from headers and return a SessionData object."""
+    group_id_keys = [AppConst.GROUP_ID_KEY, "group_id"]
+    session_id_keys = [AppConst.SESSION_ID_KEY, "session_id"]
+    agent_id_keys = [AppConst.AGENT_ID_KEY, "agent_id"]
+    user_id_keys = [AppConst.USER_ID_KEY, "user_id"]
+    headers = request.headers
+
+    def get_with_alias(possible_keys: list[str], default: str):
+        for key in possible_keys:
+            for hk, hv in headers.items():
+                if hk.lower() == key.lower():
+                    return hv
+        return default
+
+    group_id = get_with_alias(group_id_keys, group_id)
+    session_id = get_with_alias(session_id_keys, session_id)
+    agent_id = get_with_alias(agent_id_keys, agent_id)
+    user_id = get_with_alias(user_id_keys, user_id)
     return SessionData(
         group_id=group_id,
         session_id=session_id,

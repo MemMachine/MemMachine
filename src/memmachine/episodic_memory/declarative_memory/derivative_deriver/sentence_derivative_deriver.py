@@ -3,13 +3,29 @@ A derivative deriver that splits episode content into sentences
 and creates derivatives for each sentence.
 """
 
-from typing import Any
 from uuid import uuid4
 
 from nltk import sent_tokenize
+from pydantic import BaseModel, Field
 
 from ..data_types import ContentType, Derivative, EpisodeCluster
 from .derivative_deriver import DerivativeDeriver
+
+
+class SentenceDerivativeDeriverParams(BaseModel):
+    """
+    Parameters for SentenceDerivativeDeriver.
+
+    Attributes:
+        derivative_type (str):
+            The type to assign to the derived derivatives
+            (default: "sentence").
+    """
+
+    derivative_type: str = Field(
+        "sentence",
+        description="The type to assign to the derived derivatives",
+    )
 
 
 class SentenceDerivativeDeriver(DerivativeDeriver):
@@ -18,21 +34,18 @@ class SentenceDerivativeDeriver(DerivativeDeriver):
     and creates derivatives for each sentence.
     """
 
-    def __init__(self, config: dict[str, Any] = {}):
+    def __init__(self, params: SentenceDerivativeDeriverParams):
         """
         Initialize a SentenceDerivativeDeriver
-        with the provided configuration.
+        with the provided parameters.
 
         Args:
-            config (dict[str, Any], optional):
-                Configuration dictionary containing:
-                - derivative_type (str, optional):
-                  The type to assign
-                  to the derived derivatives (default: "sentence").
+            params (SentenceDerivativeDeriverParams):
+                Parameters for the SentenceDerivativeDeriver.
         """
         super().__init__()
 
-        self._derivative_type = config.get("derivative_type", "sentence")
+        self._derivative_type = params.derivative_type
 
     async def derive(self, episode_cluster: EpisodeCluster) -> list[Derivative]:
         return [
@@ -46,5 +59,6 @@ class SentenceDerivativeDeriver(DerivativeDeriver):
                 user_metadata=episode.user_metadata,
             )
             for episode in episode_cluster.episodes
-            for sentence in sent_tokenize(episode.content)
+            for line in episode.content.splitlines()
+            for sentence in sent_tokenize(line)
         ]

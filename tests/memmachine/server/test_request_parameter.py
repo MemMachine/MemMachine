@@ -66,3 +66,46 @@ def test_default_producer_with_empty_session():
     session = SessionData()
     episode = NewEpisode(session=session)
     assert episode.producer == "default"
+
+
+def test_merge_session_data_with_default():
+    session = SessionData(
+        user_id=["dave", "carol"],
+        group_id="group_a",
+        session_id="session_b",
+        agent_id=["my_agent", "another_agent"],
+    )
+    dft_session = SessionData()
+    session.merge(dft_session)
+    assert session.user_id == ["carol", "dave"]
+    assert session.group_id == "group_a"
+    assert session.session_id == "session_b"
+    assert session.agent_id == ["another_agent", "my_agent"]
+
+
+def test_no_default_agent_if_user_exists():
+    session = SessionData(
+        user_id=["dave", "carol"],
+        group_id="group_a",
+        session_id="session_b",
+    )
+    dft_session = SessionData()
+    session.merge(dft_session)
+    assert session.user_id == ["carol", "dave"]
+    assert session.group_id == "group_a"
+    assert session.session_id == "session_b"
+    assert session.agent_id == []
+
+
+def test_no_default_user_if_agent_exists():
+    session = SessionData(
+        group_id="group_a",
+        session_id="session_b",
+        agent_id=["my_agent", "another_agent"],
+    )
+    dft_session = SessionData()
+    session.merge(dft_session)
+    assert session.user_id == []
+    assert session.group_id == "group_a"
+    assert session.session_id == "session_b"
+    assert session.agent_id == ["another_agent", "my_agent"]

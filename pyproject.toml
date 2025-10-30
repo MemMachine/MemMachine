@@ -63,6 +63,7 @@ dev = [
 [tool.mypy]
 follow_untyped_imports = true
 exclude = ["venv/", ".venv/"]
+plugins = ['pydantic.mypy']
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

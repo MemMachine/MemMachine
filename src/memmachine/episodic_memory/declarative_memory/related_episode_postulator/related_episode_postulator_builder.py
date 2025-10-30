@@ -40,15 +40,16 @@ class RelatedEpisodePostulatorBuilder(Builder):
             case "previous":
                 from .previous_related_episode_postulator import (
                     PreviousRelatedEpisodePostulator,
+                    PreviousRelatedEpisodePostulatorParams,
                 )
 
-                populated_config = {
-                    "vector_graph_store": injections[config["vector_graph_store_id"]],
-                    "search_limit": config.get("search_limit", 1),
-                    "filterable_property_keys": config.get(
+                params = PreviousRelatedEpisodePostulatorParams(
+                    vector_graph_store=injections[config["vector_graph_store_id"]],
+                    search_limit=config.get("search_limit", 1),
+                    filterable_property_keys=config.get(
                         "filterable_property_keys", set()
                     ),
-                }
-                return PreviousRelatedEpisodePostulator(populated_config)
+                )
+                return PreviousRelatedEpisodePostulator(params)
             case _:
                 raise ValueError(f"Unknown RelatedEpisodePostulator name: {name}")
