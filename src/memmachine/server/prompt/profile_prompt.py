@@ -23,7 +23,7 @@ UPDATE_PROMPT = """
     - Learning Preferences: Preferred modes of receiving information.
     - Cognitive Style: How the user processes information or makes decisions.
     - Emotional Drivers: Motivators like fear of error or desire for clarity.
-    - Personal Values: User’s core values or principles.
+    - Personal Values: User's core values or principles.
     - Career & Work Preferences: Interests, titles, domains related to work.
     - Productivity Style: User's work rhythm, focus preference, or task habits.
     - Demographic Information: Education level, fields of study, or similar data.
@@ -43,7 +43,7 @@ UPDATE_PROMPT = """
     - Time Usage Patterns: Frequency and habits of use.
     - Preferred Content Format: Formats preferred for answers (e.g., tables, bullet points).
     - Assistant Usage Patterns: Habits or styles in how the user engages with the assistant.
-    - Language Preferences: Preferred tone and structure of assistant’s language.
+    - Language Preferences: Preferred tone and structure of assistant's language.
     - Motivation Triggers: Traits that drive engagement or satisfaction.
     - Behavior Under Stress: How the user reacts to failures or inaccurate responses.
 
@@ -223,9 +223,9 @@ UPDATE_PROMPT = """
 
 
     To update the user's profile, you will output a JSON document containing a list of commands to be executed in sequence.
-    
+
     CRITICAL: You MUST use the command format below. Do NOT create nested objects or use any other format.
-    
+
     The following output will add a feature:
     {
         "0": {
@@ -300,7 +300,7 @@ UPDATE_PROMPT = """
         },
         "2": {
             "command": "add",
-            "tag": "Demographic Information",
+            "tag": "Communication Style",
             "feature": "informal_speech",
             "value": "User speaks with all lower case letters and contemporary slang terms."
         },
