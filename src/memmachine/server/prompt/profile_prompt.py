@@ -345,6 +345,7 @@ UPDATE_PROMPT = """
     - Listen to any additional instructions specific to the execution context provided underneath 'EXTRA EXTERNAL INSTRUCTIONS'
     - First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON.
     - REMEMBER: Always use the command format with "command", "tag", "feature", and "value" keys. Never use nested objects or any other format.
+    - CRITICAL: Do NOT wrap your JSON response in markdown code blocks (```json). Return ONLY the raw JSON object.
 EXTRA EXTERNAL INSTRUCTIONS:
 NONE
 """

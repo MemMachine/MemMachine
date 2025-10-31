@@ -554,6 +554,31 @@ class ProfileMemory:
 
         await asyncio.gather(*tasks)
 
+    def _clean_json_response(self, response_text: str) -> str:
+        """
+        Clean JSON response by removing markdown code blocks and extra whitespace.
+
+        Args:
+            response_text: Raw response text from language model
+
+        Returns:
+            Cleaned JSON string
+        """
+        # Remove markdown code blocks
+        if response_text.strip().startswith("```json"):
+            # Remove ```json at the beginning
+            response_text = response_text.strip()[7:]
+        elif response_text.strip().startswith("```"):
+            # Remove ``` at the beginning
+            response_text = response_text.strip()[3:]
+
+        if response_text.strip().endswith("```"):
+            # Remove ``` at the end
+            response_text = response_text.strip()[:-3]
+
+        # Remove extra whitespace
+        return response_text.strip()
+
     async def _update_user_profile_think(
         self,
         record: Any,
@@ -682,9 +707,12 @@ class ProfileMemory:
             "ProfileMemory - Extracted JSON for user %s: %s", user_id, response_json
         )
 
+        # Clean JSON response from markdown code blocks
+        cleaned_json = self._clean_json_response(response_json)
+
         # TODO: These really should not be raw data structures.
         try:
-            profile_update_commands = json.loads(response_json)
+            profile_update_commands = json.loads(cleaned_json)
             logger.debug(
                 "ProfileMemory - Successfully parsed JSON for user %s: %s",
                 user_id,
