@@ -10,10 +10,12 @@ import logging
 import re
 from collections.abc import Awaitable, Collection, Mapping
 from typing import Any, cast
+import unicodedata
 from uuid import UUID
+from collections import defaultdict
 
 from neo4j import AsyncDriver
-from neo4j.graph import Node as Neo4jNode
+from neo4j.graph import Node as Neo4jNode, Relationship as Neo4jRelationship
 from neo4j.time import DateTime as Neo4jDateTime
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -77,6 +79,77 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         self._force_exact_similarity_search = params.force_exact_similarity_search
 
         self._vector_index_name_cache: set[str] = set()
+
+    @async_locked
+    async def create_fulltext_index(self):
+        relation = Neo4jVectorGraphStore._sanitize_name("HAS_RELATION")
+        field_name = Neo4jVectorGraphStore._sanitize_name("triple_text")
+        await self._driver.execute_query(
+            "CREATE FULLTEXT INDEX rel_tripletext_fts IF NOT EXISTS\n"
+            f"FOR ()-[r:{relation}]-() ON EACH [r.{field_name}]\n"
+            """
+            OPTIONS {
+            indexConfig: { `fulltext.analyzer`: 'simple' }
+            };
+            """,
+        )
+
+        await self._driver.execute_query(
+            """
+            CREATE FULLTEXT INDEX node_name_fts IF NOT EXISTS
+            FOR (n:Entity) ON EACH [n.name]
+            OPTIONS {
+            indexConfig: { `fulltext.analyzer`: 'simple' }
+            };
+            """,
+        )
+
+        await self._driver.execute_query(
+            # Fast lookups by uuid
+            """
+            CREATE CONSTRAINT entity_uuid_unique IF NOT EXISTS
+            FOR (n:Entity) REQUIRE n.uuid IS UNIQUE;
+            """,
+        )
+
+        await self._driver.execute_query(
+            # Fast lookups by uuid
+            """
+            CREATE CONSTRAINT episode_uuid_unique IF NOT EXISTS
+            FOR (n:Episode) REQUIRE n.uuid IS UNIQUE;
+            """,
+        )
+
+        await self._driver.execute_query(
+            # Fast lookups by uuid
+            """
+            CREATE CONSTRAINT episode_uuid_unique IF NOT EXISTS
+            FOR (n:EpisodeCluster) REQUIRE n.uuid IS UNIQUE;
+            """,
+        )
+
+        session_id = Neo4jVectorGraphStore._sanitize_name("session_id")
+        await self._driver.execute_query(
+            f"""
+            CREATE INDEX episode_session_id_idx IF NOT EXISTS
+            FOR (n:EpisodeCluster) ON (n.{session_id});
+            """,
+        )
+
+        await self._driver.execute_query(
+            f"""
+            CREATE INDEX episode_session_id_idx IF NOT EXISTS
+            FOR (n:Episode) ON (n.{session_id});
+            """,
+        )
+
+        await self._driver.execute_query(
+            f"""
+            CREATE INDEX entity_session_id_idx IF NOT EXISTS
+            FOR (n:Entity) ON (n.{session_id});
+            """,
+        )
+
 
     async def add_nodes(self, nodes: Collection[Node]):
         labels_nodes_map: dict[tuple[str, ...], list[Node]] = {}
@@ -272,6 +345,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         required_labels: Collection[str] | None = None,
         required_properties: Mapping[str, Property] = {},
         include_missing_properties: bool = False,
+        index_search_label: str = "",
     ) -> list[Node]:
         if not (find_sources or find_targets):
             return []
@@ -285,21 +359,30 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             else ["[]"]
         )
 
+        session_id_index = ""
+        session_id = ""
+        required_properties_copy = dict(required_properties)
+        if "session_id" in required_properties_copy:
+            session_id = required_properties_copy["session_id"]
+            session_id_index = f"{{{Neo4jVectorGraphStore._sanitize_name('session_id')}: $session_id}}"
+            required_properties_copy.pop("session_id")
+
         search_related_nodes_tasks = [
             async_with(
                 self._semaphore,
                 self._driver.execute_query(
-                    "MATCH\n"
-                    "    (m {uuid: $node_uuid})"
-                    f"    {'-' if find_targets else '<-'}"
-                    f"    {query_typed_relation}"
-                    f"    {'-' if find_sources else '->'}"
-                    f"    (n{Neo4jVectorGraphStore._format_labels(required_labels)})"
+                    f"MATCH (m{index_search_label} {{uuid: $node_uuid}})\n"
+                    f"MATCH (n{Neo4jVectorGraphStore._format_labels(required_labels)} {session_id_index})\n"
+                    f"MATCH (m)"
+                    f"  {'-' if find_targets else '<-'}"
+                    f"  {query_typed_relation}"
+                    f"  {'-' if find_sources else '->'} "
+                    f"(n{Neo4jVectorGraphStore._format_labels(required_labels)})\n"
                     f"WHERE {
                         Neo4jVectorGraphStore._format_required_properties(
                             'n',
-                            required_properties,
-                            include_missing_properties,
+                            required_properties_copy,
+                            include_missing_properties
                         )
                     }\n"
                     "RETURN n\n"
@@ -308,8 +391,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     limit=limit,
                     required_properties={
                         Neo4jVectorGraphStore._sanitize_name(key): value
-                        for key, value in required_properties.items()
+                        for key, value in required_properties_copy.items()
                     },
+                    session_id=session_id,
+                    timeout=3600,
                 ),
             )
             for query_typed_relation in query_typed_relations
@@ -325,6 +410,88 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
 
         return list(related_nodes)[:limit]
+
+    async def search_related_nodes_edges_batch(
+        self,
+        node_uuids: list[UUID],
+        allowed_relations: Collection[str] | None = None,
+        find_sources: bool = True,
+        find_targets: bool = True,
+        limit: int | None = None,
+        required_labels: Collection[str] | None = None,
+        required_properties: Mapping[str, Property] = {},
+        include_missing_properties: bool = False,
+        index_search_label: str = "",
+    ) -> tuple[list[Node], list[Edge]]:
+        if not (find_sources or find_targets):
+            return []
+
+        query_typed_relations = (
+            [
+                f"[r:{Neo4jVectorGraphStore._sanitize_name(relation)}]"
+                for relation in allowed_relations
+            ]
+            if allowed_relations is not None
+            else ["[r]"]
+        )
+
+        session_id_index = ""
+        session_id = ""
+        required_properties_copy = dict(required_properties)
+        if "session_id" in required_properties_copy:
+            session_id = required_properties_copy["session_id"]
+            session_id_index = f"{{{Neo4jVectorGraphStore._sanitize_name('session_id')}: $session_id}}"
+            required_properties_copy.pop("session_id")
+
+        search_related_nodes_tasks = [
+            async_with(
+                self._semaphore,
+                self._driver.execute_query(
+                    "UNWIND $uuids AS id\n"
+                    f"MATCH (m{index_search_label} {{uuid: id}})\n"
+                    f"MATCH (n{Neo4jVectorGraphStore._format_labels(required_labels)} {session_id_index})\n"
+                    f"MATCH (m)"
+                    f"  {'-' if find_targets else '<-'}"
+                    f"  {query_typed_relation}"
+                    f"  {'-' if find_sources else '->'} "
+                    f"(n)\n"
+                    f"WHERE {
+                        Neo4jVectorGraphStore._format_required_properties(
+                            'n',
+                            required_properties_copy,
+                            include_missing_properties
+                        )
+                    }\n"
+                    "RETURN n, r, startNode(r) AS src, endNode(r) AS dst\n"
+                    f"{'LIMIT $limit' if limit is not None else ''}",
+                    uuids=[str(node_uuid) for node_uuid in node_uuids],
+                    limit=limit,
+                    required_properties={
+                        Neo4jVectorGraphStore._sanitize_name(key): value
+                        for key, value in required_properties_copy.items()
+                    },
+                    session_id=session_id,
+                    timeout=3600,
+                ),
+            )
+            for query_typed_relation in query_typed_relations
+        ]
+
+        results = await asyncio.gather(*search_related_nodes_tasks)
+
+        related_nodes: set[Node] = set()
+        related_edges: set[Edge] = set()
+        for records, _, _ in results:
+            related_neo4j_nodes = [record["n"] for record in records]
+            related_nodes.update(
+                Neo4jVectorGraphStore._nodes_from_neo4j_nodes(related_neo4j_nodes)
+            )
+            related_neo4j_relations = [record["r"] for record in records]
+            related_edges.update(
+                Neo4jVectorGraphStore._edges_from_neo4j_relationships(related_neo4j_relations)
+            )
+
+        return list(related_nodes), list(related_edges)
 
     async def search_directional_nodes(
         self,
@@ -402,6 +569,344 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         matching_neo4j_nodes = [record["n"] for record in records]
         return Neo4jVectorGraphStore._nodes_from_neo4j_nodes(matching_neo4j_nodes)
+
+    def lucene_sanitize(self, query: str) -> str:
+        # Escape special characters from a query before passing into Lucene
+        # + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+        escape_map = str.maketrans(
+            {
+                '+': r'\+',
+                '-': r'\-',
+                '&': r'\&',
+                '|': r'\|',
+                '!': r'\!',
+                '(': r'\(',
+                ')': r'\)',
+                '{': r'\{',
+                '}': r'\}',
+                '[': r'\[',
+                ']': r'\]',
+                '^': r'\^',
+                '"': r'\"',
+                '~': r'\~',
+                '*': r'\*',
+                '?': r'\?',
+                ':': r'\:',
+                '\\': r'\\',
+                '/': r'\/',
+                'O': r'\O',
+                'R': r'\R',
+                'N': r'\N',
+                'T': r'\T',
+                'A': r'\A',
+                'D': r'\D',
+            }
+        )
+        return query.translate(escape_map)
+
+    def normalize_name(self, s: str) -> str:
+        s = unicodedata.normalize("NFKC", s)
+        s = s.lower()
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    def rrf(
+        self,
+        lists: list[list[Any]],
+        weights: list[float] | None = None,
+        k: int = 50,
+    ) -> list[tuple[Any, float]]:
+        """
+        Reciprocal Rank Fusion (RRF) implementation.
+        Args:
+            lists (list[list[str]]): List of ranked lists to fuse.
+            weights (list[float] | None): Weights for each ranked list. If None, equal weights are used.
+            k (int): Constant to control the influence of rank. Smaller k gives more weight to higher ranks.
+        Returns:
+            list[tuple[str, float]]: List of tuples containing item and its fused score, sorted by score in descending order.
+        """
+        if not lists:
+            return []
+
+        n = len(lists)
+        if weights is None:
+            weights = [1.0] * n
+        elif len(weights) != n:
+            raise ValueError(f"RRF: weights length {len(weights)} must equal number of lists {n}")
+
+        scores: dict[str, float] = defaultdict(float)
+
+        for w, L in zip(weights, lists):
+            for rank, _id in enumerate(L, start=1):
+                if w > 0:
+                    scores[_id] += w * (1.0 / (k + rank))
+
+        return sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+    async def search_similar_edges(
+        self,
+        query_text: str,
+        query_embedding: list[float],
+        embedding_property_name: str,
+        similarity_threshold: float = 0.2,
+        limit: int | None = 100,
+        allowed_relations: set[str] | None = None,
+        required_properties: dict[str, Property] = {},
+        include_missing_properties: bool = False,
+    ) -> list[Edge]:
+        query_typed_relations = (
+            [
+                f":{Neo4jVectorGraphStore._sanitize_name(relation)}"
+                for relation in allowed_relations
+            ]
+            if allowed_relations is not None
+            else [""]
+        )
+        
+        sanitized_embedding_property_name = Neo4jVectorGraphStore._sanitize_name(
+            embedding_property_name
+        )
+
+        vector_index_name = (
+            Neo4jVectorGraphStore._edge_vector_index_name(
+                Neo4jVectorGraphStore._sanitize_name(next(iter(allowed_relations))),
+                sanitized_embedding_property_name,
+            )
+            if allowed_relations is not None and len(allowed_relations) > 0
+            else None
+        )
+
+        await self._create_edge_vector_index_if_not_exist(
+            relations=cast(Collection[str], allowed_relations),
+            embedding_property_name=embedding_property_name,
+            dimensions=len(query_embedding),
+            similarity_metric=SimilarityMetric.COSINE,
+        )
+
+        vector_search_tasks = [
+            async_with(
+                self._semaphore,
+                self._driver.execute_query(
+                    f"""
+                    CALL {{
+                        CALL db.index.vector.queryRelationships($vector_index_name, $prelimit, $query_embedding)
+                        YIELD relationship AS r, score
+                        WHERE score > $similarity_threshold
+                            AND {
+                                Neo4jVectorGraphStore._format_required_properties(
+                                    "r", required_properties, include_missing_properties
+                                )
+                            }
+                        ORDER BY score DESC
+                        LIMIT $limit
+                        RETURN r, score
+                    }}
+                    RETURN r, startNode(r) AS src, endNode(r) AS dst, score AS similarity
+                    ORDER BY similarity DESC
+                    """,
+                    vector_index_name=vector_index_name,
+                    query_embedding=query_embedding,
+                    similarity_threshold=similarity_threshold,
+                    limit=limit,
+                    prelimit=(limit * 5) if limit is not None else 100,
+                    required_properties={
+                        Neo4jVectorGraphStore._sanitize_name(key): value
+                        for key, value in required_properties.items()
+                    },
+                    include_missing_properties=include_missing_properties,
+                    timeout=3600,
+                ),
+            )
+            for relation in query_typed_relations
+        ]
+
+        results = await asyncio.gather(*vector_search_tasks)
+
+        vector_search_edges = []
+        edge_source_node_map = {}
+        for records, _, _ in results:
+            rels = [record["r"] for record in records]
+            vector_search_edges.extend(
+                Neo4jVectorGraphStore._edges_from_neo4j_relationships(rels)
+            )
+            neo4j_nodes = [record["src"] for record in records]
+            src_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
+            edge_source_node_map.update({
+                n.uuid: n for n in src_nodes
+            })
+
+        fulltext_search_tasks = [
+            async_with(
+                self._semaphore,
+                self._driver.execute_query(
+                    f"""
+                    CALL {{
+                        CALL db.index.fulltext.queryRelationships('rel_tripletext_fts', $q_text, {{limit: $prelimit}})
+                        YIELD relationship AS r, score
+                        WHERE {
+                            Neo4jVectorGraphStore._format_required_properties(
+                                "r", required_properties, include_missing_properties
+                            )
+                        }
+                        ORDER BY score DESC
+                        LIMIT $limit
+                        RETURN r, score
+                    }}
+                    RETURN r, startNode(r) AS src, endNode(r) AS dst, score AS similarity
+                    ORDER BY similarity DESC
+                    """,
+                    q_text=self.lucene_sanitize(self.normalize_name(query_text)),           # see normalization helper above
+                    limit=limit,
+                    prelimit=(limit * 5) if limit is not None else 100,
+                    required_properties={
+                        Neo4jVectorGraphStore._sanitize_name(key): value
+                        for key, value in required_properties.items()
+                    },
+                    include_missing_properties=include_missing_properties,
+                    timeout=3600,
+                ),
+            )
+            for relation in query_typed_relations
+        ]
+
+        results = await asyncio.gather(*fulltext_search_tasks)
+
+        fulltext_search_edges = []
+        for records, _, _ in results:
+            rels = [record["r"] for record in records]
+            fulltext_search_edges.extend(
+                Neo4jVectorGraphStore._edges_from_neo4j_relationships(rels)
+            )
+            neo4j_nodes = [record["src"] for record in records]
+            src_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
+            edge_source_node_map.update({
+                n.uuid: n for n in src_nodes
+            })
+
+        fused = self.rrf([vector_search_edges, fulltext_search_edges], k=50)
+        result_edges = [edge for edge, _ in fused][:limit]
+        return result_edges, [edge_source_node_map[edge.source_uuid] for edge in result_edges]
+
+    # async def hybrid_search_edges(
+    #     self,
+    #     query_text: str,
+    #     query_embedding: list[float],
+    #     similarity_threshold: float = 0.6,
+    #     limit: int | None = 100,
+    #     required_properties: dict[str, Property] = {},
+    #     include_missing_properties: bool = False,
+    # ) -> list[Edge]:
+    #     async with self._semaphore:
+    #         records, _, _ = await self._driver.execute_query(
+    #             f"""
+    #             CALL db.index.fulltext.queryRelationships('rel_tripletext_fts', $q_text)
+    #             YIELD relationship AS r, score AS bm25
+    #             WITH r, bm25,
+    #                 CASE WHEN r.embedding IS NOT NULL
+    #                     THEN vector.similarity.cosine(r.embedding, $query_embedding)
+    #                     ELSE 0.0
+    #                 END AS cos
+    #             WHERE cos > $similarity_threshold
+    #             MATCH p = ()-[r:RELATED_TO]-()
+    #             WITH p, bm25, cos, 0.6*cos + 0.4*bm25 AS hybrid
+    #             RETURN p
+    #             ORDER BY hybrid DESC
+    #             {'LIMIT $limit' if limit is not None else ''}
+    #             """,
+    #             q_text=self.lucene_sanitize(self.normalize_name(query_text)),           # see normalization helper above
+    #             query_embedding=query_embedding,
+    #             similarity_threshold=similarity_threshold,   # e.g., 0.25
+    #             limit=limit,
+    #         )
+
+    #     neo4j_paths = [record["p"] for record in records]
+    #     return Neo4jVectorGraphStore._edges_from_neo4j_relationships([p.relationships[0] for p in neo4j_paths])
+
+    async def hybrid_search_nodes(
+        self,
+        node_name: str,
+        rrf_weights: list[float] | None,
+        limit: int = 3,
+        required_label: str = "Entity",
+        required_properties: dict[str, Property] = {},
+        include_missing_properties: bool = False,
+    ) -> list[Node]:
+        fulltext_nodes = []
+        substr_nodes = []
+
+        async with self._semaphore:
+            # Full text search
+            records, _, _ = await self._driver.execute_query(
+                f"""
+                CALL {{
+                    CALL db.index.fulltext.queryNodes('node_name_fts', $name, {{limit: $prelimit}})
+                    YIELD node AS n, score
+                    WHERE {
+                        Neo4jVectorGraphStore._format_required_properties(
+                            "n", required_properties, include_missing_properties
+                        )
+                    }\n
+                    RETURN n, score
+                    ORDER BY score DESC
+                    LIMIT $limit
+                }}
+                RETURN n
+                ORDER BY score DESC
+                """,
+                name=self.lucene_sanitize(self.normalize_name(node_name)),
+                limit=limit,
+                prelimit=(limit * 5) if limit is not None else 100,
+                labels=[required_label],
+                required_properties={
+                    Neo4jVectorGraphStore._sanitize_name(key): value
+                    for key, value in required_properties.items()
+                },
+                include_missing_properties=include_missing_properties,
+                timeout=3600,
+            )
+
+        neo4j_nodes = [record["n"] for record in records]
+        fulltext_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
+
+        # TODO: This is slow, consider using vector search here instead
+        substr_nodes = []
+        # if rrf_weights[1] != 0:
+        #     async with self._semaphore:
+        #         # Substring search
+        #         records, _, _ = await self._driver.execute_query(
+        #             f"""
+        #             MATCH (n:{required_label})
+        #             WHERE n.name IS NOT NULL
+        #             AND toLower(n.name) CONTAINS toLower($name)
+        #             AND {
+        #                 Neo4jVectorGraphStore._format_required_properties(
+        #                     "n", required_properties, include_missing_properties
+        #                 )
+        #             }\n
+        #             RETURN n
+        #             {'LIMIT $limit' if limit is not None else ''}
+        #             """,
+        #             name=node_name,
+        #             limit=limit,
+        #             required_properties={
+        #                 Neo4jVectorGraphStore._sanitize_name(key): value
+        #                 for key, value in required_properties.items()
+        #             },
+        #             include_missing_properties=include_missing_properties,
+        #             timeout=3600,
+        #         )
+        #     neo4j_nodes = [record["n"] for record in records]
+        #     substr_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
+
+        node_map = {}
+        for node in fulltext_nodes + substr_nodes:
+            if node.uuid not in node_map:
+                node_map[node.uuid] = node
+        ft_nodes_uuids = [n.uuid for n in fulltext_nodes]
+        ss_nodes_uuids = [n.uuid for n in substr_nodes]
+
+        fused = self.rrf([ft_nodes_uuids, ss_nodes_uuids], weights=rrf_weights, k=50)
+        return [node_map[uuid] for uuid, _ in fused][:limit]
 
     async def delete_nodes(
         self,
@@ -509,6 +1014,97 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 ),
             )
             for sanitized_label, sanitized_embedding_property_name, vector_index_name in info_for_vector_indexes_to_create
+        ]
+
+        await self._execute_create_node_vector_index_if_not_exist(create_index_tasks)
+
+        self._vector_index_name_cache.update(requested_vector_index_names)
+    
+    async def _create_edge_vector_index_if_not_exist(
+        self,
+        relations: Collection[str],
+        embedding_property_name: str,
+        dimensions: int,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+    ):
+        """
+        Create node vector index(es) if not exist.
+
+        Args:
+            labels (Collection[str]):
+                Collection of node labels to create vector indexes for.
+            embedding_property_name (str):
+                Name of the embedding property.
+            dimensions (int):
+                Dimensionality of the embedding vectors.
+            similarity_metric (SimilarityMetric):
+                Similarity metric to use for the vector index
+                (default: SimilarityMetric.COSINE).
+        """
+        if not self._vector_index_name_cache:
+            async with self._semaphore:
+                records, _, _ = await self._driver.execute_query(
+                    "SHOW VECTOR INDEXES YIELD name RETURN name"
+                )
+
+            self._vector_index_name_cache.update(record["name"] for record in records)
+
+        sanitized_relations = [
+            Neo4jVectorGraphStore._sanitize_name(relation) for relation in relations
+        ]
+
+        sanitized_embedding_property_name = Neo4jVectorGraphStore._sanitize_name(
+            embedding_property_name
+        )
+
+        requested_vector_index_names = [
+            Neo4jVectorGraphStore._edge_vector_index_name(
+                sanitized_relation, sanitized_embedding_property_name
+            )
+            for sanitized_relation in sanitized_relations
+        ]
+
+        info_for_vector_indexes_to_create = [
+            (sanitized_relation, sanitized_embedding_property_name, vector_index_name)
+            for sanitized_relation, vector_index_name in zip(
+                sanitized_relations,
+                requested_vector_index_names,
+            )
+            if vector_index_name not in self._vector_index_name_cache
+        ]
+
+        if len(info_for_vector_indexes_to_create) == 0:
+            return
+
+        match similarity_metric:
+            case SimilarityMetric.COSINE:
+                similarity_function = "cosine"
+            case SimilarityMetric.EUCLIDEAN:
+                similarity_function = "euclidean"
+            case _:
+                similarity_function = "cosine"
+
+        create_index_tasks = [
+            async_with(
+                self._semaphore,
+                self._driver.execute_query(
+                    f"CREATE VECTOR INDEX {vector_index_name}\n"
+                    "IF NOT EXISTS\n"
+                    f"FOR ()-[r:{sanitized_relation}]-()\n"
+                    f"ON r.{sanitized_embedding_property_name}\n"
+                    "OPTIONS {\n"
+                    "    indexConfig: {\n"
+                    "        `vector.dimensions`:\n"
+                    "            $dimensions,\n"
+                    "        `vector.similarity_function`:\n"
+                    "            $similarity_function\n"
+                    "    }\n"
+                    "}",
+                    dimensions=dimensions,
+                    similarity_function=similarity_function,
+                ),
+            )
+            for sanitized_relation, sanitized_embedding_property_name, vector_index_name in info_for_vector_indexes_to_create
         ]
 
         await self._execute_create_node_vector_index_if_not_exist(create_index_tasks)
@@ -680,6 +1276,66 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 },
             )
             for neo4j_node in neo4j_nodes
+        ]
+
+    @staticmethod
+    def _edge_vector_index_name(
+        sanitized_label: str, sanitized_embedding_property_name: str
+    ) -> str:
+        """
+        Generate a unique name for a node vector index
+        based on the label and embedding property name.
+
+        Args:
+            sanitized_label (str):
+                The sanitized node label.
+            embedding_property_name (str):
+                The sanitized embedding property name.
+
+        Returns:
+            str: The generated vector index name.
+        """
+        return (
+            "edge_vector_index"
+            "_for_"
+            f"{len(sanitized_label)}_"
+            f"{sanitized_label}"
+            "_on_"
+            f"{len(sanitized_embedding_property_name)}_"
+            f"{sanitized_embedding_property_name}"
+        )
+    
+    @staticmethod
+    def _edges_from_neo4j_relationships(
+        neo4j_relationships: list[Neo4jRelationship]
+    ) -> list[Edge]:
+        """
+        Convert a list of Neo4j Relationships to a list of Edges.
+
+        Args:
+            neo4j_relationships (list[Neo4jRelationship]):
+                List of Neo4j Relationships.
+
+        Returns:
+            list[Edge]: List of Edges.
+        """
+        return [
+            Edge(
+                uuid=UUID(neo4j_relationship["uuid"]),
+                source_uuid=UUID(neo4j_relationship.start_node["uuid"]),
+                target_uuid=UUID(neo4j_relationship.end_node["uuid"]),
+                relation=neo4j_relationship.type,
+                properties={
+                    Neo4jVectorGraphStore._desanitize_name(
+                        key
+                    ): Neo4jVectorGraphStore._python_value_from_neo4j_value(
+                        value
+                    )
+                    for key, value in neo4j_relationship.items()
+                    if key != "uuid"
+                },
+            )
+            for neo4j_relationship in neo4j_relationships
         ]
 
     @staticmethod

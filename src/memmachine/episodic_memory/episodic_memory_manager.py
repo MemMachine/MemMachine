@@ -396,36 +396,36 @@ class EpisodicMemoryManager:
             session_id=session_id,
         )
 
-        async with self._lock:
-            # If an instance for this context already exists, increment its
-            # reference count and return it.
-            if context in self._context_memory:
-                instance = self._context_memory[context]
-                get_it = await instance.reference()
-                if get_it:
-                    return instance
-                # The instance was closed between checking and referencing.
-                logger.error("Failed get instance reference")
-                return None
-            # If no instance exists, create a new one.
-            try:
-                info = self._session_manager.open_session(group_id, session_id)
-                final_config = info.configuration
-            except ValueError:
-                if configuration is None:
-                    configuration = {}
-                final_config = self._merge_configs(self._memory_config, configuration)
-                info = self._session_manager.create_session_if_not_exist(
-                    group_id, agent_id, user_id, session_id, final_config
-                )
+        # async with self._lock:
+        # If an instance for this context already exists, increment its
+        # reference count and return it.
+        if context in self._context_memory:
+            instance = self._context_memory[context]
+            get_it = await instance.reference()
+            if get_it:
+                return instance
+            # The instance was closed between checking and referencing.
+            logger.error("Failed get instance reference")
+            return None
+        # If no instance exists, create a new one.
+        try:
+            info = self._session_manager.open_session(group_id, session_id)
+            final_config = info.configuration
+        except ValueError:
+            if configuration is None:
+                configuration = {}
+            final_config = self._merge_configs(self._memory_config, configuration)
+            info = self._session_manager.create_session_if_not_exist(
+                group_id, agent_id, user_id, session_id, final_config
+            )
 
-            # Create and store the new memory instance.
-            memory_instance = EpisodicMemory(self, final_config, context)
+        # Create and store the new memory instance.
+        memory_instance = EpisodicMemory(self, final_config, context)
 
-            self._context_memory[context] = memory_instance
+        self._context_memory[context] = memory_instance
 
-            await memory_instance.reference()
-            return memory_instance
+        await memory_instance.reference()
+        return memory_instance
 
     async def delete_context_memory(self, context: MemoryContext):
         """

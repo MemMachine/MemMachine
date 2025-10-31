@@ -70,7 +70,7 @@ class OpenAIEmbedder(Embedder):
 
         self._model = model
 
-        temp_client = openai.OpenAI(api_key=api_key, base_url=config.get("base_url"))
+        temp_client = openai.OpenAI(api_key=api_key, base_url=config.get("base_url"), timeout=600)
 
         # https://platform.openai.com/docs/guides/embeddings#embedding-models
         dimensions = config.get("dimensions")
@@ -111,7 +111,7 @@ class OpenAIEmbedder(Embedder):
         self._dimensions = dimensions
 
         self._client = openai.AsyncOpenAI(
-            api_key=api_key, base_url=config.get("base_url")
+            api_key=api_key, base_url=config.get("base_url"), timeout=600, 
         )
 
         metrics_factory = config.get("metrics_factory")

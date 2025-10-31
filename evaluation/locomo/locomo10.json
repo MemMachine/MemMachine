@@ -44,7 +44,7 @@
       },
       {
         "question": "When did Melanie run a charity race?",
-        "answer": "The sunday before 25 May 2023",
+        "answer": "The Saturday before 25 May 2023",
         "evidence": [
           "D2:1"
         ],
@@ -265,7 +265,7 @@
         "question": "When did Melanie go camping in June?",
         "answer": "The week before 27 June 2023",
         "evidence": [
-          "D4:8"
+	  "D4:6"
         ],
         "category": 2
       },
@@ -17356,7 +17356,6 @@
         "answer": "\"Eternal Sunshineof the Spotless Mind\"",
         "evidence": [
           "D1:18",
-          "D",
           "D1:20"
         ],
         "category": 4
@@ -24164,7 +24163,7 @@
           "D2:7",
           "D4:7",
           "D5:15",
-          "D:11:26",
+          "D11:26",
           "D20:21",
           "D26:36"
         ],
@@ -54209,7 +54208,7 @@
         "question": "How might Evan and Sam's experiences with health and lifestyle changes influence their approach to stress and challenges?",
         "answer": "Their experiences likely lead them to view challenges as opportunities for growth and change. They both have embraced healthier lifestyles, indicating a proactive approach to managing stress and challenges.",
         "evidence": [
-          "D9:1 D4:4 D4:6"
+          "D9:1;D4:4;D4:6"
         ],
         "category": 3
       },
@@ -54276,7 +54275,7 @@
         "question": "What role does nature and the outdoors play in Evan and Sam's mental well-being?",
         "answer": "Nature and outdoor activities seem to be significant stress relievers and sources of joy for both Evan and Sam. These activities likely contribute positively to their mental well-being.",
         "evidence": [
-          "D22:1 D22:2 D9:10 D9:11"
+          "D22:1;D22:2;D9:10;D9:11"
         ],
         "category": 3
       },
@@ -54352,7 +54351,7 @@
         "question": "How do Evan and Sam use creative outlets to cope with life's challenges?",
         "answer": "Evan and Sam use creative activities, like painting and writing, as therapeutic tools to express themselves and cope with stress.",
         "evidence": [
-          "D21:18 D21:22 D11:15 D11:19"
+          "D21:18,D21:22,D11:15,D11:19"
         ],
         "category": 3
       },

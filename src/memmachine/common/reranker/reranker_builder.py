@@ -70,6 +70,9 @@ class RerankerBuilder(Builder):
 
                 from .bm25_reranker import BM25Reranker, BM25RerankerParams
 
+                import nltk
+                nltk.download('stopwords')
+
                 language = config.get("language", "english")
                 stop_words = stopwords.words(language)
 

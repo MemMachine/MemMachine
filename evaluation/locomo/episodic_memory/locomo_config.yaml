@@ -18,7 +18,7 @@ storage:
     host: localhost
     port: 7687
     user: neo4j
-    password: <NEO4J_PASSWORD>
+    password: password
     force_exact_similarity_search: true
 
 embedder:
@@ -34,11 +34,11 @@ reranker:
     reranker_ids:
       - id_ranker_id
       - bm_ranker_id
-      - ce_ranker_id
+      # - ce_ranker_id
   id_ranker_id:
     type: "identity"
   bm_ranker_id:
     type: "bm25"
-  ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
+  # ce_ranker_id:
+  #   type: "cross-encoder"
+  #   model_name: "cross-encoder/qnli-electra-base"
