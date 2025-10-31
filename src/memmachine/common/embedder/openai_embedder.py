@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import openai
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
@@ -19,117 +20,96 @@ from .embedder import Embedder
 logger = logging.getLogger(__name__)
 
 
+class OpenAIEmbedderParams(BaseModel):
+    """
+    Parameters for OpenAIEmbedder.
+
+    Attributes:
+        client (openai.AsyncOpenAI):
+            AsyncOpenAI client to use for making API calls.
+        model (str):
+            Name of the OpenAI embedding model to use
+            (e.g. 'text-embedding-3-small').
+        dimensions (int):
+            Dimensionality of the embedding vectors
+            produced by the OpenAI embedding model
+        max_retry_interval_seconds (int):
+            Maximal retry interval in seconds when retrying API calls
+            (default: 120).
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory
+            for collecting usage metrics
+            (default: None).
+        user_metrics_labels (dict[str, str]):
+            Labels to attach to the collected metrics
+            (default: {}).
+    """
+
+    client: InstanceOf[openai.AsyncOpenAI] = Field(
+        ...,
+        description="AsyncOpenAI client to use for making API calls",
+    )
+    model: str = Field(
+        ...,
+        description=(
+            "Name of the OpenAI embedding model to use (e.g. 'text-embedding-3-small')"
+        ),
+    )
+    dimensions: int = Field(
+        ...,
+        description=(
+            "Dimensionality of the embedding vectors "
+            "produced by the OpenAI embedding model"
+        ),
+        gt=0,
+    )
+    max_retry_interval_seconds: int = Field(
+        120,
+        description="Maximal retry interval in seconds when retrying API calls",
+        gt=0,
+    )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
+    user_metrics_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Labels to attach to the collected metrics",
+    )
+
+
 class OpenAIEmbedder(Embedder):
     """
     Embedder that uses OpenAI's embedding models
     to generate embeddings for inputs and queries.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, params: OpenAIEmbedderParams):
         """
-        Initialize an OpenAIEmbedder with the provided configuration.
+        Initialize an OpenAIEmbedder with the provided parameters.
 
         Args:
-            config (dict[str, Any]):
-                Configuration dictionary containing:
-                - api_key (str):
-                  API key for accessing the OpenAI service.
-                - model (str, optional):
-                  Name of the OpenAI embedding model to use
-                  (default: "text-embedding-3-small").
-                - dimensions (int | None, optional):
-                  Dimensionality of the embedding vectors,
-                  if different from the model's default
-                  (default: None).
-                - base_url (str, optional):
-                  Base URL of the OpenAI embedding model to use.
-                - metrics_factory (MetricsFactory, optional):
-                  An instance of MetricsFactory
-                  for collecting usage metrics.
-                - user_metrics_labels (dict[str, str], optional):
-                  Labels to attach to the collected metrics.
-                - max_retry_interval_seconds(int, optional):
-                  Maximal retry interval in seconds
-                  (default: 120).
-
-        Raises:
-            ValueError:
-                If configuration argument values are missing or invalid.
-            TypeError:
-                If configuration argument values are of incorrect type.
+            params (OpenAIEmbedderParams):
+                Parameters for the OpenAIEmbedder.
         """
         super().__init__()
 
-        api_key = config.get("api_key")
-        if not isinstance(api_key, str):
-            raise TypeError("Embedder API key must be a string")
-
-        model = config.get("model", "text-embedding-3-small")
-        if not isinstance(model, str):
-            raise TypeError("Model name must be a string")
-
-        self._model = model
-
-        temp_client = openai.OpenAI(api_key=api_key, base_url=config.get("base_url"))
+        self._client = params.client
 
         # https://platform.openai.com/docs/guides/embeddings#embedding-models
-        dimensions = config.get("dimensions")
-        if dimensions is None:
-            # Get dimensions by embedding a dummy string.
-            response = temp_client.embeddings.create(
-                input="\n",
-                model=self._model,
-            )
-            dimensions = len(response.data[0].embedding)
-            self._use_dimensions_parameter = False
-        else:
-            if not isinstance(dimensions, int):
-                raise TypeError("Dimensions must be an integer")
-            if dimensions <= 0:
-                raise ValueError("Dimensions must be positive")
+        self._model = params.model
 
-            # Validate dimensions by embedding a dummy string.
-            try:
-                response = temp_client.embeddings.create(
-                    input="\n",
-                    model=self._model,
-                    dimensions=dimensions,
-                )
-                self._use_dimensions_parameter = True
-            except openai.OpenAIError:
-                response = temp_client.embeddings.create(
-                    input="\n",
-                    model=self._model,
-                )
-                self._use_dimensions_parameter = False
+        self._dimensions = params.dimensions
+        self._use_dimensions_parameter = True
 
-            if len(response.data[0].embedding) != dimensions:
-                raise ValueError(
-                    f"Invalid dimensions {dimensions} for model {self._model}"
-                )
+        self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
-        self._dimensions = dimensions
-
-        self._client = openai.AsyncOpenAI(
-            api_key=api_key, base_url=config.get("base_url")
-        )
-
-        metrics_factory = config.get("metrics_factory")
-        if metrics_factory is not None and not isinstance(
-            metrics_factory, MetricsFactory
-        ):
-            raise TypeError("Metrics factory must be an instance of MetricsFactory")
-
-        self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
-        if not isinstance(self._max_retry_interval_seconds, int):
-            raise TypeError("max_retry_interval_seconds must be an integer")
-        if self._max_retry_interval_seconds <= 0:
-            raise ValueError("max_retry_interval_seconds must be a positive integer")
+        metrics_factory = params.metrics_factory
 
         self._collect_metrics = False
         if metrics_factory is not None:
             self._collect_metrics = True
-            self._user_metrics_labels = config.get("user_metrics_labels", {})
+            self._user_metrics_labels = params.user_metrics_labels
             label_names = self._user_metrics_labels.keys()
 
             self._prompt_tokens_usage_counter = metrics_factory.get_counter(
@@ -190,18 +170,30 @@ class OpenAIEmbedder(Embedder):
                     attempt,
                     max_attempts,
                 )
-                response = (
-                    await self._client.embeddings.create(
-                        input=inputs,
-                        model=self._model,
-                        dimensions=self._dimensions,
+                # Internal try-except is required
+                # for models that do not support dimensions parameter
+                try:
+                    response = (
+                        await self._client.embeddings.create(
+                            input=inputs,
+                            model=self._model,
+                            dimensions=self._dimensions,
+                        )
+                        if self._use_dimensions_parameter
+                        else await self._client.embeddings.create(
+                            input=inputs,
+                            model=self._model,
+                        )
                     )
-                    if self._use_dimensions_parameter
-                    else await self._client.embeddings.create(
-                        input=inputs,
-                        model=self._model,
-                    )
-                )
+                except openai.BadRequestError as e:
+                    if "dimension" in str(e).lower() and self._use_dimensions_parameter:
+                        response = await self._client.embeddings.create(
+                            input=inputs,
+                            model=self._model,
+                        )
+                        self._use_dimensions_parameter = False
+                        break
+                    raise e
                 break
             except (
                 openai.RateLimitError,
@@ -242,10 +234,7 @@ class OpenAIEmbedder(Embedder):
                     f"due to non-retryable {type(e).__name__}"
                 )
                 logger.error(error_message)
-                if isinstance(e, openai.APIError):
-                    raise ExternalServiceAPIError(error_message)
-                else:
-                    raise RuntimeError(error_message)
+                raise ExternalServiceAPIError(error_message)
 
         end_time = time.monotonic()
         logger.debug(
@@ -253,6 +242,15 @@ class OpenAIEmbedder(Embedder):
             embed_call_uuid,
             end_time - start_time,
         )
+
+        if len(response.data[0].embedding) != self._dimensions:
+            error_message = (
+                f"[call uuid: {embed_call_uuid}] "
+                f"Received embedding dimensionality {len(response.data[0].embedding)} "
+                f"does not match expected dimensionality {self._dimensions}"
+            )
+            logger.error(error_message)
+            raise ExternalServiceAPIError(error_message)
 
         if self._collect_metrics:
             self._prompt_tokens_usage_counter.increment(

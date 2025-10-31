@@ -39,8 +39,6 @@ class Embedder(ABC):
                 Errors from the underlying embedding API.
             ValueError:
                 Invalid input or max_attempts.
-            RuntimeError:
-                Catch-all for any other errors.
         """
         raise NotImplementedError
 
@@ -69,8 +67,6 @@ class Embedder(ABC):
                 Errors from the underlying embedding API.
             ValueError:
                 Invalid input or max_attempts.
-            RuntimeError:
-                Catch-all for any other errors.
         """
         raise NotImplementedError
 
