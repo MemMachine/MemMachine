@@ -82,7 +82,7 @@ services:
       MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
       GATEWAY_URL: ${GATEWAY_URL:-http://localhost:8080}
       FAST_MCP_LOG_LEVEL: ${FAST_MCP_LOG_LEVEL:-INFO}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./configuration.yml:/app/configuration.yml:ro,Z
