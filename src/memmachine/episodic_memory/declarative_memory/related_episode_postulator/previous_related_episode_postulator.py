@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 from typing import cast
 
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, field_validator
 
 from memmachine.common.vector_graph_store import VectorGraphStore
 
@@ -35,9 +35,11 @@ class PreviousRelatedEpisodePostulatorParams(BaseModel):
         search_limit (int):
             The maximum number of related previous episodes
             to postulate (default: 1).
-        filterable_property_keys (set[str]):
-            A set of property keys
-            to use for filtering episodes (default: set()).
+        filterable_property_keys (list[str]):
+            A list of property keys
+            to use for filtering episodes (default: []).
+        episode_collection_suffix (str):
+            Suffix for the episode collection name (default: "").
     """
 
     vector_graph_store: InstanceOf[VectorGraphStore] = Field(
@@ -48,10 +50,21 @@ class PreviousRelatedEpisodePostulatorParams(BaseModel):
         description="The maximum number of related previous episodes to postulate",
         gt=0,
     )
-    filterable_property_keys: set[str] = Field(
-        default_factory=set,
-        description="A set of property keys to use for filtering episodes",
+    filterable_property_keys: list[str] = Field(
+        default_factory=list,
+        description="A list of property keys to use for filtering episodes",
     )
+    episode_collection_suffix: str = Field(
+        "",
+        description="Suffix for the episode collection name",
+    )
+
+    @field_validator("filterable_property_keys", mode="after")
+    @classmethod
+    def validate_filterable_property_keys(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Filterable property keys must be unique")
+        return value
 
 
 class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
@@ -72,15 +85,16 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
         self._vector_graph_store = params.vector_graph_store
         self._search_limit = params.search_limit
         self._filterable_property_keys = params.filterable_property_keys
+        self._episode_collection = f"Episode_{params.episode_collection_suffix}"
 
     async def postulate(self, episode: Episode) -> list[Episode]:
         previous_episode_nodes = (
             await self._vector_graph_store.search_directional_nodes(
+                collection=self._episode_collection,
                 by_property="timestamp",
                 start_at_value=episode.timestamp,
                 order_ascending=False,
                 limit=self._search_limit,
-                required_labels={"Episode"},
                 required_properties={
                     mangle_filterable_property_key(key): episode.filterable_properties[
                         key

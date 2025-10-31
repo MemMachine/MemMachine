@@ -61,8 +61,8 @@ class LongTermMemory:
         if not isinstance(neo4j_password, str):
             raise TypeError("Neo4j password must be provided as a string")
 
-        neo4j_force_exact_similarity_search = vector_graph_store_config.get(
-            "force_exact_similarity_search", False
+        neo4j_exact_similarity_search = vector_graph_store_config.get(
+            "exact_similarity_search", False
         )
 
         # Configure derivative deriver
@@ -123,9 +123,7 @@ class LongTermMemory:
                         "uri": neo4j_uri,
                         "username": neo4j_username,
                         "password": neo4j_password,
-                        "force_exact_similarity_search": (
-                            neo4j_force_exact_similarity_search
-                        ),
+                        "exact_similarity_search": neo4j_exact_similarity_search,
                     },
                 }
             }
@@ -157,6 +155,7 @@ class LongTermMemory:
                         "group_id",
                         "session_id",
                     ],
+                    "episode_collection_suffix": memory_context.group_id,
                 },
             },
             "_query_derivative_deriver": {
@@ -212,6 +211,7 @@ class LongTermMemory:
                     "default": [derivation_workflow_definition],
                 },
                 "episode_metadata_template": episode_metadata_template,
+                "collection_or_relation_suffix": memory_context.group_id,
             },
             injections=combined_resources,
         )

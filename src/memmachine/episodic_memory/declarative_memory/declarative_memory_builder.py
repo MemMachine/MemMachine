@@ -119,6 +119,9 @@ class DeclarativeMemoryBuilder(Builder):
                     "derivation_workflows"
                 ].items()
             },
+            "collection_or_relation_suffix": config.get(
+                "collection_or_relation_suffix", ""
+            ),
             "episode_metadata_template": config["episode_metadata_template"],
         }
 
