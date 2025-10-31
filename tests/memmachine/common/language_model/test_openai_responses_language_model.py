@@ -1,15 +1,17 @@
 """
-Unit tests for OpenAICompatibleLanguageModel.
+Unit tests for OpenAIResponsesLanguageModel.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
+from pydantic import ValidationError
 
 from memmachine.common.data_types import ExternalServiceAPIError
-from memmachine.common.language_model.openai_language_model import (
-    OpenAILanguageModel,
+from memmachine.common.language_model.openai_responses_language_model import (
+    OpenAIResponsesLanguageModel,
+    OpenAIResponsesLanguageModelParams,
 )
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
@@ -42,109 +44,137 @@ def mock_metrics_factory():
 
 
 @pytest.fixture
-def minimal_config():
-    """Fixture for a minimal valid configuration."""
-    return {"api_key": "test_api_key", "model": "test-model"}
+def mock_async_openai():
+    """Fixture for mocking openai.AsyncOpenAI."""
+    with patch("openai.AsyncOpenAI", spec=openai.AsyncOpenAI) as mock_async_openai:
+        mock_client = mock_async_openai.return_value
+        mock_client.responses.create = AsyncMock()
+        yield mock_async_openai
 
 
 @pytest.fixture
-def full_config(mock_metrics_factory):
-    """Fixture for a full valid configuration with metrics."""
-    return {
-        "api_key": "test_api_key",
-        "model": "test-model",
-        "max_retry_interval_seconds": 60,
-        "metrics_factory": mock_metrics_factory,
-        "user_metrics_labels": {"user": "test-user"},
-    }
-
-
-@pytest.fixture
-def max_retry_interval_seconds_config():
+def minimal_config(mock_async_openai):
     """Fixture for a minimal valid configuration."""
-    return {
-        "api_key": "test_api_key",
-        "model": "test-model",
-        "max_retry_interval_seconds": 4,
-    }
-
-
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
-def test_init_success(mock_async_openai, minimal_config):
-    """Test successful initialization."""
-    OpenAILanguageModel(minimal_config)
-    mock_async_openai.assert_called_once_with(
-        api_key="test_api_key",
+    return OpenAIResponsesLanguageModelParams(
+        client=openai.AsyncOpenAI(
+            api_key="test_api_key",
+        ),
+        model="test-model",
     )
 
 
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
+@pytest.fixture
+def full_config(mock_async_openai, mock_metrics_factory):
+    """Fixture for a full valid configuration with metrics."""
+    return OpenAIResponsesLanguageModelParams(
+        client=openai.AsyncOpenAI(
+            api_key="test_api_key",
+            base_url="http://localhost:8080",
+        ),
+        model="test-model",
+        max_retry_interval_seconds=60,
+        metrics_factory=mock_metrics_factory,
+        user_metrics_labels={"user": "test-user"},
+    )
+
+
+@pytest.fixture
+def max_retry_interval_seconds_config(mock_async_openai):
+    """Fixture for a valid configuration with small max_retry_interval_seconds."""
+    return OpenAIResponsesLanguageModelParams(
+        client=openai.AsyncOpenAI(
+            api_key="test_api_key",
+        ),
+        model="test-model",
+        max_retry_interval_seconds=4,
+    )
+
+
+def test_init_success(mock_async_openai, minimal_config):
+    """Test successful initialization."""
+    OpenAIResponsesLanguageModel(minimal_config)
+
+
 def test_init_with_full_config(mock_async_openai, full_config):
     """Test successful initialization with all optional parameters."""
-    OpenAILanguageModel(full_config)
-    mock_async_openai.assert_called_once_with(api_key="test_api_key")
+    _ = OpenAIResponsesLanguageModel(full_config)
+    mock_async_openai.assert_called_once_with(
+        api_key="test_api_key", base_url="http://localhost:8080"
+    )
+
+
+def test_init_missing_client():
+    """Test initialization fails if client is missing."""
+    with pytest.raises(ValidationError):
+        OpenAIResponsesLanguageModel(
+            OpenAIResponsesLanguageModelParams(
+                model="test-model",
+            )
+        )
 
 
 def test_init_missing_model():
     """Test initialization fails if model is missing."""
-    with pytest.raises(ValueError, match="The model name must be configured"):
-        OpenAILanguageModel({"api_key": "key"})
-
-
-def test_init_missing_api_key():
-    """Test initialization fails if api_key is missing."""
-    with pytest.raises(ValueError, match="Language API key must be provided"):
-        OpenAILanguageModel({"model": "test-model"})
+    with pytest.raises(ValidationError):
+        OpenAIResponsesLanguageModel(
+            OpenAIResponsesLanguageModelParams(
+                client=openai.AsyncOpenAI(
+                    api_key="test_api_key",
+                ),
+            )
+        )
 
 
 def test_init_invalid_max_retry_interval_seconds_type(minimal_config):
     """Test initialization fails with non-integer max_retry_interval_seconds."""
-    config = {**minimal_config, "max_retry_interval_seconds": "not-an-int"}
-    with pytest.raises(
-        TypeError, match="max_retry_interval_seconds must be an integer"
-    ):
-        OpenAILanguageModel(config)
+    with pytest.raises(ValidationError):
+        OpenAIResponsesLanguageModelParams(
+            **(
+                minimal_config.model_dump()
+                | {"max_retry_interval_seconds": "not-an-int"}
+            ),
+        )
 
 
 def test_init_invalid_max_retry_interval_seconds_value(minimal_config):
     """Test initialization fails with non-positive max_retry_interval_seconds."""
-    config = {**minimal_config, "max_retry_interval_seconds": 0}
-    with pytest.raises(
-        ValueError, match="max_retry_interval_seconds must be a positive integer"
-    ):
-        OpenAILanguageModel(config)
+    with pytest.raises(ValidationError):
+        OpenAIResponsesLanguageModelParams(
+            **(minimal_config.model_dump() | {"max_retry_interval_seconds": 0}),
+        )
 
 
 def test_init_invalid_metrics_factory_type(minimal_config):
     """Test initialization fails with invalid metrics_factory type."""
-    config = {**minimal_config, "metrics_factory": "not-a-factory"}
-    with pytest.raises(
-        TypeError, match="Metrics factory must be an instance of MetricsFactory"
-    ):
-        OpenAILanguageModel(config)
+    with pytest.raises(ValidationError):
+        OpenAIResponsesLanguageModelParams(
+            **(minimal_config.model_dump() | {"metrics_factory": "not-a-factory"}),
+        )
 
 
 def test_init_invalid_user_metrics_labels_type(minimal_config, mock_metrics_factory):
     """Test initialization fails with invalid user_metrics_labels type."""
-    config = {
-        **minimal_config,
-        "metrics_factory": mock_metrics_factory,
-        "user_metrics_labels": "not-a-dict",
-    }
-    with pytest.raises(TypeError, match="user_metrics_labels must be a dictionary"):
-        OpenAILanguageModel(config)
+    with pytest.raises(ValidationError):
+        OpenAIResponsesLanguageModelParams(
+            **(
+                minimal_config.model_dump()
+                | {
+                    "metrics_factory": mock_metrics_factory,
+                    "user_metrics_labels": "not-a-dict",
+                }
+            ),
+        )
 
 
 @pytest.mark.asyncio
 async def test_generate_response_invalid_max_attempts(minimal_config):
     """Test generate_response fails with non-positive max_attempts."""
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     with pytest.raises(ValueError, match="max_attempts must be a positive integer"):
         await lm.generate_response(max_attempts=0)
 
 
 @pytest.mark.asyncio
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_success(mock_async_openai, minimal_config):
     """Test a successful call to generate_response."""
     mock_response = MagicMock()
@@ -152,11 +182,10 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
     mock_response.output = None
     mock_response.usage = None
 
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.return_value = mock_response
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     content, tool_calls = await lm.generate_response(
         system_prompt="System prompt", user_prompt="User prompt"
     )
@@ -172,7 +201,6 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
 
 
 @pytest.mark.asyncio
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_with_tool_calls(mock_async_openai, minimal_config):
     """Test a successful call that returns tool calls."""
     mock_tool_call = MagicMock()
@@ -186,11 +214,10 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
     mock_response.output = [mock_tool_call]
     mock_response.usage = None
 
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.return_value = mock_response
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     content, tool_calls = await lm.generate_response(
         system_prompt="System prompt", user_prompt="User prompt"
     )
@@ -208,7 +235,6 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
 
 
 @pytest.mark.asyncio
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_tool_call_json_error(
     mock_async_openai, minimal_config
 ):
@@ -224,11 +250,10 @@ async def test_generate_response_tool_call_json_error(
     mock_response.output = [mock_tool_call]
     mock_response.usage = None
 
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.return_value = mock_response
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     with pytest.raises(ValueError, match="JSON decode error"):
         await lm.generate_response(
             system_prompt="System prompt", user_prompt="User prompt"
@@ -237,9 +262,8 @@ async def test_generate_response_tool_call_json_error(
 
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_retry_on_rate_limit(
-    mock_async_openai, mock_sleep, minimal_config
+    mock_sleep, mock_async_openai, minimal_config
 ):
     """Test retry logic on RateLimitError."""
     mock_response = MagicMock()
@@ -247,14 +271,13 @@ async def test_generate_response_retry_on_rate_limit(
     mock_response.output = None
     mock_response.usage = None
 
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.side_effect = [
         openai.RateLimitError("rate limited", response=MagicMock(), body=None),
         mock_response,
     ]
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     content, _ = await lm.generate_response(max_attempts=2)
 
     assert content == "Success after retry"
@@ -264,9 +287,8 @@ async def test_generate_response_retry_on_rate_limit(
 
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_seconds(
-    mock_async_openai, mock_sleep, max_retry_interval_seconds_config
+    mock_sleep, mock_async_openai, max_retry_interval_seconds_config
 ):
     """Test retry logic on RateLimitError."""
     mock_response = MagicMock()
@@ -274,13 +296,12 @@ async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_sec
     mock_response.output = None
     mock_response.usage = None
 
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.side_effect = openai.RateLimitError(
         "rate limited", response=MagicMock(), body=None
     )
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(max_retry_interval_seconds_config)
+    lm = OpenAIResponsesLanguageModel(max_retry_interval_seconds_config)
     with pytest.raises(ExternalServiceAPIError):
         await lm.generate_response(max_attempts=6)
 
@@ -298,16 +319,14 @@ async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_sec
 
 @pytest.mark.asyncio
 @patch("asyncio.sleep", new_callable=AsyncMock)
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_fail_after_max_retries(
-    mock_async_openai, mock_sleep, minimal_config
+    mock_sleep, mock_async_openai, minimal_config
 ):
     """Test that an IOError is raised after max_attempts are exhausted."""
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.side_effect = openai.APITimeoutError(None)
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     with pytest.raises(ExternalServiceAPIError):
         await lm.generate_response(max_attempts=3)
 
@@ -328,24 +347,21 @@ async def test_generate_response_fail_after_max_retries(
         (openai.OpenAIError("generic error")),
     ],
 )
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_generate_response_runtime_exception_mapping(
     mock_async_openai, minimal_config, exception
 ):
     """Test that OpenAI exceptions are correctly mapped to generic
     exceptions.
     """
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.side_effect = exception
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(minimal_config)
+    lm = OpenAIResponsesLanguageModel(minimal_config)
     with pytest.raises(ExternalServiceAPIError):
         await lm.generate_response()
 
 
 @pytest.mark.asyncio
-@patch("memmachine.common.language_model.openai_language_model.openai.AsyncOpenAI")
 async def test_metrics_collection(mock_async_openai, full_config):
     """Test that metrics are collected on a successful call."""
     mock_usage = MagicMock()
@@ -362,15 +378,14 @@ async def test_metrics_collection(mock_async_openai, full_config):
     mock_response.output = None
     mock_response.usage = mock_usage
 
-    mock_client = AsyncMock()
+    mock_client = mock_async_openai.return_value
     mock_client.responses.create.return_value = mock_response
-    mock_async_openai.return_value = mock_client
 
-    lm = OpenAILanguageModel(full_config)
+    lm = OpenAIResponsesLanguageModel(full_config)
     await lm.generate_response()
 
-    metrics_factory = full_config["metrics_factory"]
-    labels = full_config["user_metrics_labels"]
+    metrics_factory = full_config.metrics_factory
+    labels = full_config.user_metrics_labels
 
     input_counter = metrics_factory.get_counter("test", "test")
     output_counter = metrics_factory.get_counter("test", "test")

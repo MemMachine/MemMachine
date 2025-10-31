@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 import openai
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
@@ -19,72 +20,80 @@ from .language_model import LanguageModel
 logger = logging.getLogger(__name__)
 
 
-class OpenAILanguageModel(LanguageModel):
+class OpenAIResponsesLanguageModelParams(BaseModel):
+    """
+    Parameters for OpenAIResponsesLanguageModel.
+
+    Attributes:
+        client (openai.AsyncOpenAI):
+            AsyncOpenAI client to use for making API calls.
+        model (str):
+            Name of the OpenAI model to use
+            (e.g. 'gpt-5-nano').
+        max_retry_interval_seconds (int):
+            Maximal retry interval in seconds when retrying API calls
+            (default: 120).
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory
+            for collecting usage metrics
+            (default: None).
+        user_metrics_labels (dict[str, str]):
+            Labels to attach to the collected metrics
+            (default: {}).
+    """
+
+    client: InstanceOf[openai.AsyncOpenAI] = Field(
+        ...,
+        description="AsyncOpenAI client to use for making API calls",
+    )
+    model: str = Field(
+        ...,
+        description="Name of the OpenAI model to use (e.g. 'gpt-5-nano')",
+    )
+    max_retry_interval_seconds: int = Field(
+        120,
+        description="Maximal retry interval in seconds when retrying API calls",
+        gt=0,
+    )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
+    user_metrics_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Labels to attach to the collected metrics",
+    )
+
+
+class OpenAIResponsesLanguageModel(LanguageModel):
     """
     Language model that uses OpenAI's models
     to generate responses based on prompts and tools.
     """
 
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, params: OpenAIResponsesLanguageModelParams):
         """
-        Initialize an OpenAILanguageModel
-        with the provided configuration.
+        Initialize an OpenAIResponsesLanguageModel
+        with the provided parameters.
 
         Args:
-            config (dict[str, Any]):
-                Configuration dictionary containing:
-                - api_key (str):
-                  API key for accessing the OpenAI service.
-                - model (str, optional):
-                  Name of the OpenAI model to use
-                - metrics_factory (MetricsFactory, optional):
-                  An instance of MetricsFactory
-                  for collecting usage metrics.
-                - user_metrics_labels (dict[str, str], optional):
-                  Labels to attach to the collected metrics.
-                - max_retry_interval_seconds(int, optional):
-                  Maximal retry interval in seconds when retrying API calls.
-                  The default value is 120 seconds.
-
-        Raises:
-            ValueError:
-                If configuration argument values are missing or invalid.
-            TypeError:
-                If configuration argument values are of incorrect type.
+            params (OpenAIResponsesLanguageModelParams):
+                Parameters for the OpenAIResponsesLanguageModel.
         """
         super().__init__()
 
-        self._model = config.get("model")
-        if self._model is None:
-            raise ValueError("The model name must be configured")
-        if not isinstance(self._model, str):
-            raise TypeError("The model name must be a string")
+        self._client = params.client
 
-        api_key = config.get("api_key")
-        if api_key is None:
-            raise ValueError("Language API key must be provided")
+        self._model = params.model
 
-        self._client = openai.AsyncOpenAI(api_key=api_key)
+        self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
-        self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
-        if not isinstance(self._max_retry_interval_seconds, int):
-            raise TypeError("max_retry_interval_seconds must be an integer")
-
-        if self._max_retry_interval_seconds <= 0:
-            raise ValueError("max_retry_interval_seconds must be a positive integer")
-
-        metrics_factory = config.get("metrics_factory")
-        if metrics_factory is not None and not isinstance(
-            metrics_factory, MetricsFactory
-        ):
-            raise TypeError("Metrics factory must be an instance of MetricsFactory")
+        metrics_factory = params.metrics_factory
 
         self._collect_metrics = False
         if metrics_factory is not None:
             self._collect_metrics = True
-            self._user_metrics_labels = config.get("user_metrics_labels", {})
-            if not isinstance(self._user_metrics_labels, dict):
-                raise TypeError("user_metrics_labels must be a dictionary")
+            self._user_metrics_labels = params.user_metrics_labels
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(

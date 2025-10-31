@@ -3,12 +3,16 @@ import json
 import os
 from importlib import import_module
 
+import openai
 import pytest
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
 from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
-from memmachine.common.language_model.openai_language_model import OpenAILanguageModel
+from memmachine.common.language_model.openai_responses_language_model import (
+    OpenAIResponsesLanguageModel,
+    OpenAIResponsesLanguageModelParams,
+)
 from memmachine.profile_memory.profile_memory import ProfileMemory
 from memmachine.profile_memory.prompt_provider import ProfilePrompt
 from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
@@ -35,8 +39,13 @@ def embedder(config):
 
 @pytest.fixture
 def llm_model(config):
-    return OpenAILanguageModel(
-        {"api_key": config["api_key"], "model": config["llm_model"]}
+    return OpenAIResponsesLanguageModel(
+        OpenAIResponsesLanguageModelParams(
+            client=openai.AsyncOpenAI(
+                api_key=config["api_key"],
+            ),
+            model=config["llm_model"],
+        )
     )
 
 
@@ -128,7 +137,7 @@ class TestLongMemEvalIngestion:
         user_id: str,
         profile_memory: ProfileMemory,
         question_str: str,
-        llm_model: OpenAILanguageModel,
+        llm_model: OpenAIResponsesLanguageModel,
     ):
         profile_search_resp = await profile_memory.semantic_search(
             question_str, user_id=user_id
