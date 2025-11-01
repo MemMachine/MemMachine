@@ -91,7 +91,7 @@ class EmbedderBuilder(Builder):
                 model_name = config.get("model")
                 if model_name is None:
                     raise ValueError(
-                        "model_name must be provided for sentence-transformer"
+                        "'model' must be provided for sentence-transformer"
                     )
                 if not isinstance(model_name, str):
                     raise TypeError("model_name must be a string")

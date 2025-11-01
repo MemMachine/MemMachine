@@ -46,6 +46,8 @@ gpu = [
 memmachine-server = "memmachine.server.app:main"
 memmachine-sync-profile-schema = "memmachine.profile_memory.storage.syncschema:main"
 memmachine-nltk-setup = "memmachine:setup_nltk"
+memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
+memmachine-mcp-http = "memmachine.server.mcp_http:main"
 
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
