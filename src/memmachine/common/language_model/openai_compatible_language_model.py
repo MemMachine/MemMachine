@@ -14,6 +14,7 @@ import openai
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine.common.utils import get_default_headers 
 
 from .language_model import LanguageModel
 
@@ -75,8 +76,10 @@ class OpenAICompatibleLanguageModel(LanguageModel):
                     raise ValueError(f"Invalid base URL: {base_url}")
             except ValueError as e:
                 raise ValueError(f"Invalid base URL: {base_url}") from e
-
-        self._client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        defHeaders = get_default_headers(config.get("bearer_token"))
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key, base_url=base_url, default_headers=defHeaders
+        )
 
         self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
         if not isinstance(self._max_retry_interval_seconds, int):

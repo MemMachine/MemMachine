@@ -76,6 +76,7 @@ class LanguageModelBuilder(Builder):
                         "model": config.get("model"),
                         "api_key": config.get("api_key", "EMPTY"),
                         "base_url": config.get("base_url"),
+                        "bearer_token": config.get("bearer_token"),
                         "metrics_factory": get_metrics_factory(config),
                         "user_metrics_labels": config.get("user_metrics_labels", {}),
                         "max_retry_interval_seconds": config.get(
