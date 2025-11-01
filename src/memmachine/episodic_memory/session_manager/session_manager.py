@@ -142,11 +142,11 @@ class SessionManager:
 
         schema = config.get("schema", "")
         if schema:
-            for table in Base.metadata.tables.values():
+            for table in Base.json_metadata.tables.values():
                 table.schema = schema
 
         # Create all tables defined in the Base metadata if they don't exist
-        Base.metadata.create_all(self._engine)
+        Base.json_metadata.create_all(self._engine)
 
     def __del__(self):
         """Destructor to clean up database engine resources."""

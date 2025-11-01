@@ -55,6 +55,13 @@ class LRUCache:
             self.head.next.prev = node
         self.head.next = node
 
+    def clean(self) -> None:
+        self.cache = {}
+        self.head = Node(None, None)
+        self.tail = Node(None, None)
+        self.head.next = self.tail
+        self.tail.prev = self.head
+
     def erase(self, key: Any) -> None:
         """
         Removes an item from the cache.
@@ -72,6 +79,7 @@ class LRUCache:
         """
         if key in self.cache:
             node = self.cache[key]
+            # TODO: Add TTL invalidation to nodes
             # Move accessed node to the front
             self._remove_node(node)
             self._add_to_front(node)
