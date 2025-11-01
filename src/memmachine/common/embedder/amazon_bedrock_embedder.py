@@ -55,6 +55,10 @@ class AmazonBedrockEmbedderConfig(BaseModel):
     aws_secret_access_key: SecretStr = Field(
         description=("AWS secret access key for authentication."),
     )
+    aws_session_token: SecretStr | None = Field(
+        None,
+        description=("AWS session token for authentication."),
+    )
     model_id: str = Field(
         description=(
             "ID of the Bedrock model to use for embedding "
@@ -92,6 +96,7 @@ class AmazonBedrockEmbedder(Embedder):
         region = config.region
         aws_access_key_id = config.aws_access_key_id
         aws_secret_access_key = config.aws_secret_access_key
+        aws_session_token = config.aws_session_token
         self._model_id = config.model_id
         self._similarity_metric = config.similarity_metric
         self._max_retry_interval_seconds = config.max_retry_interval_seconds
@@ -100,6 +105,7 @@ class AmazonBedrockEmbedder(Embedder):
             region_name=region,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
             model_id=self._model_id,
             config=botocore.config.Config(
                 retries={
