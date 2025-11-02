@@ -47,8 +47,8 @@ class VectorGraphStoreBuilder(Builder):
                         description="Maximum number of concurrent transactions",
                         gt=0,
                     )
-                    force_exact_similarity_search: bool = Field(
-                        False, description="Whether to force exact similarity search"
+                    exact_similarity_search: bool = Field(
+                        False, description="Whether to use exact similarity search"
                     )
 
                 factory_params = Neo4jFactoryParams(**config)
@@ -64,7 +64,14 @@ class VectorGraphStoreBuilder(Builder):
                     Neo4jVectorGraphStoreParams(
                         driver=driver,
                         max_concurrent_transactions=factory_params.max_concurrent_transactions,
-                        force_exact_similarity_search=factory_params.force_exact_similarity_search,
+                        exact_similarity_search=factory_params.exact_similarity_search,
+                        range_index_hierarchies=[
+                            [
+                                "filterable_group_id",
+                                "filterable_session_id",
+                                "timestamp",
+                            ],
+                        ],
                     )
                 )
             case _:

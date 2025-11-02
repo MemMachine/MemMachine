@@ -46,9 +46,7 @@ class RelatedEpisodePostulatorBuilder(Builder):
                 params = PreviousRelatedEpisodePostulatorParams(
                     vector_graph_store=injections[config["vector_graph_store_id"]],
                     search_limit=config.get("search_limit", 1),
-                    filterable_property_keys=config.get(
-                        "filterable_property_keys", set()
-                    ),
+                    filterable_property_keys=config.get("filterable_property_keys", []),
                 )
                 return PreviousRelatedEpisodePostulator(params)
             case _:
