@@ -1,6 +1,7 @@
 # MemMachine specific
 configuration.yml
 config.yml
+cfg.yml
 sqlitetest.db
 
 # Byte-compiled / optimized / DLL files
