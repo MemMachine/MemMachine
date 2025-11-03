@@ -619,7 +619,9 @@ class ProfileMemory:
             if match:
                 response_json = match.group(1).strip()
                 logger.debug(
-                    "ProfileMemory - Found JSON in %s tag for %s", pattern_name, response_type
+                    "ProfileMemory - Found JSON in %s tag for %s",
+                    pattern_name,
+                    response_type,
                 )
                 break
 
@@ -740,9 +742,13 @@ class ProfileMemory:
             logger.warning(
                 "Unable to load language model output '%s' as JSON, Error %s. "
                 "Raw response: %s",
-                str(response_json[:200]) if len(response_json) > 200 else str(response_json),
+                str(response_json[:200])
+                if len(response_json) > 200
+                else str(response_json),
                 str(e),
-                str(response_text[:500]) if len(response_text) > 500 else str(response_text),
+                str(response_text[:500])
+                if len(response_text) > 500
+                else str(response_text),
             )
             profile_update_commands = {}
             return
@@ -902,9 +908,13 @@ class ProfileMemory:
             logger.warning(
                 "Unable to load language model output '%s' as JSON, Error %s. "
                 "Raw response: %s",
-                str(response_json[:200]) if len(response_json) > 200 else str(response_json),
+                str(response_json[:200])
+                if len(response_json) > 200
+                else str(response_json),
                 str(e),
-                str(response_text[:500]) if len(response_text) > 500 else str(response_text),
+                str(response_text[:500])
+                if len(response_text) > 500
+                else str(response_text),
             )
             updated_profile_entries = {}
             return
