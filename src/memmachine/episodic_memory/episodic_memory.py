@@ -17,22 +17,18 @@ Key responsibilities include:
 """
 
 import asyncio
-import copy
 import logging
 import uuid
 from datetime import datetime
+import time
 from typing import cast
 
-from memmachine.common.language_model.language_model_builder import (
-    LanguageModelBuilder,
-)
-from memmachine.common.metrics_factory.metrics_factory_builder import (
-    MetricsFactoryBuilder,
-)
+from memmachine.configuration.episodic_config import EpisodicMemoryParams
 
-from .data_types import ContentType, Episode, MemoryContext
+
+from .data_types import ContentType, Episode, EpisodeType
 from .long_term_memory.long_term_memory import LongTermMemory
-from .short_term_memory.session_memory import SessionMemory
+from .short_term_memory.short_term_memory import ShortTermMemory
 
 logger = logging.getLogger(__name__)
 
@@ -40,81 +36,39 @@ logger = logging.getLogger(__name__)
 class EpisodicMemory:
     # pylint: disable=too-many-instance-attributes
     """
-    Represents a single, isolated memory instance for a specific context.
+    Represents a single, isolated memory instance for a specific session.
 
     This class orchestrates the interaction between short-term (session)
     memory and long-term (declarative) memory. It manages the lifecycle of
     the memory, handles adding new information (episodes), and provides
     methods to retrieve contextual information for queries.
 
-    Each instance is tied to a unique `MemoryContext` (defined by group, agent,
-    user, and session IDs) and is managed by a central
-    `EpisodicMemoryManager`.
+    Each instance is tied to a unique session key
     """
 
-    def __init__(self, manager, config: dict, memory_context: MemoryContext):
+    def __init__(
+            self,
+            param: EpisodicMemoryParams,
+            session_memory: ShortTermMemory | None = None,
+            long_term_memory: LongTermMemory | None = None
+        ):
         # pylint: disable=too-many-instance-attributes
         """
         Initializes a EpisodicMemory instance.
 
         Args:
             manager: The EpisodicMemoryManager that created this instance.
-            config: A dictionary containing the configuration for this memory
-                    instance.
-            memory_context: The unique context for this memory instance.
+            param: The paraters required to initialize the episodic memory
         """
-        self._memory_context = memory_context
-        self._manager = manager  # The manager that created this instance
-        self._lock = asyncio.Lock()  # Lock for thread-safe operations
-
-        model_config = config.get("model")
-        short_config = config.get("sessionmemory", {})
-        long_term_config = config.get("long_term_memory", {})
-
-        self._ref_count = 1  # For reference counting to manage lifecycle
-        self._session_memory: SessionMemory | None = None
-        self._long_term_memory: LongTermMemory | None = None
-        metrics_manager = MetricsFactoryBuilder.build("prometheus", {}, {})
-
-        if len(short_config) > 0 and short_config.get("enabled") != "false":
-            model_name = short_config.get("model_name")
-            if model_name is None or len(model_name) < 1:
-                raise ValueError("Invalid model name")
-
-            if model_config is None or model_config.get(model_name) is None:
-                raise ValueError("Invalid model configuration")
-
-            model_config = copy.deepcopy(model_config.get(model_name))
-            """
-            only support prometheus now.
-            TODO: support different metrics and make it configurable
-            """
-            model_config["metrics_factory_id"] = "prometheus"
-            model_vendor = model_config.pop("model_vendor")
-            metrics_injection = {}
-            metrics_injection["prometheus"] = metrics_manager
-
-            llm_model = LanguageModelBuilder.build(
-                model_vendor,
-                model_config,
-                metrics_injection,
-            )
-
-            # Initialize short-term session memory
-            self._session_memory = SessionMemory(
-                llm_model,
-                config.get("prompts", {}).get("episode_summary_prompt_system"),
-                config.get("prompts", {}).get("episode_summary_prompt_user"),
-                short_config.get("message_capacity", 1000),
-                short_config.get("max_message_length", 128000),
-                short_config.get("max_token_num", 65536),
-                self._memory_context,
-            )
-
-        if len(long_term_config) > 0 and long_term_config.get("enabled") != "false":
-            # Initialize long-term declarative memory
-            self._long_term_memory = LongTermMemory(config, self._memory_context)
-        if self._session_memory is None and self._long_term_memory is None:
+        self._session_key = param.session_key
+        self._closed = False
+        self._short_term_memory: ShortTermMemory | None = session_memory
+        self._long_term_memory: LongTermMemory | None = long_term_memory
+        metrics_manager = param.metrics_factory
+        self._enabled = param.enabled
+        if not self._enabled:
+            return
+        if self._short_term_memory is None and self._long_term_memory is None:
             raise ValueError("No memory is configured")
 
         # Initialize metrics
@@ -131,24 +85,34 @@ class EpisodicMemory:
             "query_count", "Count of query processing"
         )
 
+    @classmethod
+    async def create(cls, param: EpisodicMemoryParams) -> 'EpisodicMemory':
+        session_memory: ShortTermMemory | None = None
+        if param.short_term_memory and param.short_term_memory.enabled:
+            session_memory = await ShortTermMemory.create(param.short_term_memory)
+        long_term_memory: LongTermMemory | None = None
+        if param.long_term_memory and param.long_term_memory.enabled:
+            long_term_memory = LongTermMemory(param.long_term_memory)
+        return EpisodicMemory(param, session_memory, long_term_memory)
+
     @property
-    def short_term_memory(self) -> SessionMemory | None:
+    def short_term_memory(self) -> ShortTermMemory | None:
         """
         Get the short-term memory of the episodic memory instance
         Returns:
             The short-term memory of the episodic memory instance.
         """
-        return self._session_memory
+        return self._short_term_memory
 
     @short_term_memory.setter
-    def short_term_memory(self, value: SessionMemory | None):
+    def short_term_memory(self, value: ShortTermMemory | None):
         """
         Set the short-term memory of the episodic memory instance
         This makes the short term memory can be injected
         Args:
             value: The new short-term memory of the episodic memory instance.
         """
-        self._session_memory = value
+        self._short_term_memory = value
 
     @property
     def long_term_memory(self) -> LongTermMemory | None:
@@ -169,48 +133,18 @@ class EpisodicMemory:
         """
         self._long_term_memory = value
 
-    def get_memory_context(self) -> MemoryContext:
+    @property
+    def session_key(self) -> str:
         """
-        Get the memory context of the episodic memory instance
+        Get the session key of the episodic memory instance
         Returns:
-            The memory context of the episodic memory instance.
+            The session key of the episodic memory instance.
         """
-        return self._memory_context
-
-    def get_reference_count(self) -> int:
-        """
-        Get the reference count of the episodic memory instance
-        Returns:
-            The reference count of the episodic memory instance.
-        """
-        return self._ref_count
-
-    async def reference(self) -> bool:
-        """
-        Increments the reference count for this instance.
-
-        Used by the manager to track how many clients are actively using this
-        memory instance.
-
-        Returns:
-            True if the reference was successfully added, False if the instance
-            is already closed.
-        """
-        async with self._lock:
-            if self._ref_count <= 0:
-                return False
-            self._ref_count += 1
-            return True
+        return self._session_key
 
     async def add_memory_episode(
         self,
-        producer: str,
-        produced_for: str,
-        episode_content: str | list[float],
-        episode_type: str,
-        content_type: ContentType,
-        timestamp: datetime | None = None,
-        metadata: dict | None = None,
+        episode: Episode
     ):
         # pylint: disable=too-many-arguments
         # pylint: disable=too-many-positional-arguments
@@ -232,60 +166,25 @@ class EpisodicMemory:
         Returns:
             True if the episode was added successfully, False otherwise.
         """
-        # Validate that the producer and recipient are part of this memory
-        # context
-        if (
-            producer not in self._memory_context.user_id
-            and producer not in self._memory_context.agent_id
-        ):
-            logger.error("The producer %s does not belong to the session", producer)
-            raise ValueError(f"The producer {producer} does not belong to the session")
+        if not self._enabled:
+            return
+        start_time = time.monotonic_ns()
 
-        if (
-            produced_for not in self._memory_context.user_id
-            and produced_for not in self._memory_context.agent_id
-        ):
-            logger.error(
-                "The produced_for %s does not belong to the session",
-                produced_for,
-            )
-            raise ValueError(
-                f"""The produced_for {produced_for} does not belong to
-                 the session"""
-            )
-
-        start_time = datetime.now()
-
-        # Create a new Episode object
-        episode = Episode(
-            uuid=uuid.uuid4(),
-            episode_type=episode_type,
-            content_type=content_type,
-            content=episode_content,
-            timestamp=timestamp if timestamp else datetime.now(),
-            group_id=self._memory_context.group_id,
-            session_id=self._memory_context.session_id,
-            producer_id=producer,
-            produced_for_id=produced_for,
-            user_metadata=metadata,
-        )
-
+        if self._closed:
+            raise RuntimeError(f"Memory is closed {self._session_key}")
         # Add the episode to both memory stores concurrently
         tasks = []
-        if self._session_memory:
-            tasks.append(self._session_memory.add_episode(episode))
+        if self._short_term_memory:
+            tasks.append(self._short_term_memory.add_episode(episode))
         if self._long_term_memory:
             tasks.append(self._long_term_memory.add_episode(episode))
         await asyncio.gather(
             *tasks,
         )
-        end_time = datetime.now()
-        delta = end_time - start_time
-        self._ingestion_latency_summary.observe(
-            delta.total_seconds() * 1000 + delta.microseconds / 1000
-        )
+        end_time = time.monotonic_ns()
+        delta = (end_time - start_time) / 1000000
+        self._ingestion_latency_summary.observe(delta)
         self._ingestion_counter.increment()
-        return True
 
     async def close(self):
         """
@@ -296,21 +195,30 @@ class EpisodicMemory:
         stores and notifies the manager to remove this instance from its
         registry.
         """
-        async with self._lock:
-            self._ref_count -= 1
-            if self._ref_count > 0:
-                return
-
-            # If no more references, proceed with closing
-            logger.info("Closing context memory: %s", str(self._memory_context))
-            tasks = []
-            if self._session_memory:
-                tasks.append(self._session_memory.close())
-            await asyncio.gather(
-                *tasks,
-            )
-            await self._manager.delete_context_memory(self._memory_context)
+        self._closed = True
+        if not self._enabled:
             return
+        tasks = []
+        if self._short_term_memory:
+            tasks.append(self._short_term_memory.close())
+        if self._long_term_memory:
+            tasks.append(self._long_term_memory.close())
+        await asyncio.gather(*tasks)
+        return
+
+
+
+    async def delete_episode(self, uuid: uuid.UUID):
+        """Delete one episode by uuid"""
+        if not self._enabled:
+            return
+        tasks = []
+        if self._short_term_memory:
+            tasks.append(self._short_term_memory.delete_episode(uuid))
+        if self._long_term_memory:
+            tasks.append(self._long_term_memory.delete_episode(uuid))
+        await asyncio.gather(*tasks)
+        return
 
     async def delete_data(self):
         """
@@ -318,14 +226,15 @@ class EpisodicMemory:
         context.
         This is a destructive operation.
         """
-        async with self._lock:
-            tasks = []
-            if self._session_memory:
-                tasks.append(self._session_memory.clear_memory())
-            if self._long_term_memory:
-                tasks.append(self._long_term_memory.forget_session())
-            await asyncio.gather(*tasks)
+        if not self._enabled:
             return
+        tasks = []
+        if self._short_term_memory:
+            tasks.append(self._short_term_memory.clear_memory())
+        if self._long_term_memory:
+            tasks.append(self._long_term_memory.forget_session())
+        await asyncio.gather(*tasks)
+        return
 
     async def query_memory(
         self,
@@ -353,40 +262,38 @@ class EpisodicMemory:
             a list of long term memory Episode objects, and a
             list of summary strings.
         """
-
-        start_time = datetime.now()
+        if not self._enabled:
+            return [], [], []
+        start_time = time.monotonic_ns()
         search_limit = limit if limit is not None else 20
         if property_filter is None:
             property_filter = {}
-        # By default, always allow cross session search
-        property_filter["group_id"] = self._memory_context.group_id
 
-        async with self._lock:
-            if self._session_memory is None:
-                short_episode: list[Episode] = []
-                short_summary = ""
-                long_episode = await cast(
-                    LongTermMemory, self._long_term_memory
-                ).search(
-                    query,
-                    search_limit,
-                    property_filter,
-                )
-            elif self._long_term_memory is None:
-                session_result = await self._session_memory.get_session_memory_context(
+        if self._short_term_memory is None:
+            short_episode: list[Episode] = []
+            short_summary = ""
+            long_episode = await cast(
+                LongTermMemory, self._long_term_memory
+            ).search(
+                query,
+                search_limit,
+                property_filter,
+            )
+        elif self._long_term_memory is None:
+            session_result = await self._short_term_memory.get_session_memory_context(
+                query, limit=search_limit, filter=property_filter
+            )
+            long_episode = []
+            short_episode, short_summary = session_result
+        else:
+            # Concurrently search both memory stores
+            session_result, long_episode = await asyncio.gather(
+                self._short_term_memory.get_session_memory_context(
                     query, limit=search_limit
-                )
-                long_episode = []
-                short_episode, short_summary = session_result
-            else:
-                # Concurrently search both memory stores
-                session_result, long_episode = await asyncio.gather(
-                    self._session_memory.get_session_memory_context(
-                        query, limit=search_limit
-                    ),
-                    self._long_term_memory.search(query, search_limit, property_filter),
-                )
-                short_episode, short_summary = session_result
+                ),
+                self._long_term_memory.search(query, search_limit, property_filter),
+            )
+            short_episode, short_summary = session_result
 
         # Deduplicate episodes from both memory stores, prioritizing
         # short-term memory
@@ -398,11 +305,9 @@ class EpisodicMemory:
                 uuid_set.add(episode.uuid)
                 unique_long_episodes.append(episode)
 
-        end_time = datetime.now()
-        delta = end_time - start_time
-        self._query_latency_summary.observe(
-            delta.total_seconds() * 1000 + delta.microseconds / 1000
-        )
+        end_time = time.monotonic_ns()
+        delta = (end_time - start_time) / 1000000
+        self._query_latency_summary.observe(delta)
         self._query_counter.increment()
         return short_episode, unique_long_episodes, [short_summary]
 
@@ -455,41 +360,3 @@ class EpisodicMemory:
         finalized_query += f"<Query>\n{query}\n</Query>"
 
         return finalized_query
-
-
-class AsyncEpisodicMemory:
-    """
-    Asynchronous context manager for EpisodicMemory instances.
-
-    This class provides an `async with` interface for `EpisodicMemory` objects,
-    ensuring that `reference()` is called upon entry and `close()` is called
-    upon exit, handling the lifecycle management automatically.
-    """
-
-    def __init__(self, episodic_memory_instance: EpisodicMemory):
-        """
-        Initializes the AsyncEpisodicMemory context manager.
-
-        Args:
-            episodic_memory_instance: The EpisodicMemory instance to manage.
-        """
-        self.episodic_memory_instance = episodic_memory_instance
-
-    async def __aenter__(self) -> EpisodicMemory:
-        """
-        Enters the asynchronous context.
-
-        Returns:
-            The EpisodicMemory instance.
-
-        """
-        return self.episodic_memory_instance
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """
-        Exits the asynchronous context.
-
-        Decrements the reference count of the managed EpisodicMemory instance,
-        triggering its closure if the count reaches zero.
-        """
-        await self.episodic_memory_instance.close()

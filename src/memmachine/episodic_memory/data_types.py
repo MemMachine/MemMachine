@@ -14,6 +14,12 @@ class ContentType(Enum):
     STRING = "string"
     # Other content types like 'vector', 'image' could be added here.
 
+class EpisodeType(Enum):
+    """Enumeration for the type of an Episode."""
+
+    MESSAGE = "message"
+    THOUGHT = "thought"
+    ACTION = "action"
 
 @dataclass
 class SessionInfo:
@@ -92,7 +98,11 @@ class Episode:
 
     uuid: UUID
     """A unique identifier (UUID) for the episode."""
-    episode_type: str
+    sequence_num: int
+    """Sequence number of the Episode"""
+    session_key: str
+    """The identifier for the session to which this episode belongs."""
+    episode_type: EpisodeType
     """
     A string indicating the type of the episode (e.g., 'message', 'thought',
     'action').
@@ -103,12 +113,10 @@ class Episode:
     """The actual data of the episode, which can be of any type."""
     timestamp: datetime
     """The date and time when the episode occurred."""
-    group_id: str
-    """Identifier for the group (e.g., a specific chat room or DM)."""
-    session_id: str
-    """Identifier for the session to which this episode belongs."""
     producer_id: str
     """The identifier of the user or agent that created this episode."""
+    producer_role: str
+    """The role of the producer (e.g., 'HR', 'agent', 'engineer')."""
     produced_for_id: str | None = None
     """The identifier of the intended recipient, if any."""
     user_metadata: JSONValue = None

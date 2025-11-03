@@ -437,7 +437,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     ):
         async with self._semaphore:
             await self._driver.execute_query(
-                """
+                """delete
                 UNWIND $node_uuids AS node_uuid
                 MATCH (n {uuid: node_uuid})
                 DETACH DELETE n
