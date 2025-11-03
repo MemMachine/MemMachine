@@ -97,26 +97,18 @@ The model parameters are used to establish the LLM model to be used with MemMach
 | ----------------------------- | --------- | ----------------- | ----------------------------------------------------------------- |
 | `testmodel`                   | Yes       |  `testmodel`      | This is the default configuration ID for MemMachine using openai. |
 | `model_vendor`                | Yes       | 'openai'          | The vendor of the model (e.g., `openai`, `amazon-bedrock`).       |
-| `model_name`                  | Yes       | "gpt-4o-mini"     | The name of the model to use (e.g., `gpt-4o-mini`).               |
+| `model`                       | Yes       | "gpt-4o-mini"     | The name of the model to use (e.g., `gpt-4o-mini`).               |
 | `api_key`                     | Yes       |  N/A              | Only required if using openai, required if using default set up   |
 | `another_model_id`            | No        | `another_model_id`| Unique identifier for another model configuration.                |  
-| `region`                      | No        | N/A               | The AWS region for the Bedrock model (e.g., `us-west-2`).         |
-| `aws_access_key_id`           | No        | N/A               | The AWS access key ID for Bedrock authentication.                 |
-| `aws_secret_access_key`       | No        | N/A               | The AWS secret access key for Bedrock authentication.             |
 
 An example of these parameters in a config file would look like the following:
 ```YAML
 Model:
   testmodel:
     model_vendor: openai
-    model_name: "gpt-4o-mini"
+    model: "gpt-4o-mini"
     api_key: <YOUR_API_KEY>
   another_model_id:
-    model_vendor: "amazon-bedrock"
-    region: "us-west-2"
-    aws_access_key_id: <AWS_ACCESS_KEY_ID>
-    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
-    model_id: "openai.gpt-oss-20b-1:0"
 ```
 </Accordion>
 <Accordion title="Storage">
@@ -189,13 +181,6 @@ The Embedder model that we choose to use.
 | `<ID>.name`                          | No        | openai        | The vendor name of your embedder.                            |
 | `<ID>.model_name`                    | No        | "text-embedding-3-small" | The model type of your embedder.  Should be by the vendor designated in `name`. |
 | `<ID>.api_key`                       | No        | N/A           | Your API Key for use with OpenAI                             |
-| `aws_embedder_id`                    | No        | N/A           | Tag should you choose to use AWS Bedrock for your Embedder.  |
-| `<ID>.name`                          | No        | 'amazon-bedrock' | The vendor name of your embedder.                         |
-| `<ID>.region`                        | No        | N/A           | The AWS region for the Bedrock embedder (e.g., `us-west-2`). |
-| `<ID>.aws_access_key_id`             | No        | N/A           | The AWS access key ID for Bedrock authentication.            |
-| `<ID>.aws_secret_access_key`         | No        | N/A           | The AWS secret access key for Bedrock authentication.        |
-| `<ID>.model_id`                      | No        | N/A           | The Bedrock model ID to use for embeddings.                  |
-| `<ID>.similarity_metric`             | No        | "cosine"      | | The similarity metric to use for embedding comparisons (e.g., `cosine`, `euclidean`). |
 
 An example of these parameters in a config file would look like the following:
 ```YAML
@@ -205,14 +190,6 @@ embedder:
     config:
       model_name: "text-embedding-3-small"
       api_key: <YOUR_API_KEY>
-  aws_embedder_id:
-    name: 'amazon-bedrock'
-    config:
-      region: "us-west-2"
-      aws_access_key_id: <AWS_ACCESS_KEY_ID>
-      aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
-      model_id: "amazon.titan-embed-text-v2:0"
-      similarity_metric: "cosine"
 ```
 </Accordion>
 <Accordion title="Reranker">
