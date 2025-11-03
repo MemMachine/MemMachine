@@ -24,9 +24,18 @@
             "pages": [
               "getting_started/introduction",
               "getting_started/quickstart",
-              "getting_started/install_guide",
               "getting_started/benchmarks",
               "getting_started/faqs"
+            ]
+          },
+          {
+            "group": "Install Guides",
+            "icon": "map",
+            "pages": [
+              "install_guide/introduction",
+              "install_guide/install_guide",
+              "install_guide/aws_bedrock",
+              "install_guide/ollama"
             ]
           },
           {
@@ -151,8 +160,5 @@
       "x": "https://x.com/memmachine",
       "github": "https://github.com/memmachine"
     }
-  },
-  "ignore": [
-    ".cursor"
-  ]
+  }
 }
