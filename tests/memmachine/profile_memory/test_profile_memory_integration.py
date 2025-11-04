@@ -20,9 +20,9 @@ def config():
     open_api_key = os.environ.get("OPENAI_API_KEY")
     return {
         "api_key": open_api_key,
-        "llm_model": "gpt-4o-mini",
+        "llm_model": "gpt-4.1-mini",
         "embedding_model": "text-embedding-3-small",
-        "prompt_module": "writing_assistant_prompt",
+        "prompt_module": "profile_prompt",
     }
 
 

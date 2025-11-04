@@ -10,6 +10,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 from itertools import accumulate, groupby, tee
 from typing import Any
 
@@ -522,7 +523,6 @@ class ProfileMemory:
 
         async def process_messages(messages):
             if len(messages) == 0:
-                logger.debug("ProfileMemory - No messages to process")
                 return
 
             logger.debug("ProfileMemory - Processing %d messages", len(messages))
@@ -530,18 +530,11 @@ class ProfileMemory:
 
             for i in range(0, len(messages) - 1):
                 message = messages[i]
-                logger.debug(
-                    "ProfileMemory - Processing message %d for user %s", i, user_id
-                )
                 await self._update_user_profile_think(message)
                 mark_tasks.append(
                     self._profile_storage.mark_messages_ingested([message["id"]])
                 )
 
-            logger.debug(
-                "ProfileMemory - Processing last message with consolidation for user %s",
-                user_id,
-            )
             await self._update_user_profile_think(messages[-1], wait_consolidate=True)
             mark_tasks.append(
                 self._profile_storage.mark_messages_ingested([messages[-1]["id"]])
@@ -553,6 +546,138 @@ class ProfileMemory:
             tasks.append(process_messages(isolation_messages))
 
         await asyncio.gather(*tasks)
+
+    def _parse_llm_json_response(
+        self, response_text: str, response_type: str = "update"
+    ) -> tuple[str, str]:
+        """Parse JSON from LLM response with hybrid approach.
+
+        Strategy:
+        1. Fast path: Try OpenAI-friendly format first (expects clean JSON after tags)
+        2. Fallback: Use robust parsing for non-OpenAI models with various formats
+
+        Args:
+            response_text: Raw LLM response text
+            response_type: Type of response ("update" or "consolidation") for logging
+
+        Returns:
+            Tuple of (thinking/reasoning text, json_string)
+        """
+        thinking = ""
+        response_json = ""
+
+        # Strategy 1: OpenAI-friendly format - try standard tags first
+        # Check for common OpenAI-friendly tags (prompts use <think> tags)
+        openai_tag_patterns = [
+            ("<think>", "</think>"),  # Primary format from prompts
+        ]
+
+        for open_tag, close_tag in openai_tag_patterns:
+            if open_tag in response_text and close_tag in response_text:
+                thinking_part, _, json_part = response_text.removeprefix(
+                    open_tag
+                ).rpartition(close_tag)
+                thinking = thinking_part.strip()
+                response_json = json_part.strip()
+
+                # Try parsing - if successful, we're done (fast path)
+                try:
+                    json.loads(response_json)
+                    logger.debug(
+                        "ProfileMemory - Successfully parsed %s response using OpenAI format (%s tags)",
+                        response_type,
+                        open_tag,
+                    )
+                    return thinking, response_json
+                except (ValueError, json.JSONDecodeError):
+                    # JSON part exists but is malformed - continue to robust parsing
+                    logger.debug(
+                        "ProfileMemory - OpenAI format detected but JSON is malformed, "
+                        "trying robust parsing for %s",
+                        response_type,
+                    )
+                    # Keep the extracted parts for further processing
+                    break
+
+        # If no OpenAI tags found or parsing failed, try to extract JSON directly
+        if not response_json:
+            response_json = response_text.strip()
+
+        # Strategy 2: Robust parsing for non-OpenAI models
+        # Try to find JSON wrapped in various tags
+        json_patterns = [
+            (r"<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>", "OLD_PROFILE"),
+            (r"<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>", "NEW_PROFILE"),
+            (r"<profile>\s*(\{.*?\})\s*</profile>", "profile"),
+            (r"<json>\s*(\{.*?\})\s*</json>", "json"),
+            (r"```json\s*(\{.*?\})\s*```", "json code block"),
+            (r"```\s*(\{.*?\})\s*```", "code block"),
+        ]
+
+        for pattern, pattern_name in json_patterns:
+            match = re.search(pattern, response_text, re.DOTALL)
+            if match:
+                response_json = match.group(1).strip()
+                logger.debug(
+                    "ProfileMemory - Found JSON in %s tag for %s",
+                    pattern_name,
+                    response_type,
+                )
+                break
+
+        # Strategy 3: If no tagged JSON found, look for the last JSON object
+        if not response_json or not response_json.startswith("{"):
+            # Find the last complete JSON object in the response
+            # This handles cases where JSON is at the end after reasoning text
+            json_match = re.search(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", response_text)
+            if json_match:
+                response_json = json_match.group(1).strip()
+                logger.debug(
+                    "ProfileMemory - Extracted JSON object from end of response for %s",
+                    response_type,
+                )
+
+        # Strategy 4: If still no JSON found, use entire response
+        if not response_json:
+            response_json = response_text.strip()
+            logger.debug(
+                "ProfileMemory - Using entire response as JSON for %s", response_type
+            )
+
+        # Conservative cleanup - only fix obvious issues that won't break valid JSON
+        if response_json:
+            original_json = response_json
+
+            # Remove invalid syntax like "... (other tags remain the same)" (common LLM insertion)
+            response_json = re.sub(r"\.\.\.\s*\([^)]*\)", "", response_json)
+
+            # Remove trailing commas before closing braces/brackets (common LLM mistake)
+            response_json = re.sub(r",(\s*[}\]])", r"\1", response_json)
+
+            # Fix incomplete JSON structures (missing closing braces)
+            open_braces = response_json.count("{")
+            close_braces = response_json.count("}")
+            if open_braces > close_braces:
+                response_json += "}" * (open_braces - close_braces)
+
+            # Log if we made changes
+            if response_json != original_json:
+                logger.debug(
+                    "ProfileMemory - Cleaned up JSON for %s (removed trailing commas, fixed braces)",
+                    response_type,
+                )
+
+        # Extract thinking if we haven't already (for non-OpenAI format)
+        if not thinking:
+            for open_tag, close_tag in openai_tag_patterns:
+                if open_tag in response_text and close_tag in response_text:
+                    thinking_part, _, _ = response_text.removeprefix(
+                        open_tag
+                    ).rpartition(close_tag)
+                    thinking = thinking_part.strip()
+                    break
+
+        return thinking, response_json
 
     async def _update_user_profile_think(
         self,
@@ -597,182 +722,36 @@ class ProfileMemory:
             logger.debug(
                 "ProfileMemory - LLM response received for user_id: %s", user_id
             )
-            logger.debug(
-                "ProfileMemory - Raw LLM response for user_id %s: %s",
-                user_id,
-                response_text,
-            )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Error when update profile: %s", str(e))
             return
 
-        # Get thinking and JSON from language model response.
-        # Try multiple parsing strategies to handle different response formats
-        thinking = ""
-        response_json = ""
-
-        # Strategy 1: Look for <think> tags
-        if "<think>" in response_text and "</think>" in response_text:
-            thinking, _, response_json = response_text.removeprefix(
-                "<think>"
-            ).rpartition("</think>")
-            thinking = thinking.strip()
-        # Strategy 2: Look for JSON objects in the response
-        else:
-            # Try to extract JSON from the response by looking for common patterns
-            import re
-
-            # Look for JSON objects wrapped in various tags
-            json_patterns = [
-                r"<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>",
-                r"<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>",
-                r"<profile>\s*(\{.*?\})\s*</profile>",
-                r"<json>\s*(\{.*?\})\s*</json>",
-                r"```json\s*(\{.*?\})\s*```",
-                r"```\s*(\{.*?\})\s*```",
-                r"<think>\s*(\{.*?\})\s*</think>",
-            ]
-
-            response_json = ""
-            for pattern in json_patterns:
-                match = re.search(pattern, response_text, re.DOTALL)
-                if match:
-                    response_json = match.group(1).strip()
-                    break
-
-            # If no tagged JSON found, try to find JSON at the end of the response
-            if not response_json:
-                # Look for the last JSON object in the response
-                json_match = re.search(
-                    r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", response_text
-                )
-                if json_match:
-                    response_json = json_match.group(1).strip()
-                else:
-                    # If still no JSON found, use the entire response
-                    response_json = response_text.strip()
-
-        # Clean up common JSON syntax issues
-        if response_json:
-            # Remove invalid syntax like "... (other tags remain the same)"
-            response_json = re.sub(r"\.\.\.\s*\([^)]*\)", "", response_json)
-            # Remove trailing commas before closing braces
-            response_json = re.sub(r",(\s*[}\]])", r"\1", response_json)
-
-            # Fix common LLM JSON formatting issues
-            # Fix unquoted property names (e.g., tag: "value" -> "tag": "value")
-            response_json = re.sub(r"(\w+):\s*", r'"\1": ', response_json)
-
-            # Fix single quotes to double quotes
-            response_json = re.sub(r"'([^']*)'", r'"\1"', response_json)
-
-            # Fix backticks to double quotes
-            response_json = re.sub(r"`([^`]*)`", r'"\1"', response_json)
-
-            # Fix incomplete JSON structures (e.g., missing closing braces)
-            open_braces = response_json.count("{")
-            close_braces = response_json.count("}")
-            if open_braces > close_braces:
-                response_json += "}" * (open_braces - close_braces)
-
-            # Remove any remaining invalid characters
-            response_json = response_json.strip()
-
-        logger.debug(
-            "ProfileMemory - Extracted JSON for user %s: %s", user_id, response_json
+        # Parse thinking and JSON from language model response using hybrid approach
+        thinking, response_json = self._parse_llm_json_response(
+            response_text, response_type="update"
         )
 
         # TODO: These really should not be raw data structures.
         try:
             profile_update_commands = json.loads(response_json)
             logger.debug(
-                "ProfileMemory - Successfully parsed JSON for user %s: %s",
-                user_id,
+                "ProfileMemory - Successfully parsed profile update commands: %s",
                 profile_update_commands,
             )
-        except ValueError as e:
+        except (ValueError, json.JSONDecodeError) as e:
             logger.warning(
                 "Unable to load language model output '%s' as JSON, Error %s. "
-                "Attempting to extract valid JSON from malformed response.",
-                str(response_json),
+                "Raw response: %s",
+                str(response_json[:200])
+                if len(response_json) > 200
+                else str(response_json),
                 str(e),
+                str(response_text[:500])
+                if len(response_text) > 500
+                else str(response_text),
             )
-
-            # Try to extract valid JSON from malformed response
-            try:
-                # Try to find and extract JSON objects
-                json_objects = []
-                brace_count = 0
-                current_json = ""
-                in_string = False
-                escape_next = False
-
-                for char in response_json:
-                    if escape_next:
-                        current_json += char
-                        escape_next = False
-                        continue
-
-                    if char == "\\":
-                        escape_next = True
-                        current_json += char
-                        continue
-
-                    if char == '"' and not escape_next:
-                        in_string = not in_string
-
-                    current_json += char
-
-                    if not in_string:
-                        if char == "{":
-                            brace_count += 1
-                        elif char == "}":
-                            brace_count -= 1
-                            if brace_count == 0 and current_json.strip():
-                                # Found a complete JSON object
-                                try:
-                                    obj = json.loads(current_json.strip())
-                                    json_objects.append(obj)
-                                except (
-                                    json.JSONDecodeError,
-                                    ValueError,
-                                ) as decode_error:
-                                    # Ignore malformed JSON fragments; continue scanning
-                                    logger.debug(
-                                        "Skipping invalid JSON object during extraction: %s",
-                                        str(decode_error),
-                                    )
-                                current_json = ""
-
-                if json_objects:
-                    # Combine all valid JSON objects into one
-                    combined_json = {}
-                    for i, obj in enumerate(json_objects):
-                        if isinstance(obj, dict):
-                            for key, value in obj.items():
-                                combined_json[f"{i}_{key}"] = value
-
-                    profile_update_commands = combined_json
-                    logger.debug(
-                        "ProfileMemory - Successfully extracted JSON from malformed response for user %s: %s",
-                        user_id,
-                        profile_update_commands,
-                    )
-                else:
-                    logger.warning(
-                        "Could not extract valid JSON from malformed response. Proceeding with no profile update commands."
-                    )
-                    profile_update_commands = {}
-                    return
-
-            except Exception as extraction_error:
-                logger.warning(
-                    "Failed to extract JSON from malformed response. Error: %s. "
-                    "Proceeding with no profile update commands.",
-                    str(extraction_error),
-                )
-                profile_update_commands = {}
-                return
+            profile_update_commands = {}
+            return
         finally:
             logger.info(
                 "PROFILE MEMORY INGESTOR",
@@ -869,10 +848,6 @@ class ProfileMemory:
                     isolations=isolations,
                     # metadata=metadata
                 )
-                logger.debug(
-                    "ProfileMemory - Successfully added profile feature for user %s",
-                    user_id,
-                )
             elif command["command"] == "delete":
                 value = command["value"] if "value" in command else None
                 logger.debug(
@@ -914,102 +889,33 @@ class ProfileMemory:
                 system_prompt=self._consolidation_prompt,
                 user_prompt=json.dumps(memories),
             )
-            logger.debug(
-                "ProfileMemory - Raw LLM response for consolidation: %s", response_text
-            )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             logger.error("Model Error when deduplicate profile: %s", str(e))
             return
 
-        # Get thinking and JSON from language model response.
-        # Try multiple parsing strategies to handle different response formats
-        thinking = ""
-        response_json = ""
-
-        # Strategy 1: Look for <think> tags
-        if "<think>" in response_text and "</think>" in response_text:
-            thinking, _, response_json = response_text.removeprefix(
-                "<think>"
-            ).rpartition("</think>")
-            thinking = thinking.strip()
-        # Strategy 2: Look for JSON objects in the response
-        else:
-            # Try to extract JSON from the response by looking for common patterns
-            import re
-
-            # Look for JSON objects wrapped in various tags
-            json_patterns = [
-                r"<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>",
-                r"<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>",
-                r"<profile>\s*(\{.*?\})\s*</profile>",
-                r"<json>\s*(\{.*?\})\s*</json>",
-                r"```json\s*(\{.*?\})\s*```",
-                r"```\s*(\{.*?\})\s*```",
-                r"<think>\s*(\{.*?\})\s*</think>",
-            ]
-
-            response_json = ""
-            for pattern in json_patterns:
-                match = re.search(pattern, response_text, re.DOTALL)
-                if match:
-                    response_json = match.group(1).strip()
-                    break
-
-            # If no tagged JSON found, try to find JSON at the end of the response
-            if not response_json:
-                # Look for the last JSON object in the response
-                json_match = re.search(
-                    r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", response_text
-                )
-                if json_match:
-                    response_json = json_match.group(1).strip()
-                else:
-                    # If still no JSON found, use the entire response
-                    response_json = response_text.strip()
-
-        # Clean up common JSON syntax issues
-        if response_json:
-            # Remove invalid syntax like "... (other tags remain the same)"
-            response_json = re.sub(r"\.\.\.\s*\([^)]*\)", "", response_json)
-            # Remove trailing commas before closing braces
-            response_json = re.sub(r",(\s*[}\]])", r"\1", response_json)
-
-            # Fix common LLM JSON formatting issues
-            # Fix unquoted property names (e.g., tag: "value" -> "tag": "value")
-            response_json = re.sub(r"(\w+):\s*", r'"\1": ', response_json)
-
-            # Fix single quotes to double quotes
-            response_json = re.sub(r"'([^']*)'", r'"\1"', response_json)
-
-            # Fix backticks to double quotes
-            response_json = re.sub(r"`([^`]*)`", r'"\1"', response_json)
-
-            # Fix incomplete JSON structures (e.g., missing closing braces)
-            open_braces = response_json.count("{")
-            close_braces = response_json.count("}")
-            if open_braces > close_braces:
-                response_json += "}" * (open_braces - close_braces)
-
-            # Remove any remaining invalid characters
-            response_json = response_json.strip()
-
-        logger.debug(
-            "ProfileMemory - Extracted JSON for consolidation: %s", response_json
+        # Parse thinking and JSON from language model response using hybrid approach
+        thinking, response_json = self._parse_llm_json_response(
+            response_text, response_type="consolidation"
         )
+
         try:
             updated_profile_entries = json.loads(response_json)
             logger.debug(
-                "ProfileMemory - Successfully parsed JSON for consolidation: %s",
+                "ProfileMemory - Successfully parsed consolidation response: %s",
                 updated_profile_entries,
             )
-        except ValueError as e:
+        except (ValueError, json.JSONDecodeError) as e:
             logger.warning(
-                "Unable to load language model output '%s' as JSON, Error %s",
-                str(response_json),
+                "Unable to load language model output '%s' as JSON, Error %s. "
+                "Raw response: %s",
+                str(response_json[:200])
+                if len(response_json) > 200
+                else str(response_json),
                 str(e),
+                str(response_text[:500])
+                if len(response_text) > 500
+                else str(response_text),
             )
-            # Log raw response for debugging when JSON parsing fails
-            logger.debug("Raw LLM response that failed to parse: %s", response_text)
             updated_profile_entries = {}
             return
         finally:

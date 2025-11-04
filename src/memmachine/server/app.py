@@ -12,6 +12,7 @@ It includes:
 
 import argparse
 import asyncio
+import contextvars
 import copy
 import logging
 import os
@@ -26,9 +27,12 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.params import Depends
 from fastapi.responses import Response
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
+from fastmcp.server.http import StarletteWithLifespan
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field, model_validator
+from starlette.applications import Starlette
+from starlette.types import Lifespan, Receive, Scope, Send
 
 from memmachine.common.embedder import EmbedderBuilder
 from memmachine.common.language_model import LanguageModelBuilder
@@ -247,7 +251,6 @@ class RequestWithSession(BaseModel):
 
     session: SessionData | None = Field(
         None,
-        deprecated=True,
         description="Session field in the body is deprecated. "
         "Use header-based session instead.",
     )
@@ -597,30 +600,228 @@ async def initialize_resource(
     return episodic_memory, profile_memory
 
 
-@asynccontextmanager
-async def http_app_lifespan(application: FastAPI):
-    """Handles application startup and shutdown events.
-
-    Initializes the ProfileMemory and EpisodicMemoryManager instances,
-    and establishes necessary connections (e.g., to the database).
-    These resources are cleaned up on shutdown.
-
-    Args:
-        app: The FastAPI application instance.
-    """
+async def init_global_memory():
     config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
 
     global episodic_memory
     global profile_memory
     episodic_memory, profile_memory = await initialize_resource(config_file)
     await profile_memory.startup()
+
+
+async def shutdown_global_memory():
+    global episodic_memory
+    global profile_memory
+    if profile_memory is not None:
+        await profile_memory.cleanup()
+    if episodic_memory is not None:
+        await episodic_memory.shut_down()
+
+
+@asynccontextmanager
+async def global_memory_lifespan():
+    """Handles application startup and shutdown events.
+
+    Initializes the ProfileMemory and EpisodicMemoryManager instances,
+    and establishes necessary connections (e.g., to the database).
+    These resources are cleaned up on shutdown.
+    """
+    await init_global_memory()
     yield
-    await profile_memory.cleanup()
-    await episodic_memory.shut_down()
+    await shutdown_global_memory()
 
 
-mcp = FastMCP("MemMachine")
-mcp_app = mcp.http_app("/")
+# Context variable to hold the current user for this request
+user_id_context_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "user_id_context", default=None
+)
+
+
+def get_current_user_id() -> str | None:
+    """
+    Get the current user ID from the contextvar.
+
+    Returns:
+        The user_id if available, None otherwise.
+    """
+    return user_id_context_var.get()
+
+
+class UserIDContextMiddleware:
+    """
+    Middleware that extracts the user_id from the request and stores it
+    in a ContextVar for easy access within MCP tools.
+
+    Optionally override `user_id` from header "user-id".
+    """
+
+    def __init__(self, app: StarletteWithLifespan, header_name: str = "user-id"):
+        self.app = app
+        self.header_name = header_name
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        user_id: str | None = None
+
+        if scope.get("type") == "http":
+            headers = {
+                k.decode().lower(): v.decode() for k, v in scope.get("headers", [])
+            }
+            user_id = headers.get(self.header_name.lower(), None)
+
+        token = user_id_context_var.set(user_id)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            user_id_context_var.reset(token)
+
+    @property
+    def lifespan(self) -> Lifespan[Starlette]:
+        return self.app.lifespan
+
+
+class MemMachineFastMCP(FastMCP):
+    """Custom FastMCP subclass for MemMachine with authentication middleware."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_app(self, path: str | None = None) -> UserIDContextMiddleware:
+        """Override to add authentication middleware."""
+        http_app = super().http_app(path=path)
+        return UserIDContextMiddleware(http_app)
+
+
+class McpStatus:
+    """Status codes for MCP responses."""
+
+    SUCCESS = 200
+
+
+class McpResponse(BaseModel):
+    """Error model for MCP responses."""
+
+    status: int
+    """Error status code"""
+    message: str
+    """Error message"""
+
+
+mcpSuccess = McpResponse(status=McpStatus.SUCCESS, message="Success")
+
+
+class UserIDWithEnv(BaseModel):
+    """
+    Model with user_id that can be overridden by MM_USER_ID env var.
+    """
+
+    user_id: str = Field(
+        ...,
+        description=(
+            "The unique identifier of the user whose memory is being updated. "
+            "This ensures the new memory is stored under the correct profile."
+        ),
+        examples=["user"],
+    )
+
+    @model_validator(mode="after")
+    def _update_user(self):
+        """is MM_USER_ID env var set? If so, override user_id"""
+        env_user_id = os.environ.get("MM_USER_ID")
+        if env_user_id:
+            self.user_id = env_user_id
+        current_user_id = get_current_user_id()
+        if current_user_id:
+            self.user_id = current_user_id
+        return self
+
+
+class AddMemoryParam(UserIDWithEnv):
+    """
+    Parameters for adding memory.
+
+    This model is used by chatbots or agents to store important information
+    into memory for a specific user. The content should contain the **full
+    conversational or contextual summary**, not just a short fragment.
+
+    Chatbots should call this when they learn new facts about the user,
+    observe recurring behaviors, or summarize recent discussions.
+    """
+
+    content: str = Field(
+        ...,
+        description=(
+            "The complete context or summary to store in memory. "
+            "When adding memory, include **all relevant background**, "
+            "such as the current user message, prior conversation context, "
+            "and any inferred meaning or conclusions. "
+            "This allows future recall to be more accurate and useful."
+        ),
+        examples=[
+            (
+                "User discussed plans to visit Shanghai next month. "
+                "They enjoy historical architecture and local cuisine. "
+                "Mentioned interest in the Yu Garden and traditional tea houses."
+            )
+        ],
+    )
+
+    def get_new_episode(self) -> NewEpisode:
+        """Convert to NewEpisode object."""
+        session = SessionData(user_id=[self.user_id])
+        return NewEpisode(
+            session=session,
+            episode_content=self.content,
+            producer=self.user_id,
+            produced_for=self.user_id,
+        )
+
+
+class SearchMemoryParam(UserIDWithEnv):
+    """
+    Parameters for searching a user's memory.
+
+    This model is used by chatbots and agents to retrieve relevant
+    information from both **profile memory** (long-term traits and facts)
+    and **episodic memory** (past interactions and experiences).
+
+    Chatbots should call this search automatically when context or
+    prior information about the user or topic is missing.
+    """
+
+    query: str = Field(
+        ...,
+        description=(
+            "The current user message or topic of discussion. "
+            "This will be used as the semantic query to find related memories. "
+            "If the chatbot is unsure about context or past topics, use the current "
+            "user message as the query to recall relevant background."
+        ),
+        examples=["Tell me more about our trip to New York last summer."],
+    )
+
+    limit: int = Field(
+        5,
+        description=(
+            "The maximum number of memory entries to retrieve. "
+            "Defaults to 5 for efficiency. Increase if deeper recall is needed."
+        ),
+        ge=1,
+        le=50,
+        examples=[5],
+    )
+
+    def get_search_query(self) -> SearchQuery:
+        """Convert to SearchQuery object."""
+        session = SessionData(user_id=[self.user_id])
+        return SearchQuery(
+            session=session,
+            query=self.query,
+            limit=self.limit,
+        )
+
+
+mcp = MemMachineFastMCP("MemMachine")
+mcp_app = mcp.get_app("/")
 
 
 @asynccontextmanager
@@ -635,7 +836,7 @@ async def mcp_http_lifespan(application: FastAPI):
     Args:
         application: The FastAPI application instance.
     """
-    async with http_app_lifespan(application):
+    async with global_memory_lifespan():
         async with mcp_app.lifespan(application):
             yield
 
@@ -644,224 +845,65 @@ app = FastAPI(lifespan=mcp_http_lifespan)
 app.mount("/mcp", mcp_app)
 
 
-@mcp.tool()
-async def mcp_add_session_memory(episode: NewEpisode) -> dict[str, Any]:
-    """MCP tool to add a memory episode for a specific session. It adds the
-    episode to both episodic and profile memory.
+@mcp.tool(
+    name="add_memory",
+    description=(
+        "Store important new information about the user or conversation into memory. "
+        "Use this automatically whenever the user shares new facts, preferences, "
+        "plans, emotions, or other details that could be useful for future context. "
+        "Include the **full conversation context** in the `content` field — not just a snippet. "
+        "This tool writes to both short-term (episodic) and long-term (profile) memory, "
+        "so that future interactions can recall relevant background knowledge even "
+        "across different sessions."
+    ),
+)
+async def mcp_add_memory(param: AddMemoryParam) -> McpResponse:
+    """
+    Add a new memory for the specified user.
 
-    This tool does not require a pre-existing open session in the context.
-    It adds a memory episode directly using the session data provided in the
-    `NewEpisode` object.
+    The model should call this whenever it detects new information
+    worth remembering — for example, user preferences, recurring topics,
+    or summaries of recent exchanges.
 
     Args:
-        episode: The complete new episode data, including session info.
-        ctx: The MCP context (unused).
-
+        param: The memory entry containing the user ID and full context.
     Returns:
-        Status 0 if the memory was added successfully, Status -1 otherwise
-        with error message.
+        McpResponse indicating success or failure.
     """
+    episode = param.get_new_episode()
     try:
         await _add_memory(episode)
     except HTTPException as e:
         episode.log_error_with_session(e, "Failed to add memory episode")
-        return {"status": -1, "error_msg": str(e)}
-    return {"status": 0, "error_msg": ""}
+        return McpResponse(status=e.status_code, message=str(e.detail))
+    return mcpSuccess
 
 
-@mcp.tool()
-async def mcp_add_episodic_memory(episode: NewEpisode) -> dict[str, Any]:
-    """MCP tool to add a memory episode for a specific session. It only
-    adds the episode to the episodic memory.
-
-    This tool does not require a pre-existing open session in the context.
-    It adds a memory episode directly using the session data provided in the
-    `NewEpisode` object.
-
-    Args:
-        episode: The complete new episode data, including session info.
-        ctx: The MCP context (unused).
-
-    Returns:
-        Status 0 if the memory was added successfully, Status -1 otherwise
-        with error message.
+@mcp.tool(
+    name="search_memory",
+    description=(
+        "Retrieve relevant context, memories or profile for a user whenever "
+        "context is missing or unclear. Use this whenever you need to recall "
+        "what has been previously discussed, "
+        "even if it was from an earlier conversation or session. "
+        "This searches both profile memory (long-term user traits and facts) "
+        "and episodic memory (past conversations and experiences)."
+    ),
+)
+async def mcp_search_memory(param: SearchMemoryParam) -> McpResponse | SearchResult:
     """
+    Search memory for the specified user.
+    Args:
+        param: The search memory parameter
+    Returns:
+        McpResponse on failure, or SearchResult on success
+    """
+    query = param.get_search_query()
     try:
-        await _add_episodic_memory(episode)
+        return await _search_memory(query)
     except HTTPException as e:
-        episode.log_error_with_session(e, "Failed to add memory episode")
-        return {"status": -1, "error_msg": str(e)}
-    return {"status": 0, "error_msg": ""}
-
-
-@mcp.tool()
-async def mcp_add_profile_memory(episode: NewEpisode) -> dict[str, Any]:
-    """MCP tool to add a memory episode for a specific session. It only
-    adds the episode to profile memory.
-
-    This tool does not require a pre-existing open session in the context.
-    It adds a memory episode directly using the session data provided in the
-    `NewEpisode` object.
-
-    Args:
-        episode: The complete new episode data, including session info.
-        ctx: The MCP context (unused).
-
-    Returns:
-        Status 0 if the memory was added successfully, Status -1 otherwise
-        with error message.
-    """
-    try:
-        await _add_profile_memory(episode)
-    except HTTPException as e:
-        sess = episode.get_session()
-        session_name = f"""{sess.group_id}-{sess.agent_id}-
-                           {sess.user_id}-{sess.session_id}"""
-        logger.error("Failed to add memory episode for %s", session_name)
-        logger.error(e)
-        return {"status": -1, "error_msg": str(e)}
-    return {"status": 0, "error_msg": ""}
-
-
-@mcp.tool()
-async def mcp_search_episodic_memory(q: SearchQuery) -> SearchResult:
-    """MCP tool to search for episodic memories in a specific session.
-    This tool does not require a pre-existing open session in the context.
-    It searches only the episodic memory for the provided query.
-
-    Args:
-        q: The search query.
-
-    Return:
-        A SearchResult object if successful, None otherwise.
-    """
-    return await _search_episodic_memory(q)
-
-
-@mcp.tool()
-async def mcp_search_profile_memory(q: SearchQuery) -> SearchResult:
-    """MCP tool to search for profile memories in a specific session.
-    This tool does not require a pre-existing open session in the context.
-    It searches only the profile memory for the provided query.
-
-    Args:
-        q: The search query.
-
-    Return:
-        A SearchResult object if successful, None otherwise.
-    """
-    return await _search_profile_memory(q)
-
-
-@mcp.tool()
-async def mcp_search_session_memory(q: SearchQuery) -> SearchResult:
-    """MCP tool to search for memories in a specific session.
-
-    This tool does not require a pre-existing open session in the context.
-    It searches both episodic and profile memories for the provided query.
-
-    Args:
-        q: The search query.
-
-    Return:
-        A SearchResult object if successful, None otherwise.
-    """
-    return await _search_memory(q)
-
-
-@mcp.tool()
-async def mcp_delete_session_data(sess: SessionData) -> dict[str, Any]:
-    """MCP tool to delete all data for a specific session.
-
-    This tool does not require a pre-existing open session in the context.
-    It deletes all data associated with the provided session data.
-
-    Args:
-        sess: The session data for which to delete all memories.
-        ctx: The MCP context (unused).
-
-    Returns:
-        Status 0 if deletion was successful, Status -1 otherwise
-        with error message.
-    """
-    try:
-        await _delete_session_data(DeleteDataRequest(session=sess))
-    except HTTPException as e:
-        session_name = f"""{sess.group_id}-{sess.agent_id}-
-                           {sess.user_id}-{sess.session_id}"""
-        logger.error("Failed to add memory episode for %s", session_name)
-        logger.error(e)
-        return {"status": -1, "error_msg": str(e)}
-    return {"status": 0, "error_msg": ""}
-
-
-@mcp.tool()
-async def mcp_delete_data(ctx: Context) -> dict[str, Any]:
-    """MCP tool to delete all data for the current session.
-
-    This tool requires an open memory session. It deletes all data associated
-    with the session stored in the MCP context.
-
-    Args:
-        ctx: The MCP context.
-
-    Returns:
-        Status 0 if deletion was successful, Sttus -1 otherwise
-        with error message.
-    """
-    try:
-        sess = ctx.get_state("session_data")
-        if sess is None:
-            return {"status": -1, "error_msg": "No session open"}
-        delete_data_req = DeleteDataRequest(session=sess)
-        await _delete_session_data(delete_data_req)
-    except HTTPException as e:
-        session_name = f"""{sess.group_id}-{sess.agent_id}-
-                           {sess.user_id}-{sess.session_id}"""
-        logger.error("Failed to add memory episode for %s", session_name)
-        logger.error(e)
-        return {"status": -1, "error_msg": str(e)}
-    return {"status": 0, "error_msg": ""}
-
-
-@mcp.resource("sessions://sessions")
-async def mcp_get_sessions() -> AllSessionsResponse:
-    """MCP resource to retrieve all memory sessions.
-
-    Returns:
-        An AllSessionsResponse containing a list of all sessions.
-    """
-    return await get_all_sessions()
-
-
-@mcp.resource("users://{user_id}/sessions")
-async def mcp_get_user_sessions(user_id: str) -> AllSessionsResponse:
-    """MCP resource to retrieve all sessions for a specific user.
-
-    Returns:
-        An AllSessionsResponse containing a list of sessions for the user.
-    """
-    return await get_sessions_for_user(user_id)
-
-
-@mcp.resource("groups://{group_id}/sessions")
-async def mcp_get_group_sessions(group_id: str) -> AllSessionsResponse:
-    """MCP resource to retrieve all sessions for a specific group.
-
-    Returns:
-        An AllSessionsResponse containing a list of sessions for the group.
-    """
-    return await get_sessions_for_group(group_id)
-
-
-@mcp.resource("agents://{agent_id}/sessions")
-async def mcp_get_agent_sessions(agent_id: str) -> AllSessionsResponse:
-    """MCP resource to retrieve all sessions for a specific agent.
-
-    Returns:
-        An AllSessionsResponse containing a list of sessions for the agent.
-    """
-    return await get_sessions_for_agent(agent_id)
+        query.log_error_with_session(e, "Failed to search memory")
+        return McpResponse(status=e.status_code, message=str(e.detail))
 
 
 # === Route Handlers ===

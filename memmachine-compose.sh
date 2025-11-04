@@ -196,9 +196,9 @@ configure_models_for_provider() {
             safe_sed_inplace 's/embedding_model: .*/embedding_model: openai_embedder/' configuration.yml
             safe_sed_inplace 's/model_name: .*/model_name: openai_model/' configuration.yml
             # Update only the OpenAI LLM model
-            safe_sed_inplace "/openai_model:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
+            safe_sed_inplace "/openai_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
             # Update only the OpenAI embedder model
-            safe_sed_inplace "/openai_embedder:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
+            safe_sed_inplace "/openai_embedder:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
             print_success "Configured for OpenAI provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         "BEDROCK")
@@ -208,9 +208,9 @@ configure_models_for_provider() {
             safe_sed_inplace 's/embedding_model: .*/embedding_model: aws_embedder_id/' configuration.yml
             safe_sed_inplace 's/model_name: .*/model_name: aws_model/' configuration.yml
             # Update only the AWS LLM model
-            safe_sed_inplace "/aws_model:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model_id: \".*\"|model_id: \"$escaped_llm_model\"|" configuration.yml
+            safe_sed_inplace "/aws_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_llm_model\"|" configuration.yml
             # Update only the AWS embedder model
-            safe_sed_inplace "/aws_embedder_id:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model_id: \".*\"|model_id: \"$escaped_embedding_model\"|" configuration.yml
+            safe_sed_inplace "/aws_embedder_id:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_embedding_model\"|" configuration.yml
             print_success "Configured for Bedrock provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         "OLLAMA")
@@ -220,9 +220,9 @@ configure_models_for_provider() {
             safe_sed_inplace 's/embedding_model: .*/embedding_model: ollama_embedder/' configuration.yml
             safe_sed_inplace 's/model_name: .*/model_name: ollama_model/' configuration.yml
             # Update only the Ollama LLM model
-            safe_sed_inplace "/ollama_model:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
+            safe_sed_inplace "/ollama_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
             # Update only the Ollama embedder model
-            safe_sed_inplace "/ollama_embedder:/,/^[[:space:]]*[a-zA-Z_]*:/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
+            safe_sed_inplace "/ollama_embedder:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
             print_success "Configured for Ollama provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         *)
