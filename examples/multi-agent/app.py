@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 from agents.advisor_buddy import make_advisor_buddy
+from utils.security import sanitize_user_id
 
 # ---------- helpers ----------
 def extract_final_text(result) -> str:
@@ -36,8 +37,9 @@ st.set_page_config(page_title="☕ Morning Brief + MemMachine", layout="wide")
 if "user_id" not in st.session_state:
     query_params = st.query_params
     if "user" in query_params:
-        # Use URL parameter as user ID
-        st.session_state.user_id = str(query_params["user"]).lower().replace(" ", "_")
+        # Use URL parameter as user ID - sanitize for security
+        raw_user_id = str(query_params["user"])
+        st.session_state.user_id = sanitize_user_id(raw_user_id)
         st.session_state.user_id_source = "url"
     else:
         # Generate a random ID for now (will be replaced when user enters name)
@@ -62,7 +64,8 @@ with st.sidebar:
         user_name_input = st.text_input("Your Name", key="name_input", placeholder="e.g., anirudh")
         if st.button("Set Persistent ID", use_container_width=True):
             if user_name_input:
-                new_user_id = user_name_input.lower().replace(" ", "_")
+                # Sanitize user input for security
+                new_user_id = sanitize_user_id(user_name_input)
                 st.session_state.user_id = new_user_id
                 st.session_state.user_id_source = "manual"
                 # Recreate agent with new user ID

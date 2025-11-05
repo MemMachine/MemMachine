@@ -1,9 +1,12 @@
 from agents.advisor_buddy import make_advisor_buddy
+from utils.security import sanitize_user_id
 import sys
 
 def run():
     # Get user ID from command line or use default
-    user_id = sys.argv[1] if len(sys.argv) > 1 else "default_user"
+    # Sanitize user input for security
+    raw_user_id = sys.argv[1] if len(sys.argv) > 1 else "default_user"
+    user_id = sanitize_user_id(raw_user_id)
     
     print(f"\n☀️ Morning Brief — TRUE Multi-Agent System")
     print(f"👤 User: {user_id}")
