@@ -13,6 +13,7 @@ import openai
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine.common.utils import get_default_headers 
 
 from .language_model import LanguageModel
 
@@ -63,8 +64,8 @@ class OpenAILanguageModel(LanguageModel):
         api_key = config.get("api_key")
         if api_key is None:
             raise ValueError("Language API key must be provided")
-
-        self._client = openai.AsyncOpenAI(api_key=api_key)
+        defHeaders = get_default_headers(config.get("bearer_token"))
+        self._client = openai.AsyncOpenAI(api_key=api_key, default_headers=defHeaders)
 
         self._max_retry_interval_seconds = config.get("max_retry_interval_seconds", 120)
         if not isinstance(self._max_retry_interval_seconds, int):
