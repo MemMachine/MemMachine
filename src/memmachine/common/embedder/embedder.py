@@ -5,7 +5,7 @@ Abstract base class for an embedder.
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .data_types import SimilarityMetric
+from memmachine.common.data_types import SimilarityMetric
 
 
 class Embedder(ABC):
@@ -39,8 +39,6 @@ class Embedder(ABC):
                 Errors from the underlying embedding API.
             ValueError:
                 Invalid input or max_attempts.
-            RuntimeError:
-                Catch-all for any other errors.
         """
         raise NotImplementedError
 
@@ -69,8 +67,6 @@ class Embedder(ABC):
                 Errors from the underlying embedding API.
             ValueError:
                 Invalid input or max_attempts.
-            RuntimeError:
-                Catch-all for any other errors.
         """
         raise NotImplementedError
 

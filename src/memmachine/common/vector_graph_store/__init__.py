@@ -1,4 +1,4 @@
-from .data_types import Edge, Node, Property
+from .data_types import Edge, Node, OrderedPropertyValue, PropertyValue
 from .vector_graph_store import VectorGraphStore
 from .vector_graph_store_builder import VectorGraphStoreBuilder
 
@@ -7,5 +7,6 @@ __all__ = [
     "VectorGraphStoreBuilder",
     "Edge",
     "Node",
-    "Property",
+    "OrderedPropertyValue",
+    "PropertyValue",
 ]

@@ -19,7 +19,7 @@ storage:
     port: 7687
     user: neo4j
     password: <NEO4J_PASSWORD>
-    force_exact_similarity_search: true
+    exact_similarity_search: true
 
 embedder:
   my_embedder_id:

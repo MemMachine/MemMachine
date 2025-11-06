@@ -9,44 +9,70 @@ JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSO
 
 
 class ContentType(Enum):
-    STRING = "string"
+    MESSAGE = "message"
+    TEXT = "text"
 
 
 @dataclass(kw_only=True)
 class Episode:
     uuid: UUID
-    episode_type: str
+    timestamp: datetime
+    source: str
     content_type: ContentType
     content: Any
-    timestamp: datetime
     filterable_properties: dict[str, FilterablePropertyValue] = field(
         default_factory=dict
     )
     user_metadata: JSONValue = None
+
+    def __eq__(self, other):
+        if not isinstance(other, Episode):
+            return False
+        return self.uuid == other.uuid
+
+    def __hash__(self):
+        return hash(self.uuid)
 
 
 @dataclass(kw_only=True)
-class EpisodeCluster:
+class Chunk:
     uuid: UUID
-    episodes: list[Episode] = field(default_factory=list)
-    timestamp: datetime | None = None
+    episode_uuid: UUID
+    sequence_number: int
+    timestamp: datetime
+    source: str
+    content_type: ContentType
+    content: Any
     filterable_properties: dict[str, FilterablePropertyValue] = field(
         default_factory=dict
     )
     user_metadata: JSONValue = None
+
+    def __eq__(self, other):
+        if not isinstance(other, Chunk):
+            return False
+        return self.uuid == other.uuid
+
+    def __hash__(self):
+        return hash(self.uuid)
 
 
 @dataclass(kw_only=True)
 class Derivative:
     uuid: UUID
-    derivative_type: str
     content_type: ContentType
     content: Any
-    timestamp: datetime | None = None
     filterable_properties: dict[str, FilterablePropertyValue] = field(
         default_factory=dict
     )
-    user_metadata: JSONValue = None
+
+    def __eq__(self, other):
+        if not isinstance(other, Derivative):
+            return False
+        return self.uuid == other.uuid
+
+    def __hash__(self):
+        return hash(self.uuid)
 
 
 def mangle_filterable_property_key(key: str) -> str:
