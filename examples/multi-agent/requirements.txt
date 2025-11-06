@@ -1,0 +1,18 @@
+# Multi-Morning Dependencies
+# Core agent framework
+strands-agents>=0.1.0
+strands-agents-tools>=0.1.0
+
+# Web UI
+streamlit>=1.28.0
+
+# News & Search APIs
+tavily-python>=0.3.0
+
+# HTTP & RSS
+httpx>=0.25.0
+feedparser>=6.0.10
+
+# Standard library (usually included, but listed for clarity)
+# json, os, sys, datetime, typing, hashlib - built-in
+
