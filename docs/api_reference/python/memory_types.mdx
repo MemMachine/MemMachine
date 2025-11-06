@@ -3,7 +3,17 @@ title: "Core Data structures"
 description: "This document outlines the core data structures used for managing memory, including sessions, contexts, and individual events (episodes)." 
 icon: "cube"
 ---
-These data types are the atomic building blocks of the MemMachine SDK. They define how individual events (`Episode`) are recorded and how memory instances are securely isolated for different conversations (`MemoryContext`).
+These data types are the **atomic building blocks** of the MemMachine SDK. They define how individual events (**`Episode`**) are recorded and how memory instances are securely isolated for different conversations (**`MemoryContext`**).
+
+### Type Alias: JSONValue
+
+```python
+JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
+```
+
+An alias representing data types guaranteed to be compatible with JSON serialization.
+
+------
 
 <a id="memmachine.core_types.ContentType"></a>
 
@@ -15,11 +25,78 @@ class ContentType(Enum)
 
 This enumeration specifies the format of the data stored within an **`Episode`'s `content` field**.
 
-| Member   | Value      | Description                            |
-| -------- | ---------- | -------------------------------------- |
-| `STRING` | `"string"` | The content is a standard text string. |
+| **Member** | **Value**  | **Description**                        |
+| ---------- | ---------- | -------------------------------------- |
+| `STRING`   | `"string"` | The content is a standard text string. |
 
-<Note> This design allows for future expansion to support other data formats like vector embeddings or image metadata without changing the core episode structure.</Note>
+<Note> This design allows for future expansion to support other content types like vector embeddings, images, or specialized media metadata without changing the core episode structure.</Note>
+
+------
+
+<a id="memmachine.core_types.GroupConfiguration"></a>
+
+## GroupConfiguration Objects
+
+```python
+@dataclass
+class GroupConfiguration
+```
+
+The **`GroupConfiguration`** holds persistent metadata about a multi-session conversation group, typically managed by the `EpisodicMemoryManager`.
+
+| **Field**           | **Type**    | **Description**                                              |
+| ------------------- | ----------- | ------------------------------------------------------------ |
+| **`group_id`**      | `str`       | The unique identifier for the group.                         |
+| **`agent_list`**    | `list[str]` | A list of agent identifiers in the group.                    |
+| **`user_list`**     | `list[str]` | A list of user identifiers in the group.                     |
+| **`configuration`** | `dict`      | A dictionary containing any custom configuration for the group. |
+
+------
+
+<a id="memmachine.core_types.SessionInfo"></a>
+
+## SessionInfo Objects
+
+```python
+@dataclass
+class SessionInfo
+```
+
+The **`SessionInfo`** holds all the persistent metadata about a single conversation session. This is retrieved from or stored in a session management database.
+
+| **Field**           | **Type**    | **Description**                                              |
+| ------------------- | ----------- | ------------------------------------------------------------ |
+| **`group_id`**      | `str`       | The identifier for a group conversation.                     |
+| **`session_id`**    | `str`       | A unique string identifier for the session.                  |
+| **`agent_ids`**     | `list[str]` | A list of agent identifiers participating in the session.    |
+| **`user_ids`**      | `list[str]` | A list of user identifiers participating in the session.     |
+| **`configuration`** | `dict`      | A dictionary containing any custom configuration for this session. |
+
+------
+
+<a id="memmachine.core_types.MemoryContext"></a>
+
+## MemoryContext Objects
+
+```python
+@dataclass
+class MemoryContext
+```
+
+The **`MemoryContext`** defines the unique identifier for a memory instance. It is used by the `EpisodicMemoryManager` to ensure memory access is isolated to the correct conversation.
+
+| **Field**        | **Type**   | **Description**                             |
+| ---------------- | ---------- | ------------------------------------------- |
+| **`group_id`**   | `str`      | The identifier for the group context.       |
+| **`agent_id`**   | `set[str]` | A set of agent identifiers for the context. |
+| **`user_id`**    | `set[str]` | A set of user identifiers for the context.  |
+| **`session_id`** | `str`      | The identifier for the session context.     |
+
+### Isolation Key Behavior
+
+<Tip>The `MemoryContext` implements custom equality (`__eq__`) and hashing (`__hash__`) methods. **A memory context is considered equal to another \*if and only if\* their `group_id` and `session_id` match.** This ensures that the manager correctly uses these two fields as the primary lookup key for active memory instances, regardless of how the agent and user sets are structured.</Tip>
+
+------
 
 <a id="memmachine.core_types.Episode"></a>
 
@@ -34,75 +111,15 @@ An **`Episode`** represents a single, atomic event or piece of data in the memor
 
 The use of `@dataclass(kw_only=True)` means **all fields must be specified using keyword arguments** when you create an `Episode` instance.
 
-| Field                 | Type               | Description                                                  |
+| **Field**             | **Type**           | **Description**                                              |
 | --------------------- | ------------------ | ------------------------------------------------------------ |
-| **`uuid`**            | `UUID`             | A unique identifier for this specific episode.               |
-| **`episode_type`**    | `str`              | The category of event (e.g., `'message'`, `'thought'`, `'action'`). |
+| **`uuid`**            | `UUID`             | A unique identifier (UUID) for the episode.                  |
+| **`episode_type`**    | `str`              | A string indicating the category of event (e.g., `'message'`, `'thought'`). |
 | **`content_type`**    | `ContentType`      | The type of the data stored in the `content` field.          |
-| **`content`**         | `Any`              | The actual data of the episode.                              |
+| **`content`**         | `Any`              | The actual data of the episode, which can be of any type.    |
 | **`timestamp`**       | `datetime`         | The date and time when the episode occurred.                 |
-| **`group_id`**        | `str`              | Identifier for the larger conversation **group**.            |
-| **`session_id`**      | `str`              | Identifier for the specific **session** this episode belongs to. |
+| **`group_id`**        | `str`              | Identifier for the group (e.g., a specific chat room or DM). |
+| **`session_id`**      | `str`              | Identifier for the session to which this episode belongs.    |
 | **`producer_id`**     | `str`              | The ID of the user or agent that created this episode.       |
 | **`produced_for_id`** | `str | None`       | The ID of the intended recipient, if any.                    |
-| **`user_metadata`**   | `JSONValue | None` | A dictionary for any additional, custom metadata in a JSON-compatible format. |
-
-<a id="memmachine.core_types.MemoryContext"></a>
-
-## MemoryContext Objects
-
-```python
-@dataclass
-class MemoryContext
-```
-
-The **`MemoryContext`** is used by the `EpisodicMemoryManager` to define the unique identifier for a memory instance. It ensures that memory access is isolated to the correct conversation.
-
-| Field            | Type       | Description                                 |
-| ---------------- | ---------- | ------------------------------------------- |
-| **`group_id`**   | `str`      | The identifier for the group context.       |
-| **`agent_id`**   | `set[str]` | A set of agent identifiers for the context. |
-| **`user_id`**    | `set[str]` | A set of user identifiers for the context.  |
-| **`session_id`** | `str`      | The identifier for the session context.     |
-
-
-### Special Behavior for Isolation
-<Callout icon="key" color="#FFC107" iconType="regular">The `MemoryContext` implements custom equality (`__eq__`) and hashing (`__hash__`) methods. **A memory context is considered equal to another *if and only if* their `group_id` and `session_id` match.** This ensures that the manager correctly uses these two fields as the primary lookup key for active memory instances, regardless of how the agent and user sets are structured.</Callout>
-
-
-<a id="memmachine.core_types.SessionInfo"></a>
-
-## SessionInfo Objects
-
-```python
-@dataclass
-class SessionInfo
-```
-
-The **`SessionInfo`** holds all the persistent metadata about a single conversation session. This is retrieved from the `SessionManager` when an existing memory instance is opened.
-
-| Field               | Type        | Description                                                  |
-| ------------------- | ----------- | ------------------------------------------------------------ |
-| **`group_id`**      | `str`       | The identifier for the group conversation.                   |
-| **`session_id`**    | `str`       | The unique string identifier for the session.                |
-| **`agent_ids`**     | `list[str]` | A list of agent IDs participating in the session.            |
-| **`user_ids`**      | `list[str]` | A list of user IDs participating in the session.             |
-| **`configuration`** | `dict`      | A dictionary containing any custom configuration for this session. |
-
-<a id="memmachine.core_types.GroupConfiguration"></a>
-
-## GroupConfiguration Objects
-
-```python
-@dataclass
-class GroupConfiguration
-```
-
-The **`GroupConfiguration`** holds persistent metadata about a multi-session conversation group.
-
-| Field               | Type        | Description                                                  |
-| ------------------- | ----------- | ------------------------------------------------------------ |
-| **`group_id`**      | `str`       | The unique identifier for the group.                         |
-| **`agent_list`**    | `list[str]` | A list of agent IDs that belong to the group.                |
-| **`user_list`**     | `list[str]` | A list of user IDs that belong to the group.                 |
-| **`configuration`** | `dict`      | A dictionary containing any custom configuration for the group. |
+| **`user_metadata`**   | `JSONValue | None` | A dictionary for any additional, user-defined metadata in a JSON-compatible format. |
