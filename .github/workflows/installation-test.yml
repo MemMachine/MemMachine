@@ -1,0 +1,304 @@
+# .github/workflows/installation-test.yml
+
+name: Installation Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-python.yml
+    with:
+      python-version: "3.12"
+
+  check-linux:
+    needs: build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: memmachine
+          POSTGRES_PASSWORD: mammachine_password
+          POSTGRES_DB: memmachine
+          POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U memmachine"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      ollama:
+        image: ollama/ollama
+        ports:
+          - 11434:11434
+
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-dist
+
+      - name: Set up ollama
+        run: |
+          set -eo pipefail
+          until curl -s http://localhost:11434/ > /dev/null; do
+            echo "Ollama not up yet, sleeping..."
+            sleep 1
+          done
+
+          echo "Ollama is up, loading model..."
+          curl http://localhost:11434/api/pull -d '{
+            "name": "qwen3:0.6b"
+          }' -v
+          echo "pulled model qwen3:0.6b into ollama"
+
+          curl http://localhost:11434/api/pull -d '{
+            "name": "nomic-embed-text"
+          }' -v
+          echo "pulled model nomic-embed-text into ollama"
+
+      - name: Test install on Ubuntu
+        run: |
+          set -eo pipefail
+          whl_name=$(ls *.whl)
+          echo "Installing wheel file: $whl_name"
+          python -m pip install $whl_name
+          echo "configuring memmachine"
+          memmachine-configure << EOF
+          y
+          CPU
+          Ollama
+          qwen3:0.6b
+          nomic-embed-text
+          localhost
+          5432
+          memmachine
+          mammachine_password
+          memmachine
+          http://localhost:11434/v1
+          localhost
+          8080
+          EOF
+
+          memmachine-nltk-setup
+          memmachine-sync-profile-schema
+
+          memmachine-server &
+          server_pid=$!
+          sleep 5
+
+          curl -f http://127.0.0.1:8080/v1/sessions
+
+        shell: bash
+
+  check-windows:
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: 3.12
+          auto-update-conda: true
+          run-post: false
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-dist
+
+      - name: set up dev tools
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: install postgresql
+        run: |
+          conda install postgresql
+
+          echo "Cloning pgvector..."
+          git clone https://github.com/pgvector/pgvector.git
+          cd pgvector
+
+          echo "Building and installing pgvector..."
+          $env:PGROOT = "$($env:CONDA_PREFIX)\Library"
+          echo "PGROOT set to: $env:PGROOT"
+
+          nmake /NOLOGO /F Makefile.win
+          if ($LastExitCode -ne 0) { throw "nmake build failed!" }
+          nmake /NOLOGO /F Makefile.win install
+          if ($LastExitCode -ne 0) { throw "nmake install failed!" }
+
+          echo "Build and install complete."
+          cd ..
+
+          initdb -D postgres_data --encoding=UTF-8 --lc-collate=C --lc-ctype=C
+          pg_ctl -D postgres_data -o "-F" -l logfile start
+          createuser -U runneradmin -s memmachine
+          createdb -U runneradmin -O memmachine memmachine
+          psql -U runneradmin -d postgres -c "ALTER USER memmachine WITH PASSWORD 'mammachine_password';"
+          psql -d memmachine -U memmachine -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Set up ollama
+        shell: bash
+        run: |
+          set -eo pipefail
+          winget install Ollama.Ollama --accept-source-agreements
+
+          until curl -s http://localhost:11434/ > /dev/null; do
+            echo "Ollama not up yet, sleeping..."
+            sleep 1
+          done
+
+          echo "Ollama is up, loading model..."
+          curl http://localhost:11434/api/pull -d '{
+            "name": "qwen3:0.6b"
+          }' -v
+          echo "pulled model qwen3:0.6b into ollama"
+
+          curl http://localhost:11434/api/pull -d '{
+            "name": "nomic-embed-text"
+          }' -v
+          echo "pulled model nomic-embed-text into ollama"
+
+      - name: Test install on Windows
+        run: |
+          set -eo pipefail
+          export PYTHONUTF8=1
+          whl_name=$(ls *.whl)
+          echo "Installing wheel file: $whl_name"
+          python -m pip install $whl_name
+          echo "configuring memmachine"
+          memmachine-configure << EOF
+          y
+
+          CPU
+          Ollama
+          qwen3:0.6b
+          nomic-embed-text
+          localhost
+          5432
+          memmachine
+          mammachine_password
+          memmachine
+          http://localhost:11434/v1
+          localhost
+          8080
+          EOF
+
+          python -c "import nltk; nltk.download('punkt')"
+          memmachine-nltk-setup
+          memmachine-sync-profile-schema
+
+          memmachine-server &
+          server_pid=$!
+          sleep 15
+
+          curl -f http://127.0.0.1:8080/v1/sessions
+
+        shell: bash
+
+  check-macos:
+    needs: build
+    runs-on: macos-latest
+
+    steps:
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-dist
+
+      - name: Set up postgresql (pgvector) using Homebrew
+        run: |
+          set -eo pipefail
+          brew update
+          brew upgrade
+
+          brew install postgresql@18
+          brew install pgvector
+          rm -rf /opt/homebrew/var/postgresql@18
+          "/opt/homebrew/opt/postgresql@18/bin/initdb" -D /opt/homebrew/var/postgresql@18 --encoding=UTF-8 --lc-collate=C --lc-ctype=C
+          brew services start postgresql@18
+
+          export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"
+          while ! pg_isready -q; do
+              sleep 1
+          done
+
+          createuser -s memmachine
+          createdb -O memmachine memmachine
+          psql -d postgres -c "ALTER USER memmachine WITH PASSWORD 'mammachine_password';"
+          psql -d memmachine -U memmachine -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Set up ollama
+        run: |
+          set -eo pipefail
+          brew install ollama
+          brew services start ollama
+          until curl -s http://localhost:11434/ > /dev/null; do
+            echo "Ollama not up yet, sleeping..."
+            sleep 1
+          done
+
+          echo "Ollama is up, loading model..."
+          curl http://localhost:11434/api/pull -d '{
+            "name": "qwen3:0.6b"
+          }' -v
+          echo "pulled model qwen3:0.6b into ollama"
+
+          curl http://localhost:11434/api/pull -d '{
+            "name": "nomic-embed-text"
+          }' -v
+          echo "pulled model nomic-embed-text into ollama"
+
+      - name: Test install on macOS
+        run: |
+          set -eo pipefail
+          whl_name=$(ls *.whl)
+          echo "Installing wheel file: $whl_name"
+          python -m pip install $whl_name
+          echo "configuring memmachine"
+          memmachine-configure << EOF
+          y
+          CPU
+          Ollama
+          qwen3:0.6b
+          nomic-embed-text
+          localhost
+          5432
+          memmachine
+          mammachine_password
+          memmachine
+          http://localhost:11434/v1
+          localhost
+          8080
+          EOF
+          memmachine-nltk-setup
+          memmachine-sync-profile-schema
+
+          memmachine-server &
+          server_pid=$!
+          sleep 5
+          curl -f http://127.0.0.1:8080/v1/sessions
+        shell: bash

@@ -9,14 +9,14 @@
 ### 1. Configure Environment
 Copy the example environment file and add your OpenAI API key:
 ```bash
-cp sample_configs/env.dockercompose .env
+cp src/memmachine/sample_configs/env.dockercompose .env
 # Edit .env and add your OPENAI_API_KEY
 ```
 
 ### 2. Configure MemMachine
 Copy the sample configuration file and update it with your settings:
 ```bash
-cp sample_configs/episodic_memory_config.sample configuration.yml
+cp src/memmachine/sample_configs/episodic_memory_config.sample configuration.yml
 # Edit configuration.yml and update:
 # - Replace <YOUR_API_KEY> with your OpenAI API key
 # - Replace <YOUR_PASSWORD_HERE> with your Neo4j password

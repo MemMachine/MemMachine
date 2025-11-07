@@ -88,13 +88,13 @@ MemMachine uses a single configuration file, `cfg.yml` to provide login and opti
 
 Create a file named `cfg.yml` in the same directory that you plan on running memmachine from. This file configures the various models and storage options for MemMachine.
 
-There are two examples of `cfg.yml` files in the `sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.
+There are two examples of `cfg.yml` files in the `src/memmachine/sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.
 
 <AccordionGroup>
 <Accordion title="CPU-Only Installations">
 You can download this file from our GitHub repository as a template using the following curl command:
 ```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
+curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/src/memmachine/sample_configs/episodic_memory_config.cpu.sample
 ```
 Below is an example of what the CPU-only `config.yml` file should look like:
 
@@ -172,7 +172,7 @@ prompt:
 <Accordion title="GPU-Enabled Installations">
 You can download this file from our GitHub repository as a template using the following curl command:
 ```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
+curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/src/memmachine/sample_configs/episodic_memory_config.gpu.sample
 ```
 Below is an example of what the GPU-enabled `config.yml` file should look like:
 
