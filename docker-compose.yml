@@ -21,7 +21,21 @@ services:
       start_period: 30s
     networks:
       - memmachine-network
-
+  pgweb:
+    container_name: pgweb
+    image: sosedoff/pgweb:latest
+    environment:
+      PGWEB_DATABASE_URL: postgres://memmachine:memmachine_password@postgres:5432/memmachine?sslmode=disable
+    ports:
+      - 8181:8081
+    networks:
+      - memmachine-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-vz", "127.0.0.1", "8081"]
+      interval: 5s
   # Neo4j database for graph storage
   neo4j:
     image: neo4j:5.23-community
