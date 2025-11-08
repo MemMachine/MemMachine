@@ -9,9 +9,8 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import uuid4
 
-import botocore
 from langchain_aws import BedrockEmbeddings
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
 
@@ -21,45 +20,30 @@ from .embedder import Embedder
 logger = logging.getLogger(__name__)
 
 
-class AmazonBedrockEmbedderConfig(BaseModel):
+class AmazonBedrockEmbedderParams(BaseModel):
     """
-    Configuration for AmazonBedrockEmbedder.
+    Parameters for AmazonBedrockEmbedder.
 
     Attributes:
-        region (str):
-            AWS region where Bedrock is hosted.
-        aws_access_key_id (SecretStr):
-            AWS access key ID for authentication.
-        aws_secret_access_key (SecretStr):
-            AWS secret access key for authentication.
+        client (langchain_aws.BedrockEmbeddings):
+            BedrockEmbeddings client instance.
         model_id (str):
             ID of the Bedrock model to use for embedding
             (e.g. 'amazon.titan-embed-text-v2:0').
-        dimensions (int):
-            Dimensionality of the embedding vectors.
         similarity_metric (SimilarityMetric):
             Similarity metric to use for comparing embeddings
             (default: SimilarityMetric.COSINE).
-        max_retry_interval_seconds (int, optional):
+        max_retry_interval_seconds (int):
             Maximal retry interval in seconds
             (default: 120).
     """
 
-    region: str = Field(
-        "us-west-2",
-        description="AWS region where Bedrock is hosted.",
-    )
-    aws_access_key_id: SecretStr = Field(
-        description=("AWS access key ID for authentication."),
-    )
-    aws_secret_access_key: SecretStr = Field(
-        description=("AWS secret access key for authentication."),
-    )
-    aws_session_token: SecretStr | None = Field(
-        None,
-        description=("AWS session token for authentication."),
+    client: InstanceOf[BedrockEmbeddings] = Field(
+        ...,
+        description="BedrockEmbeddings client instance.",
     )
     model_id: str = Field(
+        ...,
         description=(
             "ID of the Bedrock model to use for embedding "
             "(e.g. 'amazon.titan-embed-text-v2:0')."
@@ -82,41 +66,25 @@ class AmazonBedrockEmbedder(Embedder):
     to generate embeddings for inputs and queries.
     """
 
-    def __init__(self, config: AmazonBedrockEmbedderConfig):
+    def __init__(self, params: AmazonBedrockEmbedderParams):
         """
         Initialize an AmazonBedrockEmbedder
-        with the provided configuration.
+        with the provided parameters.
 
         Args:
-            config (AmazonBedrockEmbedderConfig):
-                Configuration for the embedder.
+            params (AmazonBedrockEmbedderParams):
+                Parameters for the AmazonBedrockEmbedder.
         """
         super().__init__()
 
-        region = config.region
-        aws_access_key_id = config.aws_access_key_id
-        aws_secret_access_key = config.aws_secret_access_key
-        aws_session_token = config.aws_session_token
-        self._model_id = config.model_id
-        self._similarity_metric = config.similarity_metric
-        self._max_retry_interval_seconds = config.max_retry_interval_seconds
+        self._client = params.client
 
-        self._embeddings = BedrockEmbeddings(
-            region_name=region,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token,
-            model_id=self._model_id,
-            config=botocore.config.Config(
-                retries={
-                    "total_max_attempts": 1,
-                    "mode": "standard",
-                }
-            ),
-        )
+        self._model_id = params.model_id
+        self._similarity_metric = params.similarity_metric
+        self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
         # Get dimensions by embedding a dummy string.
-        response = self._embeddings.embed_documents(["."])
+        response = self._client.embed_documents(["."])
         self._dimensions = len(response[0])
 
     async def ingest_embed(
@@ -134,7 +102,7 @@ class AmazonBedrockEmbedder(Embedder):
         self,
         inputs: list[Any],
     ) -> list[list[float]]:
-        return await self._embeddings.aembed_documents(inputs)
+        return await self._client.aembed_documents(inputs)
 
     async def search_embed(
         self,
@@ -151,9 +119,7 @@ class AmazonBedrockEmbedder(Embedder):
         self,
         queries: list[Any],
     ) -> list[list[float]]:
-        embed_queries_tasks = [
-            self._embeddings.aembed_query(query) for query in queries
-        ]
+        embed_queries_tasks = [self._client.aembed_query(query) for query in queries]
         return await asyncio.gather(*embed_queries_tasks)
 
     async def _embed(
