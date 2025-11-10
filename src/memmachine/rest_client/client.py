@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 from weakref import WeakSet
 
 import requests
@@ -46,8 +46,8 @@ class MemMachineClient:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         timeout: int = 30,
         max_retries: int = 3,
         **kwargs,
@@ -104,10 +104,10 @@ class MemMachineClient:
 
     def memory(
         self,
-        group_id: Optional[str] = None,
-        agent_id: Optional[Union[str, List[str]]] = None,
-        user_id: Optional[Union[str, List[str]]] = None,
-        session_id: Optional[str] = None,
+        group_id: str | None = None,
+        agent_id: str | list[str] | None = None,
+        user_id: str | list[str] | None = None,
+        session_id: str | None = None,
         **kwargs,
     ) -> Memory:
         """
@@ -135,7 +135,7 @@ class MemMachineClient:
         self._memory_objects.add(memory)
         return memory
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """
         Check the health status of the MemMachine server.
 
