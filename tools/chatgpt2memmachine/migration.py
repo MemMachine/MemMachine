@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -271,6 +272,13 @@ if __name__ == "__main__":
     chat_history = args.chat_history
     chat_type = args.chat_type
     start_time = args.start_time
+    try:
+        start_time = int(start_time)
+    except Exception:
+        time_format = "%Y-%m-%dT%H:%M:%S"
+        time_obj = datetime.datetime.strptime(args.start_time, time_format)
+        start_time = time_obj.timestamp()
+
     max_messages = args.max_messages
     # use summarized messages when summarize is true
     summarize = args.summarize

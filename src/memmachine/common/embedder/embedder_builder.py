@@ -7,6 +7,7 @@ from typing import Any
 from memmachine.common.builder import Builder
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
+from .data_types import SimilarityMetric
 from .embedder import Embedder
 
 
@@ -36,14 +37,50 @@ class EmbedderBuilder(Builder):
     ) -> Embedder:
         match name:
             case "amazon-bedrock":
+                import botocore
+                from langchain_aws import BedrockEmbeddings
+
                 from .amazon_bedrock_embedder import (
                     AmazonBedrockEmbedder,
-                    AmazonBedrockEmbedderConfig,
+                    AmazonBedrockEmbedderParams,
                 )
 
-                return AmazonBedrockEmbedder(AmazonBedrockEmbedderConfig(**config))
+                region = config.get("region", "us-west-2")
+                aws_access_key_id = config.get("aws_access_key_id")
+                aws_secret_access_key = config.get("aws_secret_access_key")
+                aws_session_token = config.get("aws_session_token")
+                model_id = config["model_id"]
+
+                client = BedrockEmbeddings(
+                    region_name=region,
+                    aws_access_key_id=aws_access_key_id,
+                    aws_secret_access_key=aws_secret_access_key,
+                    aws_session_token=aws_session_token,
+                    model_id=model_id,
+                    config=botocore.config.Config(
+                        retries={
+                            "total_max_attempts": 1,
+                            "mode": "standard",
+                        }
+                    ),
+                )
+
+                return AmazonBedrockEmbedder(
+                    AmazonBedrockEmbedderParams(
+                        client=client,
+                        model_id=model_id,
+                        similarity_metric=SimilarityMetric(
+                            config.get("similarity_metric", "cosine")
+                        ),
+                        max_retry_interval_seconds=config.get(
+                            "max_retry_interval_seconds", 120
+                        ),
+                    )
+                )
             case "openai":
-                from .openai_embedder import OpenAIEmbedder
+                import openai
+
+                from .openai_embedder import OpenAIEmbedder, OpenAIEmbedderParams
 
                 injected_metrics_factory_id = config.get("metrics_factory_id")
                 if injected_metrics_factory_id is None:
@@ -68,17 +105,19 @@ class EmbedderBuilder(Builder):
                         )
 
                 return OpenAIEmbedder(
-                    {
-                        "model": config.get("model", "text-embedding-3-small"),
-                        "api_key": config["api_key"],
-                        "dimensions": config.get("dimensions"),
-                        "metrics_factory": injected_metrics_factory,
-                        "max_retry_interval_seconds": config.get(
+                    OpenAIEmbedderParams(
+                        client=openai.AsyncOpenAI(
+                            api_key=config["api_key"],
+                            base_url=config.get("base_url"),
+                        ),
+                        model=config.get("model", "text-embedding-3-small"),
+                        dimensions=config.get("dimensions", 1536),
+                        max_retry_interval_seconds=config.get(
                             "max_retry_interval_seconds", 120
                         ),
-                        "base_url": config.get("base_url"),
-                        "user_metrics_labels": config.get("user_metrics_labels", {}),
-                    }
+                        metrics_factory=injected_metrics_factory,
+                        user_metrics_labels=config.get("user_metrics_labels", {}),
+                    )
                 )
             case "sentence-transformer":
                 from sentence_transformers import SentenceTransformer

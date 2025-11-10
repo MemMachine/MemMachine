@@ -3,11 +3,15 @@ import json
 import os
 from importlib import import_module
 
+import openai
 import pytest
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
-from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
+from memmachine.common.embedder.openai_embedder import (
+    OpenAIEmbedder,
+    OpenAIEmbedderParams,
+)
 from memmachine.common.language_model.openai_language_model import OpenAILanguageModel
 from memmachine.profile_memory.profile_memory import ProfileMemory
 from memmachine.profile_memory.prompt_provider import ProfilePrompt
@@ -20,16 +24,21 @@ def config():
     open_api_key = os.environ.get("OPENAI_API_KEY")
     return {
         "api_key": open_api_key,
-        "llm_model": "gpt-4o-mini",
+        "llm_model": "gpt-4.1-mini",
         "embedding_model": "text-embedding-3-small",
-        "prompt_module": "writing_assistant_prompt",
+        "prompt_module": "profile_prompt",
     }
 
 
 @pytest.fixture
 def embedder(config):
+    client = openai.AsyncOpenAI(api_key=config["api_key"])
     return OpenAIEmbedder(
-        {"api_key": config["api_key"], "model": config["embedding_model"]}
+        OpenAIEmbedderParams(
+            client=client,
+            model=config["embedding_model"],
+            dimensions=1536,
+        )
     )
 
 
