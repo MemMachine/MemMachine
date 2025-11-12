@@ -177,7 +177,9 @@ async def test_search_memory_variants(mock_search, search_param, mcp_client):
     assert root["status"] == 200
     assert root["content"] == content
 
+
 # === Flat Parameter Style Tests ===
+
 
 @patch("memmachine.server.app._add_memory", new_callable=AsyncMock)
 async def test_add_memory_flat_success(mock_add, mcp_client):

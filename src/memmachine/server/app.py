@@ -861,7 +861,7 @@ app.mount("/mcp", mcp_app)
 async def mcp_add_memory(
     param: AddMemoryParam | None = None,
     user_id: str | None = None,
-    content: str | None = None
+    content: str | None = None,
 ) -> McpResponse:
     """
     Add a new memory for the specified user.
@@ -886,7 +886,7 @@ async def mcp_add_memory(
         if user_id is None or content is None:
             return McpResponse(
                 status=400,
-                message="Either param or both user_id and content must be provided"
+                message="Either param or both user_id and content must be provided",
             )
         param = AddMemoryParam(user_id=user_id, content=content)
 
@@ -915,7 +915,7 @@ async def mcp_search_memory(
     param: SearchMemoryParam | None = None,
     user_id: str | None = None,
     query: str | None = None,
-    limit: int = 5
+    limit: int = 5,
 ) -> McpResponse | SearchResult:
     """
     Search memory for the specified user.
@@ -937,15 +937,15 @@ async def mcp_search_memory(
         if user_id is None or query is None:
             return McpResponse(
                 status=400,
-                message="Either param or both user_id and query must be provided"
+                message="Either param or both user_id and query must be provided",
             )
         param = SearchMemoryParam(user_id=user_id, query=query, limit=limit)
 
-    query = param.get_search_query()
+    search_result = param.get_search_query()
     try:
-        return await _search_memory(query)
+        return await _search_memory(search_result)
     except HTTPException as e:
-        query.log_error_with_session(e, "Failed to search memory")
+        search_result.log_error_with_session(e, "Failed to search memory")
         return McpResponse(status=e.status_code, message=str(e.detail))
 
 
