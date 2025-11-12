@@ -402,13 +402,30 @@ set_config_defaults() {
         -v pg_db="${POSTGRES_DB:-memmachine}" \
         -v neo4j_user="${NEO4J_USER:-neo4j}" \
         -v neo4j_pass="${NEO4J_PASSWORD:-neo4j_password}" '
+/^storage:/ || /^vector_graph_store:/ {
+  vendor = ""
+}
+/^[a-zA-Z][^:]*:/ && !/^storage:/ && !/^vector_graph_store:/ {
+  vendor = ""
+}
+
 /vendor_name:/ {
   vendor = $2
+  gsub(/^[ \t]+|[ \t]+$/, "", vendor)  # trim whitespace
+}
+
+/provider:/ && /neo4j/ {
+  vendor = "neo4j"
+}
+/provider:/ && /postgres/ {
+  vendor = "postgres"
 }
 
 vendor == "neo4j" && /host:/ { sub(/localhost/, "neo4j") }
+vendor == "neo4j" && /uri:/ { sub(/localhost/, "neo4j") }
 vendor == "neo4j" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, neo4j_pass) }
 
+# Handle postgres configurations
 vendor == "postgres" && /host:/ { sub(/localhost/, "postgres") }
 vendor == "postgres" && /user:/ { sub(/postgres/, pg_user) }
 vendor == "postgres" && /db_name:/ { sub(/postgres/, pg_db) }
