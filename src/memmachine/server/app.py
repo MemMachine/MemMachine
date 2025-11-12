@@ -889,7 +889,7 @@ async def mcp_add_memory(
                 message="Either param or both user_id and content must be provided"
             )
         param = AddMemoryParam(user_id=user_id, content=content)
-    
+
     episode = param.get_new_episode()
     try:
         await _add_memory(episode)
@@ -919,11 +919,11 @@ async def mcp_search_memory(
 ) -> McpResponse | SearchResult:
     """
     Search memory for the specified user.
-    
+
     This function supports both nested and flat parameter styles:
     - Nested: pass a SearchMemoryParam object to the param argument
     - Flat: pass user_id, query, and optionally limit as separate arguments
-    
+
     Args:
         param: The search memory parameter (nested style).
         user_id: The unique identifier of the user (flat style).
@@ -940,7 +940,7 @@ async def mcp_search_memory(
                 message="Either param or both user_id and query must be provided"
             )
         param = SearchMemoryParam(user_id=user_id, query=query, limit=limit)
-    
+
     query = param.get_search_query()
     try:
         return await _search_memory(query)
