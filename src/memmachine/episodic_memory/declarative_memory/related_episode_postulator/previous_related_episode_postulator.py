@@ -30,6 +30,8 @@ class PreviousRelatedEpisodePostulatorParams(BaseModel):
     Parameters for PreviousRelatedEpisodePostulator.
 
     Attributes:
+        episode_collection (str):
+            The episode collection name.
         vector_graph_store (VectorGraphStore):
             VectorGraphStore instance to use for searching episodes.
         search_limit (int):
@@ -40,6 +42,7 @@ class PreviousRelatedEpisodePostulatorParams(BaseModel):
             to use for filtering episodes (default: set()).
     """
 
+    episode_collection: str = Field(..., description="The episode collection name")
     vector_graph_store: InstanceOf[VectorGraphStore] = Field(
         ..., description="VectorGraphStore instance to use for searching episodes"
     )
@@ -69,6 +72,7 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
             params (PreviousRelatedEpisodePostulatorParams):
                 Parameters for the PreviousRelatedEpisodePostulator.
         """
+        self._episode_collection = params.episode_collection
         self._vector_graph_store = params.vector_graph_store
         self._search_limit = params.search_limit
         self._filterable_property_keys = params.filterable_property_keys
@@ -80,7 +84,7 @@ class PreviousRelatedEpisodePostulator(RelatedEpisodePostulator):
                 start_at_value=episode.timestamp,
                 order_ascending=False,
                 limit=self._search_limit,
-                required_labels={"Episode"},
+                required_labels={self._episode_collection},
                 required_properties={
                     mangle_filterable_property_key(key): episode.filterable_properties[
                         key

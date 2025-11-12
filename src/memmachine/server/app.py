@@ -559,11 +559,11 @@ async def initialize_resource(
         raise ValueError(f"Can not find definition of embedder {embedder_id}")
 
     embedder_config = copy.deepcopy(embedder_def["config"])
-    if embedder_def["name"] == "openai":
+    if embedder_def["provider"] == "openai":
         embedder_config["metrics_factory_id"] = "prometheus"
 
     embeddings = EmbedderBuilder.build(
-        embedder_def["name"], embedder_config, metrics_injection
+        embedder_def["provider"], embedder_config, metrics_injection
     )
 
     # Get the database configuration

@@ -21,7 +21,7 @@ import copy
 import logging
 import uuid
 from datetime import datetime
-from typing import cast
+from typing import Any, cast
 
 from memmachine.common.language_model.language_model_builder import (
     LanguageModelBuilder,
@@ -29,15 +29,17 @@ from memmachine.common.language_model.language_model_builder import (
 from memmachine.common.metrics_factory.metrics_factory_builder import (
     MetricsFactoryBuilder,
 )
+from memmachine.common.resource_initializer import ResourceInitializer
 
 from .data_types import ContentType, Episode, MemoryContext
-from .long_term_memory.long_term_memory import LongTermMemory
+from .long_term_memory.long_term_memory import LongTermMemory, LongTermMemoryParams
 from .short_term_memory.session_memory import SessionMemory
 
 logger = logging.getLogger(__name__)
 
 
 class EpisodicMemory:
+    _shared_resources: dict[str, Any] = {}
     # pylint: disable=too-many-instance-attributes
     """
     Represents a single, isolated memory instance for a specific context.
@@ -112,8 +114,55 @@ class EpisodicMemory:
             )
 
         if len(long_term_config) > 0 and long_term_config.get("enabled") != "false":
+            vector_graph_store_id = long_term_config["vector_graph_store"]
+            embedder_id = long_term_config["embedder"]
+            reranker_id = long_term_config["reranker"]
+
+            resource_definitions = {}
+
+            resource_types = [
+                "embedder",
+                "language_model",
+                "metrics_factory",
+                "reranker",
+                "vector_graph_store",
+            ]
+            for resource_type in resource_types:
+                resource_declarations = config.get(resource_type, {})
+                if not isinstance(resource_declarations, dict):
+                    raise TypeError(
+                        f"{resource_type} declarations must be a dictionary"
+                    )
+
+                resource_definitions.update(
+                    {
+                        resource_id: {
+                            "type": resource_type,
+                            "provider": resource_declaration["provider"],
+                            "config": resource_declaration.get("config", {}),
+                        }
+                        for resource_id, resource_declaration in resource_declarations.items()
+                    }
+                )
+
+            resources = ResourceInitializer.initialize(
+                resource_definitions,
+                EpisodicMemory._shared_resources,
+            )
+            EpisodicMemory._shared_resources |= resources
+
             # Initialize long-term declarative memory
-            self._long_term_memory = LongTermMemory(config, self._memory_context)
+            self._long_term_memory = LongTermMemory(
+                LongTermMemoryParams(
+                    group_id=self._memory_context.group_id,
+                    session_id=self._memory_context.session_id,
+                    vector_graph_store=EpisodicMemory._shared_resources[
+                        vector_graph_store_id
+                    ],
+                    embedder=EpisodicMemory._shared_resources[embedder_id],
+                    reranker=EpisodicMemory._shared_resources[reranker_id],
+                )
+            )
         if self._session_memory is None and self._long_term_memory is None:
             raise ValueError("No memory is configured")
 

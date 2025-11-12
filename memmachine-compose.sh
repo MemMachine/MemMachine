@@ -72,12 +72,15 @@ safe_sed_inplace() {
     fi
 }
 
-# Function to escape special characters for sed
+# Function to escape special characters for sed replacement string
+# In sed replacement strings, we only need to escape: & (ampersand) and \ (backslash)
 escape_for_sed() {
     # Remove newlines and carriage returns first
     local cleaned=$(echo "$1" | tr -d '\n\r')
-    # Escape special regex characters
-    echo "$cleaned" | sed 's/[[\.*^$()+?{|]/\\&/g' | sed 's/\\/\\\\/g'
+    # Escape backslashes first (must be done before escaping &)
+    cleaned=$(echo "$cleaned" | sed 's/\\/\\\\/g')
+    # Escape ampersands (used for matched text in sed replacement)
+    echo "$cleaned" | sed 's/&/\\&/g'
 }
 
 # Check if Docker is installed
@@ -210,7 +213,8 @@ configure_models_for_provider() {
             # Update only the AWS LLM model
             safe_sed_inplace "/aws_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_llm_model\"|" configuration.yml
             # Update only the AWS embedder model
-            safe_sed_inplace "/aws_embedder_id:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_embedding_model\"|" configuration.yml
+            # Fix: end pattern matches same indentation level (2 spaces) as aws_embedder_id, not nested config: (4 spaces)
+            safe_sed_inplace "/aws_embedder_id:/,/^[[:space:]]\{2\}[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_embedding_model\"|" configuration.yml
             print_success "Configured for Bedrock provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
             ;;
         "OLLAMA")

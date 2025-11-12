@@ -64,12 +64,13 @@ dev = [
 
 [tool.mypy]
 follow_untyped_imports = true
+enable_error_code = ["deprecated"]
 exclude = ["venv/", ".venv/"]
 plugins = ['pydantic.mypy']
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501", "UP015"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"

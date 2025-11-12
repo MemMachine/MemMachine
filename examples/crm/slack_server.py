@@ -4,7 +4,6 @@ import hmac
 import logging
 import os
 import time
-from typing import Optional
 
 import httpx
 import uvicorn
@@ -54,8 +53,8 @@ def reset_counters():
 @router.post("/events")
 async def slack_events(
     request: Request,
-    x_slack_signature: Optional[str] = Header(default=None, alias="X-Slack-Signature"),
-    x_slack_request_timestamp: Optional[str] = Header(
+    x_slack_signature: str | None = Header(default=None, alias="X-Slack-Signature"),
+    x_slack_request_timestamp: str | None = Header(
         default=None, alias="X-Slack-Request-Timestamp"
     ),
 ):
@@ -131,14 +130,14 @@ def verify_slack_signature(
     if abs(int(time.time()) - req_ts) > 300:
         return False
 
-    base_string = f"v0:{timestamp}:{body.decode('utf-8')}".encode("utf-8")
+    base_string = f"v0:{timestamp}:{body.decode('utf-8')}".encode()
     computed = hmac.new(secret.encode("utf-8"), base_string, hashlib.sha256).hexdigest()
     expected = f"v0={computed}"
     return hmac.compare_digest(expected, signature)
 
 
 async def process_memory_post(
-    channel: str, ts: str, thread_ts: Optional[str], user: str, text: str
+    channel: str, ts: str, thread_ts: str | None, user: str, text: str
 ) -> bool:
     """Post all messages to memory system with efficient deduplication
 
@@ -185,7 +184,7 @@ async def process_memory_post(
 
 
 async def process_query_and_reply(
-    channel: str, ts: str, thread_ts: Optional[str], user: str, query_text: str
+    channel: str, ts: str, thread_ts: str | None, user: str, query_text: str
 ):
     """Handle *Q queries by searching memory and using OpenAI chat completion"""
     logger.info(f"[SLACK] Processing query from user {user}: {query_text[:50]}...")

@@ -2,7 +2,6 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -59,9 +58,7 @@ Response Format:
 </USER_QUERY>
 """
 
-    def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
-    ) -> str:
+    def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a health assistant query using the prompt template"""
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")

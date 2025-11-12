@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
@@ -13,7 +13,7 @@ class SlackService:
     Thin async wrapper around Slack Web API for the operations we need.
     """
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, token: str | None = None):
         self.token = token or os.getenv("SLACK_BOT_TOKEN")
         if not self.token:
             logger.warning("SLACK_BOT_TOKEN is not set; Slack operations will fail")
@@ -26,8 +26,8 @@ class SlackService:
         """
         try:
             resp = await self.client.users_info(user=user_id)
-            user: Dict[str, Any] = resp.get("user") or {}
-            profile: Dict[str, Any] = user.get("profile") or {}
+            user: dict[str, Any] = resp.get("user") or {}
+            profile: dict[str, Any] = user.get("profile") or {}
             display = (profile.get("display_name") or "").strip()
             real = (profile.get("real_name") or "").strip()
             return display or real or user_id
@@ -41,8 +41,8 @@ class SlackService:
             return user_id
 
     async def post_message(
-        self, channel: str, text: str, thread_ts: Optional[str] = None
-    ) -> Optional[str]:
+        self, channel: str, text: str, thread_ts: str | None = None
+    ) -> str | None:
         """
         Post a message to a channel (optionally in a thread). Returns ts if successful.
         """
@@ -62,7 +62,7 @@ class SlackService:
 
     async def get_channel_history(
         self, channel: str, limit: int = 1000
-    ) -> list[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch historical messages from a Slack channel.
         Returns list of message objects with metadata.
@@ -106,7 +106,7 @@ class SlackService:
             logger.exception("[SLACK] conversations.history unexpected error")
             return []
 
-    async def get_all_channels(self) -> list[Dict[str, Any]]:
+    async def get_all_channels(self) -> list[dict[str, Any]]:
         """
         Get list of all channels the bot has access to.
         """
