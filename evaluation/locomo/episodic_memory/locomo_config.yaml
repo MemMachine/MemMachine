@@ -1,6 +1,4 @@
 long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$source_timestamp] $producer_id: "
   embedder: my_embedder_id
   reranker: my_reranker_id
   vector_graph_store: my_storage_id
@@ -8,37 +6,35 @@ long_term_memory:
 sessiondb:
   uri: sqlitetest.db
 
-model:
-  my_model_id:
-    model_name: "gpt-4o-mini"
-    api_key: <OPENAI_API_KEY>
-storage:
+vector_graph_store:
   my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <NEO4J_PASSWORD>
-    force_exact_similarity_search: true
+    provider: neo4j
+    config:
+      uri: 'bolt://localhost:7687'
+      username: neo4j
+      password: <NEO4J_PASSWORD>
+      force_exact_similarity_search: true
 
 embedder:
   my_embedder_id:
-    name: "openai"
+    provider: "openai"
     config:
       model_name: "text-embedding-3-small"
       api_key: <OPENAI_API_KEY>
 
 reranker:
   my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-      - ce_ranker_id
+    provider: "rrf-hybrid"
+    config:
+      reranker_ids:
+        - id_ranker_id
+        - bm_ranker_id
+        - ce_ranker_id
   id_ranker_id:
-    type: "identity"
+    provider: "identity"
   bm_ranker_id:
-    type: "bm25"
+    provider: "bm25"
   ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
+    provider: "cross-encoder"
+    config:
+      model_name: "cross-encoder/qnli-electra-base"

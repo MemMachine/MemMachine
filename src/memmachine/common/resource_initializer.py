@@ -18,25 +18,13 @@ from memmachine.common.reranker.reranker_builder import RerankerBuilder
 from memmachine.common.vector_graph_store.vector_graph_store_builder import (
     VectorGraphStoreBuilder,
 )
-from memmachine.episodic_memory.declarative_memory import (
-    DeclarativeMemoryBuilder,
-)
-from memmachine.episodic_memory.declarative_memory.derivative_deriver import (
-    DerivativeDeriverBuilder,
-)
-from memmachine.episodic_memory.declarative_memory.derivative_mutator import (
-    DerivativeMutatorBuilder,
-)
-from memmachine.episodic_memory.declarative_memory.related_episode_postulator import (
-    RelatedEpisodePostulatorBuilder,
-)
 
 """
 Each entry in resource_definitions should look like this:
 ```
 resource_id: {
     "type": "<TYPE>",
-    "name": "<NAME>",
+    "provider": "<PROVIDER>",
     "config": {
         ... <CONFIGURATION> ...
     }
@@ -46,10 +34,6 @@ resource_id: {
 
 # Map resource types to their corresponding builder classes
 resource_builder_map: dict[str, type[Builder]] = {
-    "declarative_memory": DeclarativeMemoryBuilder,
-    "derivative_deriver": DerivativeDeriverBuilder,
-    "derivative_mutator": DerivativeMutatorBuilder,
-    "related_episode_postulator": RelatedEpisodePostulatorBuilder,
     "embedder": EmbedderBuilder,
     "language_model": LanguageModelBuilder,
     "metrics_factory": MetricsFactoryBuilder,
@@ -85,7 +69,7 @@ class ResourceInitializer:
             resource_builder = resource_builder_map[resource_definition["type"]]
             resource_dependency_graph[resource_id] = (
                 resource_builder.get_dependency_ids(
-                    resource_definition["name"],
+                    resource_definition["provider"],
                     resource_definition["config"],
                 )
             )
@@ -161,7 +145,7 @@ class ResourceInitializer:
             resource_builder = resource_builder_map[resource_definition["type"]]
 
             initialized_resource = resource_builder.build(
-                resource_definition["name"],
+                resource_definition["provider"],
                 resource_definition["config"],
                 injections=resource_cache | initialized_resources,
             )

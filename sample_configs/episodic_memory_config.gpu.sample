@@ -3,8 +3,6 @@ logging:
   level: info #| debug | error
 
 long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$timestamp] $producer_id: "
   embedder: openai_embedder
   reranker: my_reranker_id
   vector_graph_store: my_storage_id
@@ -30,13 +28,6 @@ Model:
     base_url: "http://host.docker.internal:11434/v1"
 
 storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
-
   profile_storage:
     vendor_name: postgres
     host: localhost
@@ -59,12 +50,12 @@ sessionMemory:
 
 embedder:
   openai_embedder:
-    name: openai
+    provider: openai
     config:
       model: "text-embedding-3-small"
       api_key: <YOUR_API_KEY>
   aws_embedder_id:
-    name: 'amazon-bedrock'
+    provider: 'amazon-bedrock'
     config:
       region: "us-west-2"
       aws_access_key_id: <AWS_ACCESS_KEY_ID>
@@ -72,7 +63,7 @@ embedder:
       model_id: "amazon.titan-embed-text-v2:0"
       similarity_metric: "cosine"
   ollama_embedder:
-    name: openai
+    provider: openai
     config:
       model: "nomic-embed-text"
       api_key: "EMPTY"
@@ -81,24 +72,35 @@ embedder:
 
 reranker:
   my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-      - ce_ranker_id
+    provider: "rrf-hybrid"
+    config:
+      reranker_ids:
+        - id_ranker_id
+        - bm_ranker_id
+        - ce_ranker_id
   id_ranker_id:
-    type: "identity"
+    provider: "identity"
   bm_ranker_id:
-    type: "bm25"
+    provider: "bm25"
   ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
+    provider: "cross-encoder"
+    config:
+      model_name: "cross-encoder/qnli-electra-base"
   aws_reranker_id:
-    type: "amazon-bedrock"
-    region: "us-west-2"
-    aws_access_key_id: <AWS_ACCESS_KEY_ID>
-    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
-    model_id: "amazon.rerank-v1:0"
+    provider: "amazon-bedrock"
+    config:
+      region: "us-west-2"
+      aws_access_key_id: <AWS_ACCESS_KEY_ID>
+      aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+      model_id: "amazon.rerank-v1:0"
 
 prompt:
   profile: profile_prompt
+
+vector_graph_store:
+  my_storage_id:
+    provider: neo4j
+    config:
+      uri: 'bolt://localhost:7687'
+      username: neo4j
+      password: <YOUR_PASSWORD_HERE>

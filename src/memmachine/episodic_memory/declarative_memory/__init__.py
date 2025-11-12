@@ -4,12 +4,11 @@ from .data_types import (
     FilterablePropertyValue,
     JSONValue,
 )
-from .declarative_memory import DeclarativeMemory
-from .declarative_memory_builder import DeclarativeMemoryBuilder
+from .declarative_memory import DeclarativeMemory, DeclarativeMemoryParams
 
 __all__ = [
     "DeclarativeMemory",
-    "DeclarativeMemoryBuilder",
+    "DeclarativeMemoryParams",
     "Episode",
     "ContentType",
     "FilterablePropertyValue",

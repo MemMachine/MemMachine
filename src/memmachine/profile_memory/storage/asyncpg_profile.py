@@ -1,8 +1,8 @@
 import functools
 import json
 import logging
-from collections.abc import Mapping
-from typing import Any, Iterator
+from collections.abc import Iterator, Mapping
+from typing import Any
 
 import asyncpg
 import numpy as np

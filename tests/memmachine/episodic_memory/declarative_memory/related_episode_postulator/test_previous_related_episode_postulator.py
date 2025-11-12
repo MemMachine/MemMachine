@@ -75,6 +75,7 @@ async def test_previous_related_episode_postulator():
 
     postulator = PreviousRelatedEpisodePostulator(
         PreviousRelatedEpisodePostulatorParams(
+            episode_collection="Episode",
             vector_graph_store=vector_graph_store,
             search_limit=2,
             filterable_property_keys=[],
@@ -86,6 +87,7 @@ async def test_previous_related_episode_postulator():
 
     postulator = PreviousRelatedEpisodePostulator(
         PreviousRelatedEpisodePostulatorParams(
+            episode_collection="Episode",
             vector_graph_store=vector_graph_store,
             search_limit=1,
             filterable_property_keys=[],
@@ -105,6 +107,7 @@ async def test_previous_related_episode_postulator():
 
     postulator = PreviousRelatedEpisodePostulator(
         PreviousRelatedEpisodePostulatorParams(
+            episode_collection="Episode",
             vector_graph_store=vector_graph_store,
             search_limit=2,
             filterable_property_keys=[],
@@ -125,6 +128,7 @@ async def test_previous_related_episode_postulator():
 
     postulator = PreviousRelatedEpisodePostulator(
         PreviousRelatedEpisodePostulatorParams(
+            episode_collection="Episode",
             vector_graph_store=vector_graph_store,
             search_limit=2,
             filterable_property_keys={"user_id"},
@@ -146,6 +150,7 @@ async def test_previous_related_episode_postulator():
 
     postulator = PreviousRelatedEpisodePostulator(
         PreviousRelatedEpisodePostulatorParams(
+            episode_collection="Episode",
             vector_graph_store=vector_graph_store,
             search_limit=2,
             filterable_property_keys={"user_id"},

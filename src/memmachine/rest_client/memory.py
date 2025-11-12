@@ -6,7 +6,7 @@ operations for a specific context.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 from uuid import uuid4
 
 import requests
@@ -44,10 +44,10 @@ class Memory:
     def __init__(
         self,
         client,
-        group_id: Optional[str] = None,
-        agent_id: Optional[Union[str, List[str]]] = None,
-        user_id: Optional[Union[str, List[str]]] = None,
-        session_id: Optional[str] = None,
+        group_id: str | None = None,
+        agent_id: str | list[str] | None = None,
+        user_id: str | list[str] | None = None,
+        session_id: str | None = None,
         **kwargs,
     ):
         """
@@ -97,7 +97,7 @@ class Memory:
             self.__group_id = self.__user_id[0]
 
     @property
-    def user_id(self) -> Optional[List[str]]:
+    def user_id(self) -> list[str] | None:
         """
         Get the user_id list (read-only).
 
@@ -107,7 +107,7 @@ class Memory:
         return self.__user_id
 
     @property
-    def agent_id(self) -> Optional[List[str]]:
+    def agent_id(self) -> list[str] | None:
         """
         Get the agent_id list (read-only).
 
@@ -117,7 +117,7 @@ class Memory:
         return self.__agent_id
 
     @property
-    def group_id(self) -> Optional[str]:
+    def group_id(self) -> str | None:
         """
         Get the group_id (read-only).
 
@@ -139,10 +139,10 @@ class Memory:
     def add(
         self,
         content: str,
-        producer: Optional[str] = None,
-        produced_for: Optional[str] = None,
+        producer: str | None = None,
+        produced_for: str | None = None,
         episode_type: str = "text",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         Add a memory episode.
@@ -251,9 +251,9 @@ class Memory:
     def search(
         self,
         query: str,
-        limit: Optional[int] = None,
-        filter_dict: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        filter_dict: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Search for memories.
 
@@ -300,7 +300,7 @@ class Memory:
             logger.error(f"Failed to search memories: {e}")
             raise
 
-    def get_context(self) -> Dict[str, Any]:
+    def get_context(self) -> dict[str, Any]:
         """
         Get the current memory context.
 

@@ -700,16 +700,13 @@ class ProfileMemory:
         user_prompt = (
             "The old profile is provided below:\n"
             "<OLD_PROFILE>\n"
-            "{profile}\n"
+            f"{str(profile)}\n"
             "</OLD_PROFILE>\n"
             "\n"
             "The history is provided below:\n"
             "<HISTORY>\n"
-            "{memory_content}\n"
+            f"{memory_content}\n"
             "</HISTORY>\n"
-        ).format(
-            profile=str(profile),
-            memory_content=memory_content,
         )
         # Use chain-of-thought to get entity profile update commands.
         logger.debug(

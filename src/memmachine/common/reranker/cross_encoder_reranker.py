@@ -15,7 +15,7 @@ class CrossEncoderRerankerParams(BaseModel):
     Parameters for CrossEncoderReranker.
 
     Attributes:
-        reranker_model (CrossEncoder):
+        cross_encoder (CrossEncoder):
             The cross-encoder model to use for reranking.
     """
 
