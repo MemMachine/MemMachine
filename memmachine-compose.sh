@@ -181,58 +181,217 @@ select_embedding_model() {
     echo "$embedding_model"
 }
 
-# Configure models based on selected provider
-configure_models_for_provider() {
-    local provider="$1"
-    local llm_model="$2"
-    local embedding_model="$3"
+# Generate configuration file with only the needed sections for the selected provider
+generate_config_for_provider() {
+    local config_source="$1"
+    local provider="$2"
+    local llm_model="$3"
+    local embedding_model="$4"
     local escaped_llm_model=$(escape_for_sed "$llm_model")
     local escaped_embedding_model=$(escape_for_sed "$embedding_model")
     
-    print_info "Configuring models for $provider provider..."
+    print_info "Generating configuration file for $provider provider..."
     
+    # Determine which model and embedder to use based on provider
     case "$provider" in
         "OPENAI")
-            # Configure for OpenAI - use openai_model and openai_embedder
-            safe_sed_inplace 's/embedder: .*/embedder: openai_embedder/' configuration.yml
-            safe_sed_inplace 's/llm_model: .*/llm_model: openai_model/' configuration.yml
-            safe_sed_inplace 's/embedding_model: .*/embedding_model: openai_embedder/' configuration.yml
-            safe_sed_inplace 's/model_name: .*/model_name: openai_model/' configuration.yml
-            # Update only the OpenAI LLM model
-            safe_sed_inplace "/openai_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
-            # Update only the OpenAI embedder model
-            safe_sed_inplace "/openai_embedder:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
-            print_success "Configured for OpenAI provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
+            local model_name="openai_model"
+            local embedder_name="openai_embedder"
+            local model_field="model"
+            local embedder_field="model"
             ;;
         "BEDROCK")
-            # Configure for Bedrock - use bedrock_model and aws_embedder_id
-            safe_sed_inplace 's/embedder: .*/embedder: aws_embedder_id/' configuration.yml
-            safe_sed_inplace 's/llm_model: .*/llm_model: aws_model/' configuration.yml
-            safe_sed_inplace 's/embedding_model: .*/embedding_model: aws_embedder_id/' configuration.yml
-            safe_sed_inplace 's/model_name: .*/model_name: aws_model/' configuration.yml
-            # Update only the AWS LLM model
-            safe_sed_inplace "/aws_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_llm_model\"|" configuration.yml
-            # Update only the AWS embedder model
-            # Fix: end pattern matches same indentation level (2 spaces) as aws_embedder_id, not nested config: (4 spaces)
-            safe_sed_inplace "/aws_embedder_id:/,/^[[:space:]]\{2\}[a-zA-Z_]*:$/ s|model_id: \".*\"|model_id: \"$escaped_embedding_model\"|" configuration.yml
-            print_success "Configured for Bedrock provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
+            local model_name="aws_model"
+            local embedder_name="aws_embedder_id"
+            local model_field="model_id"
+            local embedder_field="model_id"
             ;;
         "OLLAMA")
-            # Configure for Ollama - use ollama_model and ollama_embedder
-            safe_sed_inplace 's/embedder: .*/embedder: ollama_embedder/' configuration.yml
-            safe_sed_inplace 's/llm_model: .*/llm_model: ollama_model/' configuration.yml
-            safe_sed_inplace 's/embedding_model: .*/embedding_model: ollama_embedder/' configuration.yml
-            safe_sed_inplace 's/model_name: .*/model_name: ollama_model/' configuration.yml
-            # Update only the Ollama LLM model
-            safe_sed_inplace "/ollama_model:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_llm_model\"|" configuration.yml
-            # Update only the Ollama embedder model
-            safe_sed_inplace "/ollama_embedder:/,/^[[:space:]]*[a-zA-Z_]*:$/ s|model: \".*\"|model: \"$escaped_embedding_model\"|" configuration.yml
-            print_success "Configured for Ollama provider with LLM model: $llm_model and embedding model: $embedding_model" >&2
+            local model_name="ollama_model"
+            local embedder_name="ollama_embedder"
+            local model_field="model"
+            local embedder_field="model"
             ;;
         *)
-            print_warning "Unknown provider: $provider. Using default OpenAI configuration."
+            print_error "Unknown provider: $provider"
+            return 1
             ;;
     esac
+    
+    # Use awk to extract and build the configuration file
+    awk -v provider="$provider" \
+        -v model_name="$model_name" \
+        -v embedder_name="$embedder_name" \
+        -v llm_model="$llm_model" \
+        -v embedding_model="$embedding_model" \
+        -v model_field="$model_field" \
+        -v embedder_field="$embedder_field" \
+        -f- "$config_source" <<'AWK_SCRIPT' > configuration.yml
+    BEGIN {
+        in_model_section = 0
+        in_embedder_section = 0
+        in_current_model = 0
+        in_current_embedder = 0
+        skip_model = 0
+        skip_embedder = 0
+        current_section = ""
+        in_long_term = 0
+        in_profile = 0
+        in_session = 0
+    }
+    
+    # Track current top-level section (but skip sections with specific handlers)
+    /^[a-zA-Z]/ && !/^[[:space:]]/ && !/^long_term_memory:/ && !/^profile_memory:/ && !/^sessionMemory:/ {
+        # If we're leaving Model or embedder section, add blank line first
+        if (in_model_section || in_embedder_section) {
+            print ""
+        }
+        current_section = $1
+        current_section = substr(current_section, 1, length(current_section) - 1)  # Remove trailing :
+        in_model_section = (current_section == "Model")
+        in_embedder_section = (current_section == "embedder")
+        skip_model = 0
+        skip_embedder = 0
+        in_current_model = 0
+        in_current_embedder = 0
+        # Don't reset in_long_term, in_profile, in_session here - let their handlers manage them
+        print
+        next
+    }
+    
+    # Handle Model section
+    in_model_section {
+        # Check if this is a model definition line (2 spaces)
+        if (/^  [a-zA-Z_][a-zA-Z_]*:$/) {
+            model_key = substr($1, 1, length($1) - 1)  # Remove trailing :
+            if (model_key == model_name) {
+                in_current_model = 1
+                skip_model = 0
+                print
+                next
+            } else {
+                in_current_model = 0
+                skip_model = 1
+                next
+            }
+        }
+        # Print lines for current model, skip others
+        if (skip_model) {
+            next
+        }
+        if (in_current_model) {
+            # Replace model field value if this is the model line
+            if (model_field == "model" && /^    model:/) {
+                print "    model: \"" llm_model "\""
+                next
+            } else if (model_field == "model_id" && /^    model_id:/) {
+                print "    model_id: \"" llm_model "\""
+                next
+            }
+        }
+        print
+        next
+    }
+    
+    # Handle embedder section
+    in_embedder_section {
+        # Check if this is an embedder definition line (2 spaces)
+        if (/^  [a-zA-Z_][a-zA-Z_]*:$/) {
+            embedder_key = substr($1, 1, length($1) - 1)  # Remove trailing :
+            if (embedder_key == embedder_name) {
+                in_current_embedder = 1
+                skip_embedder = 0
+                print
+                next
+            } else {
+                in_current_embedder = 0
+                skip_embedder = 1
+                next
+            }
+        }
+        # Print lines for current embedder, skip others
+        if (skip_embedder) {
+            next
+        }
+        if (in_current_embedder) {
+            # Replace embedder model field value
+            if (embedder_field == "model" && /^      model:/) {
+                print "      model: \"" embedding_model "\""
+                next
+            } else if (embedder_field == "model_id" && /^      model_id:/) {
+                print "      model_id: \"" embedding_model "\""
+                next
+            }
+        }
+        print
+        next
+    }
+    
+    # Handle long_term_memory section - update embedder reference
+    /^long_term_memory:/ {
+        in_long_term = 1
+        print
+        next
+    }
+    in_long_term {
+        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
+            in_long_term = 0
+            # Fall through to let top-level tracker or default rule handle this line
+        } else if (/^  embedder:/) {
+            print "  embedder: " embedder_name
+            next
+        } else {
+            print
+            next
+        }
+    }
+    
+    # Handle profile_memory section - update model references
+    /^profile_memory:/ {
+        in_profile = 1
+        print
+        next
+    }
+    in_profile {
+        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
+            in_profile = 0
+            # Fall through to let top-level tracker or default rule handle this line
+        } else if (/^  llm_model:/) {
+            print "  llm_model: " model_name
+            next
+        } else if (/^  embedding_model:/) {
+            print "  embedding_model: " embedder_name
+            next
+        } else {
+            print
+            next
+        }
+    }
+    
+    # Handle sessionMemory section - update model_name
+    /^sessionMemory:/ {
+        in_session = 1
+        print
+        next
+    }
+    in_session {
+        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
+            in_session = 0
+            # Fall through to let top-level tracker or default rule handle this line
+        } else if (/^  model_name:/) {
+            print "  model_name: " model_name
+            next
+        } else {
+            print
+            next
+        }
+    }
+    
+    # Default: print all other lines
+    { print }
+AWK_SCRIPT
+    
+    print_success "Generated configuration file with $provider provider settings"
 }
 
 # In lieu of yq, use awk to read over the configuration.yml file line-by-line,
@@ -308,17 +467,14 @@ check_config_file() {
         print_success "Set MEMMACHINE_IMAGE to ${MEMMACHINE_IMAGE} in .env file"
 
         if [ -f "$CONFIG_SOURCE" ]; then
-            cp "$CONFIG_SOURCE" configuration.yml
-            print_success "Created configuration.yml file from $CONFIG_SOURCE"
-            
             # LLM model selection
             local selected_llm_model=$(select_llm_model "$provider")
             
             # embedding model selection
             local selected_embedding_model=$(select_embedding_model "$provider")
             
-            # Configure models based on selected provider
-            configure_models_for_provider "$provider" "$selected_llm_model" "$selected_embedding_model"
+            # Generate configuration file with only needed sections for the selected provider
+            generate_config_for_provider "$CONFIG_SOURCE" "$provider" "$selected_llm_model" "$selected_embedding_model"
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1
