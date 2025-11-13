@@ -11,10 +11,9 @@ from uuid import uuid4
 import openai
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import ExternalServiceAPIError
-from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 
-from .data_types import SimilarityMetric
+from ..metrics_factory import MetricsFactory
 from .embedder import Embedder
 
 logger = logging.getLogger(__name__)

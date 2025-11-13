@@ -1,3 +1,8 @@
+from memmachine.semantic_memory.semantic_model import (
+    RawSemanticPrompt,
+    SemanticCategory,
+)
+
 UPDATE_PROMPT = """
     Your job is to handle memory extraction for a personalized memory system, one which takes the form of a user profile recording details relevant to personalizing chat engine responses.
     You will receive a profile and a user's query to the chat system, your job is to update that profile by extracting or inferring information about the user from the query.
@@ -46,181 +51,6 @@ UPDATE_PROMPT = """
     - Language Preferences: Preferred tone and structure of assistant's language.
     - Motivation Triggers: Traits that drive engagement or satisfaction.
     - Behavior Under Stress: How the user reacts to failures or inaccurate responses.
-
-    Example Profile:
-    {
-        "Assistant Response Preferences": {
-            "1": "User prefers structured and professional communication when discussing technical topics such as SQL optimization, regression analysis in Stata, or web scraping methods using Python.",
-            "2": "User values responsiveness to follow-ups and iteration. They often refine their queries or ask for additional clarifications after the initial response, indicating a preference for interactive, back-and-forth engagement.",
-            "3": "User shows a preference for concise, utility-driven responses when asking simple factual questions. They expect just the necessary information without excessive explanation.",
-            "4": "User prefers detailed explanations and examples when dealing with complex software development and AI implementation topics.",
-            "5": "User reacts poorly to repetitive errors and inaccuracies. If a response is incorrect or misinterprets a request, they can express frustration and explicitly demand a correction.",
-            "6": "User sometimes displays a humorous or playful tone, especially when discussing creative tasks such as team name generation.",
-            "7": "User values precision when dealing with numerical or statistical queries, often double-checking results and testing assumptions.",
-            "8": "User expects direct engagement in professional communication and application-related tasks, such as resume optimization and cover letter drafting. They appreciate tone adjustments that align with formal correspondence.",
-            "9": "User prefers clear and informative troubleshooting responses when debugging code errors, requesting actionable steps to resolve issues."
-        },
-        "Notable Past Conversation Topic Highlights": {
-            "1": "In past conversations in April 2025, the user worked on building an internal LLM agent using Slack and Confluence data. They explored vector storage and retrieval techniques, discussed metadata filtering, and showed interest in optimizing query responses.",
-            "2": "In conversations from April 2025, the user worked on setting up a hosting environment that included a frontend and backend, aiming to deploy a web-based chatbot interface leveraging GPT-4o-mini.",
-            "3": "In past discussions in April 2025, the user explored applying various machine learning techniques in a business analytics context, especially using structured data from Slack and Confluence.",
-            "4": "In an April 2025 conversation, the user configured MCP-Agent as a middleware component to facilitate intelligent tool selection when handling AI queries.",
-            "5": "In discussions from May 2025, the user continued implementing an enterprise LLM agent, focusing on embedding document retrieval and structuring Slack/Confluence data for efficient RAG-based responses."
-        },
-        "Helpful User Insights": {
-            "1": "User is a software engineer and data analyst with experience in both frontend and backend development.",
-            "2": "User completed their education at the San Jose State University with a degree in Computer Science.",
-            "3": "User has experience working on AI-powered applications, including the development of internal LLM agents, retrieval-augmented generation (RAG) pipelines, and vector database implementations.",
-            "4": "User has been actively involved in scraping and analyzing Slack and Confluence data for enterprise applications.",
-            "5": "User is familiar with cloud and hosting environments, including deploying applications on internal and cloud-based servers.",
-            "6": "User has worked extensively with Milvus and FAISS for vector storage and AI-driven search applications.",
-            "7": "User has experience working with Next.js and TypeScript for frontend web development.",
-            "8": "User has past experience applying to business analyst and data analyst positions at companies like Cisco and Carta.",
-            "9": "User is interested in startup work and has engaged in Series A funding research and investor outreach.",
-            "10": "User has an interest in board games and developed a project for board game logging and searches.",
-            "11": "User has a strong interest in artificial intelligence and LLM-based development, focusing on enterprise integrations."
-        },
-        "User Interaction Metadata": {
-            "account_age_weeks": 118,
-            "platform": "web",
-            "device_type": "desktop",
-            "plan": "ChatGPT Plus",
-            "mode": "dark",
-            "last_1_day_activity": 1,
-            "last_7_days_activity": 4,
-            "last_30_days_activity": 16,
-            "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-            "model_usage_primary": "gpt-4o",
-            "device_pixel_ratio": 2.0,
-            "screen_width": 900,
-            "screen_height": 1440,
-            "user_name": "Jensen Musk",
-            "location": "United States",
-            "conversation_depth": 23.7,
-            "average_message_length": 50257.2,
-            "total_messages": 5863,
-            "good_interaction_quality": 1469,
-            "bad_interaction_quality": 700,
-            "local_hour": 9,
-            "session_duration_seconds": 72347,
-            "viewport_width": 788,
-            "viewport_height": 1440
-        },
-        "Political Views, Likes and Dislikes": {
-            "political_affiliation": "None stated",
-            "likes": "concise, accurate answers; AI infrastructure discussions",
-            "dislikes": "inaccurate output; repeated errors"
-        },
-        "Psychological Profile": {
-            "traits": "analytical, persistent, quality-driven, frustration-sensitive"
-        },
-        "Communication Style": {
-            "style": "structured, direct, professional"
-        },
-        "Learning Preferences": {
-            "preference": "example-based, step-by-step, interactive"
-        },
-        "Cognitive Style": {
-            "processing_style": "systematic and logic-driven"
-        },
-        "Emotional Drivers": {
-            "primary_motivation": "clarity and control"
-        },
-        "Personal Values": {
-            "values": "accuracy, efficiency, technical rigor"
-        },
-        "Career & Work Preferences": {
-            "interests": "startups, enterprise AI, internal LLM agent development",
-            "desired_titles": "Software Engineer, AI Applications Engineer",
-            "work_environment": "iterative, fast-paced, collaborative"
-        },
-        "Productivity Style": {
-            "style": "focused, iterative, interruption-averse"
-        },
-        "Demographic Information": {
-            "education": "San Jose State University",
-            "major": "Computer Science",
-            "graduation_year": 2024
-        },
-        "Geographic & Cultural Context": {
-            "country": "United States",
-            "culture": "Western tech professional norms"
-        },
-        "Financial Profile": {
-            "budgeting_style": "pragmatic",
-            "investment_interest": "tech startups and dev tools"
-        },
-        "Health & Wellness": {
-            "physical_activity": "basketball",
-            "mental_focus_strategy": "structured problem-solving"
-        },
-        "Education & Knowledge Level": {
-            "degree": "Undergraduate",
-            "institution": "San Jose State University",
-            "field": "Computer Science",
-            "expertise_areas": "AI infrastructure, RAG pipelines, vector databases"
-        },
-        "Platform Behavior": {
-            "prefers_detailed_responses": true,
-            "tests_responses_for_accuracy": true,
-            "follows_up_with_iterations": true
-        },
-        "Tech Proficiency": {
-            "languages": "Python, JavaScript, TypeScript, SQL",
-            "frameworks": "FastAPI, React, Next.js",
-            "tools": "OpenAI API, Milvus, FAISS, Docker, Git"
-        },
-        "Hobbies & Interests": {
-            "interests": "basketball, AI development, board games"
-        },
-        "Social Identity": {
-            "affiliations": "engineer, startup contributor"
-        },
-        "Media Consumption Habits": {
-            "formats": "technical blogs, YouTube coding tutorials, API docs"
-        },
-        "Life Goals & Milestones": {
-            "goals": "build an AI product, contribute to open-source tools"
-        },
-        "Relationship & Family Context": {
-            "status": "not discussed"
-        },
-        "Risk Tolerance": {
-            "entrepreneurial_interest": true,
-            "tolerance_level": "moderate-to-high"
-        },
-        "Assistant Trust Level": {
-            "trust_when_accurate": true,
-            "critical_on_error": true
-        },
-        "Time Usage Patterns": {
-            "interaction_pattern": "frequent, iterative",
-            "active_hours": "weekday mornings and evenings"
-        },
-        "Preferred Content Format": {
-            "technical": "structured, step-by-step",
-            "professional": "formal and polished",
-            "quick_answers": "concise and direct"
-        },
-        "Assistant Usage Patterns": {
-            "uses_contextual_memory": true,
-            "refines_queries": true,
-            "multi_turn_usage": true
-        },
-        "Language Preferences": {
-            "tone": "professional and clear",
-            "structure": "bullet points or structured prose"
-        },
-        "Motivation Triggers": {
-            "prefers_efficiency": true,
-            "values_accuracy_and_relevance": true
-        },
-        "Behavior Under Stress": {
-            "frustration_with_inaccuracy": true,
-            "expectation_of_corrective_action": true
-        }
-    }
-
 
     To update the user's profile, you will output a JSON document containing a list of commands to be executed in sequence.
 
@@ -410,3 +240,14 @@ The final output schema is:
     "keep_memories": list of ids of old memories to keep
 }
 """
+
+UserProfileSemanticCategory = SemanticCategory(
+    name="profile",
+    tags=set(),
+    prompt=RawSemanticPrompt(
+        update_prompt=UPDATE_PROMPT,
+        consolidation_prompt=CONSOLIDATION_PROMPT,
+    ),
+)
+
+SEMANTIC_TYPE = UserProfileSemanticCategory

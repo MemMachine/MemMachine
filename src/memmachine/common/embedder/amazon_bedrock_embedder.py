@@ -12,9 +12,8 @@ from uuid import uuid4
 from langchain_aws import BedrockEmbeddings
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 
-from .data_types import SimilarityMetric
 from .embedder import Embedder
 
 logger = logging.getLogger(__name__)
@@ -87,6 +86,10 @@ class AmazonBedrockEmbedder(Embedder):
         response = self._client.embed_documents(["."])
         self._dimensions = len(response[0])
 
+    @property
+    def embeddings(self) -> BedrockEmbeddings:
+        return self._client
+
     async def ingest_embed(
         self,
         inputs: list[Any],
@@ -135,6 +138,7 @@ class AmazonBedrockEmbedder(Embedder):
 
         start_time = time.monotonic()
 
+        embeddings = []
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
             logger.debug(
@@ -142,7 +146,7 @@ class AmazonBedrockEmbedder(Embedder):
                 "Attempting to create embeddings using %s Amazon Bedrock model: "
                 "on attempt %d with max attempts %d",
                 embed_call_uuid,
-                self._model_id,
+                self.model_id,
                 attempt,
                 max_attempts,
             )
@@ -173,7 +177,7 @@ class AmazonBedrockEmbedder(Embedder):
                     type(e).__name__,
                 )
                 await asyncio.sleep(
-                    min(sleep_seconds, self._max_retry_interval_seconds)
+                    min(sleep_seconds, self._conf.max_retry_interval_seconds)
                 )
                 sleep_seconds *= 2
 

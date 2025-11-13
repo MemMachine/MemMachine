@@ -18,7 +18,7 @@ def test_health_check_propagates_unexpected_exceptions(monkeypatch):
     # Monkeypatch global memory managers to None to simulate an expected error condition.
     import memmachine.server.app as app_module
 
-    monkeypatch.setattr(app_module, "profile_memory", None)
+    monkeypatch.setattr(app_module, "semantic_session_manager", None)
     monkeypatch.setattr(app_module, "episodic_memory", None)
 
     # Call the /health endpoint and verify it returns a 503 status code
@@ -57,7 +57,7 @@ def test_health_check_returns_healthy_status(monkeypatch):
     class DummyMemoryManager:
         pass
 
-    monkeypatch.setattr(app_module, "profile_memory", DummyMemoryManager())
+    monkeypatch.setattr(app_module, "semantic_session_manager", DummyMemoryManager())
     monkeypatch.setattr(app_module, "episodic_memory", DummyMemoryManager())
 
     # Remove any monkeypatched /health route and restore the original
@@ -75,5 +75,5 @@ def test_health_check_returns_healthy_status(monkeypatch):
     assert json_data["status"] == "healthy"
     assert json_data["service"] == "memmachine"
     assert "version" in json_data
-    assert json_data["memory_managers"]["profile_memory"] is True
+    assert json_data["memory_managers"]["semantic_memory"] is True
     assert json_data["memory_managers"]["episodic_memory"] is True

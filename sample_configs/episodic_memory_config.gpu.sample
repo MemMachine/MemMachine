@@ -1,6 +1,6 @@
 logging:
   path: /tmp/memory_log
-  level: info #| debug | error
+  level: info # | debug | error
 
 long_term_memory:
   embedder: openai_embedder

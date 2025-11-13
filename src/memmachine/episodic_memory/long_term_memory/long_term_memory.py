@@ -1,11 +1,6 @@
 from typing import Any, cast
 
-from pydantic import BaseModel, Field, InstanceOf
-
-from memmachine.common.embedder.embedder import Embedder
-from memmachine.common.reranker.reranker import Reranker
-from memmachine.common.vector_graph_store import VectorGraphStore
-
+from ...common.configuration.episodic_config import LongTermMemoryParams
 from ..data_types import ContentType, Episode
 from ..declarative_memory import DeclarativeMemory, DeclarativeMemoryParams
 from ..declarative_memory.data_types import (
@@ -22,56 +17,15 @@ declarative_memory_content_type_to_content_type_map = {
 }
 
 
-class LongTermMemoryParams(BaseModel):
-    """
-    Parameters for LongTermMemory.
-
-    Attributes:
-        group_id (str):
-            Group identifier.
-        session_id (str):
-            Session identifier.
-        vector_graph_store (VectorGraphStore):
-            VectorGraphStore instance
-            for storing and retrieving memories.
-        embedder (Embedder):
-            Embedder instance for creating embeddings.
-        reranker (Reranker):
-            Reranker instance for reranking search results.
-    """
-
-    group_id: str = Field(
-        ...,
-        description="Group identifier",
-    )
-    session_id: str = Field(
-        ...,
-        description="Session identifier",
-    )
-    vector_graph_store: InstanceOf[VectorGraphStore] = Field(
-        ...,
-        description="VectorGraphStore instance for storing and retrieving memories",
-    )
-    embedder: InstanceOf[Embedder] = Field(
-        ...,
-        description="Embedder instance for creating embeddings",
-    )
-    reranker: InstanceOf[Reranker] = Field(
-        ...,
-        description="Reranker instance for reranking search results",
-    )
-
-
 class LongTermMemory:
     _shared_resources: dict[str, Any] = {}
 
     def __init__(self, params: LongTermMemoryParams):
-        self._group_id = params.group_id
         # Note: Things look a bit weird during refactor...
         # Internal session_id is used for external group_id. This is intentional.
         self._declarative_memory = DeclarativeMemory(
             DeclarativeMemoryParams(
-                session_id=params.group_id,
+                session_id=params.session_id,
                 content_metadata_template="[$timestamp] $producer_id: $content",
                 vector_graph_store=params.vector_graph_store,
                 embedder=params.embedder,

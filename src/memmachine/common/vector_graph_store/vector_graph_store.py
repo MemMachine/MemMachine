@@ -10,8 +10,7 @@ from collections.abc import Collection, Mapping
 from typing import Any
 from uuid import UUID
 
-from memmachine.common.embedder import SimilarityMetric
-
+from ..data_types import SimilarityMetric
 from .data_types import Edge, Node, Property
 
 

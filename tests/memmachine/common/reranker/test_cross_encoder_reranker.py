@@ -3,9 +3,9 @@ from unittest.mock import MagicMock
 import pytest
 from sentence_transformers import CrossEncoder
 
+from memmachine.common.configuration.reranker_conf import CrossEncoderRerankerConf
 from memmachine.common.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,
-    CrossEncoderRerankerParams,
 )
 
 
@@ -18,7 +18,7 @@ def cross_encoder():
 @pytest.fixture
 def reranker(cross_encoder):
     return CrossEncoderReranker(
-        CrossEncoderRerankerParams(
+        CrossEncoderRerankerConf(
             cross_encoder=cross_encoder,
         )
     )

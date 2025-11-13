@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from memmachine.semantic_memory.semantic_session_resource import SessionIdManager
 from memmachine.server.app import app
 
 """
@@ -58,16 +59,19 @@ def mock_memory_managers(monkeypatch):
         async def get_episodic_memory_instance(self, *args, **kwargs):
             return MagicMock()
 
-    class DummyProfileMemory:
-        async def add_persona_message(self, *args, **kwargs):
+    class DummySemanticSessionManager:
+        async def add_message(self, *args, **kwargs):
             pass
 
-        async def semantic_search(self, *args, **kwargs):
+        async def search(self, *args, **kwargs):
             return []
 
     # 5. Apply all patches to the app module.
     monkeypatch.setattr(app_module, "episodic_memory", DummyEpisodicMemoryManager())
-    monkeypatch.setattr(app_module, "profile_memory", DummyProfileMemory())
+    monkeypatch.setattr(
+        app_module, "semantic_session_manager", DummySemanticSessionManager()
+    )
+    monkeypatch.setattr(app_module, "session_id_manager", SessionIdManager())
     # This is the crucial fix: patch the name in the module where it's looked
     # up.
     monkeypatch.setattr(app_module, "AsyncEpisodicMemory", MockAsyncEpisodicMemory)

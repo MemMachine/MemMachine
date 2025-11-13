@@ -3,14 +3,15 @@ import re
 import pytest
 
 from memmachine import setup_nltk
-from memmachine.common.reranker.bm25_reranker import BM25Reranker, BM25RerankerParams
+from memmachine.common.configuration.reranker_conf import BM25RerankerConf
+from memmachine.common.reranker.bm25_reranker import BM25Reranker
 
 
 @pytest.fixture
 def reranker():
     setup_nltk()
     return BM25Reranker(
-        BM25RerankerParams(
+        BM25RerankerConf(
             tokenize=lambda text: re.sub(r"\W+", " ", text).lower().split()
         )
     )

@@ -13,15 +13,12 @@ It includes:
 import argparse
 import asyncio
 import contextvars
-import copy
 import logging
 import os
 from contextlib import asynccontextmanager
-from importlib import import_module
 from typing import Any, Self, cast
 
 import uvicorn
-import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -34,9 +31,8 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.applications import Starlette
 from starlette.types import Lifespan, Receive, Scope, Send
 
-from memmachine.common.embedder import EmbedderBuilder
-from memmachine.common.language_model import LanguageModelBuilder
-from memmachine.common.metrics_factory import MetricsFactoryBuilder
+from memmachine.common.configuration import load_config_yml_file
+from memmachine.common.resource_mgr import ResourceMgr
 from memmachine.episodic_memory.data_types import ContentType
 from memmachine.episodic_memory.episodic_memory import (
     AsyncEpisodicMemory,
@@ -45,9 +41,10 @@ from memmachine.episodic_memory.episodic_memory import (
 from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
-from memmachine.profile_memory.profile_memory import ProfileMemory
-from memmachine.profile_memory.prompt_provider import ProfilePrompt
-from memmachine.profile_memory.storage.asyncpg_profile import AsyncPgProfileStorage
+from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
+from memmachine.semantic_memory.semantic_session_resource import (
+    SessionIdManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -480,142 +477,41 @@ class DeleteDataRequest(RequestWithSession):
 
 # === Globals ===
 # Global instances for memory managers, initialized during app startup.
-profile_memory: ProfileMemory | None = None
-episodic_memory: EpisodicMemoryManager | None = None
+resource_mgr: ResourceMgr | None = None
 
 
 # === Lifespan Management ===
 
 
-async def initialize_resource(
-    config_file: str,
-) -> tuple[EpisodicMemoryManager, ProfileMemory]:
+async def initialize_resource(config_file: str) -> ResourceMgr:
     """
     This is a temporary solution to unify the ProfileMemory and Episodic Memory
     configuration.
-    Initializes the ProfileMemory and EpisodicMemoryManager instances,
+    Initializes the SemanticSessionManager and EpisodicMemoryManager instances,
     and establishes necessary connections (e.g., to the database).
     These resources are cleaned up on shutdown.
     Args:
         config_file: The path to the configuration file.
     Returns:
-        A tuple containing the EpisodicMemoryManager and ProfileMemory instances.
+        A tuple containing the EpisodicMemoryManager, SemanticSessionManager,
+        and SessionIdManager instances.
     """
 
-    try:
-        yaml_config = yaml.safe_load(open(config_file, encoding="utf-8"))
-    except FileNotFoundError:
-        raise FileNotFoundError(f"Config file {config_file} not found")
-    except yaml.YAMLError:
-        raise ValueError(f"Config file {config_file} is not valid YAML")
-    except Exception as e:
-        raise e
-
-    def config_to_lowercase(data: Any) -> Any:
-        """Recursively converts all dictionary keys in a nested structure
-        to lowercase."""
-        if isinstance(data, dict):
-            return {k.lower(): config_to_lowercase(v) for k, v in data.items()}
-        if isinstance(data, list):
-            return [config_to_lowercase(i) for i in data]
-        return data
-
-    yaml_config = config_to_lowercase(yaml_config)
-
-    # if the model is defined in the config, use it.
-    profile_config = yaml_config.get("profile_memory", {})
-
-    # create LLM model from the configuration
-    model_config = yaml_config.get("model", {})
-
-    model_name = profile_config.get("llm_model")
-    if model_name is None:
-        raise ValueError("Model not configured in config file for profile memory")
-
-    model_def = model_config.get(model_name)
-    if model_def is None:
-        raise ValueError(f"Can not find definition of model{model_name}")
-
-    profile_model = copy.deepcopy(model_def)
-    metrics_manager = MetricsFactoryBuilder.build("prometheus", {}, {})
-    profile_model["metrics_factory_id"] = "prometheus"
-    metrics_injection = {}
-    metrics_injection["prometheus"] = metrics_manager
-    model_vendor = profile_model.pop("model_vendor")
-    llm_model = LanguageModelBuilder.build(
-        model_vendor, profile_model, metrics_injection
-    )
-
-    # create embedder
-    embedders = yaml_config.get("embedder", {})
-    embedder_id = profile_config.get("embedding_model")
-    if embedder_id is None:
-        raise ValueError(
-            "Embedding model not configured in config file for profile memory"
-        )
-
-    embedder_def = embedders.get(embedder_id)
-    if embedder_def is None:
-        raise ValueError(f"Can not find definition of embedder {embedder_id}")
-
-    embedder_config = copy.deepcopy(embedder_def["config"])
-    if embedder_def["provider"] == "openai":
-        embedder_config["metrics_factory_id"] = "prometheus"
-
-    embeddings = EmbedderBuilder.build(
-        embedder_def["provider"], embedder_config, metrics_injection
-    )
-
-    # Get the database configuration
-    # get DB config from configuration file is available
-    db_config_name = profile_config.get("database")
-    if db_config_name is None:
-        raise ValueError("Profile database not configured in config file")
-    db_config = yaml_config.get("storage", {})
-    db_config = db_config.get(db_config_name)
-    if db_config is None:
-        raise ValueError(f"Can not find configuration for database {db_config_name}")
-
-    prompt_file = profile_config.get("prompt", "profile_prompt")
-    prompt_module = import_module(f".prompt.{prompt_file}", __package__)
-    profile_prompt = ProfilePrompt.load_from_module(prompt_module)
-
-    profile_storage = AsyncPgProfileStorage.build_config(
-        {
-            "host": db_config.get("host", "localhost"),
-            "port": db_config.get("port", 0),
-            "user": db_config.get("user", ""),
-            "password": db_config.get("password", ""),
-            "database": db_config.get("database", ""),
-        }
-    )
-
-    profile_memory = ProfileMemory(
-        model=llm_model,
-        embeddings=embeddings,
-        profile_storage=profile_storage,
-        prompt=profile_prompt,
-    )
-    episodic_memory = EpisodicMemoryManager.create_episodic_memory_manager(config_file)
-    return episodic_memory, profile_memory
+    config = load_config_yml_file(config_file)
+    ret = ResourceMgr(config)
+    await resource_mgr.profile_memory.startup()
+    return ret
 
 
 async def init_global_memory():
     config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
-
-    global episodic_memory
-    global profile_memory
-    episodic_memory, profile_memory = await initialize_resource(config_file)
-    await profile_memory.startup()
+    global resource_mgr
+    resource_mgr = await initialize_resource(config_file)
 
 
 async def shutdown_global_memory():
-    global episodic_memory
-    global profile_memory
-    if profile_memory is not None:
-        await profile_memory.cleanup()
-    if episodic_memory is not None:
-        await episodic_memory.shut_down()
+    global resource_mgr
+    resource_mgr.close()
 
 
 @asynccontextmanager
@@ -956,12 +852,12 @@ async def add_memory(
     response: Response,
     session: SessionData = Depends(_get_session_from_header),  # type: ignore
 ):
-    """Adds a memory episode to both episodic and profile memory.
+    """Adds a memory episode to both episodic and semantic memory.
 
     This endpoint first retrieves the appropriate episodic memory instance
     based on the session context (group, agent, user, session IDs). It then
     adds the episode to the episodic memory. If successful, it also passes
-    the message to the profile memory for ingestion.
+    the message to the semantic memory for ingestion.
 
     Args:
         episode: The NewEpisode object containing the memory details.
@@ -979,15 +875,15 @@ async def add_memory(
 
 
 async def _add_memory(episode: NewEpisode):
-    """Adds a memory episode to both episodic and profile memory.
+    """Adds a memory episode to both episodic and semantic memory.
     Internal function.  Shared by both REST API and MCP API
 
     See the docstring for add_memory() for details."""
     session = episode.get_session()
     group_id = session.group_id
-    inst: EpisodicMemory | None = await cast(
-        EpisodicMemoryManager, episodic_memory
-    ).get_episodic_memory_instance(
+    inst: (
+        EpisodicMemory | None
+    ) = await resource_mgr.episodic_memory_manager.get_episodic_memory_instance(
         group_id=group_id if group_id is not None else "",
         agent_id=session.agent_id,
         user_id=session.user_id,
@@ -1012,18 +908,8 @@ async def _add_memory(episode: NewEpisode):
                         or {session.agent_id}""",
             )
 
-        ctx = inst.get_memory_context()
-        await cast(ProfileMemory, profile_memory).add_persona_message(
-            str(episode.episode_content),
-            episode.metadata if episode.metadata is not None else {},
-            {
-                "group_id": ctx.group_id,
-                "session_id": ctx.session_id,
-                "producer": episode.producer,
-                "produced_for": episode.produced_for,
-            },
-            user_id=episode.producer,
-        )
+        # Add to semantic memory using session manager
+    await _add_semantic_memory(episode)
 
 
 @app.post("/v1/memories/episodic")
@@ -1037,7 +923,7 @@ async def add_episodic_memory(
     This endpoint first retrieves the appropriate episodic memory instance
     based on the session context (group, agent, user, session IDs). It then
     adds the episode to the episodic memory. If successful, it also passes
-    the message to the profile memory for ingestion.
+    the message to the semantic memory for ingestion.
 
     Args:
         episode: The NewEpisode object containing the memory details.
@@ -1055,16 +941,16 @@ async def add_episodic_memory(
 
 
 async def _add_episodic_memory(episode: NewEpisode):
-    """Adds a memory episode to both episodic and profile memory.
+    """Adds a memory episode to both episodic and semantic memory.
     Internal function.  Shared by both REST API and MCP API
 
     See the docstring for add_episodic_memory() for details.
     """
     session = episode.get_session()
     group_id = session.group_id
-    inst: EpisodicMemory | None = await cast(
-        EpisodicMemoryManager, episodic_memory
-    ).get_episodic_memory_instance(
+    inst: (
+        EpisodicMemory | None
+    ) = await resource_mgr.episodic_memory_manager.get_episodic_memory_instance(
         group_id=group_id if group_id is not None else "",
         agent_id=session.agent_id,
         user_id=session.user_id,
@@ -1115,28 +1001,27 @@ async def add_profile_memory(
     """
     episode.merge_and_validate_session(session)
     episode.update_response_session_header(response)
-    await _add_profile_memory(episode)
+    await _add_semantic_memory(episode)
 
 
-async def _add_profile_memory(episode: NewEpisode):
+async def _add_semantic_memory(episode: NewEpisode):
     """Adds a memory episode to profile memory.
     Internal function.  Shared by both REST API and MCP API
 
     See the docstring for add_profile_memory() for details.
     """
     session = episode.get_session()
-    group_id = session.group_id
 
-    await cast(ProfileMemory, profile_memory).add_persona_message(
-        str(episode.episode_content),
-        episode.metadata if episode.metadata is not None else {},
-        {
-            "group_id": group_id if group_id is not None else "",
-            "session_id": session.session_id,
-            "producer": episode.producer,
-            "produced_for": episode.produced_for,
-        },
+    semantic_session_data = cast(
+        SessionIdManager, session_id_manager
+    ).generate_session_data(
         user_id=episode.producer,
+        session_id=session.session_id,
+    )
+
+    await cast(SemanticSessionManager, semantic_session_manager).add_message(
+        message=str(episode.episode_content),
+        session_data=semantic_session_data,
     )
 
 
@@ -1184,23 +1069,10 @@ async def _search_memory(q: SearchQuery) -> SearchResult:
     if inst is None:
         raise q.new_404_not_found_error("unable to find episodic memory")
     async with AsyncEpisodicMemory(inst) as inst:
-        ctx = inst.get_memory_context()
-        user_id = (
-            session.user_id[0]
-            if session.user_id is not None and len(session.user_id) > 0
-            else ""
-        )
+        # Search semantic memory using session manager
+
         res = await asyncio.gather(
-            inst.query_memory(q.query, q.limit, q.filter),
-            cast(ProfileMemory, profile_memory).semantic_search(
-                q.query,
-                q.limit if q.limit is not None else 5,
-                isolations={
-                    "group_id": ctx.group_id,
-                    "session_id": ctx.session_id,
-                },
-                user_id=user_id,
-            ),
+            inst.query_memory(q.query, q.limit, q.filter), _search_semantic_memory(q)
         )
         return SearchResult(
             content={"episodic_memory": res[0], "profile_memory": res[1]}
@@ -1274,26 +1146,27 @@ async def search_profile_memory(
     """
     q.merge_and_validate_session(session)
     q.update_response_session_header(response)
-    return await _search_profile_memory(q)
+    return await _search_semantic_memory(q)
 
 
-async def _search_profile_memory(q: SearchQuery) -> SearchResult:
+async def _search_semantic_memory(q: SearchQuery) -> SearchResult:
     """Searches for memories across profile memory.
     Internal function.  Shared by both REST API and MCP API
     See the docstring for search_profile_memory() for details.
     """
     session = q.get_session()
-    user_id = session.user_id[0] if session.user_id is not None else ""
-    group_id = session.group_id if session.group_id is not None else ""
 
-    res = await cast(ProfileMemory, profile_memory).semantic_search(
-        q.query,
-        q.limit if q.limit is not None else 5,
-        isolations={
-            "group_id": group_id,
-            "session_id": session.session_id,
-        },
-        user_id=user_id,
+    # Search semantic memory using session manager
+    semantic_session_data = cast(
+        SessionIdManager, session_id_manager
+    ).generate_session_data(
+        user_id=session.first_user_id(),
+        session_id=session.session_id,
+    )
+    res = await cast(SemanticSessionManager, semantic_session_manager).search(
+        message=q.query,
+        session_data=semantic_session_data,
+        limit=q.limit if q.limit is not None else 5,
     )
     return SearchResult(content={"profile_memory": res})
 
@@ -1423,7 +1296,7 @@ async def health_check():
     """Health check endpoint for container orchestration."""
     try:
         # Check if memory managers are initialized
-        if profile_memory is None or episodic_memory is None:
+        if semantic_session_manager is None or episodic_memory is None:
             raise HTTPException(
                 status_code=503, detail="Memory managers not initialized"
             )
@@ -1434,7 +1307,7 @@ async def health_check():
             "service": "memmachine",
             "version": "1.0.0",
             "memory_managers": {
-                "profile_memory": profile_memory is not None,
+                "semantic_memory": semantic_session_manager is not None,
                 "episodic_memory": episodic_memory is not None,
             },
         }
@@ -1478,15 +1351,13 @@ def main():
 
         async def run_mcp_server():
             """Initialize resources and run MCP server in the same event loop."""
-            global episodic_memory, profile_memory
+            global resource_mgr
             try:
-                episodic_memory, profile_memory = await initialize_resource(config_file)
-                await profile_memory.startup()
+                resource_mgr = await initialize_resource(config_file)
                 await mcp.run_stdio_async()
             finally:
                 # Clean up resources when server stops
-                if profile_memory:
-                    await profile_memory.cleanup()
+                resource_mgr.close()
 
         asyncio.run(run_mcp_server())
     else:

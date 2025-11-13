@@ -7,7 +7,7 @@ import pytest_asyncio
 from neo4j import AsyncGraphDatabase
 from testcontainers.neo4j import Neo4jContainer
 
-from memmachine.common.embedder import SimilarityMetric
+from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.vector_graph_store import Edge, Node
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
