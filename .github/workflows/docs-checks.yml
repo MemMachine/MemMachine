@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false  # Continue running all matrix jobs even if one fails
       matrix:
-        node-version: [18, 20, 22]  # Test against multiple Node.js versions
+        node-version: [20, 22]  # Test against multiple Node.js versions
 
     steps:
       # Step 1: Checkout the repository code
