@@ -4,9 +4,11 @@ from unittest.mock import create_autospec
 
 import pytest
 import pytest_asyncio
+from neo4j import AsyncGraphDatabase
 from sqlalchemy import StaticPool, text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
 
 from memmachine.common.configuration.model_conf import (
@@ -28,6 +30,9 @@ from memmachine.common.language_model.openai_language_model import OpenAILanguag
 from memmachine.history_store.history_sqlalchemy_store import (
     BaseHistoryStore,
     SqlAlchemyHistoryStore,
+)
+from memmachine.semantic_memory.storage.neo4j_semantic_storage import (
+    Neo4jSemanticStorage,
 )
 from memmachine.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
     SqlAlchemyPgVectorSemanticStorage,
@@ -176,7 +181,10 @@ def real_llm_model(request):
 
 
 @pytest.fixture(scope="session")
-def pg_container():
+def pg_container(pytestconfig):
+    if not pytestconfig.getoption("--integration"):
+        pytest.skip("need --integration option to start Postgres container")
+
     with PostgresContainer("pgvector/pgvector:pg16") as container:
         yield container
 
@@ -235,6 +243,7 @@ def sqlalchemy_engine(request):
 @pytest_asyncio.fixture
 async def pgvector_semantic_storage(sqlalchemy_pg_engine):
     storage = SqlAlchemyPgVectorSemanticStorage(sqlalchemy_pg_engine)
+    storage.backend_name = "postgres"
     await storage.startup()
     yield storage
     await storage.delete_all()
@@ -244,14 +253,53 @@ async def pgvector_semantic_storage(sqlalchemy_pg_engine):
 @pytest_asyncio.fixture
 async def in_memory_semantic_storage():
     store = InMemorySemanticStorage()
+    store.backend_name = "sqlite"
     await store.startup()
     yield store
     await store.cleanup()
 
 
+@pytest.fixture(scope="session")
+def neo4j_container(pytestconfig):
+    if not pytestconfig.getoption("--integration"):
+        pytest.skip("need --integration option to start Neo4j container")
+
+    username = "neo4j"
+    password = "password"
+    with Neo4jContainer(
+        image="neo4j:5.23", username=username, password=password
+    ) as container:
+        yield {
+            "uri": container.get_connection_url(),
+            "username": username,
+            "password": password,
+        }
+
+
+@pytest_asyncio.fixture(scope="session")
+async def neo4j_driver(neo4j_container):
+    driver = AsyncGraphDatabase.driver(
+        neo4j_container["uri"],
+        auth=(neo4j_container["username"], neo4j_container["password"]),
+    )
+    yield driver
+    await driver.close()
+
+
+@pytest_asyncio.fixture
+async def neo4j_semantic_storage(neo4j_driver):
+    storage = Neo4jSemanticStorage(neo4j_driver)
+    await storage.startup()
+    await storage.delete_all()
+    yield storage
+    await storage.delete_all()
+    await storage.cleanup()
+
+
 @pytest.fixture(
     params=[
         pytest.param("pgvector_semantic_storage", marks=pytest.mark.integration),
+        pytest.param("neo4j_semantic_storage", marks=pytest.mark.integration),
         "in_memory_semantic_storage",
     ]
 )
