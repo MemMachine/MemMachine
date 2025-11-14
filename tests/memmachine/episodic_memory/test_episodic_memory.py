@@ -100,7 +100,7 @@ def episodic_memory_instance(mock_manager, mock_config, memory_context):
         MockSessionMemory.return_value = mock_session_memory_instance
 
         mock_ltm_instance = MagicMock()
-        mock_ltm_instance.add_episode = AsyncMock()
+        mock_ltm_instance.add_episodes = AsyncMock()
         mock_ltm_instance.forget_session = AsyncMock()
         mock_ltm_instance.close = AsyncMock()
         mock_ltm_instance.search = AsyncMock()

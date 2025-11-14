@@ -9,8 +9,8 @@ from .declarative_memory import DeclarativeMemory, DeclarativeMemoryParams
 __all__ = [
     "DeclarativeMemory",
     "DeclarativeMemoryParams",
-    "Episode",
     "ContentType",
+    "Episode",
     "FilterablePropertyValue",
     "JSONValue",
 ]

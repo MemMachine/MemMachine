@@ -50,6 +50,49 @@ class VectorGraphStoreBuilder(Builder):
                     force_exact_similarity_search: bool = Field(
                         False, description="Whether to force exact similarity search"
                     )
+                    filtered_similarity_search_fudge_factor: int = Field(
+                        4,
+                        description=(
+                            "Fudge factor for filtered similarity search "
+                            "because Neo4j vector index search does not "
+                            "support pre-filtering or filtered search"
+                        ),
+                        gt=0,
+                    )
+                    exact_similarity_search_fallback_threshold: float = Field(
+                        0.5,
+                        description=(
+                            "Threshold ratio of ANN search results to the search limit "
+                            "below which to fall back to exact similarity search "
+                            "when performing filtered similarity search"
+                        ),
+                        ge=0.0,
+                        le=1.0,
+                    )
+                    range_index_hierarchies: list[list[str]] = Field(
+                        default_factory=list,
+                        description=(
+                            "List of property name hierarchies "
+                            "for which to create range indexes "
+                            "applied to all nodes and edges"
+                        ),
+                    )
+                    range_index_creation_threshold: int = Field(
+                        10_000,
+                        description=(
+                            "Threshold number of entities "
+                            "in a collection or having a relation "
+                            "at which range indexes may be created"
+                        ),
+                    )
+                    vector_index_creation_threshold: int = Field(
+                        10_000,
+                        description=(
+                            "Threshold number of entities "
+                            "in a collection or having a relation "
+                            "at which vector indexes may be created"
+                        ),
+                    )
 
                 factory_params = Neo4jFactoryParams(**config)
                 driver = AsyncGraphDatabase.driver(
@@ -65,6 +108,17 @@ class VectorGraphStoreBuilder(Builder):
                         driver=driver,
                         max_concurrent_transactions=factory_params.max_concurrent_transactions,
                         force_exact_similarity_search=factory_params.force_exact_similarity_search,
+                        filtered_similarity_search_fudge_factor=factory_params.filtered_similarity_search_fudge_factor,
+                        exact_similarity_search_fallback_threshold=factory_params.exact_similarity_search_fallback_threshold,
+                        range_index_hierarchies=[
+                            [
+                                "filterable_group_id",
+                                "filterable_session_id",
+                                "timestamp",
+                            ],
+                        ],
+                        range_index_creation_threshold=factory_params.range_index_creation_threshold,
+                        vector_index_creation_threshold=factory_params.vector_index_creation_threshold,
                     )
                 )
             case _:

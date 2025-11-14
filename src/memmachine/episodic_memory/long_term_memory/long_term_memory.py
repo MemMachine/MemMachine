@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 from pydantic import BaseModel, Field, InstanceOf
@@ -11,14 +12,17 @@ from ..declarative_memory import DeclarativeMemory, DeclarativeMemoryParams
 from ..declarative_memory.data_types import (
     ContentType as DeclarativeMemoryContentType,
 )
-from ..declarative_memory.data_types import Episode as DeclarativeMemoryEpisode
+from ..declarative_memory.data_types import (
+    Episode as DeclarativeMemoryEpisode,
+)
 
 content_type_to_declarative_memory_content_type_map = {
-    ContentType.STRING: DeclarativeMemoryContentType.STRING,
+    ContentType.STRING: DeclarativeMemoryContentType.MESSAGE,
 }
 
 declarative_memory_content_type_to_content_type_map = {
-    DeclarativeMemoryContentType.STRING: ContentType.STRING,
+    DeclarativeMemoryContentType.MESSAGE: ContentType.STRING,
+    DeclarativeMemoryContentType.TEXT: ContentType.STRING,
 }
 
 
@@ -72,61 +76,66 @@ class LongTermMemory:
         self._declarative_memory = DeclarativeMemory(
             DeclarativeMemoryParams(
                 session_id=params.group_id,
-                content_metadata_template="[$timestamp] $producer_id: $content",
                 vector_graph_store=params.vector_graph_store,
                 embedder=params.embedder,
                 reranker=params.reranker,
             )
         )
 
-    async def add_episode(self, episode: Episode):
-        declarative_memory_episode = DeclarativeMemoryEpisode(
-            uuid=episode.uuid,
-            episode_type="default",
-            content_type=content_type_to_declarative_memory_content_type_map[
-                episode.content_type
-            ],
-            content=episode.content,
-            timestamp=episode.timestamp,
-            filterable_properties={
-                key: value
-                for key, value in {
-                    "session_id": episode.session_id,
-                    "producer_id": episode.producer_id,
-                    "produced_for_id": episode.produced_for_id,
-                }.items()
-                if value is not None
-            },
-            user_metadata=episode.user_metadata,
-        )
-        await self._declarative_memory.add_episode(declarative_memory_episode)
+    async def add_episodes(self, episodes: Iterable[Episode]):
+        declarative_memory_episodes = [
+            DeclarativeMemoryEpisode(
+                uuid=episode.uuid,
+                timestamp=episode.timestamp,
+                source=episode.producer_id,
+                content_type=content_type_to_declarative_memory_content_type_map[
+                    episode.content_type
+                ],
+                content=episode.content,
+                filterable_properties={
+                    key: value
+                    for key, value in {
+                        "session_id": episode.session_id,
+                        "producer_id": episode.producer_id,
+                        "produced_for_id": episode.produced_for_id,
+                    }.items()
+                    if value is not None
+                },
+                user_metadata=episode.user_metadata,
+            )
+            for episode in episodes
+        ]
+        await self._declarative_memory.add_episodes(declarative_memory_episodes)
 
     async def search(
         self,
         query: str,
         num_episodes_limit: int,
-        id_filter: dict[str, str] = {},
+        id_filter: Mapping[str, str] | None = None,
     ):
+        if id_filter is None:
+            id_filter = {}
+
         id_filter = {
             key: value for key, value in id_filter.items() if key != "group_id"
         }
 
         declarative_memory_episodes = await self._declarative_memory.search(
             query,
-            num_episodes_limit=num_episodes_limit,
+            max_num_episodes=num_episodes_limit,
             property_filter=dict(id_filter),
         )
         return [
             Episode(
                 uuid=declarative_memory_episode.uuid,
-                episode_type=declarative_memory_episode.episode_type,
+                timestamp=declarative_memory_episode.timestamp,
+                episode_type="",
                 content_type=(
                     declarative_memory_content_type_to_content_type_map[
                         declarative_memory_episode.content_type
                     ]
                 ),
                 content=declarative_memory_episode.content,
-                timestamp=declarative_memory_episode.timestamp,
                 group_id=self._group_id,
                 session_id=cast(
                     str,
@@ -152,11 +161,17 @@ class LongTermMemory:
         ]
 
     async def clear(self):
-        self._declarative_memory.forget_all()
+        self._declarative_memory.delete_episodes(
+            episode.uuid
+            for episode in await self._declarative_memory.get_matching_episodes()
+        )
 
     async def forget_session(self):
-        await self._declarative_memory.forget_filtered_episodes(
-            property_filter={
-                "session_id": self._memory_context.session_id,
-            }
+        await self._declarative_memory.delete_episodes(
+            episode.uuid
+            for episode in await self._declarative_memory.get_matching_episodes(
+                property_filter={
+                    "session_id": self._memory_context.session_id,
+                }
+            )
         )
