@@ -854,10 +854,15 @@ app.mount("/mcp", mcp_app)
         "Include the **full conversation context** in the `content` field — not just a snippet. "
         "This tool writes to both short-term (episodic) and long-term (profile) memory, "
         "so that future interactions can recall relevant background knowledge even "
-        "across different sessions."
+        "across different sessions. "
+        "\n\n**Parameters**: Supports both nested (param object) and flat (user_id, content) styles."
     ),
 )
-async def mcp_add_memory(param: AddMemoryParam) -> McpResponse:
+async def mcp_add_memory(
+    param: AddMemoryParam | None = None,
+    user_id: str | None = None,
+    content: str | None = None,
+) -> McpResponse:
     """
     Add a new memory for the specified user.
 
@@ -865,11 +870,26 @@ async def mcp_add_memory(param: AddMemoryParam) -> McpResponse:
     worth remembering — for example, user preferences, recurring topics,
     or summaries of recent exchanges.
 
+    This function supports both nested and flat parameter styles:
+    - Nested: pass an AddMemoryParam object to the param argument
+    - Flat: pass user_id and content as separate arguments
+
     Args:
-        param: The memory entry containing the user ID and full context.
+        param: The memory entry containing the user ID and full context (nested style).
+        user_id: The unique identifier of the user (flat style).
+        content: The complete context or summary to store in memory (flat style).
     Returns:
         McpResponse indicating success or failure.
     """
+    # Handle flat parameters by constructing the Pydantic model
+    if param is None:
+        if user_id is None or content is None:
+            return McpResponse(
+                status=400,
+                message="Either param or both user_id and content must be provided",
+            )
+        param = AddMemoryParam(user_id=user_id, content=content)
+
     episode = param.get_new_episode()
     try:
         await _add_memory(episode)
@@ -887,22 +907,45 @@ async def mcp_add_memory(param: AddMemoryParam) -> McpResponse:
         "what has been previously discussed, "
         "even if it was from an earlier conversation or session. "
         "This searches both profile memory (long-term user traits and facts) "
-        "and episodic memory (past conversations and experiences)."
+        "and episodic memory (past conversations and experiences). "
+        "\n\n**Parameters**: Supports both nested (param object) and flat (user_id, query, limit) styles."
     ),
 )
-async def mcp_search_memory(param: SearchMemoryParam) -> McpResponse | SearchResult:
+async def mcp_search_memory(
+    param: SearchMemoryParam | None = None,
+    user_id: str | None = None,
+    query: str | None = None,
+    limit: int = 5,
+) -> McpResponse | SearchResult:
     """
     Search memory for the specified user.
+
+    This function supports both nested and flat parameter styles:
+    - Nested: pass a SearchMemoryParam object to the param argument
+    - Flat: pass user_id, query, and optionally limit as separate arguments
+
     Args:
-        param: The search memory parameter
+        param: The search memory parameter (nested style).
+        user_id: The unique identifier of the user (flat style).
+        query: The current user message or topic of discussion (flat style).
+        limit: The maximum number of memory entries to retrieve (flat style). Defaults to 5.
     Returns:
         McpResponse on failure, or SearchResult on success
     """
-    query = param.get_search_query()
+    # Handle flat parameters by constructing the Pydantic model
+    if param is None:
+        if user_id is None or query is None:
+            return McpResponse(
+                status=400,
+                message="Either param or both user_id and query must be provided",
+            )
+        param = SearchMemoryParam(user_id=user_id, query=query, limit=limit)
+
+    search_result = param.get_search_query()
     try:
-        return await _search_memory(query)
+        return await _search_memory(search_result)
     except HTTPException as e:
-        query.log_error_with_session(e, "Failed to search memory")
+        search_result.log_error_with_session(e, "Failed to search memory")
         return McpResponse(status=e.status_code, message=str(e.detail))
 
 

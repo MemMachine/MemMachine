@@ -6,9 +6,10 @@ icon: "memory"
 ## Memory Types
 
 MemMachine works as an intelligent memory layer on top of a user's Agentic LLM experience.  It gathers input via Python APIs in a Memory Instance, then determines if that input is profile, short-term and/or long-term:  
- - **Profile memory** consists of information specific to the user and their experience.  
- - **Short-term memory** consists of episodic memory and summaries of the episodic memory.  A raw episode consists of 1 message. 
- - **Long-term memory** consists of a batch of episodes that is generated from the short-term memories.  The Episode batch is then ranked using a Reranker and deduplicated for the most frequent hits.  
+ - **Semantic memory** consists of information specific to the user and their experience.  
+ - **Episodic memory** consists of both short-term and long-term memory function:
+     - **Short-term memory** consists of episodic memory and summaries of the episodic memory.  A raw episode consists of 1 message. 
+     - **Long-term memory** consists of a batch of episodes that is generated from the short-term memories.  The Episode batch is then ranked using a Reranker and deduplicated for the most frequent hits.  
 
 ## How does MemMachine sort into it's Memory Types?
 
@@ -18,15 +19,15 @@ After the re-ranker completes it's activity, memory is stored into an associated
 
 
 
-### Profile Memory
+### Semantic Memory
 
-Profile memory specifically focuses on information and data specific to a user and their experience.  The data is stored in a PostgreSQL database.
+Semantic, or profile memory specifically focuses on information and data specific to a user and their experience.  The data is stored in a PostgreSQL database.
 
 **Memory Storage Process**
-     1. Raw user messages go into session_history
+     1. Raw user messages go into `history` table
      2. An LLM analyzes conversations to extract meaningful knowledge
-     3. Structured knowledge gets stored in memvergeprofile with vector embeddings
-     4. The citations table links each piece of knowledge back to its source conversations
+     3. Structured knowledge gets stored into the `prof` table with vector embeddings
+     4. The `citations` table links each piece of knowledge back to its source conversations
 
 **Memory Retrieval Process**
      1. **Query**: User asks a question or system needs context
@@ -35,18 +36,18 @@ Profile memory specifically focuses on information and data specific to a user a
      4. **Context**: Citations provide traceability back to original conversations
 
 
-#### Database Profile Memory Table Structures
+#### Database Semantic Memory Table Structures
 
 MemMachine is built on a **PostgreSQL database**, which uses the pgvector extension to perform an efficient vector similarity search. Think of this as a way to instantly find similar or related information. The system's memory is organized across **three main tables** that work together to store user profiles, conversation history, and the key relationships between them.
 
 
 <Tabs>
-    <Tab title ="Profile Table">
+    <Tab title ="Semantic Table">
  **Description:** This is the main table for storing a user's profile and their features. We use **vector embeddings** in this table to give us a powerful way to perform **semantic searches**.
  
- **Purpose:** This is where we store a user's profile information. We use **key-value pairs** and **vector embeddings** to make it easy to find relevant user characteristics quickly through a **semantic search**.
+ **Purpose:** This is where we store a user's profile information. We use a **two-level key-value structure** (tag → feature → value) and **vector embeddings** to make it easy to find relevant user characteristics quickly through a **semantic search**.
 
-Here's an example Profile table:
+Here's an example Semantic table:
 ```bash
 Column   |           Type           | Collation | Nullable |             Default              
 ------------+--------------------------+-----------+----------+----------------------------------
@@ -57,11 +58,12 @@ Column   |           Type           | Collation | Nullable |             Default
  value      | text                     |           | not null | 
  create_at  | timestamp with time zone |           | not null | CURRENT_TIMESTAMP
  update_at  | timestamp with time zone |           | not null | CURRENT_TIMESTAMP
- embedding  | vector(1536)             |           | not null | 
+ embedding  | vector                   |           | not null | 
  metadata   | jsonb                    |           | not null | '{}'::jsonb
  isolations | jsonb                    |           | not null | '{}'::jsonb
 Indexes:
     "prof_pkey" PRIMARY KEY, btree (id)
+    "prof_user_idx" btree (user_id)
 Referenced by:
     TABLE "citations" CONSTRAINT "citations_profile_id_fkey" FOREIGN KEY (profile_id) REFERENCES prof(id) ON DELETE CASCADE
 ```
@@ -77,10 +79,19 @@ Here are the fields you'll find in this table:
 | value     | Detailed content of the knowledge (e.g., "Margherita with extra cheese", "Python, JavaScript, Go") |
 | create_at | This is a timestamp for when the listing in the table was created. |
 | update_at | This is a timestamp for when the listing in the table was last updated. |
-| embedding | MemMachine creates a detailed 1536-trait numerical fingerprint for each memory, enabling smart, meaning-based searches to find the most relevant context. |
+| embedding | MemMachine creates a numerical fingerprint (vector embedding) for each memory, enabling smart, meaning-based searches to find the most relevant context. The dimension depends on the configured embedder (e.g., 768 for nomic-embed-text, 1536 for some OpenAI models). |
 | metadata  | A JSONB field for storing additional structured information about the knowledge entry. |
 | isolations | A JSONB field for storing isolation parameters, which can be used to restrict access to certain knowledge entries based on specific criteria. |
 
+<Danger>
+**Vector Dimension Mismatch** 
+
+Vector dimension in a memory table must never change.
+
+If you switch to an embedding model that generates vectors of a different dimension (length), all similarity searches will immediately fail due to the mismatch.
+
+Solution: You must either re-embed all existing memory data with the new model, or use a separate table/namespace for the new model's embeddings.
+</Danger>
 <Note> The `unique_utfv` constraint ensures no duplicate knowledge entries for the same user, tag, feature, and value combination. </Note>
 </Tab>
     <Tab title="History Table">
@@ -95,12 +106,16 @@ Below is an example of a History Table:
 ------------+--------------------------+-----------+----------+-------------------------------------
  id         | integer                  |           | not null | nextval('history_id_seq'::regclass)
  user_id    | text                     |           | not null | 
+ ingested   | boolean                  |           | not null | false
  content    | text                     |           | not null | 
  create_at  | timestamp with time zone |           | not null | CURRENT_TIMESTAMP
  metadata   | jsonb                    |           | not null | '{}'::jsonb
  isolations | jsonb                    |           | not null | '{}'::jsonb
 Indexes:
     "history_pkey" PRIMARY KEY, btree (id)
+    "history_user_idx" btree (user_id)
+    "history_user_ingested_idx" btree (user_id, ingested)
+    "history_user_ingested_ts_desc" btree (user_id, ingested, create_at DESC)
 Referenced by:
     TABLE "citations" CONSTRAINT "citations_content_id_fkey" FOREIGN KEY (content_id) REFERENCES history(id) ON DELETE CASCADE
 ```
@@ -110,6 +125,7 @@ Here are the fields you'll find in this table:
 | ----------- | ------------------------------------------------------------ |
 | id          | Unique identifier for each conversation entry. |
 | user_id     | This integer is a unique ID specific to the user that is interacting with the agent.  The ID organizes all information about the user, and only this user. |
+| ingested    | A boolean flag indicating whether this message has been processed by the profile memory ingestion system. |
 | content     | The actual conversation text |
 | create_at  | This is a timestamp for when the listing in the table was created. |
 | metadata    | A JSONB field for storing additional structured information about the conversation entry. |
@@ -120,7 +136,7 @@ Here are the fields you'll find in this table:
 
 **Description:** This table acts as a link between a user's profile and their conversation history. It connects profile features to the specific conversations that support or cite them.
 
-** Purpose:** This table links profile features to the conversation history that created them. This lets you trace exactly where a feature came from and confirm its validity.
+**Purpose:** This table links profile features to the conversation history that created them. This lets you trace exactly where a feature came from and confirm its validity.
 
 Below is an example of a Citations Table:
 ```bash
@@ -137,7 +153,7 @@ Foreign-key constraints:
 This table consists of the following fields:
 | Field       | Explanation                                                  |
 | ----------- | ------------------------------------------------------------ |
-| profile_id  | References the knowledge entry in `memvergeprofile` |
-| content_id  | References the conversation source in `session_history` |
+| profile_id  | References the knowledge entry in `prof` |
+| content_id  | References the conversation source in `history` |
     </Tab>
 </Tabs>

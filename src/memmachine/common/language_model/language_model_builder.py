@@ -54,50 +54,94 @@ class LanguageModelBuilder(Builder):
 
         match name:
             case "openai":
-                from .openai_language_model import OpenAILanguageModel
+                import openai
 
-                return OpenAILanguageModel(
-                    {
-                        "model": config.get("model", "gpt-5-nano"),
-                        "api_key": config["api_key"],
-                        "metrics_factory": get_metrics_factory(config),
-                        "user_metrics_labels": config.get("user_metrics_labels", {}),
-                        "max_delay": config.get("max_delay", 120),
-                    }
+                from .openai_responses_language_model import (
+                    OpenAIResponsesLanguageModel,
+                    OpenAIResponsesLanguageModelParams,
+                )
+
+                return OpenAIResponsesLanguageModel(
+                    OpenAIResponsesLanguageModelParams(
+                        client=openai.AsyncOpenAI(
+                            api_key=config["api_key"],
+                            base_url=config.get("base_url"),
+                            max_retries=0,
+                        ),
+                        model=config["model"],
+                        max_retry_interval_seconds=config.get(
+                            "max_retry_interval_seconds", 120
+                        ),
+                        metrics_factory=get_metrics_factory(config),
+                        user_metrics_labels=config.get("user_metrics_labels", {}),
+                    )
                 )
 
             case "vllm" | "sglang" | "openai-compatible":
-                from .openai_compatible_language_model import (
-                    OpenAICompatibleLanguageModel,
+                import openai
+
+                from .openai_chat_completions_language_model import (
+                    OpenAIChatCompletionsLanguageModel,
+                    OpenAIChatCompletionsLanguageModelParams,
                 )
 
-                return OpenAICompatibleLanguageModel(
-                    {
-                        "model": config.get("model"),
-                        "api_key": config.get("api_key", "EMPTY"),
-                        "base_url": config.get("base_url"),
-                        "metrics_factory": get_metrics_factory(config),
-                        "user_metrics_labels": config.get("user_metrics_labels", {}),
-                        "max_retry_interval_seconds": config.get(
+                return OpenAIChatCompletionsLanguageModel(
+                    OpenAIChatCompletionsLanguageModelParams(
+                        client=openai.AsyncOpenAI(
+                            api_key=config["api_key"],
+                            base_url=config.get("base_url"),
+                            max_retries=0,
+                        ),
+                        model=config["model"],
+                        max_retry_interval_seconds=config.get(
                             "max_retry_interval_seconds", 120
                         ),
-                    }
+                        metrics_factory=get_metrics_factory(config),
+                        user_metrics_labels=config.get("user_metrics_labels", {}),
+                    )
                 )
 
             case "amazon-bedrock":
+                import boto3
+                import botocore
+
                 from .amazon_bedrock_language_model import (
+                    AmazonBedrockConverseInferenceConfig,
                     AmazonBedrockLanguageModel,
-                    AmazonBedrockLanguageModelConfig,
+                    AmazonBedrockLanguageModelParams,
+                )
+
+                region = config.get("region", "us-west-2")
+
+                client = boto3.client(
+                    "bedrock-runtime",
+                    region_name=region,
+                    aws_access_key_id=config.get("aws_access_key_id"),
+                    aws_secret_access_key=config.get("aws_secret_access_key"),
+                    aws_session_token=config.get("aws_session_token"),
+                    config=botocore.config.Config(
+                        retries={
+                            "total_max_attempts": 1,
+                            "mode": "standard",
+                        }
+                    ),
                 )
 
                 return AmazonBedrockLanguageModel(
-                    AmazonBedrockLanguageModelConfig(
-                        **{
-                            key: value
-                            for key, value in config.items()
-                            if key != "metrics_factory_id"
-                        }
-                        | {"metrics_factory": get_metrics_factory(config)}
+                    AmazonBedrockLanguageModelParams(
+                        client=client,
+                        model_id=config["model_id"],
+                        inference_config=AmazonBedrockConverseInferenceConfig(
+                            **config.get("inference_config", {})
+                        ),
+                        additional_model_request_fields=config.get(
+                            "additional_model_request_fields"
+                        ),
+                        max_retry_interval_seconds=config.get(
+                            "max_retry_interval_seconds", 120
+                        ),
+                        metrics_factory=get_metrics_factory(config),
+                        user_metrics_labels=config.get("user_metrics_labels", {}),
                     )
                 )
 

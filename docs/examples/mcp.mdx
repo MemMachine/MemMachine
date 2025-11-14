@@ -194,9 +194,11 @@ To configure the Claude Desktop App to connect to your MCP server, follow these 
 {
   "mcpServers": {
     "memmachine": {
-      "command": "MEMORY_CONFIG=config.yml MM_USER_ID="user" uv run memmachine-mcp-stdio",
+      "command": "uv run memmachine-mcp-stdio",
       "env": {
-        "PYTHONUNBUFFERED": "1"
+        "PYTHONUNBUFFERED": "1",
+        "MEMORY_CONFIG": "config.yml",
+        "MM_USER_ID": "user"
       }
     }
   }
@@ -227,6 +229,7 @@ MEMORY_CONFIG=config.yml MM_USER_ID="user" memmachine-mcp-stdio
       "args": [
         "mcp-remote",
         "http://localhost:8080/mcp",
+        "--allow-http",
         "--header",
         "user-id: user"
       ]

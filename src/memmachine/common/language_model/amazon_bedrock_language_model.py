@@ -8,9 +8,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-import boto3
-import botocore
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory import MetricsFactory
@@ -25,19 +23,20 @@ class AmazonBedrockConverseInferenceConfig(BaseModel):
     Inference configuration for Amazon Bedrock Converse API.
 
     Attributes:
-        max_tokens (int | None, optional):
+        max_tokens (int | None):
             The maximum number of tokens to allow in the generated response.
-            The default value is the maximum allowed value
-            for the model that you are using.
-        stop_sequences (list[str] | None, optional):
+            If None, uses the maximum allowed value
+            for the model that you are using
+            (default: None).
+        stop_sequences (list[str] | None):
             A list of stop sequences that will stop response generation
             (default: None).
-        temperature (float | None, optional):
+        temperature (float | None):
             What sampling temperature to use, between 0 and 1.
             The default value is the default value
             for the model that you are using, applied when None
             (default: None).
-        top_p (float | None, optional):
+        top_p (float | None):
             The percentage of probability mass to consider for the next token
             (default: None).
     """
@@ -46,26 +45,21 @@ class AmazonBedrockConverseInferenceConfig(BaseModel):
         None,
         description=(
             "The maximum number of tokens to allow in the generated response. "
-            "The default value is the maximum allowed value "
-            "for the model that you are using, applied when None"
-            "(default: None)."
+            "If None, uses the maximum allowed value "
+            "for the model that you are using"
         ),
         gt=0,
     )
     stop_sequences: list[str] | None = Field(
         None,
-        description=(
-            "A list of stop sequences that will stop response generation "
-            "(default: None)."
-        ),
+        description="A list of stop sequences that will stop response generation",
     )
     temperature: float | None = Field(
         None,
         description=(
             "What sampling temperature to use, between 0 and 1. "
             "The default value is the default value "
-            "for the model that you are using, applied when None "
-            "(default: None)."
+            "for the model that you are using, applied when None"
         ),
         ge=0.0,
         le=1.0,
@@ -73,64 +67,52 @@ class AmazonBedrockConverseInferenceConfig(BaseModel):
     top_p: float | None = Field(
         None,
         description=(
-            "The percentage of probability mass to consider for the next token "
-            "(default: None)."
+            "The percentage of probability mass to consider for the next token"
         ),
         ge=0.0,
         le=1.0,
     )
 
 
-class AmazonBedrockLanguageModelConfig(BaseModel):
+class AmazonBedrockLanguageModelParams(BaseModel):
     """
-    Configuration for AmazonBedrockLanguageModel.
+    Parameters for AmazonBedrockLanguageModel.
 
     Attributes:
-        region (str):
-            AWS region where Bedrock is hosted.
-        aws_access_key_id (SecretStr):
-            AWS access key ID for authentication.
-        aws_secret_access_key (SecretStr):
-            AWS secret access key for authentication.
+        client (Any):
+            Boto3 Bedrock Runtime client
+            to use for making API calls.
         model_id (str):
             ID of the Bedrock model to use for generation
             (e.g. 'openai.gpt-oss-20b-1:0').
-        inference_config (AmazonBedrockConverseInferenceConfig | None, optional):
+        inference_config (AmazonBedrockConverseInferenceConfig | None):
             Inference configuration for the Bedrock Converse API
             (default: None).
-        additional_model_request_fields (dict[str, Any] | None, optional):
+        additional_model_request_fields (dict[str, Any] | None):
             Keys are request fields for the model
             and values are values for those fields
             (default: None).
-        max_retry_interval_seconds (int, optional):
+        max_retry_interval_seconds (int):
             Maximal retry interval in seconds when retrying API calls
             (default: 120).
-        metrics_factory (MetricsFactory | None, optional):
+        metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory
             for collecting usage metrics
             (default: None).
-        user_metrics_labels (dict[str, str], optional):
+        user_metrics_labels (dict[str, str]):
             Labels to attach to the collected metrics
-            (default: None).
+            (default: {}).
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    client: Any = Field(
+        ...,
+        description=(
+            "Boto3 Agents for Amazon Bedrock Runtime client to use for making API calls"
+        ),
+    )
 
-    region: str = Field(
-        "us-west-2",
-        description="AWS region where Bedrock is hosted.",
-    )
-    aws_access_key_id: SecretStr = Field(
-        description=("AWS access key ID for authentication."),
-    )
-    aws_secret_access_key: SecretStr = Field(
-        description=("AWS secret access key for authentication."),
-    )
-    aws_session_token: SecretStr | None = Field(
-        None,
-        description=("AWS session token for authentication."),
-    )
     model_id: str = Field(
+        ...,
         description=(
             "ID of the Bedrock model to use for generation "
             "(e.g. 'openai.gpt-oss-20b-1:0')."
@@ -157,7 +139,7 @@ class AmazonBedrockLanguageModelConfig(BaseModel):
         ),
         gt=0,
     )
-    metrics_factory: MetricsFactory | None = Field(
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description=(
             "An instance of MetricsFactory "
@@ -165,8 +147,8 @@ class AmazonBedrockLanguageModelConfig(BaseModel):
             "(default: None)."
         ),
     )
-    user_metrics_labels: dict[str, str] | None = Field(
-        None,
+    user_metrics_labels: dict[str, str] = Field(
+        default_factory=dict,
         description="Labels to attach to the collected metrics (default: None).",
     )
 
@@ -177,68 +159,46 @@ class AmazonBedrockLanguageModel(LanguageModel):
     to generate responses based on prompts and tools.
     """
 
-    def __init__(self, config: AmazonBedrockLanguageModelConfig):
+    def __init__(self, params: AmazonBedrockLanguageModelParams):
         """
         Initialize an AmazonBedrockLanguageModel
-        with the provided configuration.
+        with the provided parameters.
         See https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html
 
         Args:
-            config (AmazonBedrockLanguageModelConfig):
-                Configuration for the language model.
+            params (AmazonBedrockLanguageModelParams):
+                Parameters for the language model.
         """
         super().__init__()
 
-        region = config.region
-        aws_access_key_id = config.aws_access_key_id
-        aws_secret_access_key = config.aws_secret_access_key
-        if config.aws_session_token is not None:
-            aws_session_token = config.aws_session_token.get_secret_value()
-        else:
-            aws_session_token = None
-        self._model_id = config.model_id
+        self._client = params.client
+
+        self._model_id = params.model_id
 
         self._inference_config = (
             {
                 key: value
                 for key, value in {
-                    "maxTokens": config.inference_config.max_tokens,
-                    "stopSequences": config.inference_config.stop_sequences,
-                    "temperature": config.inference_config.temperature,
-                    "topP": config.inference_config.top_p,
+                    "maxTokens": params.inference_config.max_tokens,
+                    "stopSequences": params.inference_config.stop_sequences,
+                    "temperature": params.inference_config.temperature,
+                    "topP": params.inference_config.top_p,
                 }.items()
                 if value is not None
             }
-            if config.inference_config is not None
+            if params.inference_config is not None
             else None
         )
 
-        self._additional_model_request_fields = config.additional_model_request_fields
+        self._additional_model_request_fields = params.additional_model_request_fields
+        self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
-        self._client = boto3.client(
-            "bedrock-runtime",
-            region_name=region,
-            aws_access_key_id=aws_access_key_id.get_secret_value(),
-            aws_secret_access_key=aws_secret_access_key.get_secret_value(),
-            aws_session_token=aws_session_token,
-            config=botocore.config.Config(
-                retries={
-                    "total_max_attempts": 1,
-                    "mode": "standard",
-                }
-            ),
-        )
-
-        self._max_retry_interval_seconds = config.max_retry_interval_seconds
-
-        metrics_factory = config.metrics_factory
+        metrics_factory = params.metrics_factory
 
         self._collect_metrics = False
         if metrics_factory is not None:
             self._collect_metrics = True
-            self._user_metrics_labels = config.user_metrics_labels or {}
-            if not isinstance(self._user_metrics_labels, dict):
-                raise TypeError("user_metrics_labels must be a dictionary")
+            self._user_metrics_labels = params.user_metrics_labels
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(

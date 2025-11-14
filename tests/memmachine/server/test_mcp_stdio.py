@@ -176,3 +176,107 @@ async def test_search_memory_variants(mock_search, search_param, mcp_client):
     root = result.data
     assert root["status"] == 200
     assert root["content"] == content
+
+
+# === Flat Parameter Style Tests ===
+
+
+@patch("memmachine.server.app._add_memory", new_callable=AsyncMock)
+async def test_add_memory_flat_success(mock_add, mcp_client):
+    """Test add_memory with flat parameters (user_id, content)."""
+    result = await mcp_client.call_tool(
+        name="add_memory",
+        arguments={"user_id": "u1", "content": "Hello memory!"},
+    )
+    mock_add.assert_awaited_once()
+    assert result.data is not None
+    root = result.data
+    assert root.status == 200
+    assert root.message == "Success"
+
+
+@patch("memmachine.server.app._add_memory", new_callable=AsyncMock)
+async def test_add_memory_flat_failure(mock_add, mcp_client):
+    """Test add_memory with flat parameters when operation fails."""
+    mock_add.side_effect = HTTPException(status_code=500, detail="DB down")
+
+    # Patch log_error_with_session on NewEpisode
+    with patch.object(NewEpisode, "log_error_with_session") as mock_log:
+        result = await mcp_client.call_tool(
+            name="add_memory",
+            arguments={"user_id": "u1", "content": "Hello memory!"},
+        )
+        mock_log.assert_called_once()
+        assert result.data is not None
+        assert result.data.status == 500
+        assert "DB down" in result.data.message
+
+
+async def test_add_memory_flat_missing_params(mcp_client):
+    """Test add_memory with flat parameters when required params are missing."""
+    result = await mcp_client.call_tool(
+        name="add_memory",
+        arguments={"user_id": "u1"},  # missing content
+    )
+    assert result.data is not None
+    assert result.data.status == 400
+    assert "user_id and content must be provided" in result.data.message
+
+
+@patch("memmachine.server.app._search_memory", new_callable=AsyncMock)
+async def test_search_memory_flat_success(mock_search, mcp_client):
+    """Test search_memory with flat parameters (user_id, query, limit)."""
+    content = {"ep": "Memory found"}
+    mock_search.return_value = SearchResult(status=200, content=content)
+    result = await mcp_client.call_tool(
+        name="search_memory",
+        arguments={"user_id": "u1", "query": "find", "limit": 5},
+    )
+    mock_search.assert_awaited_once()
+    assert result.data is not None
+    root = result.data
+    assert root["status"] == 200
+    assert root["content"] == content
+
+
+@patch("memmachine.server.app._search_memory", new_callable=AsyncMock)
+async def test_search_memory_flat_failure(mock_search, mcp_client):
+    """Test search_memory with flat parameters when operation fails."""
+    mock_search.side_effect = HTTPException(status_code=404, detail="Not found")
+
+    result = await mcp_client.call_tool(
+        name="search_memory",
+        arguments={"user_id": "u1", "query": "find", "limit": 5},
+    )
+    mock_search.assert_awaited_once()
+    assert result.data is not None
+    root = result.data
+    assert root["status"] == 404
+    assert "Not found" in root["message"]
+
+
+@patch("memmachine.server.app._search_memory", new_callable=AsyncMock)
+async def test_search_memory_flat_default_limit(mock_search, mcp_client):
+    """Test search_memory with flat parameters using default limit."""
+    content = {"ep": "Memory found"}
+    mock_search.return_value = SearchResult(status=200, content=content)
+    result = await mcp_client.call_tool(
+        name="search_memory",
+        arguments={"user_id": "u1", "query": "find"},  # limit defaults to 5
+    )
+    mock_search.assert_awaited_once()
+    assert result.data is not None
+    root = result.data
+    assert root["status"] == 200
+    assert root["content"] == content
+
+
+async def test_search_memory_flat_missing_params(mcp_client):
+    """Test search_memory with flat parameters when required params are missing."""
+    result = await mcp_client.call_tool(
+        name="search_memory",
+        arguments={"user_id": "u1"},  # missing query
+    )
+    assert result.data is not None
+    assert result.data["status"] == 400
+    assert "user_id and query must be provided" in result.data["message"]
