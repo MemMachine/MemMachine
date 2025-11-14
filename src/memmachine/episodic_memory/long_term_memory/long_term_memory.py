@@ -67,6 +67,7 @@ class LongTermMemory:
 
     def __init__(self, params: LongTermMemoryParams):
         self._group_id = params.group_id
+        self._session_id = params.session_id
         # Note: Things look a bit weird during refactor...
         # Internal session_id is used for external group_id. This is intentional.
         self._declarative_memory = DeclarativeMemory(
@@ -157,6 +158,6 @@ class LongTermMemory:
     async def forget_session(self):
         await self._declarative_memory.forget_filtered_episodes(
             property_filter={
-                "session_id": self._memory_context.session_id,
+                "session_id": self._session_id,
             }
         )
