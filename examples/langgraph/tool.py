@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from memmachine import MemMachineClient
 
@@ -12,12 +12,12 @@ class MemMachineTools:
 
     def __init__(
         self,
-        client: Optional[MemMachineClient] = None,
+        client: MemMachineClient | None = None,
         base_url: str = "http://localhost:8080",
         group_id: str = "langgraph_group",
         agent_id: str = "langgraph_agent",
         user_id: str = "default_user",
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
     ):
         """
         Initialize MemMachine tools.
@@ -38,10 +38,10 @@ class MemMachineTools:
 
     def get_memory(
         self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        group_id: str | None = None,
+        session_id: str | None = None,
     ):
         """
         Get or create a memory instance for the specified context.
@@ -65,13 +65,13 @@ class MemMachineTools:
     def add_memory(
         self,
         content: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        group_id: str | None = None,
+        session_id: str | None = None,
         episode_type: str = "text",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Add a memory to MemMachine.
 
@@ -118,13 +118,13 @@ class MemMachineTools:
     def search_memory(
         self,
         query: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        group_id: str | None = None,
+        session_id: str | None = None,
         limit: int = 5,
-        filter_dict: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        filter_dict: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Search for memories in MemMachine.
 
@@ -186,7 +186,7 @@ class MemMachineTools:
                 "message": f"Error searching memory: {str(e)}",
             }
 
-    def _format_search_summary(self, results: Dict[str, Any]) -> str:
+    def _format_search_summary(self, results: dict[str, Any]) -> str:
         """
         Format search results into a readable summary.
 
@@ -216,11 +216,11 @@ class MemMachineTools:
 
     def get_context(
         self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        group_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Get the current memory context.
 
@@ -256,9 +256,9 @@ def create_add_memory_tool(tools: MemMachineTools):
 
     def add_memory_tool(
         content: str,
-        user_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        user_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Tool to add a memory to MemMachine.
 
@@ -292,9 +292,9 @@ def create_search_memory_tool(tools: MemMachineTools):
 
     def search_memory_tool(
         query: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Tool to search memories in MemMachine.
 
