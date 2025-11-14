@@ -11,9 +11,8 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, InstanceOf
 from sentence_transformers import SentenceTransformer
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 
-from .data_types import SimilarityMetric
 from .embedder import Embedder
 
 logger = logging.getLogger(__name__)

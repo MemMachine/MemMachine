@@ -49,13 +49,16 @@ class Derivative:
     user_metadata: JSONValue = None
 
 
+_MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX = "filterable_"
+
+
 def mangle_filterable_property_key(key: str) -> str:
-    return f"filterable_{key}"
+    return _MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX + key
 
 
 def demangle_filterable_property_key(mangled_key: str) -> str:
-    return mangled_key.removeprefix("filterable_")
+    return mangled_key.removeprefix(_MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX)
 
 
 def is_mangled_filterable_property_key(candidate_key: str) -> bool:
-    return candidate_key.startswith("filterable_")
+    return candidate_key.startswith(_MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX)

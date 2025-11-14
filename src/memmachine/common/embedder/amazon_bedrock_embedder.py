@@ -12,9 +12,8 @@ from uuid import uuid4
 from langchain_aws import BedrockEmbeddings
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 
-from .data_types import SimilarityMetric
 from .embedder import Embedder
 
 logger = logging.getLogger(__name__)

@@ -142,6 +142,14 @@ class DeclarativeMemory:
             )
         )
 
+        self._episode_collection = "Episode"
+        self._episode_cluster_collection = "EpisodeCluster"
+        self._derivative_collection = "Derivative"
+
+        self._episode_episode_relation = "RELATED_TO"
+        self._episode_cluster_episode_relation = "CONTAINS"
+        self._derivative_episode_cluster_relation = "DERIVED_FROM"
+
         def build_episode_cluster_assembly_workflow(
             config: dict[str, Any],
         ) -> DeclarativeMemory.Workflow:
@@ -345,19 +353,21 @@ class DeclarativeMemory:
         mutated_derivative_nodes = [
             Node(
                 uuid=derivative.uuid,
-                labels={self._derivative_collection},
                 properties={
+                    "uuid": str(derivative.uuid),
                     "content": derivative.content,
-                    DeclarativeMemory._embedding_property_name(
-                        self._embedder.model_id,
-                        self._embedder.dimensions,
-                    ): derivative_embedding,
                     "timestamp": derivative.timestamp,
                     "user_metadata": json.dumps(derivative.user_metadata),
                 }
                 | {
                     mangle_filterable_property_key(key): value
                     for key, value in derivative.filterable_properties.items()
+                },
+                embeddings={
+                    DeclarativeMemory._embedding_name(
+                        self._embedder.model_id,
+                        self._embedder.dimensions,
+                    ): (derivative_embedding, self._embedder.similarity_metric),
                 },
             )
             for derivative, derivative_embedding in zip(
@@ -389,7 +399,7 @@ class DeclarativeMemory:
         self,
         episode_cluster: EpisodeCluster,
         derivation_workflows_derivative_nodes: list[list[Node]],
-    ) -> tuple[list[Node], list[Edge]]:
+    ) -> tuple[list[Edge], list[Node], list[Edge], list[Node]]:
         """
         Process the result of episode cluster assembly
         by creating nodes and edges
@@ -399,9 +409,9 @@ class DeclarativeMemory:
         # Create episode cluster nodes.
         episode_cluster_node = Node(
             uuid=episode_cluster.uuid,
-            labels={self._episode_cluster_collection},
             properties=dict(
                 {
+                    "uuid": str(episode_cluster.uuid),
                     "timestamp": episode_cluster.timestamp,
                     "user_metadata": json.dumps(episode_cluster.user_metadata),
                 }
@@ -419,7 +429,6 @@ class DeclarativeMemory:
                 uuid=uuid4(),
                 source_uuid=episode_cluster.uuid,
                 target_uuid=episode.uuid,
-                relation=self._episode_cluster_episode_relation,
             )
             for episode in episode_cluster.episodes
         ]
@@ -439,17 +448,16 @@ class DeclarativeMemory:
                 uuid=uuid4(),
                 source_uuid=derivative_node.uuid,
                 target_uuid=episode_cluster_node.uuid,
-                relation=self._derivative_episode_cluster_relation,
             )
             for derivative_node in derivative_nodes
         ]
 
-        nodes = [episode_cluster_node] + derivative_nodes
-        edges = (
-            episode_cluster_source_episodes_edges
-            + derivatives_source_episode_cluster_edges
+        return (
+            episode_cluster_source_episodes_edges,
+            [episode_cluster_node],
+            derivatives_source_episode_cluster_edges,
+            derivative_nodes,
         )
-        return nodes, edges
 
     async def add_episode(
         self,
@@ -463,8 +471,8 @@ class DeclarativeMemory:
         """
         episode_node = Node(
             uuid=episode.uuid,
-            labels={self._episode_collection},
             properties={
+                "uuid": str(episode.uuid),
                 "episode_type": episode.episode_type,
                 "content_type": episode.content_type.value,
                 "content": episode.content,
@@ -477,12 +485,17 @@ class DeclarativeMemory:
             },
         )
 
-        await self._vector_graph_store.add_nodes([episode_node])
+        await self._vector_graph_store.add_nodes(
+            self._episode_collection, [episode_node]
+        )
 
         # Create nodes and edges for episode clusters and derivatives.
-        derivation_nodes, derivation_edges = await self._derivation_workflow.execute(
-            episode
-        )
+        (
+            episode_cluster_source_episodes_edges,
+            episode_cluster_nodes,
+            derivatives_source_episode_cluster_edges,
+            derivative_nodes,
+        ) = await self._derivation_workflow.execute(episode)
 
         related_episodes = await self._related_episode_postulator.postulate(episode)
 
@@ -492,14 +505,33 @@ class DeclarativeMemory:
                 uuid=uuid4(),
                 source_uuid=episode.uuid,
                 target_uuid=related_episode.uuid,
-                relation=self._episode_episode_relation,
             )
             for related_episode in related_episodes
         ]
 
-        await self._vector_graph_store.add_nodes(derivation_nodes)
         await self._vector_graph_store.add_edges(
-            derivation_edges + related_episode_edges
+            self._episode_episode_relation,
+            self._episode_collection,
+            self._episode_collection,
+            related_episode_edges,
+        )
+        await self._vector_graph_store.add_nodes(
+            self._episode_cluster_collection, episode_cluster_nodes
+        )
+        await self._vector_graph_store.add_edges(
+            self._episode_cluster_episode_relation,
+            self._episode_cluster_collection,
+            self._episode_collection,
+            episode_cluster_source_episodes_edges,
+        )
+        await self._vector_graph_store.add_nodes(
+            self._derivative_collection, derivative_nodes
+        )
+        await self._vector_graph_store.add_edges(
+            self._derivative_episode_cluster_relation,
+            self._derivative_collection,
+            self._episode_cluster_collection,
+            derivatives_source_episode_cluster_edges,
         )
 
     async def search(
@@ -544,15 +576,15 @@ class DeclarativeMemory:
 
         # Search graph store for vector matches.
         matched_derivative_nodes = await self._vector_graph_store.search_similar_nodes(
-            query_embedding=query_embedding,
-            embedding_property_name=(
-                DeclarativeMemory._embedding_property_name(
+            collection=self._derivative_collection,
+            embedding_name=(
+                DeclarativeMemory._embedding_name(
                     self._embedder.model_id,
                     self._embedder.dimensions,
                 )
             ),
+            query_embedding=query_embedding,
             similarity_metric=self._embedder.similarity_metric,
-            required_labels={self._derivative_collection},
             required_properties={
                 mangle_filterable_property_key(key): value
                 for key, value in property_filter.items()
@@ -563,16 +595,17 @@ class DeclarativeMemory:
         # Get source episode clusters of matched derivatives.
         search_derivatives_source_episode_cluster_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
-                node_uuid=matched_derivative_node.uuid,
-                allowed_relations={self._derivative_episode_cluster_relation},
+                relation=self._derivative_episode_cluster_relation,
+                other_collection=self._episode_cluster_collection,
+                this_collection=self._derivative_collection,
+                this_node_uuid=matched_derivative_node.uuid,
                 find_sources=False,
                 find_targets=True,
-                required_labels={self._episode_cluster_collection},
-                required_properties={
+                required_node_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
                 },
-                include_missing_properties=True,
+                include_missing_node_properties=True,
             )
             for matched_derivative_node in matched_derivative_nodes
         ]
@@ -593,12 +626,13 @@ class DeclarativeMemory:
         # Get source episodes of matched episode clusters.
         search_episode_clusters_source_episode_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
-                node_uuid=matched_episode_cluster_node.uuid,
-                allowed_relations={self._episode_cluster_episode_relation},
+                relation=self._episode_cluster_episode_relation,
+                other_collection=self._episode_collection,
+                this_collection=self._episode_cluster_collection,
+                this_node_uuid=matched_episode_cluster_node.uuid,
                 find_sources=False,
                 find_targets=True,
-                required_labels={self._episode_collection},
-                required_properties={
+                required_node_properties={
                     mangle_filterable_property_key(key): value
                     for key, value in property_filter.items()
                 },
@@ -686,12 +720,14 @@ class DeclarativeMemory:
         for _ in range(1, retrieval_depth_limit + 1):
             get_new_frontier_tasks = [
                 self._vector_graph_store.search_related_nodes(
-                    node_uuid=frontier_node.uuid,
+                    relation=self._episode_episode_relation,
+                    other_collection=self._episode_collection,
+                    this_collection=self._episode_collection,
+                    this_node_uuid=frontier_node.uuid,
                     find_sources=True,
                     find_targets=True,
                     limit=10,
-                    required_labels={self._episode_collection},
-                    required_properties={
+                    required_node_properties={
                         mangle_filterable_property_key(key): value
                         for key, value in property_filter.items()
                     },
@@ -822,7 +858,7 @@ class DeclarativeMemory:
         """
         Forget all episodes and data derived from them.
         """
-        await self._vector_graph_store.clear_data()
+        await self._vector_graph_store.delete_all_data()
 
     async def forget_filtered_episodes(
         self,
@@ -833,7 +869,7 @@ class DeclarativeMemory:
         and data derived from them.
         """
         matching_episode_nodes = await self._vector_graph_store.search_matching_nodes(
-            required_labels={self._episode_collection},
+            collection=self._episode_collection,
             required_properties={
                 mangle_filterable_property_key(key): value
                 for key, value in property_filter.items()
@@ -842,9 +878,10 @@ class DeclarativeMemory:
 
         search_related_episode_cluster_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
-                node_uuid=episode_node.uuid,
-                allowed_relations={self._episode_cluster_episode_relation},
-                required_labels={self._episode_cluster_collection},
+                relation=self._episode_cluster_episode_relation,
+                other_collection=self._episode_cluster_collection,
+                this_collection=self._episode_collection,
+                this_node_uuid=episode_node.uuid,
                 find_sources=True,
                 find_targets=False,
             )
@@ -866,9 +903,10 @@ class DeclarativeMemory:
 
         search_related_derivative_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
-                node_uuid=episode_cluster_node.uuid,
-                allowed_relations={self._derivative_episode_cluster_relation},
-                required_labels={self._derivative_collection},
+                relation=self._derivative_episode_cluster_relation,
+                other_collection=self._derivative_collection,
+                this_collection=self._episode_cluster_collection,
+                this_node_uuid=episode_cluster_node.uuid,
                 find_sources=True,
                 find_targets=False,
             )
@@ -892,8 +930,21 @@ class DeclarativeMemory:
         episode_cluster_uuids = [node.uuid for node in matching_episode_cluster_nodes]
         derivative_uuids = [node.uuid for node in matching_derivative_nodes]
 
-        node_uuids_to_delete = episode_uuids + episode_cluster_uuids + derivative_uuids
-        await self._vector_graph_store.delete_nodes(node_uuids_to_delete)
+        deletion_tasks = [
+            self._vector_graph_store.delete_nodes(
+                collection=self._episode_collection,
+                node_uuids=episode_uuids,
+            ),
+            self._vector_graph_store.delete_nodes(
+                collection=self._episode_cluster_collection,
+                node_uuids=episode_cluster_uuids,
+            ),
+            self._vector_graph_store.delete_nodes(
+                collection=self._derivative_collection,
+                node_uuids=derivative_uuids,
+            ),
+        ]
+        await asyncio.gather(*deletion_tasks)
 
     @staticmethod
     def _episodes_from_episode_nodes(
@@ -933,7 +984,7 @@ class DeclarativeMemory:
         ]
 
     @staticmethod
-    def _embedding_property_name(model_id: str, dimensions: int) -> str:
+    def _embedding_name(model_id: str, dimensions: int) -> str:
         """
         Generate a standardized property name for embeddings
         based on the model ID and embedding dimensions.
