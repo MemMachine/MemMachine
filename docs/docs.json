@@ -69,12 +69,18 @@
             ]
           },
           {
-            "group": "PythonSDK",
+            "group": "PythonSDK Server",
             "pages": [
               "api_reference/python/episodic_memory",
               "api_reference/python/episodic_memory_manager",
               "api_reference/python/memory_types",
               "api_reference/python/profile_memory"
+            ]
+          },
+          {
+            "group": "PythonSDK Client",
+            "pages": [
+              "api_reference/python/client"
             ]
           },
           {
