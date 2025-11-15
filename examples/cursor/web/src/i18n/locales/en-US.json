@@ -1,0 +1,34 @@
+{
+  "common": {
+    "back": "Back",
+    "continue": "Continue",
+    "next": "Next",
+    "confirm": "Confirm",
+    "verify": "Verify",
+    "resend": "Resend code",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "cancel": "Cancel",
+    "notLoggedIn": "Not logged in",
+    "login": "Login"
+  },
+  "errors": {
+    "enterPhoneNumber": "Please enter a phone number",
+    "invalidOTP": "Please enter a valid 6-digit code",
+    "networkError": "Network error, please try again"
+  },
+  "requestError": {
+    "default": "Request failed",
+    "networkError": "Network error"
+  },
+  "home": {
+    "title": "Home",
+    "welcome": "Welcome to BigMemory"
+  },
+  "userDropdown": {
+    "settings": "Settings",
+    "profile": "Profile",
+    "logout": "Logout"
+  }
+}
