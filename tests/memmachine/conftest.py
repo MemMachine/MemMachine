@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
 
-from memmachine.common.configuration.model_conf import (
+from memmachine.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
 )

@@ -5,7 +5,7 @@ from asyncio import Lock
 
 from pydantic import SecretStr
 
-from memmachine.common.configuration.model_conf import LanguageModelConf
+from memmachine.common.configuration.language_model_conf import LanguageModelConf
 from memmachine.common.language_model.language_model import LanguageModel
 
 

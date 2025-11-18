@@ -1,7 +1,7 @@
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from memmachine.common.configuration.model_conf import (
+from memmachine.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
     LanguageModelConf,
     OpenAIChatCompletionsLanguageModelConf,

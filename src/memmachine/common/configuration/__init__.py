@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from memmachine.common.configuration.embedder_conf import EmbedderConf
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConfPartial
+from memmachine.common.configuration.language_model_conf import LanguageModelConf
 from memmachine.common.configuration.log_conf import LogConf
-from memmachine.common.configuration.model_conf import LanguageModelConf
 from memmachine.common.configuration.reranker_conf import RerankerConf
 from memmachine.common.configuration.storage_conf import StorageConf
 from memmachine.semantic_memory.semantic_model import SemanticCategory
