@@ -123,7 +123,7 @@ async def semantic_service(
 ):
     params = SemanticService.Params(
         semantic_storage=semantic_storage,
-        history_storage=episode_storage,
+        episodic_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
         feature_update_message_limit=10,

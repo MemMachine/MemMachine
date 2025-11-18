@@ -2,6 +2,7 @@
 
 from typing import Protocol, runtime_checkable
 
+from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine.common.embedder import Embedder
@@ -25,6 +26,10 @@ class CommonResourceManager(Protocol):
 
     async def get_sql_engine(self, name: str) -> AsyncEngine:
         """Return the SQL engine by name."""
+        raise NotImplementedError
+
+    async def get_neo4j_driver(self, name: str) -> AsyncDriver:
+        """Return the Neo4j driver by name."""
         raise NotImplementedError
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:

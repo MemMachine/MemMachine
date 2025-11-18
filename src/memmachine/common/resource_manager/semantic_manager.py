@@ -17,9 +17,11 @@ from memmachine.semantic_memory.semantic_session_manager import SemanticSessionM
 from memmachine.semantic_memory.semantic_session_resource import (
     SessionIdManager,
 )
+from memmachine.semantic_memory.storage.neo4j_semantic_storage import Neo4jSemanticStorage
 from memmachine.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
     SqlAlchemyPgVectorSemanticStorage,
 )
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
 
 class SemanticResourceManager:
@@ -37,7 +39,7 @@ class SemanticResourceManager:
         self._resource_manager = resource_manager
         self._conf = semantic_conf
         self._prompt_conf = prompt_conf
-        self._history_storage = history_storage
+        self._episodic_storage = history_storage
 
         self._simple_semantic_session_id_manager: SessionIdManager | None = None
         self._semantic_session_resource_manager: (
@@ -97,23 +99,29 @@ class SemanticResourceManager:
         self._semantic_session_resource_manager = SemanticResourceRetriever()
         return self._semantic_session_resource_manager
 
+    async def _get_semantic_storage(self) -> SemanticStorage:
+        database = self._conf.database
+        try:
+            engine = await self._resource_manager.get_sql_engine(database)
+            return SqlAlchemyPgVectorSemanticStorage(engine)
+        except ValueError as e:
+            # try graph store
+            engine = await self._resource_manager.get_neo4j_driver(database)
+            return Neo4jSemanticStorage(engine)
+
     async def get_semantic_service(self) -> SemanticService:
         """Return the semantic service, constructing it if needed."""
         if self._semantic_service is not None:
             return self._semantic_service
 
-        conf = self._conf.semantic_service
-
-        engine = await self._resource_manager.get_sql_engine(conf.database)
-        semantic_storage = SqlAlchemyPgVectorSemanticStorage(engine)
-
-        history_store = self._history_storage
+        semantic_storage = await self._get_semantic_storage()
+        episodic_store = self._episodic_storage
         resource_retriever = await self.get_semantic_session_resource_manager()
 
         self._semantic_service = SemanticService(
             SemanticService.Params(
                 semantic_storage=semantic_storage,
-                history_storage=history_store,
+                episodic_storage=episodic_store,
                 resource_retriever=resource_retriever,
             ),
         )

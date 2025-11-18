@@ -5,7 +5,7 @@ import logging
 from asyncio import Lock
 from typing import Self
 
-from neo4j import AsyncGraphDatabase
+from neo4j import AsyncGraphDatabase, AsyncDriver
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -27,6 +27,7 @@ class StorageManager:
         self.conf = conf
         self.graph_stores: dict[str, VectorGraphStore] = {}
         self.sql_engines: dict[str, AsyncEngine] = {}
+        self.neo4j_drivers: dict[str, AsyncDriver] = {}
 
         self._lock = Lock()
 
@@ -54,20 +55,32 @@ class StorageManager:
                 except Exception:
                     logger.exception("Error closing graph store '%s'", name)
             tasks.extend(engine.dispose() for engine in self.sql_engines.values())
-
             await asyncio.gather(*tasks)
+            # reset all connections
+            self.graph_stores = {}
+            self.sql_engines = {}
+            self.neo4j_drivers = {}
 
-    def get_vector_graph_store(self, name: str) -> VectorGraphStore:
+    async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
-        if name not in self.graph_stores:
-            raise ValueError(f"Neo4J driver '{name}' not found.")
-        return self.graph_stores[name]
+        async with self._lock:
+            if name not in self.graph_stores:
+                raise ValueError(f"Neo4J driver '{name}' not found.")
+            return self.graph_stores[name]
 
-    def get_sql_engine(self, name: str) -> AsyncEngine:
+    async def get_neo4j_driver(self, name: str) -> AsyncDriver:
+        """Return a Neo4j driver by name."""
+        async with self._lock:
+            if name not in self.neo4j_drivers:
+                raise ValueError(f"Neo4J driver '{name}' not found.")
+            return self.neo4j_drivers[name]
+
+    async def get_sql_engine(self, name: str) -> AsyncEngine:
         """Return a SQL engine by name."""
-        if name not in self.sql_engines:
-            raise ValueError(f"SQL connection '{name}' not found.")
-        return self.sql_engines[name]
+        async with self._lock:
+            if name not in self.sql_engines:
+                raise ValueError(f"SQL connection '{name}' not found.")
+            return self.sql_engines[name]
 
     async def _build_neo4j(self) -> None:
         """Establish Neo4j drivers for all configured graph stores."""
@@ -85,6 +98,7 @@ class StorageManager:
                 neo4j_uri,
                 auth=(conf.user, conf.password),
             )
+            self.neo4j_drivers[name] = driver
             params = Neo4jVectorGraphStoreParams(
                 driver=driver,
                 force_exact_similarity_search=conf.force_exact_similarity_search,
