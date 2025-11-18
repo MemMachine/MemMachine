@@ -17,7 +17,9 @@ from memmachine.semantic_memory.semantic_session_manager import SemanticSessionM
 from memmachine.semantic_memory.semantic_session_resource import (
     SessionIdManager,
 )
-from memmachine.semantic_memory.storage.neo4j_semantic_storage import Neo4jSemanticStorage
+from memmachine.semantic_memory.storage.neo4j_semantic_storage import (
+    Neo4jSemanticStorage,
+)
 from memmachine.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
     SqlAlchemyPgVectorSemanticStorage,
 )
@@ -104,7 +106,7 @@ class SemanticResourceManager:
         try:
             engine = await self._resource_manager.get_sql_engine(database)
             return SqlAlchemyPgVectorSemanticStorage(engine)
-        except ValueError as e:
+        except ValueError:
             # try graph store
             engine = await self._resource_manager.get_neo4j_driver(database)
             return Neo4jSemanticStorage(engine)

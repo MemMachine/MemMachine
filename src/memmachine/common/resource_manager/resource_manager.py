@@ -36,8 +36,12 @@ class ResourceManagerImpl:
         """Initialize managers from configuration."""
         self._conf = conf
         self._conf.logging.apply()
-        self._storage_manager: StorageManager = StorageManager(self._conf.resources.storages)
-        self._embedder_manager: EmbedderManager = EmbedderManager(self._conf.resources.embedders)
+        self._storage_manager: StorageManager = StorageManager(
+            self._conf.resources.storages
+        )
+        self._embedder_manager: EmbedderManager = EmbedderManager(
+            self._conf.resources.embedders
+        )
         self._model_manager: LanguageModelManager = LanguageModelManager(
             self._conf.model,
         )

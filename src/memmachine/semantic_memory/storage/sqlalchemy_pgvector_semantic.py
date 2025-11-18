@@ -1,7 +1,7 @@
 """SQLAlchemy-backed semantic storage implementation using pgvector."""
 
 from pathlib import Path
-from typing import Any, Union, TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 from alembic import command
@@ -510,7 +510,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
             if vector_search_opts is not None:
                 if type(_stmt) is not Select:
-                    raise RuntimeError("vector_search_opts is only supported for select statements")
+                    raise RuntimeError(
+                        "vector_search_opts is only supported for select statements"
+                    )
 
                 if vector_search_opts.min_distance is not None:
                     threshold = 1 - vector_search_opts.min_distance
