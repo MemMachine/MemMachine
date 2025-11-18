@@ -21,13 +21,9 @@ jobs:
       fail-fast: false
       matrix:
         test-paths: [
-          # Session manager tests
           "tests/memmachine/common/session_manager/",
-          # Vector Graph Store tests
           "tests/memmachine/common/vector_graph_store/",
-          # Episodic Store tests
           "tests/memmachine/episode_store/"
-          # Semantic Memory tests
           "tests/memmachine/semantic_memory/",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
