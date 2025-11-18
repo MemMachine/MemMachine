@@ -10,8 +10,8 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 from itertools import accumulate, groupby, tee
-from types import ModuleType
 from typing import Any
 
 import numpy as np
@@ -21,6 +21,7 @@ from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.language_model.language_model import LanguageModel
 
+from .prompt_provider import ProfilePrompt
 from .storage.storage_base import ProfileStorageBase
 from .util.lru_cache import LRUCache
 
@@ -146,9 +147,8 @@ class ProfileMemory:
     Args:
         model (LanguageModel): The language model for profile extraction.
         embeddings (Embedder): The model for generating vector embeddings.
-        db_config (dict[str, Any]): Configuration for the database connection.
-        prompt_module (ModuleType): A Python module containing system prompts
-            ('UPDATE_PROMPT', 'CONSOLIDATION_PROMPT').
+        profile_storage (ProfileStorageBase): Connection to the profile database.
+        prompt (ProfilePrompt): The system prompts to be used.
         max_cache_size (int, optional): Max size for the profile LRU cache.
             Defaults to 1000.
     """
@@ -175,7 +175,7 @@ class ProfileMemory:
         *,
         model: LanguageModel,
         embeddings: Embedder,
-        prompt_module: ModuleType,
+        prompt: ProfilePrompt,
         max_cache_size=1000,
         profile_storage: ProfileStorageBase,
     ):
@@ -183,8 +183,8 @@ class ProfileMemory:
             raise ValueError("model must be provided")
         if embeddings is None:
             raise ValueError("embeddings must be provided")
-        if prompt_module is None:
-            raise ValueError("prompt_module must be provided")
+        if prompt is None:
+            raise ValueError("prompt must be provided")
         if profile_storage is None:
             raise ValueError("profile_storage must be provided")
 
@@ -193,8 +193,9 @@ class ProfileMemory:
         self._profile_storage = profile_storage
 
         self._max_cache_size = max_cache_size
-        self._update_prompt = getattr(prompt_module, "UPDATE_PROMPT", "")
-        self._consolidation_prompt = getattr(prompt_module, "CONSOLIDATION_PROMPT", "")
+
+        self._update_prompt = prompt.update_prompt
+        self._consolidation_prompt = prompt.consolidation_prompt
 
         self._update_interval = 1
         self._dirty_users: ProfileUpdateTrackerManager = ProfileUpdateTrackerManager(
@@ -450,8 +451,6 @@ class ProfileMemory:
             metadata: Metadata associated with the message, such as the
                      speaker.
             isolations: A dictionary for data isolation.
-            wait_consolidate: If true, wait for consolidation to finish
-                     before returning.
 
         Returns:
             A boolean indicating whether the consolidation process was awaited.
@@ -477,11 +476,19 @@ class ProfileMemory:
     async def _background_ingestion_task(self):
         while not self._is_shutting_down:
             dirty_users = await self._dirty_users.get_users_to_update()
+            logger.debug(
+                "ProfileMemory - Background task checking for dirty users: %s",
+                dirty_users,
+            )
 
             if len(dirty_users) == 0:
                 await asyncio.sleep(self.PROFILE_UPDATE_INTERVAL_SEC)
                 continue
 
+            logger.debug(
+                "ProfileMemory - Processing uningested memories for users: %s",
+                dirty_users,
+            )
             await asyncio.gather(
                 *[self._process_uningested_memories(user_id) for user_id in dirty_users]
             )
@@ -504,12 +511,21 @@ class ProfileMemory:
         self,
         user_id: str,
     ):
+        logger.debug(
+            "ProfileMemory - Processing uningested memories for user: %s", user_id
+        )
         message_isolation_groups = await self._get_isolation_grouped_memories(user_id)
+        logger.debug(
+            "ProfileMemory - Found %d message isolation groups for user %s",
+            len(message_isolation_groups),
+            user_id,
+        )
 
         async def process_messages(messages):
             if len(messages) == 0:
                 return
 
+            logger.debug("ProfileMemory - Processing %d messages", len(messages))
             mark_tasks = []
 
             for i in range(0, len(messages) - 1):
@@ -530,6 +546,138 @@ class ProfileMemory:
             tasks.append(process_messages(isolation_messages))
 
         await asyncio.gather(*tasks)
+
+    def _parse_llm_json_response(
+        self, response_text: str, response_type: str = "update"
+    ) -> tuple[str, str]:
+        """Parse JSON from LLM response with hybrid approach.
+
+        Strategy:
+        1. Fast path: Try OpenAI-friendly format first (expects clean JSON after tags)
+        2. Fallback: Use robust parsing for non-OpenAI models with various formats
+
+        Args:
+            response_text: Raw LLM response text
+            response_type: Type of response ("update" or "consolidation") for logging
+
+        Returns:
+            Tuple of (thinking/reasoning text, json_string)
+        """
+        thinking = ""
+        response_json = ""
+
+        # Strategy 1: OpenAI-friendly format - try standard tags first
+        # Check for common OpenAI-friendly tags (prompts use <think> tags)
+        openai_tag_patterns = [
+            ("<think>", "</think>"),  # Primary format from prompts
+        ]
+
+        for open_tag, close_tag in openai_tag_patterns:
+            if open_tag in response_text and close_tag in response_text:
+                thinking_part, _, json_part = response_text.removeprefix(
+                    open_tag
+                ).rpartition(close_tag)
+                thinking = thinking_part.strip()
+                response_json = json_part.strip()
+
+                # Try parsing - if successful, we're done (fast path)
+                try:
+                    json.loads(response_json)
+                    logger.debug(
+                        "ProfileMemory - Successfully parsed %s response using OpenAI format (%s tags)",
+                        response_type,
+                        open_tag,
+                    )
+                    return thinking, response_json
+                except (ValueError, json.JSONDecodeError):
+                    # JSON part exists but is malformed - continue to robust parsing
+                    logger.debug(
+                        "ProfileMemory - OpenAI format detected but JSON is malformed, "
+                        "trying robust parsing for %s",
+                        response_type,
+                    )
+                    # Keep the extracted parts for further processing
+                    break
+
+        # If no OpenAI tags found or parsing failed, try to extract JSON directly
+        if not response_json:
+            response_json = response_text.strip()
+
+        # Strategy 2: Robust parsing for non-OpenAI models
+        # Try to find JSON wrapped in various tags
+        json_patterns = [
+            (r"<OLD_PROFILE>\s*(\{.*?\})\s*</OLD_PROFILE>", "OLD_PROFILE"),
+            (r"<NEW_PROFILE>\s*(\{.*?\})\s*</NEW_PROFILE>", "NEW_PROFILE"),
+            (r"<profile>\s*(\{.*?\})\s*</profile>", "profile"),
+            (r"<json>\s*(\{.*?\})\s*</json>", "json"),
+            (r"```json\s*(\{.*?\})\s*```", "json code block"),
+            (r"```\s*(\{.*?\})\s*```", "code block"),
+        ]
+
+        for pattern, pattern_name in json_patterns:
+            match = re.search(pattern, response_text, re.DOTALL)
+            if match:
+                response_json = match.group(1).strip()
+                logger.debug(
+                    "ProfileMemory - Found JSON in %s tag for %s",
+                    pattern_name,
+                    response_type,
+                )
+                break
+
+        # Strategy 3: If no tagged JSON found, look for the last JSON object
+        if not response_json or not response_json.startswith("{"):
+            # Find the last complete JSON object in the response
+            # This handles cases where JSON is at the end after reasoning text
+            json_match = re.search(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", response_text)
+            if json_match:
+                response_json = json_match.group(1).strip()
+                logger.debug(
+                    "ProfileMemory - Extracted JSON object from end of response for %s",
+                    response_type,
+                )
+
+        # Strategy 4: If still no JSON found, use entire response
+        if not response_json:
+            response_json = response_text.strip()
+            logger.debug(
+                "ProfileMemory - Using entire response as JSON for %s", response_type
+            )
+
+        # Conservative cleanup - only fix obvious issues that won't break valid JSON
+        if response_json:
+            original_json = response_json
+
+            # Remove invalid syntax like "... (other tags remain the same)" (common LLM insertion)
+            response_json = re.sub(r"\.\.\.\s*\([^)]*\)", "", response_json)
+
+            # Remove trailing commas before closing braces/brackets (common LLM mistake)
+            response_json = re.sub(r",(\s*[}\]])", r"\1", response_json)
+
+            # Fix incomplete JSON structures (missing closing braces)
+            open_braces = response_json.count("{")
+            close_braces = response_json.count("}")
+            if open_braces > close_braces:
+                response_json += "}" * (open_braces - close_braces)
+
+            # Log if we made changes
+            if response_json != original_json:
+                logger.debug(
+                    "ProfileMemory - Cleaned up JSON for %s (removed trailing commas, fixed braces)",
+                    response_type,
+                )
+
+        # Extract thinking if we haven't already (for non-OpenAI format)
+        if not thinking:
+            for open_tag, close_tag in openai_tag_patterns:
+                if open_tag in response_text and close_tag in response_text:
+                    thinking_part, _, _ = response_text.removeprefix(
+                        open_tag
+                    ).rpartition(close_tag)
+                    thinking = thinking_part.strip()
+                    break
+
+        return thinking, response_json
 
     async def _update_user_profile_think(
         self,
@@ -552,41 +700,52 @@ class ProfileMemory:
         user_prompt = (
             "The old profile is provided below:\n"
             "<OLD_PROFILE>\n"
-            "{profile}\n"
+            f"{str(profile)}\n"
             "</OLD_PROFILE>\n"
             "\n"
             "The history is provided below:\n"
             "<HISTORY>\n"
-            "{memory_content}\n"
+            f"{memory_content}\n"
             "</HISTORY>\n"
-        ).format(
-            profile=str(profile),
-            memory_content=memory_content,
         )
         # Use chain-of-thought to get entity profile update commands.
+        logger.debug(
+            "ProfileMemory - Calling LLM for profile update with user_id: %s", user_id
+        )
         try:
             response_text, _ = await self._model.generate_response(
                 system_prompt=self._update_prompt, user_prompt=user_prompt
             )
+            logger.debug(
+                "ProfileMemory - LLM response received for user_id: %s", user_id
+            )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
-            logger.error("Eror when update profile: %s", str(e))
+            logger.error("Error when update profile: %s", str(e))
             return
 
-        # Get thinking and JSON from language model response.
-        thinking, _, response_json = response_text.removeprefix("<think>").rpartition(
-            "</think>"
+        # Parse thinking and JSON from language model response using hybrid approach
+        thinking, response_json = self._parse_llm_json_response(
+            response_text, response_type="update"
         )
-        thinking = thinking.strip()
 
         # TODO: These really should not be raw data structures.
         try:
             profile_update_commands = json.loads(response_json)
-        except ValueError as e:
+            logger.debug(
+                "ProfileMemory - Successfully parsed profile update commands: %s",
+                profile_update_commands,
+            )
+        except (ValueError, json.JSONDecodeError) as e:
             logger.warning(
-                "Unable to load language model output '%s' as JSON, Error %s: "
-                "Proceeding with no profile update commands",
-                str(response_json),
+                "Unable to load language model output '%s' as JSON, Error %s. "
+                "Raw response: %s",
+                str(response_json[:200])
+                if len(response_json) > 200
+                else str(response_json),
                 str(e),
+                str(response_text[:500])
+                if len(response_text) > 500
+                else str(response_text),
             )
             profile_update_commands = {}
             return
@@ -665,8 +824,18 @@ class ProfileMemory:
 
             valid_commands.append(command)
 
+        logger.debug(
+            "ProfileMemory - Executing %d valid commands for user %s",
+            len(valid_commands),
+            user_id,
+        )
         for command in valid_commands:
             if command["command"] == "add":
+                logger.debug(
+                    "ProfileMemory - Adding profile feature for user %s: %s",
+                    user_id,
+                    command,
+                )
                 await self.add_new_profile(
                     user_id,
                     command["feature"],
@@ -678,6 +847,11 @@ class ProfileMemory:
                 )
             elif command["command"] == "delete":
                 value = command["value"] if "value" in command else None
+                logger.debug(
+                    "ProfileMemory - Deleting profile feature for user %s: %s",
+                    user_id,
+                    command,
+                )
                 await self.delete_user_profile_feature(
                     user_id,
                     command["feature"],
@@ -716,19 +890,28 @@ class ProfileMemory:
             logger.error("Model Error when deduplicate profile: %s", str(e))
             return
 
-        # Get thinking and JSON from language model response.
-        thinking, _, response_json = response_text.removeprefix("<think>").rpartition(
-            "</think>"
+        # Parse thinking and JSON from language model response using hybrid approach
+        thinking, response_json = self._parse_llm_json_response(
+            response_text, response_type="consolidation"
         )
-        thinking = thinking.strip()
 
         try:
             updated_profile_entries = json.loads(response_json)
-        except ValueError as e:
+            logger.debug(
+                "ProfileMemory - Successfully parsed consolidation response: %s",
+                updated_profile_entries,
+            )
+        except (ValueError, json.JSONDecodeError) as e:
             logger.warning(
-                "Unable to load language model output '%s' as JSON, Error %s",
-                str(response_json),
+                "Unable to load language model output '%s' as JSON, Error %s. "
+                "Raw response: %s",
+                str(response_json[:200])
+                if len(response_json) > 200
+                else str(response_json),
                 str(e),
+                str(response_text[:500])
+                if len(response_text) > 500
+                else str(response_text),
             )
             updated_profile_entries = {}
             return

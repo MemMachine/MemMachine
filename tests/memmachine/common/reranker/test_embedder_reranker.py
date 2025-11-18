@@ -1,10 +1,20 @@
+from unittest.mock import MagicMock
+
 import pytest
 
 from memmachine.common.embedder import Embedder, SimilarityMetric
-from memmachine.common.reranker.embedder_reranker import EmbedderReranker
+from memmachine.common.reranker.embedder_reranker import (
+    EmbedderReranker,
+    EmbedderRerankerParams,
+)
 
 
 class FakeEmbedder(Embedder):
+    def __init__(self, similarity_metric=SimilarityMetric.COSINE):
+        super().__init__()
+
+        self._similarity_metric = similarity_metric
+
     async def ingest_embed(self, inputs: list[str]) -> list[list[float]]:
         return [[float(len(input)), -float(len(input))] for input in inputs]
 
@@ -21,12 +31,24 @@ class FakeEmbedder(Embedder):
 
     @property
     def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
+        return self._similarity_metric
+
+
+@pytest.fixture(
+    params=[
+        SimilarityMetric.COSINE,
+        SimilarityMetric.DOT,
+        SimilarityMetric.EUCLIDEAN,
+        SimilarityMetric.MANHATTAN,
+    ]
+)
+def embedder(request):
+    return FakeEmbedder(similarity_metric=request.param)
 
 
 @pytest.fixture
-def reranker():
-    return EmbedderReranker({"embedder": FakeEmbedder()})
+def reranker(embedder):
+    return EmbedderReranker(EmbedderRerankerParams(embedder=embedder))
 
 
 @pytest.fixture(params=["Are tomatoes fruits?", ""])
@@ -47,16 +69,33 @@ def candidates(request):
 
 
 @pytest.mark.asyncio
-async def test_score(reranker, query, candidates):
+async def test_shape(reranker, query, candidates):
     scores = await reranker.score(query, candidates)
     assert isinstance(scores, list)
     assert len(scores) == len(candidates)
     assert all(isinstance(score, float) for score in scores)
 
 
-def test_invalid_embedder():
-    with pytest.raises(ValueError):
-        EmbedderReranker(config={"embedder": None})
+@pytest.mark.asyncio
+async def test_score():
+    embedder = MagicMock(spec=Embedder)
+    reranker = EmbedderReranker(EmbedderRerankerParams(embedder=embedder))
 
-    with pytest.raises(TypeError):
-        EmbedderReranker(config={"embedder": "a string: not an Embedder"})
+    embedder.ingest_embed.return_value = [[1.0, 2.0], [1.5, 1.5]]
+    embedder.search_embed.return_value = [[1.0, 1.0]]
+
+    embedder.similarity_metric = SimilarityMetric.COSINE
+    scores = await reranker.score("query", ["candidate1", "candidate2"])
+    assert scores[0] < scores[1]
+
+    embedder.similarity_metric = SimilarityMetric.DOT
+    scores = await reranker.score("query", ["candidate1", "candidate2"])
+    assert scores[0] == scores[1]
+
+    embedder.similarity_metric = SimilarityMetric.EUCLIDEAN
+    scores = await reranker.score("query", ["candidate1", "candidate2"])
+    assert scores[0] < scores[1]
+
+    embedder.similarity_metric = SimilarityMetric.MANHATTAN
+    scores = await reranker.score("query", ["candidate1", "candidate2"])
+    assert scores[0] == scores[1]

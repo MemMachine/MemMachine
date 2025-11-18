@@ -3,6 +3,8 @@ UPDATE_PROMPT = """
     You will receive a profile and a user's query to the chat system, your job is to update that profile by extracting or inferring information about the user from the query.
     A profile is a two-level key-value store. We call the outer key the *tag*, and the inner key the *feature*. Together, a *tag* and a *feature* are associated with one or several *value*s.
 
+    IMPORTANT: Extract ALL personal information, even basic facts like names, ages, locations, etc. Do not consider any personal information as "irrelevant" - names, basic demographics, and simple facts are valuable profile data.
+
     How to construct profile entries:
     - Entries should be atomic. They should communicate a single discrete fact.
     - Entries should be as short as possible without corrupting meaning. Be careful when leaving out prepositions, qualifiers, negations, etc. Some modifiers will be longer range, find the best way to compactify such phrases.
@@ -21,7 +23,7 @@ UPDATE_PROMPT = """
     - Learning Preferences: Preferred modes of receiving information.
     - Cognitive Style: How the user processes information or makes decisions.
     - Emotional Drivers: Motivators like fear of error or desire for clarity.
-    - Personal Values: User’s core values or principles.
+    - Personal Values: User's core values or principles.
     - Career & Work Preferences: Interests, titles, domains related to work.
     - Productivity Style: User's work rhythm, focus preference, or task habits.
     - Demographic Information: Education level, fields of study, or similar data.
@@ -41,7 +43,7 @@ UPDATE_PROMPT = """
     - Time Usage Patterns: Frequency and habits of use.
     - Preferred Content Format: Formats preferred for answers (e.g., tables, bullet points).
     - Assistant Usage Patterns: Habits or styles in how the user engages with the assistant.
-    - Language Preferences: Preferred tone and structure of assistant’s language.
+    - Language Preferences: Preferred tone and structure of assistant's language.
     - Motivation Triggers: Traits that drive engagement or satisfaction.
     - Behavior Under Stress: How the user reacts to failures or inaccurate responses.
 
@@ -221,6 +223,9 @@ UPDATE_PROMPT = """
 
 
     To update the user's profile, you will output a JSON document containing a list of commands to be executed in sequence.
+
+    CRITICAL: You MUST use the command format below. Do NOT create nested objects or use any other format.
+
     The following output will add a feature:
     {
         "0": {
@@ -247,7 +252,7 @@ UPDATE_PROMPT = """
             "value": true
         },
         "1": {
-            "command": "add,
+            "command": "add",
             "tag" : "Platform Behavior",
             "feature": "prefers_detailed_response",
             "value": false
@@ -255,6 +260,15 @@ UPDATE_PROMPT = """
     }
 
     Example Scenarios:
+    Query: "Hi! My name is Katara"
+    {
+        "0": {
+            "command": "add",
+            "tag": "Demographic Information",
+            "feature": "name",
+            "value": "Katara"
+        }
+    }
     Query: "I'm planning a dinner party for 8 people next weekend and want to impress my guests with something special. Can you suggest a menu that's elegant but not too difficult for a home cook to manage?"
     {
         "0": {
@@ -266,7 +280,7 @@ UPDATE_PROMPT = """
         "1":{
             "command": "add",
             "tag": "Financial Profile",
-            "feature": "upper_class"
+            "feature": "upper_class",
             "value": "User entertains guests at dinner parties, suggesting affluence."
         }
     }
@@ -286,7 +300,7 @@ UPDATE_PROMPT = """
         },
         "2": {
             "command": "add",
-            "tag": "Demographic Information",
+            "tag": "Communication Style",
             "feature": "informal_speech",
             "value": "User speaks with all lower case letters and contemporary slang terms."
         },
@@ -327,9 +341,10 @@ UPDATE_PROMPT = """
     - Do not create new tags which you don't see in the example profile. However, you can and should create new features.
     - If a user asks for a summary of a report, code, or other content, that content may not necessarily be written by the user, and might not be relevant to the user's profile.
     - Do not delete anything unless a user asks you to
-    - If you want to keep the profile the same, as you should if the query is completely irrelevant or the information will soon be outdated, return the empty object: {}.
+    - Only return the empty object {} if the query contains absolutely no personal information about the user (e.g., asking about the weather, requesting code without personal context, etc.). Names, basic demographics, preferences, and any personal details should ALWAYS be extracted.
     - Listen to any additional instructions specific to the execution context provided underneath 'EXTRA EXTERNAL INSTRUCTIONS'
     - First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON.
+    - REMEMBER: Always use the command format with "command", "tag", "feature", and "value" keys. Never use nested objects or any other format.
 EXTRA EXTERNAL INSTRUCTIONS:
 NONE
 """

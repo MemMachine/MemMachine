@@ -8,7 +8,6 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -434,9 +433,7 @@ class CRMQueryConstructor(BaseQueryConstructor):
     def __init__(self):
         self.prompt_template = _build_unified_query_template()
 
-    def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
-    ) -> str:
+    def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a CRM query using the prompt template"""
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")

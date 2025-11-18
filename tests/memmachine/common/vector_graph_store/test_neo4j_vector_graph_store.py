@@ -11,7 +11,7 @@ from memmachine.common.embedder import SimilarityMetric
 from memmachine.common.vector_graph_store import Edge, Node
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
-    Neo4jVectorGraphStoreConfig,
+    Neo4jVectorGraphStoreParams,
 )
 
 pytestmark = pytest.mark.integration
@@ -50,7 +50,7 @@ async def neo4j_driver(neo4j_connection_info):
 @pytest.fixture(scope="module")
 def vector_graph_store(neo4j_driver):
     return Neo4jVectorGraphStore(
-        Neo4jVectorGraphStoreConfig(
+        Neo4jVectorGraphStoreParams(
             driver=neo4j_driver,
             force_exact_similarity_search=True,
         )
@@ -60,7 +60,7 @@ def vector_graph_store(neo4j_driver):
 @pytest.fixture(scope="module")
 def vector_graph_store_ann(neo4j_driver):
     return Neo4jVectorGraphStore(
-        Neo4jVectorGraphStoreConfig(
+        Neo4jVectorGraphStoreParams(
             driver=neo4j_driver,
             force_exact_similarity_search=False,
         )

@@ -1,0 +1,185 @@
+---
+title: "Using AWS Bedrock"
+description: "Guide to install and configure MemMachine using AWS Bedrock models."
+icon: "aws"
+---
+
+## Prerequisites
+
+Before beginning, ensure you have the following access and components:
+
+**AWS Credentials**
+  - **AWS Access key ID** and **AWS Secret Access Key**.
+  - *Need help?* Follow this guide: [Create an AWS access key| Amazon Web Services](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html).
+
+**AWS Bedrock Model Access**
+  - Access to the necessary **models on AWS Bedrock**.
+  - *Need help?* Follow this guide: [AWS Foundation Models| Amazon Web Services](https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models-reference.html).
+
+**MemMachine**
+  - You can find the latest release here: [GitHub - MemMachine/MemMachine](https://api.github.com/repos/MemMachine/MemMachine/releases/latest).
+
+**Docker**
+  - The **Docker** containerization platform must be installed and running.
+
+
+## Installation: QuickStart Configuration
+
+The installation script will automatically guide you through setting up your **Large Language Model (LLM) provider**. When prompted, you **must** select **Bedrock** to integrate with **AWS Bedrock**.
+
+Your prompt input should match the following example:
+
+```bash
+[PROMPT] Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: Bedrock
+[INFO] Selected provider: BEDROCK
+```
+
+After selecting **Bedrock**, you will be prompted to enter the necessary **AWS credentials and configuration details**:
+
+- **AWS Access Key ID**
+- **AWS Secret Access Key**
+- **AWS Region** (e.g., `us-east-1` or `eu-central-1`)
+- **Choice of LLM**
+- **Choice of Embedding Model**
+
+<Note> If you are unsure about model selection, simply press **Enter** at the respective prompts to use the recommended default options.</Note>
+
+Congratulations!  You have now successfully deployed MemMachine using AWS Bedrock!
+
+## Manually Configuring MemMachine to use AWS Bedrock
+
+If you already have MemMachine installed and wish to switch to AWS Bedrock or change models manually, you can do so by updating the configuration file, `cfg.yml`.
+
+<Note> Within the 'cfg.yml' file, make sure duplicate models are commented out or removed.  For example, if you are using the aws_model, ensure that any other model configurations (like openai_model) are commented out or deleted to avoid conflicts. </Note>
+
+We will walk you through the necessary configuration changes for each component: LLM Provider, Embedder, and Reranker.  After that, we'll show you how to use parameters you've already set to fill out your Memory section.
+
+Below is an example configuration snippets for setting up AWS Bedrock as different components of MemMachine:
+
+### LLM Provider
+
+To set your LLM Model for Bedrock, you will want to use the following fields:
+
+| Parameter                     | Required? | Default           | Description                                                       |
+| ----------------------------- | --------- | ----------------- | ----------------------------------------------------------------- |
+| `Model:`                      | Yes       | N/A               | The Model block in the configuration                              |
+| `aws_model:`                  | Yes       | N/A               | Tag you can use if setting AWS Bedrock for your Embedder.         |
+| `model_vendor`                | Yes       | "amazon-bedrock"  | The vendor of the model (e.g., `openai`, `amazon-bedrock`).       |
+| `region`                      | Yes       | N/A               | The AWS region for the Bedrock model (e.g., `us-west-2`).         |
+| `aws_access_key_id`           | Yes       | N/A               | The AWS access key ID for Bedrock authentication.                 |
+| `aws_secret_access_key`       | Yes       | N/A               | The AWS secret access key for Bedrock authentication.             |
+| `model_id`                    | Yes       | N/A.              | The name of the model to use (e.g., `openai.gpt-oss-20b-1:0`).    |
+
+Here's an example of what the Amazon Bedrock LLM Model configuration would look like in `cfg.yml`:
+
+```yaml
+Model:
+  aws_model:
+    model_vendor: "amazon-bedrock"
+    region: "us-west-2"
+    aws_access_key_id: <AWS_ACCESS_KEY_ID>
+    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+    model_id: "openai.gpt-oss-20b-1:0"
+    ```
+
+### Embedder Configuration
+
+To set your Embedding Model for Bedrock, you will want to use the following fields:
+| Parameter                            | Required? | Default          | Description                                                                           |
+| ------------------------------------ | ---------- | --------------- | ------------------------------------------------------------------------------------- |
+| `embedder:`                          | Yes        | N/A             | The embedder block in the configuration.                                              |
+| `aws_embedder_id:`                   | Yes        | N/A             | Tag you can use if setting AWS Bedrock for your Embedder.                             |
+| `name:`                              | Yes        | 'amazon-bedrock'| The vendor name of your embedder.                                                     |
+| `config:`                            | Yes        | N/A             | Configuration block for the embedder.                                                 |
+| `region:`                            | Yes        | N/A             | The AWS region for the Bedrock embedder (e.g., `us-west-2`).                          |
+| `aws_access_key_id:`                 | Yes        | N/A             | The AWS access key ID for Bedrock authentication.                                     |
+| `aws_secret_access_key:`             | Yes        | N/A             | The AWS secret access key for Bedrock authentication.                                 |
+| `model_id:`                          | Yes        | N/A             | The Bedrock model ID to use for the embedder (e.g., amazon.titan-embed-text-v2:0').   |
+| `similarity_metric:`                 | Yes        | N/A             | The similarity metric to use for embedding comparisons (e.g., `cosine`, `euclidean`). |
+
+Here's an example of what the Amazon Bedrock embedder configuration would look like in `cfg.yml`:
+```yaml
+embedder:
+    aws_embedder_id:
+        name: 'amazon-bedrock'
+        config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+```
+
+### Reranker Configuration
+
+To set your Reranker Model for Bedrock, you will want to use the following fields:
+
+| Parameter                            | Required? | Default       | Description                                                  |
+| ------------------------------------ | --------- | ------------- | ------------------------------------------------------------ |
+| `reranker:`                          | Yes       | N/A           | This tag defines the reranker section of the cfg.yml file.   |
+| `aws_reranker_id:`                   | Yes       | N/A           | Tag should you choose to use AWS Bedrock for your Reranker.  |
+| `type:`                              | Yes       | N/A           | The type of reranker to use (e.g., `amazon-bedrock`).        |
+| `region:`                            | Yes       | N/A           | The AWS region for the Bedrock reranker (e.g., `us-west-2`). |
+| `aws_access_key_id:`                 | Yes       | N/A           | The AWS access key ID for Bedrock authentication.            |
+| `aws_secret_access_key:`             | Yes       | N/A           | The AWS secret access key for Bedrock authentication.        |
+| `model_id`                           | Yes       | N/A           | The Bedrock model ID to use for reranking (e.g., `amazon.rerank-v1:0`).|
+
+
+Here's an example of what the Amazon Bedrock reranker configuration would look like in `cfg.yml`:
+
+```yaml
+reranker:
+  aws_reranker_id:
+    type: "amazon-bedrock"
+    region: "us-west-2"
+    aws_access_key_id: <AWS_ACCESS_KEY_ID>
+    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+    model_id: "amazon.rerank-v1:0"
+    ```
+<Note> If you have a GPU configuration, and want to use the cross-encoder reranker, ensure that you keep the `type: cross-encoder` section and `ce_ranker_id` in your `cfg.yml` file. </Note>
+
+With these configurations in place, MemMachine will be set up to use AWS Bedrock for its LLM, embedding, and reranker functionalities. 
+
+### Memory Configuration
+To ensure optimal performance when using AWS Bedrock models, you will want to adjust the memory settings in your `cfg.yml` file.  The memory sections are `long_term_memory`,`profile_memory`, and `sessionMemory`.  Within the Configuration file, you do not need to put the blocks together.
+
+In the following table, we'll map the memory parameters to their corresponding field settings for AWS Bedrock.  Keep in mind, Memory Parameter is using a naming convention of `codeblock:parameter`.  Field Setting Equivalent shows 
+which code block and field you've already set up in the previous sections, with the format `codeblock:field`.
+
+Here is a translation of the existing fields we've already covered and where you would enter them in the memory section:
+
+| Memory Parameter                  | Field Setting Equivalent      | Example             | Description                                             |
+| --------------------------------- | ----------------------------- | ------------------- | ------------------------------------------------------- |
+| `long_term_memory: embedder`      | `embedder: aws_embedder_id'   |  `aws_embedder_id`  | The Tag you defined for your AWS Embedder Config Block  |
+| `long_term_memory: reranker`      | `reranker: aws_reranker_id`   |  `aws_reranker_id`  | The Tag you defined for your AWS Reranker Config Block  |
+| `profile_memory: llm_model`       | `Model: aws_model`            |  `aws_model`        | The Tag you defined for your AWS LLM Model Config Block |
+| `profile_memory: embedding_model` | `embedder: aws_embedder_id`   |  `aws_embedder_id`  | The Tag you defined for your AWS Embedder Config Block  |
+| `session_memory: model_name`      | `Model: aws_model`            |  `aws_model`        | The Tag you defined for your AWS LLM Model Config Block |
+
+Here's an example of how the memory configuration would look in `cfg.yml`:
+```yaml
+long_term_memory:
+  derivative_deriver: sentence
+  metadata_prefix: "[$timestamp] $producer_id: "
+  embedder: aws_embedder_id
+  reranker: aws_reranker_id
+  vector_graph_store: my_storage_id
+
+profile_memory:
+  llm_model: aws_model
+  embedding_model: aws_reranker_id
+  database: profile_storage
+  prompt: profile_prompt
+
+sessionMemory:
+  model_name: aws_model
+  message_capacity: 500
+  max_message_length: 16000
+  max_token_num: 8000
+```
+
+Congratulations!  You've now changed your MemMachine configuration to use AWS Bedrock for LLM, Embedding, and Reranking functionalities, along with the appropriate memory settings.
+
+Make sure to restart MemMachine after making these changes to apply the new settings. 
+
+*Need Help?*  Refer to the [Install Guide](./install_guide) for how to start and test your configuration with MemMachine.

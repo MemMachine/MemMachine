@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS prof (
     value TEXT NOT NULL,
     create_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    embedding vector(1536) NOT NULL,
+    embedding vector NOT NULL,
     metadata JSONB NOT NULL DEFAULT '{}',
     isolations JSONB NOT NULL DEFAULT '{}'
 );

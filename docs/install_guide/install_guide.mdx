@@ -1,0 +1,289 @@
+---
+title: "Using PIP and Source"
+description: "Your Home for Localized MemMachine Installation"
+icon: "bookmark"
+---
+
+## MemMachine Installation Guide
+
+This guide will walk you through the process of installing MemMachine. We'll start with the prerequisites you need to get set up, followed by two different installation methods.
+
+<Steps>
+<Step title="Gather Your Prerequisites">
+
+Before you install the MemMachine software itself, you'll need to set up a few things. Be sure to note down any passwords or keys you create, as you'll need them later.
+
+### A. Core Software
+
+- **Python 3.12+**: MemMachine requires Python version 3.12 or newer.
+- **PostgreSQL**: You will need a local PostgreSQL instance with the `pgvector` extension. You can find installation instructions on the official [PostgreSQL Downloads page](https://www.postgresql.org/download/). Once installed, create a new database and a user with full privileges for that database.
+- **Neo4j**: A Neo4j database is required.  You can find installation instructions on the official [Neo4j Documentation page](https://neo4j.com/docs/). After installation, start the Neo4j server and set a password for the default `neo4j` user.
+
+### B. Accounts and Keys
+
+- **OpenAI API Key**: You will need an OpenAI account to use MemMachine. You can sign up on the [OpenAI Platform](https://platform.openai.com/). You'll need to generate and copy your **API Key** for a later step.
+
+<Note> MemMachine itself is free to install, but please be aware that using the software consumes tokens from your OpenAI account.</Note>
+
+</Step>
+<Step title="Choose Your Installation Method">
+
+You can install MemMachine using a Python package manager or by cloning the source code from our GitHub repository.
+<AccordionGroup>
+<Accordion title="Option 1: Install with Pip">
+
+This is the recommended method for most users who want to add MemMachine to an existing Python environment.
+
+To create a python environment(if it does not already exist), you can use `venv` as follows:
+```sh
+python -m venv memmachine-env
+source memmachine-env/bin/activate  # On Windows use `source memmachine-env/Scripts/activate`
+```
+
+A. Run the following command in your terminal:
+
+ - If you are using MemMachine in a CPU-only environment, use:
+```sh
+   pip install memmachine
+```
+ - If you have an NVIDIA GPU and want to leverage it, use:
+```sh
+pip install memmachine[gpu]
+```
+B. Next, install dependencies from NLTK through the following MemMachine command:
+```sh
+memmachine-nltk-setup
+```
+</Accordion>
+<Accordion title="Option 2: Install from Source (GitHub)">
+
+This method is for users who want to contribute to the project or run from the latest source code.
+
+First, clone the repository and navigate into the project directory:
+
+```sh
+git clone https://github.com/MemMachine/MemMachine.git
+cd MemMachine
+```
+
+Second, Ensure you have a python environment set up. You can use `venv`, `conda`, or any other environment manager of your choice. 
+
+
+Next, use the `uv` tool to install all dependencies. If you don't have `uv`, you'll need to install it first.
+
+```sh
+# If you don't have uv installed, run this command:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Now, install the project dependencies:
+uv pip install .
+```
+<Note> If you wish to run with an NVIDIA GPU, you will need to install dependencies for GPU by using the `uv pip install ".[gpu]"` command.</Note>
+</Accordion>
+</AccordionGroup>
+</Step>
+<Step title="Create Your Configuration File - `cfg.yml`">
+
+MemMachine uses a single configuration file, `cfg.yml` to provide login and options to it.
+
+Create a file named `cfg.yml` in the same directory that you plan on running memmachine from. This file configures the various models and storage options for MemMachine.
+
+There are two examples of `cfg.yml` files in the `sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.
+
+<AccordionGroup>
+<Accordion title="CPU-Only Installations">
+You can download this file from our GitHub repository as a template using the following curl command:
+```sh
+curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
+```
+Below is an example of what the CPU-only `config.yml` file should look like:
+
+```sh expandable lines
+logging:
+  path: /tmp/memory_log
+  level: info #| debug | error
+
+long_term_memory:
+  derivative_deriver: sentence
+  metadata_prefix: "[$timestamp] $producer_id: "
+  embedder: my_embedder_id
+  reranker: my_reranker_id
+  vector_graph_store: my_storage_id
+
+SessionDB:
+  uri: sqlitetest.db
+
+Model:
+  testmodel:
+    model_vendor: openai
+    model_name: "gpt-4o-mini"
+    api_key: <YOUR_API_KEY>
+    
+storage:
+  my_storage_id:
+    vendor_name: neo4j
+    host: localhost
+    port: 7687
+    user: neo4j
+    password: <YOUR_PASSWORD_HERE>
+
+  profile_storage:
+    vendor_name: postgres
+    host: localhost
+    port: 5432
+    user: postgres
+    db_name: postgres
+    password: <YOUR_PASSWORD_HERE>
+
+profile_memory:
+  llm_model: testmodel
+  embedding_model: my_embedder_id
+  database: profile_storage
+  prompt: profile_prompt
+
+sessionMemory:
+  model_name: testmodel
+  message_capacity: 500
+  max_message_length: 16000
+  max_token_num: 8000
+
+embedder:
+  my_embedder_id:
+    model_vendor: openai
+    model_name: "text-embedding-3-small"
+    api_key: <YOUR_API_KEY>
+
+reranker:
+  my_reranker_id:
+    type: "rrf-hybrid"
+    reranker_ids:
+      - id_ranker_id
+      - bm_ranker_id
+  id_ranker_id:
+    type: "identity"
+  bm_ranker_id:
+    type: "bm25"
+
+prompt:
+  profile: profile_prompt
+```
+<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
+</Accordion>
+<Accordion title="GPU-Enabled Installations">
+You can download this file from our GitHub repository as a template using the following curl command:
+```sh
+curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
+```
+Below is an example of what the GPU-enabled `config.yml` file should look like:
+
+```sh expandable lines
+logging:
+  path: /tmp/memory_log
+  level: info #| debug | error
+
+long_term_memory:
+  derivative_deriver: sentence
+  metadata_prefix: "[$timestamp] $producer_id: "
+  embedder: my_embedder_id
+  reranker: my_reranker_id
+  vector_graph_store: my_storage_id
+
+profile_memory:
+  llm_model: testmodel
+  embedding_model: my_embedder_id
+  database: profile_storage
+  prompt: profile_prompt
+
+
+SessionDB:
+  uri: sqlitetest.db
+
+Model:
+  testmodel:
+    model_vendor: openai
+    model_name: "gpt-4o-mini"
+    api_key: <YOUR_API_KEY>
+    
+storage:
+  my_storage_id:
+    vendor_name: neo4j
+    host: localhost
+    port: 7687
+    user: neo4j
+    password: <YOUR_PASSWORD_HERE>
+
+  profile_storage:
+    vendor_name: postgres
+    host: localhost
+    port: 5432
+    user: postgres
+    db_name: postgres
+    password: <YOUR_PASSWORD_HERE>
+
+sessionMemory:
+  model_name: testmodel
+  message_capacity: 500
+  max_message_length: 16000
+  max_token_num: 8000
+
+embedder:
+  my_embedder_id:
+    model_vendor: openai
+    model_name: "text-embedding-3-small"
+    api_key: <YOUR_API_KEY>
+
+reranker:
+  my_reranker_id:
+    type: "rrf-hybrid"
+    reranker_ids:
+      - id_ranker_id
+      - bm_ranker_id
+      - ce_ranker_id
+  id_ranker_id:
+    type: "identity"
+  bm_ranker_id:
+    type: "bm25"
+  ce_ranker_id:
+    type: "cross-encoder"
+    model_name: "cross-encoder/qnli-electra-base"
+
+prompt:
+  profile: profile_prompt
+```
+<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
+</Accordion>
+</AccordionGroup>
+<Tip> 
+You can name this configuration file whatever you like, then pass it to MemMachine using the `MEMORY_CONFIG` environment variable, like in the following examples:
+
+ ```sh
+ export MEMORY_CONFIG="/home/steve/wibble.cfg" # Sets the config file name
+ memmachine # start memmachine
+ ```
+
+```sh
+MEMORY_CONFIG="/home/steve/wibble.cfg" memmachine #defines the variable and starts memmachine
+```
+</Tip>
+</Step>
+<Step title="Run MemMachine">
+
+You're ready to go! Run these commands from the directory where you've installed MemMachine.
+
+First, you need to sync the profile schema. This is a **one-time** command that must be run before the very first time you start the server.
+
+```
+memmachine-sync-profile-schema
+```
+
+Now you can start the MemMachine server. If you have run MemMachine before, you can skip the sync step and go straight to this command:
+
+```
+memmachine-server
+```
+
+You should now have the MemMachine server running.
+
+<Note> If you are using Docker to run your databases, ensure they are started and accessible before you try to start MemMachine.</Note>
+</Step>
+</Steps>

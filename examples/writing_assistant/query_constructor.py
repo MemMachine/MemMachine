@@ -2,7 +2,6 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -137,9 +136,7 @@ Use the "/submit" command followed by the content type and your writing sample:
                 "original_query": query,
             }
 
-    def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
-    ) -> str:
+    def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a writing assistant query using the prompt template"""
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
@@ -169,7 +166,7 @@ Use the "/submit" command followed by the content type and your writing sample:
                 return f"{profile_str}\n\n{context_block}{query}"
 
     def create_submission_query(
-        self, profile: Optional[str], context: Optional[str], submit_info: dict
+        self, profile: str | None, context: str | None, submit_info: dict
     ) -> str:
         """Create a specialized query for writing sample submissions"""
         content_type = submit_info["content_type"]

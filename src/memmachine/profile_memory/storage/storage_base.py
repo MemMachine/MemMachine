@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 
 
-## LEGACY CODE to be fixed.
 class ProfileStorageBase(ABC):
     """
     The base class for profile storage
@@ -164,7 +164,10 @@ class ProfileStorageBase(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def mark_messages_ingested(self, ids: list[int]) -> None:
+    async def mark_messages_ingested(
+        self,
+        ids: list[int],
+    ) -> None:
         """
         mark the messages with the id as ingested
         """

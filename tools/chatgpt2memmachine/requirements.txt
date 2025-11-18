@@ -1,0 +1,19 @@
+# Core dependencies for chatgpt2memmachine project
+requests>=2.31.0
+tqdm>=4.65.0
+
+# Optional: For better JSON handling and validation
+# jsonschema>=4.0.0
+
+# Optional: For enhanced HTTP client features
+# urllib3>=2.0.0
+
+# Optional: For data processing and analysis
+# pandas>=2.0.0
+# numpy>=1.24.0
+
+# Optional: For better logging and debugging
+# loguru>=0.7.0
+
+# Optional: For configuration management
+# python-dotenv>=1.0.0
