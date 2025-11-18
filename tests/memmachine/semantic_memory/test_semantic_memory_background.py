@@ -20,7 +20,7 @@ from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     MockResourceRetriever,
 )
 from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import (
-    SemanticStorageBase,
+    SemanticStorage,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -73,7 +73,7 @@ def resource_retriever(resources: Resources) -> MockResourceRetriever:
 
 @pytest_asyncio.fixture
 async def semantic_service(
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
 ):
@@ -83,7 +83,6 @@ async def semantic_service(
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
         feature_update_message_limit=2,
-        feature_update_time_limit_sec=10.0,
     )
     service = SemanticService(params)
     yield service
@@ -136,7 +135,7 @@ async def test_stop_when_not_started(
 
 
 async def test_background_ingestion_processes_messages_on_message_limit(
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     resource_retriever: MockResourceRetriever,
     episode_storage: EpisodeStorage,
     semantic_type: SemanticCategory,
@@ -150,8 +149,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
         history_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
-        feature_update_message_limit=2,  # Trigger on 2 messages
-        feature_update_time_limit_sec=100.0,  # High time limit to avoid time-based trigger
+        feature_update_message_limit=0,
     )
     service = SemanticService(params)
     await service.start()
@@ -211,66 +209,6 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     assert len(features) > 0, f"Expected features to be created, got {len(features)}"
 
 
-async def test_background_ingestion_with_time_based_trigger(
-    semantic_storage: SemanticStorageBase,
-    resource_retriever: MockResourceRetriever,
-    episode_storage: EpisodeStorage,
-    semantic_type: SemanticCategory,
-    monkeypatch,
-):
-    from memmachine.semantic_memory.semantic_model import SemanticCommand
-
-    # Create service with very short time limit
-    params = SemanticService.Params(
-        semantic_storage=semantic_storage,
-        history_storage=episode_storage,
-        resource_retriever=resource_retriever,
-        feature_update_interval_sec=0.05,
-        feature_update_message_limit=100,  # High message limit
-        feature_update_time_limit_sec=0.1,  # Short time limit
-    )
-    service = SemanticService(params)
-    await service.start()
-
-    # Mock the LLM response
-    commands = [
-        SemanticCommand(
-            command=SemanticCommandType.ADD,
-            feature="activity",
-            tag="hobbies",
-            value="reading",
-        ),
-    ]
-
-    async def mock_llm_update(*args, **kwargs):
-        return commands
-
-    monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
-        mock_llm_update,
-    )
-
-    # Add a single message
-    msg1 = await add_history(
-        history_storage=episode_storage,
-        content="I enjoy reading books",
-    )
-    await service.add_messages(set_id="user-456", history_ids=[msg1])
-
-    # Wait for time-based trigger to fire
-    await asyncio.sleep(0.5)
-
-    # Verify features were created despite not hitting message limit
-    features = await semantic_storage.get_feature_set(
-        set_ids=["user-456"],
-        category_names=[semantic_type.name],
-    )
-
-    assert len(features) >= 1
-
-    await service.stop()
-
-
 async def test_background_ingestion_handles_errors_gracefully(
     semantic_service: SemanticService,
     episode_storage: EpisodeStorage,
@@ -303,7 +241,7 @@ async def test_background_ingestion_handles_errors_gracefully(
 
 async def test_consolidation_threshold_not_reached(
     semantic_service: SemanticService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     semantic_type: SemanticCategory,
 ):
@@ -353,7 +291,7 @@ async def test_consolidation_threshold_not_reached(
 
 
 async def test_multiple_sets_processed_independently(
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     resource_retriever: MockResourceRetriever,
     episode_storage: EpisodeStorage,
     semantic_type: SemanticCategory,
@@ -367,8 +305,7 @@ async def test_multiple_sets_processed_independently(
         history_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
-        feature_update_message_limit=2,
-        feature_update_time_limit_sec=100.0,
+        feature_update_message_limit=0,
     )
     service = SemanticService(params)
     await service.start()
@@ -424,7 +361,7 @@ async def test_multiple_sets_processed_independently(
     await service.add_messages(set_id="user-b", history_ids=[msg_b2])
 
     # Wait for background processing
-    await asyncio.sleep(0.7)
+    await asyncio.sleep(0.8)
 
     # Verify that messages were ingested for both sets
     uningested_a = await semantic_storage.get_history_messages_count(

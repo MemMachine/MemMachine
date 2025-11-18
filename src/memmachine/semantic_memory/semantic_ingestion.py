@@ -25,7 +25,7 @@ from memmachine.semantic_memory.semantic_model import (
     SemanticFeature,
     SetIdT,
 )
-from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class IngestionService:
     class Params(BaseModel):
         """Dependencies and tuning knobs for the ingestion workflow."""
 
-        semantic_storage: InstanceOf[SemanticStorageBase]
+        semantic_storage: InstanceOf[SemanticStorage]
         history_store: InstanceOf[EpisodeStorage]
         resource_retriever: InstanceOf[ResourceRetriever]
         consolidated_threshold: int = 20

@@ -26,14 +26,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, mapped_column
+from sqlalchemy.orm import DeclarativeBase, aliased, mapped_column
 from sqlalchemy.sql import Select, func
 
 from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
-    SemanticStorageBase,
+    SemanticStorage,
 )
 
 
@@ -162,7 +162,7 @@ async def apply_alembic_migrations(engine: AsyncEngine) -> None:
         await conn.run_sync(run_migrations)
 
 
-class SqlAlchemyPgVectorSemanticStorage(SemanticStorageBase):
+class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     """Concrete SemanticStorageBase backed by PostgreSQL with pgvector."""
 
     def __init__(self, sqlalchemy_engine: AsyncEngine) -> None:
@@ -293,7 +293,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorageBase):
         feature_names: list[str] | None = None,
         tags: list[str] | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
@@ -341,7 +341,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorageBase):
         tags: list[str] | None = None,
         thresh: int | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
     ) -> None:
         stmt = delete(Feature)
 
@@ -482,7 +482,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorageBase):
         tags: list[str] | None = None,
         thresh: int | None = None,
         k: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
     ) -> Select:
         def _apply_feature_id_filter(
             _stmt: Select,
@@ -557,3 +557,30 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorageBase):
             citations.setdefault(feature_id, []).append(history_id)
 
         return citations
+
+    async def get_history_set_ids(
+        self,
+        *,
+        min_uningested_messages: int | None = None,
+    ) -> list[SetIdT]:
+        stmt = select(SetIngestedHistory.set_id).distinct()
+
+        if min_uningested_messages is not None and min_uningested_messages > 0:
+            inner = aliased(SetIngestedHistory)
+
+            count_uningested = (
+                select(func.count(inner.set_id))
+                .where(
+                    inner.set_id == SetIngestedHistory.set_id,  # correlate on set_id
+                    inner.ingested.is_(False),
+                )
+                .scalar_subquery()
+            )
+
+            stmt = stmt.where(count_uningested >= min_uningested_messages)
+
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            set_ids = result.scalars().all()
+
+        return TypeAdapter(list[SetIdT]).validate_python(set_ids)

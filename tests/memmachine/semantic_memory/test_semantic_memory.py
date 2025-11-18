@@ -13,7 +13,7 @@ from memmachine.semantic_memory.semantic_model import (
     SemanticCategory,
     SemanticPrompt,
 )
-from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     MockResourceRetriever,
 )
@@ -106,7 +106,7 @@ def resource_retriever(resources: Resources) -> MockResourceRetriever:
 
 @pytest_asyncio.fixture
 async def semantic_service(
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     resource_retriever: MockResourceRetriever,
     episode_storage: EpisodeStorage,
 ) -> SemanticService:
@@ -291,7 +291,7 @@ async def test_delete_feature_set_applies_filters(
 
 async def test_add_messages_tracks_uningested_counts(
     semantic_service: SemanticService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
 ):
     # Given a stored history message
@@ -318,7 +318,7 @@ async def test_add_messages_tracks_uningested_counts(
 
 async def test_add_message_to_sets_supports_multiple_targets(
     semantic_service: SemanticService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
 ):
     # Given a history entry

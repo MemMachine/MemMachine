@@ -7,10 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from memmachine.common.configuration import Configuration
 from memmachine.common.embedder import Embedder
 from memmachine.common.language_model import LanguageModel
-from memmachine.common.metrics_factory import MetricsFactory
-from memmachine.common.metrics_factory.prometheus_metrics_factory import (
-    PrometheusMetricsFactory,
-)
 from memmachine.common.reranker import Reranker
 from memmachine.common.resource_manager.embedder_manager import EmbedderManager
 from memmachine.common.resource_manager.language_model_manager import (
@@ -49,9 +45,6 @@ class ResourceManagerImpl:
             self._conf.reranker,
             embedder_factory=self._embedder_manager,
         )
-        self._metric_factory: dict[str, type[MetricsFactory]] = {
-            "prometheus": PrometheusMetricsFactory,
-        }
 
         self._session_data_manager: SessionDataManager | None = None
         self._episodic_memory_manager: EpisodicMemoryManager | None = None
@@ -99,10 +92,6 @@ class ResourceManagerImpl:
     async def get_reranker(self, name: str) -> Reranker:
         """Return a reranker by name."""
         return await self._reranker_manager.get_reranker(name)
-
-    async def get_metrics_factory(self, name: str) -> type[MetricsFactory] | None:
-        """Return a metrics factory by name, if available."""
-        return self._metric_factory.get(name)
 
     @property
     def session_data_manager(self) -> SessionDataManager:

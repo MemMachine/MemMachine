@@ -16,7 +16,7 @@ from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import SemanticFeature
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
-    SemanticStorageBase,
+    SemanticStorage,
 )
 
 
@@ -67,7 +67,7 @@ def _desanitize_identifier(value: str) -> str:
     return re.sub(r"_u([0-9A-Fa-f]+)_", _replace, value)
 
 
-class Neo4jSemanticStorage(SemanticStorageBase):
+class Neo4jSemanticStorage(SemanticStorage):
     """Concrete :class:`SemanticStorageBase` backed by Neo4j."""
 
     _VECTOR_INDEX_PREFIX = "feature_embedding_index"
@@ -355,7 +355,7 @@ class Neo4jSemanticStorage(SemanticStorageBase):
         feature_names: list[str] | None = None,
         tags: list[str] | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
@@ -399,7 +399,7 @@ class Neo4jSemanticStorage(SemanticStorageBase):
         tags: list[str] | None = None,
         thresh: int | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
     ) -> None:
         entries = await self.get_feature_set(
             set_ids=set_ids,
@@ -492,6 +492,36 @@ class Neo4jSemanticStorage(SemanticStorageBase):
         query.append("RETURN count(*) AS cnt")
         records, _, _ = await self._driver.execute_query("\n".join(query), **params)
         return int(records[0]["cnt"]) if records else 0
+
+    async def get_history_set_ids(
+        self,
+        *,
+        min_uningested_messages: int | None = None,
+    ) -> list[str]:
+        if min_uningested_messages is None or min_uningested_messages <= 0:
+            records, _, _ = await self._driver.execute_query(
+                """
+                MATCH (h:SetHistory)
+                RETURN DISTINCT h.set_id AS set_id
+                """,
+            )
+        else:
+            records, _, _ = await self._driver.execute_query(
+                """
+                MATCH (h:SetHistory)
+                WITH h.set_id AS set_id,
+                     sum(CASE WHEN coalesce(h.is_ingested, false) = false THEN 1 ELSE 0 END) AS uningested_count
+                WHERE uningested_count >= $min_uningested_messages
+                RETURN set_id
+                """,
+                min_uningested_messages=min_uningested_messages,
+            )
+
+        return [
+            str(record.get("set_id"))
+            for record in records
+            if record.get("set_id") is not None
+        ]
 
     async def add_history_to_set(self, set_id: str, history_id: EpisodeIdT) -> None:
         await self._driver.execute_query(
@@ -597,7 +627,7 @@ class Neo4jSemanticStorage(SemanticStorageBase):
         feature_names: list[str] | None,
         tags: list[str] | None,
         limit: int | None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts,
+        vector_search_opts: SemanticStorage.VectorSearchOpts,
     ) -> list[_FeatureEntry]:
         embedding_array = np.array(vector_search_opts.query_embedding, dtype=float)
         embedding = [float(x) for x in embedding_array.tolist()]

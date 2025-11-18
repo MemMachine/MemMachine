@@ -1,11 +1,11 @@
 import numpy as np
 import pytest_asyncio
 
-from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
 
 @pytest_asyncio.fixture
-async def with_multiple_features(semantic_storage: SemanticStorageBase):
+async def with_multiple_features(semantic_storage: SemanticStorage):
     idx_a = await semantic_storage.add_feature(
         set_id="user",
         category_name="test_type",
@@ -45,7 +45,7 @@ async def with_multiple_features(semantic_storage: SemanticStorageBase):
 
 
 @pytest_asyncio.fixture
-async def with_multiple_sets(semantic_storage: SemanticStorageBase):
+async def with_multiple_sets(semantic_storage: SemanticStorage):
     idx_a = await semantic_storage.add_feature(
         set_id="user1",
         category_name="default",

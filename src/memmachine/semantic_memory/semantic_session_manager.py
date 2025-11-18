@@ -30,21 +30,21 @@ class SemanticSessionManager:
 
     async def add_message(
         self,
-        history_ids: list[EpisodeIdT],
+        episode_ids: list[EpisodeIdT],
         session_data: SessionData,
         memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
     ) -> None:
-        if len(history_ids) == 0:
+        if len(episode_ids) == 0:
             return
 
         set_ids = self._get_set_ids(session_data, memory_type)
 
-        if len(history_ids) == 1:
-            await self._semantic_service.add_message_to_sets(history_ids[0], set_ids)
+        if len(episode_ids) == 1:
+            await self._semantic_service.add_message_to_sets(episode_ids[0], set_ids)
             return
 
         tasks = [
-            self._semantic_service.add_messages(s_id, history_ids) for s_id in set_ids
+            self._semantic_service.add_messages(s_id, episode_ids) for s_id in set_ids
         ]
 
         await asyncio.gather(*tasks)

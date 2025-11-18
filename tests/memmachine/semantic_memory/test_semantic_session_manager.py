@@ -26,7 +26,7 @@ from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     MockResourceRetriever,
 )
 from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import (
-    SemanticStorageBase,
+    SemanticStorage,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -117,7 +117,7 @@ def resource_retriever(resources: Resources) -> MockResourceRetriever:
 
 @pytest_asyncio.fixture
 async def semantic_service(
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
 ):
@@ -172,7 +172,7 @@ def mock_semantic_service() -> MagicMock:
 @pytest_asyncio.fixture
 async def mock_session_manager(
     mock_semantic_service: MagicMock,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
 ) -> SemanticSessionManager:
     return SemanticSessionManager(
         semantic_service=mock_semantic_service,
@@ -182,7 +182,7 @@ async def mock_session_manager(
 async def test_add_message_records_history_and_uningested_counts(
     session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     session_data,
 ):
@@ -194,8 +194,7 @@ async def test_add_message_records_history_and_uningested_counts(
         producer_role="dev",
     )
     await session_manager.add_message(
-        session_data=session_data,
-        history_ids=[history_id],
+        session_data=session_data, episode_ids=[history_id]
     )
 
     # When inspecting storage for each isolation level
@@ -257,7 +256,7 @@ async def test_search_returns_relevant_features(
 
 async def test_add_feature_applies_requested_isolation(
     session_manager: SemanticSessionManager,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     spy_embedder: SpyEmbedder,
     session_data,
 ):
@@ -288,7 +287,7 @@ async def test_add_feature_applies_requested_isolation(
 async def test_delete_feature_set_removes_filtered_entries(
     session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     session_data,
 ):
     # Given profile and session features with distinct tags
@@ -332,8 +331,7 @@ async def test_add_message_uses_all_isolations(
 ):
     history_id = "abc"
     await mock_session_manager.add_message(
-        session_data=session_data,
-        history_ids=[history_id],
+        session_data=session_data, episode_ids=[history_id]
     )
 
     mock_semantic_service.add_message_to_sets.assert_awaited_once_with(
@@ -348,7 +346,7 @@ async def test_add_message_with_session_only_isolation(
     session_data,
 ):
     await mock_session_manager.add_message(
-        history_ids=["abc"],
+        episode_ids=["abc"],
         session_data=session_data,
         memory_type=[IsolationType.SESSION],
     )

@@ -15,7 +15,7 @@ from memmachine.semantic_memory.semantic_model import (
 )
 
 
-class SemanticStorageBase(ABC):
+class SemanticStorage(ABC):
     """Base class for semantic storage backends."""
 
     @abstractmethod
@@ -165,4 +165,13 @@ class SemanticStorageBase(ABC):
         history_ids: list[EpisodeIdT],
     ) -> None:
         """Mark the provided history messages as ingested."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_history_set_ids(
+        self,
+        *,
+        min_uningested_messages: int | None = None,
+    ) -> list[SetIdT]:
+        """Return all set id's that match the specified filters."""
         raise NotImplementedError

@@ -14,7 +14,7 @@ from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import SemanticFeature
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
-    SemanticStorageBase,
+    SemanticStorage,
 )
 
 
@@ -45,7 +45,7 @@ class _FeatureEntry:
     updated_at: datetime = field(default_factory=_utcnow)
 
 
-class InMemorySemanticStorage(SemanticStorageBase):
+class InMemorySemanticStorage(SemanticStorage):
     """In-memory implementation of :class:`SemanticStorageBase` used for testing."""
 
     def __init__(self):
@@ -166,7 +166,7 @@ class InMemorySemanticStorage(SemanticStorageBase):
         feature_names: list[str] | None = None,
         tags: list[str] | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
@@ -194,7 +194,7 @@ class InMemorySemanticStorage(SemanticStorageBase):
         tags: list[str] | None = None,
         thresh: int | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
     ):
         async with self._lock:
             to_remove = self._filter_features(
@@ -259,6 +259,25 @@ class InMemorySemanticStorage(SemanticStorageBase):
             rows = self._history_rows_for_sets(set_ids)
             filtered_rows = self._filter_history_rows(rows, is_ingested)
             return len(filtered_rows)
+
+    async def get_history_set_ids(
+        self,
+        *,
+        min_uningested_messages: int | None = None,
+    ) -> list[str]:
+        async with self._lock:
+            if min_uningested_messages is None or min_uningested_messages <= 0:
+                return list(self._set_history_map.keys())
+
+            set_ids: list[str] = []
+            for set_id, history_map in self._set_history_map.items():
+                uningested_count = sum(
+                    1 for ingested in history_map.values() if not ingested
+                )
+                if uningested_count >= min_uningested_messages:
+                    set_ids.append(set_id)
+
+            return set_ids
 
     def _handle_set_change(
         self,
@@ -417,7 +436,7 @@ class InMemorySemanticStorage(SemanticStorageBase):
         feature_names: list[str] | None,
         tags: list[str] | None,
         k: int | None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None,
         tag_threshold: int | None,
     ) -> list[_FeatureEntry]:
         entries = list(self._features_by_id.values())
@@ -468,7 +487,7 @@ class InMemorySemanticStorage(SemanticStorageBase):
     def _apply_vector_filter(
         self,
         entries: list[_FeatureEntry],
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None,
     ) -> list[_FeatureEntry]:
         if vector_search_opts is None:
             return sorted(entries, key=lambda e: (e.created_at, e.id))

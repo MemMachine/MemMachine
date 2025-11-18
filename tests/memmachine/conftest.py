@@ -11,10 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
 
-from memmachine.common.configuration.language_model_conf import (
-    AmazonBedrockLanguageModelConf,
-    OpenAIResponsesLanguageModelConf,
-)
 from memmachine.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
@@ -22,12 +18,15 @@ from memmachine.common.embedder.openai_embedder import (
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.language_model.amazon_bedrock_language_model import (
     AmazonBedrockLanguageModel,
+    AmazonBedrockLanguageModelParams,
 )
 from memmachine.common.language_model.openai_chat_completions_language_model import (
     OpenAIChatCompletionsLanguageModel,
+    OpenAIChatCompletionsLanguageModelParams,
 )
 from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
+    OpenAIResponsesLanguageModelParams,
 )
 from memmachine.episode_store.episode_sqlalchemy_store import (
     BaseHistoryStore,
@@ -105,10 +104,10 @@ def openai_embedder(openai_client, openai_integration_config):
 
 
 @pytest.fixture(scope="session")
-def openai_llm_model(openai_integration_config):
+def openai_llm_model(openai_client, openai_integration_config):
     return OpenAIResponsesLanguageModel(
-        OpenAIResponsesLanguageModelConf(
-            api_key=openai_integration_config["api_key"],
+        OpenAIResponsesLanguageModelParams(
+            client=openai_client,
             model=openai_integration_config["llm_model"],
         ),
     )
@@ -128,13 +127,25 @@ def openai_chat_completions_llm_config():
 
 
 @pytest.fixture(scope="session")
-def openai_chat_completions_llm_model(openai_chat_completions_llm_config):
+def openai_compat_client(openai_chat_completions_llm_config):
+    import openai
+
+    openai_compat_client = openai.AsyncOpenAI(
+        api_key=openai_chat_completions_llm_config["api_key"],
+        base_url=openai_chat_completions_llm_config["api_url"],
+    )
+    return openai_compat_client
+
+
+@pytest.fixture(scope="session")
+def openai_chat_completions_llm_model(
+    openai_compat_client, openai_chat_completions_llm_config
+):
     return OpenAIChatCompletionsLanguageModel(
-        {
-            "base_url": openai_chat_completions_llm_config["api_url"],
-            "model": openai_chat_completions_llm_config["model"],
-            "api_key": openai_chat_completions_llm_config["api_key"],
-        },
+        OpenAIChatCompletionsLanguageModelParams(
+            client=openai_compat_client,
+            model=openai_chat_completions_llm_config["model"],
+        ),
     )
 
 
@@ -153,13 +164,23 @@ def bedrock_integration_config():
 
 
 @pytest.fixture(scope="session")
-def bedrock_llm_model(bedrock_integration_config):
+def boto3_bedrock_client(bedrock_integration_config):
+    import boto3
+
+    return boto3.client(
+        "bedrock-runtime",
+        aws_access_key_id=bedrock_integration_config["aws_access_key_id"],
+        aws_secret_access_key=bedrock_integration_config["aws_secret_access_key"],
+    )
+
+
+@pytest.fixture(scope="session")
+def bedrock_llm_model(boto3_bedrock_client, bedrock_integration_config):
     return AmazonBedrockLanguageModel(
-        AmazonBedrockLanguageModelConf(
-            aws_access_key_id=bedrock_integration_config["aws_access_key_id"],
-            aws_secret_access_key=bedrock_integration_config["aws_secret_access_key"],
+        AmazonBedrockLanguageModelParams(
+            client=boto3_bedrock_client,
             model_id=bedrock_integration_config["model"],
-        ),
+        )
     )
 
 

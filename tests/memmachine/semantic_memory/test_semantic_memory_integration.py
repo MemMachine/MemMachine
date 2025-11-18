@@ -24,6 +24,7 @@ from memmachine.semantic_memory.semantic_session_resource import (
     SessionIdManager,
     SessionResourceRetriever,
 )
+from memmachine.server.prompt.profile_prompt import UserProfileSemanticCategory
 
 
 @pytest.fixture
@@ -45,6 +46,20 @@ def storage(pgvector_semantic_storage):
 @pytest.fixture
 def session_id_manager():
     return SessionIdManager()
+
+
+@pytest.fixture
+def session_types():
+    return [
+        UserProfileSemanticCategory,
+    ]
+
+
+@pytest.fixture
+def profile_types():
+    return [
+        UserProfileSemanticCategory,
+    ]
 
 
 @pytest.fixture
@@ -143,7 +158,7 @@ class TestLongMemEvalIngestion:
                 )
                 await semantic_memory.add_message(
                     session_data=session_data,
-                    history_ids=[h_id],
+                    episode_ids=[h_id],
                 )
 
     @staticmethod

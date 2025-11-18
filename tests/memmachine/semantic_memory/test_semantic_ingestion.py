@@ -20,7 +20,7 @@ from memmachine.semantic_memory.semantic_model import (
     SemanticFeature,
     SemanticPrompt,
 )
-from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     MockEmbedder,
     MockResourceRetriever,
@@ -83,7 +83,7 @@ def resource_retriever(resources: Resources) -> MockResourceRetriever:
 
 @pytest_asyncio.fixture
 async def ingestion_service(
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
 ) -> IngestionService:
@@ -99,7 +99,7 @@ async def ingestion_service(
 @pytest.mark.asyncio
 async def test_process_single_set_returns_when_no_messages(
     ingestion_service: IngestionService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     resource_retriever: MockResourceRetriever,
 ):
     await ingestion_service._process_single_set("user-123")
@@ -118,7 +118,7 @@ async def test_process_single_set_returns_when_no_messages(
 @pytest.mark.asyncio
 async def test_process_single_set_applies_commands(
     ingestion_service: IngestionService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     embedder_double: MockEmbedder,
     semantic_category: SemanticCategory,
@@ -196,7 +196,7 @@ async def test_process_single_set_applies_commands(
 @pytest.mark.asyncio
 async def test_consolidation_groups_by_tag(
     ingestion_service: IngestionService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resources: Resources,
     semantic_category: SemanticCategory,
@@ -244,7 +244,7 @@ async def test_consolidation_groups_by_tag(
 @pytest.mark.asyncio
 async def test_deduplicate_features_merges_and_relabels(
     ingestion_service: IngestionService,
-    semantic_storage: SemanticStorageBase,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resources: Resources,
     semantic_category: SemanticCategory,

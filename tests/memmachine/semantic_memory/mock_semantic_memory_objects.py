@@ -11,10 +11,10 @@ from memmachine.semantic_memory.semantic_model import (
     Resources,
     SemanticFeature,
 )
-from memmachine.semantic_memory.storage.storage_base import SemanticStorageBase
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
 
-class MockSemanticStorage(SemanticStorageBase):
+class MockSemanticStorage(SemanticStorage):
     def __init__(self):
         self.get_history_messages_mock = AsyncMock()
         self.get_feature_set_mock = AsyncMock()
@@ -82,7 +82,7 @@ class MockSemanticStorage(SemanticStorageBase):
         feature_names: list[str] | None = None,
         tags: list[str] | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
@@ -106,7 +106,7 @@ class MockSemanticStorage(SemanticStorageBase):
         tags: list[str] | None = None,
         thresh: int | None = None,
         limit: int | None = None,
-        vector_search_opts: SemanticStorageBase.VectorSearchOpts | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
     ):
         await self.delete_feature_set_mock(
             set_ids=set_ids,
