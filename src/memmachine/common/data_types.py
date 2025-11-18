@@ -2,10 +2,7 @@
 
 from enum import Enum
 
-from pydantic import JsonValue
-
 FilterablePropertyValue = bool | int | str
-JSONValue = JsonValue
 
 
 class SimilarityMetric(Enum):

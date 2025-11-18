@@ -6,7 +6,9 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from memmachine.common.data_types import FilterablePropertyValue, JSONValue
+from pydantic import JsonValue
+
+from memmachine.common.data_types import FilterablePropertyValue
 
 
 class ContentType(Enum):
@@ -28,7 +30,7 @@ class Episode:
     filterable_properties: dict[str, FilterablePropertyValue] = field(
         default_factory=dict,
     )
-    user_metadata: JSONValue = None
+    user_metadata: JsonValue = None
 
     def __eq__(self, other: object) -> bool:
         """Compare episodes by UUID."""

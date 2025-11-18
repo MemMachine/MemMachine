@@ -2,7 +2,7 @@
 
 from datetime import UTC
 
-from pydantic import AwareDatetime, validate_call
+from pydantic import AwareDatetime, JsonValue, validate_call
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
 
-from memmachine.common.data_types import JSONValue
 from memmachine.episode_store.episode_model import Episode, EpisodeType
 from memmachine.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
 
@@ -122,7 +121,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         producer_role: str,
         produced_for_id: str | None = None,
         episode_type: EpisodeType | None = None,
-        metadata: dict[str, JSONValue] | None = None,
+        metadata: dict[str, JsonValue] | None = None,
         created_at: AwareDatetime | None = None,
     ) -> EpisodeIdT:
         stmt = (
@@ -265,7 +264,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         episode_types: list[EpisodeType] | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JSONValue] | None = None,
+        metadata: dict[str, JsonValue] | None = None,
     ) -> None:
         stmt = delete(History)
 
