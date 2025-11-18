@@ -21,7 +21,7 @@ def bm25_reranker_conf() -> dict:
             "k1": 1.5,
             "b": 0.75,
             "epsilon": 0.25,
-            "tokenize": "default",
+            "tokenizer": "default",
         },
     }
 
@@ -102,7 +102,7 @@ def test_valid_bm25_reranker_conf(bm25_reranker_conf):
     assert conf.k1 == 1.5
     assert conf.b == 0.75
     assert conf.epsilon == 0.25
-    assert conf.tokenize == "default"
+    assert conf.tokenizer == "default"
 
 
 def test_valid_identity_reranker_conf(identity_reranker_conf):
