@@ -55,10 +55,7 @@ class StoragesConf(BaseModel):
     @classmethod
     def parse_storage_conf(cls, input_dict: dict) -> Self:
         """Parse storage configuration from a raw mapping."""
-        storage = input_dict
-        for key in ["storage", "Storage"]:
-            if key in input_dict:
-                storage = input_dict.get(key, {})
+        storage = input_dict.get("storages", {})
 
         neo4j_dict, relational_db_dict = {}, {}
 

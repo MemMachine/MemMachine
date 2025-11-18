@@ -94,9 +94,7 @@ class RerankersConf(BaseModel):
     @classmethod
     def parse_reranker_conf(cls, input_dict: dict) -> Self:
         """Parse reranker configuration from a raw mapping."""
-        reranker = input_dict
-        if "reranker" in input_dict:
-            reranker = input_dict.get("reranker")
+        reranker = input_dict.get("rerankers", {})
 
         bm25_dict = {}
         amazon_bedrock_dict = {}
@@ -104,6 +102,7 @@ class RerankersConf(BaseModel):
         embedder_dict = {}
         identity_dict = {}
         rrf_hybrid_dict = {}
+
         for reranker_id, value in reranker.items():
             provider = value.get("provider")
             conf = value.get("config", {})

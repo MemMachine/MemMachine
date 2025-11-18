@@ -148,9 +148,10 @@ class LanguageModelsConf(BaseModel):
     @classmethod
     def parse_language_model_conf(cls, input_dict: dict) -> Self:
         """Parse language model config definitions into typed models."""
-        lm = input_dict.get("language_model", {})
+        lm = input_dict.get("language_models", {})
 
         openai_dict, aws_bedrock_dict, openai_chat_completions_dict = {}, {}, {}
+
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
             conf = resource_definition.get("config", {})

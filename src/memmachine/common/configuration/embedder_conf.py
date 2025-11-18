@@ -102,9 +102,7 @@ class EmbeddersConf(BaseModel):
     @classmethod
     def parse_embedder_conf(cls, input_dict: dict) -> Self:
         """Parse embedder config by provider and return the structured model."""
-        embedder = input_dict
-        if "embedder" in embedder:
-            embedder = embedder["embedder"]
+        embedder = input_dict.get("embedders", {})
 
         amazon_bedrock_dict = {}
         openai_dict = {}
