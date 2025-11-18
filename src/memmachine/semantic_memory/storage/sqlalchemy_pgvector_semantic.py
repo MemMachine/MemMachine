@@ -474,6 +474,55 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         return stmt
 
+    def _apply_vector_search_opts(
+            self,
+            *,
+            stmt: Select[Any],
+            vector_search_opts: SemanticStorage.VectorSearchOpts,
+    ) -> Select[Any]:
+        if vector_search_opts.min_distance is not None:
+            threshold = 1 - vector_search_opts.min_distance
+            stmt = stmt.where(
+                Feature.embedding.cosine_distance(
+                    vector_search_opts.query_embedding,
+                )
+                <= threshold,
+            )
+
+        stmt = stmt.order_by(
+            Feature.embedding.cosine_distance(
+                vector_search_opts.query_embedding,
+            ).asc(),
+        )
+
+        return stmt
+
+
+    def _apply_feature_select_filter(
+        self,
+        stmt: StmtT,
+        *,
+        k: int | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
+    ) -> StmtT:
+        if k is not None:
+            if type(stmt) is not Select:
+                raise RuntimeError("k is only supported for select statements")
+            stmt = stmt.limit(k)
+
+        if vector_search_opts is not None:
+            if type(stmt) is not Select:
+                raise RuntimeError(
+                    "vector_search_opts is only supported for select statements"
+                )
+
+            stmt = self._apply_vector_search_opts(
+                stmt=stmt,
+                vector_search_opts=vector_search_opts,
+            )
+
+        return stmt
+
     def _apply_feature_filter(
         self,
         stmt: StmtT,
@@ -503,31 +552,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             if feature_names is not None and len(feature_names) > 0:
                 _stmt = _stmt.where(Feature.feature.in_(feature_names))
 
-            if k is not None:
-                if type(_stmt) is not Select:
-                    raise RuntimeError("k is only supported for select statements")
-                _stmt = _stmt.limit(k)
-
-            if vector_search_opts is not None:
-                if type(_stmt) is not Select:
-                    raise RuntimeError(
-                        "vector_search_opts is only supported for select statements"
-                    )
-
-                if vector_search_opts.min_distance is not None:
-                    threshold = 1 - vector_search_opts.min_distance
-                    _stmt = _stmt.where(
-                        Feature.embedding.cosine_distance(
-                            vector_search_opts.query_embedding,
-                        )
-                        <= threshold,
-                    )
-
-                _stmt = _stmt.order_by(
-                    Feature.embedding.cosine_distance(
-                        vector_search_opts.query_embedding,
-                    ).asc(),
-                )
+            _stmt = self._apply_feature_select_filter(
+                _stmt,
+                k=k,
+                vector_search_opts=vector_search_opts,
+            )
 
             return _stmt
 

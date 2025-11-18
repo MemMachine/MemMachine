@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +38,13 @@ class _FeatureEntry:
     citations: list[EpisodeIdT]
     created_at_ts: float
     updated_at_ts: float
+
+
+def _required_str_prop(props: Mapping[str, Any], key: str) -> str:
+    value = props.get(key)
+    if value is None:
+        raise ValueError(f"Feature node missing '{key}' property")
+    return str(value)
 
 
 def _sanitize_identifier(value: str) -> str:
@@ -585,11 +593,11 @@ class Neo4jSemanticStorage(SemanticStorage):
         citations = [EpisodeIdT(cid) for cid in props.get("citations", [])]
         return _FeatureEntry(
             feature_id=feature_id,
-            set_id=props.get("set_id"),
-            category_name=props.get("category_name"),
-            tag=props.get("tag"),
-            feature_name=props.get("feature"),
-            value=props.get("value"),
+            set_id=_required_str_prop(props, "set_id"),
+            category_name=_required_str_prop(props, "category_name"),
+            tag=_required_str_prop(props, "tag"),
+            feature_name=_required_str_prop(props, "feature"),
+            value=_required_str_prop(props, "value"),
             embedding=embedding,
             metadata=props.get("metadata") or None,
             citations=citations,
@@ -786,7 +794,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             return
         await self._driver.execute_query(f"DROP INDEX {name} IF EXISTS")
 
-    def _set_id_from_record(self, record: dict[str, Any]) -> str | None:
+    def _set_id_from_record(self, record: Mapping[str, Any]) -> str | None:
         labels = record.get("labelsOrTypes") or []
         for label in labels or []:
             set_id = self._set_id_from_label(label)
@@ -795,7 +803,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         return None
 
     @staticmethod
-    def _dimensions_from_record(record: dict[str, Any]) -> int | None:
+    def _dimensions_from_record(record: Mapping[str, Any]) -> int | None:
         options = record.get("options") or {}
         config = options.get("indexConfig") or {}
         dimensions = config.get("vector.dimensions")
