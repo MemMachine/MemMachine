@@ -63,7 +63,7 @@ class StorageConf(BaseModel):
         neo4j_dict, relational_db_dict = {}, {}
 
         for storage_id, conf in storage.items():
-            provider = conf.get("provider").lower()
+            provider = conf.get("provider")
             if provider == "neo4j":
                 neo4j_dict[storage_id] = Neo4JConf(**conf)
             elif provider == "postgres":

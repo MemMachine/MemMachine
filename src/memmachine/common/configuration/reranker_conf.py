@@ -105,7 +105,7 @@ class RerankerConf(BaseModel):
         identity_dict = {}
         rrf_hybrid_dict = {}
         for reranker_id, value in reranker.items():
-            provider = value.get("provider").lower()
+            provider = value.get("provider")
             conf = value.get("config", {})
             if provider == "bm25":
                 bm25_dict[reranker_id] = BM25RerankerConf(**conf)
