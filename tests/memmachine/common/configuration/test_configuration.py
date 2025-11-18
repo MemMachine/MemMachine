@@ -102,7 +102,7 @@ def test_load_sample_cpu_config():
     conf = load_config_yml_file(str(config_path))
     assert conf.logging.level == LogLevel.INFO
     assert conf.sessiondb.uri == "sqlitetest.db"
-    assert conf.model.openai_compatible_confs["ollama_model"].model == "llama3"
+    assert conf.model.openai_chat_completions_confs["ollama_model"].model == "llama3"
     postgres_conf = conf.storage.relational_db_confs["profile_storage"]
     assert postgres_conf.password == SecretStr("<YOUR_PASSWORD_HERE>")
     assert conf.semantic_memory.database == "profile_storage"

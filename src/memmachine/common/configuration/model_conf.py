@@ -154,14 +154,14 @@ class LanguageModelConf(BaseModel):
                 lm = input_dict.get(key, {})
                 break
 
-        openai_dict, aws_bedrock_dict, openai_compatible_dict = {}, {}, {}
+        openai_dict, aws_bedrock_dict, openai_chat_completions_dict = {}, {}, {}
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
             conf = resource_definition.get("config", {})
             if provider == "openai-responses":
                 openai_dict[lm_id] = OpenAIResponsesLanguageModelConf(**conf)
             elif provider == "openai-chat-completions":
-                openai_compatible_dict[lm_id] = OpenAIChatCompletionsLanguageModelConf(
+                openai_chat_completions_dict[lm_id] = OpenAIChatCompletionsLanguageModelConf(
                     **conf,
                 )
             elif provider == "amazon-bedrock":
@@ -174,5 +174,5 @@ class LanguageModelConf(BaseModel):
         return cls(
             openai_confs=openai_dict,
             aws_bedrock_confs=aws_bedrock_dict,
-            openai_compatible_confs=openai_compatible_dict,
+            openai_chat_completions_confs=openai_chat_completions_dict,
         )

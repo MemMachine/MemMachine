@@ -32,7 +32,7 @@ def aws_model_conf() -> dict:
 @pytest.fixture
 def ollama_model_conf() -> dict:
     return {
-        "provider": "openai-compatible",
+        "provider": "openai-chat-completions",
         "model": "llama3",
         "api_key": "EMPTY",
         "base_url": "http://host.docker.internal:11434/v1",
@@ -66,7 +66,7 @@ def test_valid_aws_model(aws_model_conf):
     assert conf.max_retry_interval_seconds == 120
 
 
-def test_valid_openai_compatible_model(ollama_model_conf):
+def test_valid_openai_chat_completions_model(ollama_model_conf):
     conf = OpenAIChatCompletionsLanguageModelConf(**ollama_model_conf)
     assert conf.model == "llama3"
     assert conf.api_key == SecretStr("EMPTY")
@@ -85,9 +85,9 @@ def test_full_language_model_conf(full_model_conf):
     aws_conf = conf.aws_bedrock_confs["aws_model"]
     assert aws_conf.region == "us-west-2"
 
-    assert "ollama_model" in conf.openai_compatible_confs
-    compatible_conf = conf.openai_compatible_confs["ollama_model"]
-    assert compatible_conf.model == "llama3"
+    assert "ollama_model" in conf.openai_chat_completions_confs
+    chat_completions_conf = conf.openai_chat_completions_confs["ollama_model"]
+    assert chat_completions_conf.model == "llama3"
 
 
 def test_missing_required_field_openai_model():
@@ -97,9 +97,9 @@ def test_missing_required_field_openai_model():
     assert "field required" in str(exc_info.value).lower()
 
 
-def test_invalid_base_url_in_openai_compatible_model():
+def test_invalid_base_url_in_openai_chat_completions_model():
     conf_dict = {
-        "provider": "openai-compatible",
+        "provider": "openai-chat-completions",
         "model": "llama3",
         "api_key": "EMPTY",
         "base_url": "invalid-url",

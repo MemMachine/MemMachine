@@ -115,7 +115,7 @@ def openai_llm_model(openai_integration_config):
 
 
 @pytest.fixture(scope="session")
-def openai_compatible_llm_config():
+def openai_chat_completions_llm_config():
     ollama_host = os.environ.get("OLLAMA_HOST")
     if not ollama_host:
         pytest.skip("OLLAMA_HOST environment variable not set")
@@ -128,12 +128,12 @@ def openai_compatible_llm_config():
 
 
 @pytest.fixture(scope="session")
-def openai_compatible_llm_model(openai_compatible_llm_config):
+def openai_chat_completions_llm_model(openai_chat_completions_llm_config):
     return OpenAIChatCompletionsLanguageModel(
         {
-            "base_url": openai_compatible_llm_config["api_url"],
-            "model": openai_compatible_llm_config["model"],
-            "api_key": openai_compatible_llm_config["api_key"],
+            "base_url": openai_chat_completions_llm_config["api_url"],
+            "model": openai_chat_completions_llm_config["model"],
+            "api_key": openai_chat_completions_llm_config["api_key"],
         },
     )
 
@@ -167,7 +167,7 @@ def bedrock_llm_model(bedrock_integration_config):
     params=[
         pytest.param("bedrock", marks=pytest.mark.integration),
         pytest.param("openai", marks=pytest.mark.integration),
-        pytest.param("openai_compatible", marks=pytest.mark.integration),
+        pytest.param("openai_chat_completions", marks=pytest.mark.integration),
     ],
 )
 def real_llm_model(request):
@@ -176,8 +176,8 @@ def real_llm_model(request):
             return request.getfixturevalue("bedrock_llm_model")
         case "openai":
             return request.getfixturevalue("openai_llm_model")
-        case "openai_compatible":
-            return request.getfixturevalue("openai_compatible_llm_model")
+        case "openai_chat_completions":
+            return request.getfixturevalue("openai_chat_completions_llm_model")
         case _:
             raise ValueError(f"Unknown LLM model type: {request.param}")
 

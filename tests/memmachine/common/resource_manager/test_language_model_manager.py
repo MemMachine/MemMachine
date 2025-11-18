@@ -70,7 +70,7 @@ async def test_build_aws_bedrock_model(mock_conf):
 
 
 @pytest.mark.asyncio
-async def test_build_openai_compatible_model(mock_conf):
+async def test_build_openai_chat_completions_model(mock_conf):
     builder = LanguageModelManager(mock_conf)
     await builder.build_all()
 
