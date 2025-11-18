@@ -2,27 +2,25 @@ logging:
   path: /tmp/memory_log
   level: info #| debug | error
 
-long_term_memory:
-  embedder: openai_embedder
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
-
-SessionDB:
-  uri: sqlitetest.db
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
 
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
   database: profile_storage
 
-sessionMemory:
-  model_name: openai_model
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
+session_db:
+  uri: sqlitetest.db
 
 resources:
-  storage:
+  storages:
     profile_storage:
       provider: postgres
       config:
@@ -37,7 +35,7 @@ resources:
         uri: 'bolt://localhost:7687'
         username: neo4j
         password: <YOUR_PASSWORD_HERE>
-  embedder:
+  embedders:
     openai_embedder:
       provider: openai
       config:
@@ -59,7 +57,7 @@ resources:
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
         dimensions: 768
-  language_model:
+  language_models:
     openai_model:
       provider: openai-responses
       config:
@@ -78,7 +76,7 @@ resources:
         model: "llama3"
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
-  reranker:
+  rerankers:
     my_reranker_id:
       provider: "rrf-hybrid"
       config:

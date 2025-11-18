@@ -56,7 +56,7 @@ def embedder_conf(
     ollama_embedder_conf,
 ) -> dict[str, Any]:
     return {
-        "embedder": {
+        "embedders": {
             "openai_embedder": openai_embedder_conf,
             "aws_embedder_id": aws_embedder_conf,
             "ollama_embedder": ollama_embedder_conf,

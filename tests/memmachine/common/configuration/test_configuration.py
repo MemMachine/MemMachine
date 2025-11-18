@@ -100,15 +100,21 @@ def find_config_file(filename: str, start_path: Path | None = None) -> Path:
 def test_load_sample_cpu_config():
     config_path = find_config_file("episodic_memory_config.cpu.sample")
     conf = load_config_yml_file(str(config_path))
+    resources_conf = conf.resources
     assert conf.logging.level == LogLevel.INFO
-    assert conf.sessiondb.uri == "sqlitetest.db"
-    assert conf.model.openai_chat_completions_confs["ollama_model"].model == "llama3"
-    postgres_conf = conf.storage.relational_db_confs["profile_storage"]
+    assert conf.session_db.uri == "sqlitetest.db"
+    assert (
+        resources_conf.language_models.openai_chat_completions_language_model_confs[
+            "ollama_model"
+        ].model
+        == "llama3"
+    )
+    postgres_conf = resources_conf.storages.relational_db_confs["profile_storage"]
     assert postgres_conf.password == SecretStr("<YOUR_PASSWORD_HERE>")
     assert conf.semantic_memory.database == "profile_storage"
-    embedder_conf = conf.embedder.openai["openai_embedder"]
+    embedder_conf = resources_conf.embedders.openai["openai_embedder"]
     assert embedder_conf.api_key == SecretStr("<YOUR_API_KEY>")
-    reranker_conf = conf.reranker.amazon_bedrock["aws_reranker_id"]
+    reranker_conf = resources_conf.rerankers.amazon_bedrock["aws_reranker_id"]
     assert reranker_conf.aws_access_key_id == SecretStr("<AWS_ACCESS_KEY_ID>")
     assert "Given" in conf.prompt.episode_summary_user_prompt
     assert "concise summary" in conf.prompt.episode_summary_system_prompt

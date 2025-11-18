@@ -85,7 +85,7 @@ def full_reranker_input(
     rrf_hybrid_reranker_conf,
 ) -> dict:
     return {
-        "reranker": {
+        "rerankers": {
             "my_reranker_id": rrf_hybrid_reranker_conf,
             "id_ranker_id": identity_reranker_conf,
             "bm_ranker_id": bm25_reranker_conf,

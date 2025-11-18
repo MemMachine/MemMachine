@@ -103,7 +103,7 @@ class PromptConf(BaseModel):
         """Load the system portion of the episode summary prompt."""
         file_path = self.episode_summary_system_prompt_path
         if not file_path:
-            txt = "dft_episode_summary_system_prompt.txt"
+            txt = "default_episode_summary_system_prompt.txt"
             file_path = Path(__file__).parent / txt
         return _read_txt(file_path)
 
@@ -112,7 +112,7 @@ class PromptConf(BaseModel):
         """Load the user portion of the episode summary prompt."""
         file_path = self.episode_summary_user_prompt_path
         if not file_path:
-            txt = "dft_episode_summary_user_prompt.txt"
+            txt = "default_episode_summary_user_prompt.txt"
             file_path = Path(__file__).parent / txt
         return _read_txt(file_path)
 
@@ -146,10 +146,10 @@ class ResourcesConf(BaseModel):
         """Parse nested configuration sections into typed models."""
         data = data.copy()  # avoid mutating caller's dict
         super().__init__(**data)
-        self.model = LanguageModelsConf.parse_language_model_conf(data)
-        self.storage = StoragesConf.parse_storage_conf(data)
-        self.embedder = EmbeddersConf.parse_embedder_conf(data)
-        self.reranker = RerankersConf.parse_reranker_conf(data)
+        self.embedders = EmbeddersConf.parse_embedder_conf(data)
+        self.language_models = LanguageModelsConf.parse_language_model_conf(data)
+        self.rerankers = RerankersConf.parse_reranker_conf(data)
+        self.storages = StoragesConf.parse_storage_conf(data)
 
 
 class Configuration(BaseModel):

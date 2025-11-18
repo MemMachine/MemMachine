@@ -98,7 +98,7 @@ class ResourceManagerImpl:
         """Lazy-load the session data manager."""
         if self._session_data_manager is not None:
             return self._session_data_manager
-        engine = self._storage_manager.get_sql_engine(self._conf.sessiondb.storage_id)
+        engine = self._storage_manager.get_sql_engine(self._conf.session_db.storage_id)
         self._session_data_manager = SessionDataManagerSQL(engine)
         return self._session_data_manager
 
