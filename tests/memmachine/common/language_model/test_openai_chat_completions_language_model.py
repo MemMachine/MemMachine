@@ -225,7 +225,7 @@ async def test_generate_response_with_tool_calls(
 ):
     """Test a successful call that returns tool calls."""
     mock_tool_call = mock_tool_call_impl()
-    mock_tool_call.uuid = "call_123"
+    mock_tool_call.id = "call_123"
     mock_tool_call.function.name = "get_weather"
     mock_tool_call.function.arguments = '{"location": "Boston"}'
 
