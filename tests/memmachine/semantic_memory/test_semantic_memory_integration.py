@@ -227,7 +227,7 @@ class TestLongMemEvalIngestion:
             conversation_sessions=[smoke_convos],
         )
         count = 1
-        for _i in range(60):
+        for _i in range(90):
             count = await semantic_memory.number_of_uningested_messages(
                 session_data=basic_session_data,
             )

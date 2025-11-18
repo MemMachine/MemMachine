@@ -1,7 +1,7 @@
 """SQLAlchemy-backed semantic storage implementation using pgvector."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Union, TypeVar
 
 import numpy as np
 from alembic import command
@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, aliased, mapped_column
-from sqlalchemy.sql import Select, func
+from sqlalchemy.sql import Delete, Select, func
 
 from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
@@ -35,6 +35,8 @@ from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
 )
+
+StmtT = TypeVar("StmtT", Select[Any], Delete)
 
 
 class BaseSemanticStorage(DeclarativeBase):
@@ -474,7 +476,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
     def _apply_feature_filter(
         self,
-        stmt: Select,
+        stmt: StmtT,
         *,
         set_ids: list[str] | None = None,
         category_names: list[str] | None = None,
@@ -483,10 +485,12 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         thresh: int | None = None,
         k: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
-    ) -> Select:
+    ) -> StmtT:
+        _StmtT = TypeVar("_StmtT", Select[Any], Delete)
+
         def _apply_feature_id_filter(
-            _stmt: Select,
-        ) -> Select:
+            _stmt: _StmtT,
+        ) -> _StmtT:
             if set_ids is not None and len(set_ids) > 0:
                 _stmt = _stmt.where(Feature.set_id.in_(set_ids))
 
@@ -500,9 +504,14 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
                 _stmt = _stmt.where(Feature.feature.in_(feature_names))
 
             if k is not None:
+                if type(_stmt) is not Select:
+                    raise RuntimeError("k is only supported for select statements")
                 _stmt = _stmt.limit(k)
 
             if vector_search_opts is not None:
+                if type(_stmt) is not Select:
+                    raise RuntimeError("vector_search_opts is only supported for select statements")
+
                 if vector_search_opts.min_distance is not None:
                     threshold = 1 - vector_search_opts.min_distance
                     _stmt = _stmt.where(
@@ -523,15 +532,15 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         stmt = _apply_feature_id_filter(stmt)
 
         if thresh is not None:
-            subquery = self._get_tags_with_more_than_k_features(thresh)
-            subquery = _apply_feature_id_filter(subquery)
+            subquery_stmt = self._get_tags_with_more_than_k_features(thresh)
+            subquery = _apply_feature_id_filter(subquery_stmt)
 
             stmt = stmt.where(Feature.tag_id.in_(subquery))
 
         return stmt
 
     @staticmethod
-    def _get_tags_with_more_than_k_features(k: int) -> Select:
+    def _get_tags_with_more_than_k_features(k: int) -> Select[Any]:
         return select(Feature.tag_id).group_by(Feature.tag_id).having(func.count() >= k)
 
     async def _load_feature_citations(

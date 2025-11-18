@@ -9,6 +9,7 @@ information extraction and a vector database for semantic search capabilities.
 
 import asyncio
 import logging
+from asyncio import Task
 from typing import Any
 
 import numpy as np
@@ -63,7 +64,7 @@ class SemanticService:
 
         self._feature_update_message_limit = params.feature_update_message_limit
 
-        self._ingestion_task = None
+        self._ingestion_task: Task | None = None
         self._is_shutting_down = False
         self._debug_fail_loudly = params.debug_fail_loudly
 

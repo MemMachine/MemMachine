@@ -49,7 +49,7 @@ class StructuredSemanticPrompt(BaseModel):
     def update_prompt(self) -> str:
         return semantic_prompt_template.build_update_prompt(
             tags=self.tags,
-            description=self.description,
+            description=self.description if self.description else "",
         )
 
     @property

@@ -446,22 +446,22 @@ def get_writing_assistant_config() -> dict:
     return CONFIG.copy()
 
 
-def get_update_prompt() -> dict:
+def get_update_prompt() -> str:
     """Get the profile update prompt."""
     return UPDATE_PROMPT
 
 
-def get_query_construction_prompt() -> dict:
+def get_query_construction_prompt() -> str:
     """Get the query construction prompt."""
     return QUERY_CONSTRUCTION_PROMPT
 
 
-def get_writing_style_features() -> list[dict[str, str]]:
+def get_writing_style_features() -> list[str]:
     """Get the list of writing style features."""
     return WRITING_STYLE_FEATURES.copy()
 
 
-def get_consolidation_prompt() -> dict:
+def get_consolidation_prompt() -> str:
     """Get the consolidation prompt."""
     return CONSOLIDATION_PROMPT
 
