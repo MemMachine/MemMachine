@@ -13,15 +13,15 @@ class AmazonBedrockEmbedderConfig(BaseModel):
     """Configuration for AmazonBedrockEmbedder."""
 
     region: str = Field(
-        "us-east-1",
+        ...,
         description="AWS region where Bedrock is hosted.",
     )
     aws_access_key_id: SecretStr | None = Field(
-        default=None,
+        ...,
         description="AWS access key ID for authentication.",
     )
     aws_secret_access_key: SecretStr | None = Field(
-        default=None,
+        ...,
         description="AWS secret access key for authentication.",
     )
     aws_session_token: SecretStr | None = Field(

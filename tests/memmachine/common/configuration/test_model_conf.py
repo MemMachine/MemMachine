@@ -12,9 +12,11 @@ from memmachine.common.configuration.model_conf import (
 @pytest.fixture
 def openai_model_conf() -> dict:
     return {
-        "provider": "openai",
-        "model": "gpt-4o-mini",
-        "api_key": "open-ai-key",
+        "provider": "openai-responses",
+        "config": {
+            "model": "gpt-4o-mini",
+            "api_key": "open-ai-key",
+        },
     }
 
 
@@ -22,10 +24,12 @@ def openai_model_conf() -> dict:
 def aws_model_conf() -> dict:
     return {
         "provider": "amazon-bedrock",
-        "region": "us-west-2",
-        "aws_access_key_id": "aws-key-id",
-        "aws_secret_access_key": "aws-secret-key",
-        "model_id": "openai.gpt-oss-20b-1:0",
+        "config": {
+            "region": "us-west-2",
+            "aws_access_key_id": "aws-key-id",
+            "aws_secret_access_key": "aws-secret-key",
+            "model_id": "openai.gpt-oss-20b-1:0",
+        },
     }
 
 
@@ -33,16 +37,18 @@ def aws_model_conf() -> dict:
 def ollama_model_conf() -> dict:
     return {
         "provider": "openai-chat-completions",
-        "model": "llama3",
-        "api_key": "EMPTY",
-        "base_url": "http://host.docker.internal:11434/v1",
+        "config": {
+            "model": "llama3",
+            "api_key": "EMPTY",
+            "base_url": "http://host.docker.internal:11434/v1",
+        },
     }
 
 
 @pytest.fixture
 def full_model_conf(openai_model_conf, aws_model_conf, ollama_model_conf) -> dict:
     return {
-        "model": {
+        "language_model": {
             "openai_model": openai_model_conf,
             "aws_model": aws_model_conf,
             "ollama_model": ollama_model_conf,
@@ -51,14 +57,14 @@ def full_model_conf(openai_model_conf, aws_model_conf, ollama_model_conf) -> dic
 
 
 def test_valid_openai_model(openai_model_conf):
-    conf = OpenAIResponsesLanguageModelConf(**openai_model_conf)
+    conf = OpenAIResponsesLanguageModelConf(**openai_model_conf["config"])
     assert conf.model == "gpt-4o-mini"
     assert conf.api_key == SecretStr("open-ai-key")
     assert conf.max_retry_interval_seconds == 120
 
 
 def test_valid_aws_model(aws_model_conf):
-    conf = AmazonBedrockLanguageModelConf(**aws_model_conf)
+    conf = AmazonBedrockLanguageModelConf(**aws_model_conf["config"])
     assert conf.region == "us-west-2"
     assert conf.aws_access_key_id == SecretStr("aws-key-id")
     assert conf.aws_secret_access_key == SecretStr("aws-secret-key")
@@ -67,7 +73,7 @@ def test_valid_aws_model(aws_model_conf):
 
 
 def test_valid_openai_chat_completions_model(ollama_model_conf):
-    conf = OpenAIChatCompletionsLanguageModelConf(**ollama_model_conf)
+    conf = OpenAIChatCompletionsLanguageModelConf(**ollama_model_conf["config"])
     assert conf.model == "llama3"
     assert conf.api_key == SecretStr("EMPTY")
     assert conf.base_url == "http://host.docker.internal:11434/v1"
@@ -77,21 +83,23 @@ def test_valid_openai_chat_completions_model(ollama_model_conf):
 def test_full_language_model_conf(full_model_conf):
     conf = LanguageModelConf.parse_language_model_conf(full_model_conf)
 
-    assert "openai_model" in conf.openai_confs
-    openai_conf = conf.openai_confs["openai_model"]
+    assert "openai_model" in conf.openai_responses_language_model_confs
+    openai_conf = conf.openai_responses_language_model_confs["openai_model"]
     assert openai_conf.model == "gpt-4o-mini"
 
-    assert "aws_model" in conf.aws_bedrock_confs
-    aws_conf = conf.aws_bedrock_confs["aws_model"]
+    assert "aws_model" in conf.amazon_bedrock_language_model_confs
+    aws_conf = conf.amazon_bedrock_language_model_confs["aws_model"]
     assert aws_conf.region == "us-west-2"
 
-    assert "ollama_model" in conf.openai_chat_completions_confs
-    chat_completions_conf = conf.openai_chat_completions_confs["ollama_model"]
+    assert "ollama_model" in conf.openai_chat_completions_language_model_confs
+    chat_completions_conf = conf.openai_chat_completions_language_model_confs[
+        "ollama_model"
+    ]
     assert chat_completions_conf.model == "llama3"
 
 
 def test_missing_required_field_openai_model():
-    conf_dict = {"provider": "openai", "model": "gpt-4o-mini"}  # Missing api_key
+    conf_dict = {"model": "gpt-4o-mini"}
     with pytest.raises(ValidationError) as exc_info:
         OpenAIResponsesLanguageModelConf(**conf_dict)
     assert "field required" in str(exc_info.value).lower()
@@ -99,7 +107,6 @@ def test_missing_required_field_openai_model():
 
 def test_invalid_base_url_in_openai_chat_completions_model():
     conf_dict = {
-        "provider": "openai-chat-completions",
         "model": "llama3",
         "api_key": "EMPTY",
         "base_url": "invalid-url",

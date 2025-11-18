@@ -94,15 +94,15 @@ class AmazonBedrockLanguageModelConf(WithMetricsFactoryId):
     """
 
     region: str = Field(
-        default="us-east-1",
+        ...,
         description="AWS region where Bedrock is hosted.",
     )
     aws_access_key_id: SecretStr | None = Field(
-        default=None,
+        ...,
         description="AWS access key ID for authentication.",
     )
     aws_secret_access_key: SecretStr | None = Field(
-        default=None,
+        ...,
         description="AWS secret access key for authentication.",
     )
     aws_session_token: SecretStr | None = Field(
@@ -148,11 +148,7 @@ class LanguageModelConf(BaseModel):
     @classmethod
     def parse_language_model_conf(cls, input_dict: dict) -> Self:
         """Parse language model config definitions into typed models."""
-        lm = input_dict
-        for key in ["language_model", "model", "language-model"]:
-            if key in lm:
-                lm = input_dict.get(key, {})
-                break
+        lm = input_dict.get("language_model", {})
 
         openai_dict, aws_bedrock_dict, openai_chat_completions_dict = {}, {}, {}
         for lm_id, resource_definition in lm.items():
@@ -161,8 +157,10 @@ class LanguageModelConf(BaseModel):
             if provider == "openai-responses":
                 openai_dict[lm_id] = OpenAIResponsesLanguageModelConf(**conf)
             elif provider == "openai-chat-completions":
-                openai_chat_completions_dict[lm_id] = OpenAIChatCompletionsLanguageModelConf(
-                    **conf,
+                openai_chat_completions_dict[lm_id] = (
+                    OpenAIChatCompletionsLanguageModelConf(
+                        **conf,
+                    )
                 )
             elif provider == "amazon-bedrock":
                 aws_bedrock_dict[lm_id] = AmazonBedrockLanguageModelConf(**conf)
@@ -171,8 +169,8 @@ class LanguageModelConf(BaseModel):
                     f"Unknown language model provider '{provider}' for language model id '{lm_id}'",
                 )
 
-        return cls(
-            openai_confs=openai_dict,
-            aws_bedrock_confs=aws_bedrock_dict,
-            openai_chat_completions_confs=openai_chat_completions_dict,
+        return LanguageModelConf(
+            openai_responses_language_model_confs=openai_dict,
+            amazon_bedrock_language_model_confs=aws_bedrock_dict,
+            openai_chat_completions_language_model_confs=openai_chat_completions_dict,
         )

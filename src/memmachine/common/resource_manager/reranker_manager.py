@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 import boto3
-from pydantic import InstanceOf
+from pydantic import InstanceOf, SecretStr
 from typing_extensions import runtime_checkable
 
 from memmachine.common.configuration.reranker_conf import RerankerConf
@@ -153,11 +153,17 @@ class RerankerManager:
 
         conf = self.conf.amazon_bedrock[name]
 
+        def _get_secret_value(secret: SecretStr | None) -> str | None:
+            if secret is None:
+                return None
+            return secret.get_secret_value()
+
         client = boto3.client(
             "bedrock-agent-runtime",
             region_name=conf.region,
-            aws_access_key_id=conf.aws_access_key_id.get_secret_value(),
-            aws_secret_access_key=conf.aws_secret_access_key.get_secret_value(),
+            aws_access_key_id=_get_secret_value(conf.aws_access_key_id),
+            aws_secret_access_key=_get_secret_value(conf.aws_secret_access_key),
+            aws_session_token=_get_secret_value(conf.aws_session_token),
         )
         params = AmazonBedrockRerankerParams(
             client=client,

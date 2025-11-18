@@ -26,16 +26,20 @@ class AmazonBedrockRerankerConf(BaseModel):
 
     model_id: str = Field(..., description="The Bedrock model ID to use for reranking")
     region: str = Field(
-        default="us-west-2",
+        ...,
         description="The AWS region of the Bedrock service",
     )
-    aws_access_key_id: SecretStr = Field(
+    aws_access_key_id: SecretStr | None = Field(
         ...,
-        description="The AWS access key ID for Bedrock authentication",
+        description="AWS access key ID for authentication.",
     )
-    aws_secret_access_key: SecretStr = Field(
+    aws_secret_access_key: SecretStr | None = Field(
         ...,
-        description="The AWS secret access key for Bedrock authentication",
+        description="AWS secret access key for authentication.",
+    )
+    aws_session_token: SecretStr | None = Field(
+        default=None,
+        description="AWS session token for authentication.",
     )
     additional_model_request_fields: dict = Field(
         default_factory=dict,

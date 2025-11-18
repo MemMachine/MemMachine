@@ -34,7 +34,7 @@ def mock_conf():
                 model_id="amazon.rerank-v1:0",
                 aws_access_key_id=SecretStr("<AWS_ACCESS_KEY_ID>"),
                 aws_secret_access_key=SecretStr("<AWS_SECRET_ACCESS_KEY>"),
-                region="us-east-1",
+                region="us-west-2",
             ),
         },
     )
