@@ -7,7 +7,7 @@ from memmachine.common.configuration.reranker_conf import (
     AmazonBedrockRerankerConf,
     BM25RerankerConf,
     CrossEncoderRerankerConf,
-    RerankerConf,
+    RerankersConf,
     RRFHybridRerankerConf,
 )
 from memmachine.common.embedder import Embedder
@@ -16,7 +16,7 @@ from memmachine.common.resource_manager.reranker_manager import RerankerManager
 
 @pytest.fixture
 def mock_conf():
-    conf = RerankerConf(
+    conf = RerankersConf(
         rrf_hybrid={
             "my_reranker_id": RRFHybridRerankerConf(
                 reranker_ids=["bm_ranker_id", "ce_ranker_id", "id_ranker_id"],

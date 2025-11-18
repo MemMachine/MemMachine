@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from memmachine.common.configuration import EmbedderConf
+from memmachine.common.configuration import EmbeddersConf
 from memmachine.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConfig,
     OpenAIEmbedderConf,
@@ -88,7 +88,7 @@ def test_valid_ollama_embedder_config(ollama_embedder_conf):
 
 
 def test_full_embedder_conf(embedder_conf):
-    conf = EmbedderConf.parse_embedder_conf(embedder_conf)
+    conf = EmbeddersConf.parse_embedder_conf(embedder_conf)
     assert len(conf.amazon_bedrock) > 0
     assert len(conf.openai) > 0
     assert conf.amazon_bedrock.get("aws_embedder_id") is not None

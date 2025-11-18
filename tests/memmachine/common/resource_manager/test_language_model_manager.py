@@ -3,7 +3,7 @@ from pydantic import SecretStr
 
 from memmachine.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
-    LanguageModelConf,
+    LanguageModelsConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
 )
@@ -14,8 +14,8 @@ from memmachine.common.resource_manager.language_model_manager import (
 
 @pytest.fixture
 def mock_conf():
-    """Mock LanguageModelConf with dummy configurations."""
-    conf = LanguageModelConf(
+    """Mock LanguageModelsConf with dummy configurations."""
+    conf = LanguageModelsConf(
         openai_responses_language_model_confs={
             "openai_4o_mini": OpenAIResponsesLanguageModelConf(
                 model="gpt-4o-mini",

@@ -92,7 +92,7 @@ class SentenceTransformerEmbedderConfig(WithMetricsFactoryId):
     )
 
 
-class EmbedderConf(BaseModel):
+class EmbeddersConf(BaseModel):
     """Top-level embedder configuration mapping provider ids to configs."""
 
     amazon_bedrock: dict[str, AmazonBedrockEmbedderConfig] = {}

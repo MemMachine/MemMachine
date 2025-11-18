@@ -3,7 +3,7 @@ import pytest
 from memmachine.common.configuration.storage_conf import (
     Neo4JConf,
     SqlAlchemyConf,
-    StorageConf,
+    StoragesConf,
 )
 
 
@@ -29,7 +29,7 @@ def test_parse_valid_storage_dict():
         },
     }
 
-    storage_conf = StorageConf.parse_storage_conf(input_dict)
+    storage_conf = StoragesConf.parse_storage_conf(input_dict)
 
     # Neo4J check
     neo_conf = storage_conf.neo4j_confs["my_neo4j"]
@@ -54,11 +54,11 @@ def test_parse_unknown_provider_raises():
         "storage": {"bad_storage": {"provider": "unknown_db", "host": "localhost"}},
     }
     with pytest.raises(ValueError, match="Unknown provider 'unknown_db'"):
-        StorageConf.parse_storage_conf(input_dict)
+        StoragesConf.parse_storage_conf(input_dict)
 
 
 def test_parse_empty_storage_returns_empty_conf():
     input_dict = {"storage": {}}
-    storage_conf = StorageConf.parse_storage_conf(input_dict)
+    storage_conf = StoragesConf.parse_storage_conf(input_dict)
     assert storage_conf.neo4j_confs == {}
     assert storage_conf.relational_db_confs == {}

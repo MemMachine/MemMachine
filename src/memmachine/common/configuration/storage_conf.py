@@ -46,7 +46,7 @@ class SupportedDB(str, Enum):
     SQLITE = "sqlite"
 
 
-class StorageConf(BaseModel):
+class StoragesConf(BaseModel):
     """Top-level storage configuration mapping identifiers to backends."""
 
     neo4j_confs: dict[str, Neo4JConf] = {}

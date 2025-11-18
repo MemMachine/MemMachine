@@ -3,14 +3,14 @@
 import asyncio
 from asyncio import Lock
 
-from memmachine.common.configuration.embedder_conf import EmbedderConf
+from memmachine.common.configuration.embedder_conf import EmbeddersConf
 from memmachine.common.embedder import Embedder
 
 
 class EmbedderManager:
     """Create and cache embedders defined in configuration."""
 
-    def __init__(self, conf: EmbedderConf) -> None:
+    def __init__(self, conf: EmbeddersConf) -> None:
         """Store embedder configuration and initialize caches."""
         self.conf = conf
         self._embedders: dict[str, Embedder] = {}

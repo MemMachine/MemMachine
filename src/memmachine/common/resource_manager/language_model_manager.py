@@ -5,14 +5,14 @@ from asyncio import Lock
 
 from pydantic import SecretStr
 
-from memmachine.common.configuration.language_model_conf import LanguageModelConf
+from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.language_model.language_model import LanguageModel
 
 
 class LanguageModelManager:
     """Create and cache configured language model instances."""
 
-    def __init__(self, conf: LanguageModelConf) -> None:
+    def __init__(self, conf: LanguageModelsConf) -> None:
         """Store configuration and initialize caches."""
         self._lock = Lock()
         self._language_models_lock: dict[str, Lock] = {}

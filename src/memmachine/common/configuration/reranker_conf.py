@@ -81,7 +81,7 @@ class RRFHybridRerankerConf(BaseModel):
     k: int = Field(default=60, description="The k parameter for RRF scoring")
 
 
-class RerankerConf(BaseModel):
+class RerankersConf(BaseModel):
     """Top-level configuration for available rerankers."""
 
     bm25: dict[str, BM25RerankerConf] = {}

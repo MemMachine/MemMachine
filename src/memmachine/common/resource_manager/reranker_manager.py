@@ -11,7 +11,7 @@ import boto3
 from pydantic import InstanceOf, SecretStr
 from typing_extensions import runtime_checkable
 
-from memmachine.common.configuration.reranker_conf import RerankerConf
+from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.embedder import Embedder
 from memmachine.common.reranker import Reranker
 
@@ -30,7 +30,7 @@ class RerankerManager:
 
     def __init__(
         self,
-        conf: RerankerConf,
+        conf: RerankersConf,
         embedder_factory: InstanceOf[EmbedderFactory],
     ) -> None:
         """Store configuration and factories, initializing caches."""

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import SecretStr
 
-from memmachine.common.configuration import EmbedderConf
+from memmachine.common.configuration import EmbeddersConf
 from memmachine.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConfig,
     OpenAIEmbedderConf,
@@ -13,7 +13,7 @@ from memmachine.common.resource_manager.embedder_manager import EmbedderManager
 
 @pytest.fixture
 def mock_conf():
-    conf = EmbedderConf(
+    conf = EmbeddersConf(
         amazon_bedrock={
             "aws_embedder_id": AmazonBedrockEmbedderConfig(
                 model_id="amazon.embed-v1:0",

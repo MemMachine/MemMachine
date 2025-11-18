@@ -3,7 +3,7 @@ from pydantic import SecretStr, ValidationError
 
 from memmachine.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
-    LanguageModelConf,
+    LanguageModelsConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
 )
@@ -81,7 +81,7 @@ def test_valid_openai_chat_completions_model(ollama_model_conf):
 
 
 def test_full_language_model_conf(full_model_conf):
-    conf = LanguageModelConf.parse_language_model_conf(full_model_conf)
+    conf = LanguageModelsConf.parse_language_model_conf(full_model_conf)
 
     assert "openai_model" in conf.openai_responses_language_model_confs
     openai_conf = conf.openai_responses_language_model_confs["openai_model"]

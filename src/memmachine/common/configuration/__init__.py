@@ -7,12 +7,12 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-from memmachine.common.configuration.embedder_conf import EmbedderConf
+from memmachine.common.configuration.embedder_conf import EmbeddersConf
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConfPartial
-from memmachine.common.configuration.language_model_conf import LanguageModelConf
+from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
-from memmachine.common.configuration.reranker_conf import RerankerConf
-from memmachine.common.configuration.storage_conf import StorageConf
+from memmachine.common.configuration.reranker_conf import RerankersConf
+from memmachine.common.configuration.storage_conf import StoragesConf
 from memmachine.semantic_memory.semantic_model import SemanticCategory
 from memmachine.semantic_memory.semantic_session_resource import IsolationType
 from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGORIES
@@ -134,26 +134,33 @@ class PromptConf(BaseModel):
         }
 
 
-class Configuration(EpisodicMemoryConfPartial):
-    """Aggregate configuration for MemMachine services."""
+class ResourcesConf(BaseModel):
+    """Configuration for MemMachine common resources."""
 
-    logging: LogConf
-    sessiondb: SessionDBConf
-    model: LanguageModelConf
-    storage: StorageConf
-    embedder: EmbedderConf
-    reranker: RerankerConf
-    prompt: PromptConf = PromptConf()
-    semantic_memory: SemanticMemoryConf
+    embedders: EmbeddersConf
+    language_models: LanguageModelsConf
+    rerankers: RerankersConf
+    storages: StoragesConf
 
     def __init__(self, **data: object) -> None:
         """Parse nested configuration sections into typed models."""
         data = data.copy()  # avoid mutating caller's dict
         super().__init__(**data)
-        self.model = LanguageModelConf.parse_language_model_conf(data)
-        self.storage = StorageConf.parse_storage_conf(data)
-        self.embedder = EmbedderConf.parse_embedder_conf(data)
-        self.reranker = RerankerConf.parse_reranker_conf(data)
+        self.model = LanguageModelsConf.parse_language_model_conf(data)
+        self.storage = StoragesConf.parse_storage_conf(data)
+        self.embedder = EmbeddersConf.parse_embedder_conf(data)
+        self.reranker = RerankersConf.parse_reranker_conf(data)
+
+
+class Configuration(BaseModel):
+    """Aggregate configuration for MemMachine services."""
+
+    episodic_memory: EpisodicMemoryConfPartial
+    semantic_memory: SemanticMemoryConf
+    logging: LogConf
+    prompt: PromptConf = PromptConf()
+    session_db: SessionDBConf
+    resources: ResourcesConf
 
 
 def load_config_yml_file(config_file: str) -> Configuration:

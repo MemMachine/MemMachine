@@ -132,7 +132,7 @@ class AmazonBedrockLanguageModelConf(WithMetricsFactoryId):
     )
 
 
-class LanguageModelConf(BaseModel):
+class LanguageModelsConf(BaseModel):
     """Top-level language model configuration container."""
 
     openai_responses_language_model_confs: dict[
@@ -169,7 +169,7 @@ class LanguageModelConf(BaseModel):
                     f"Unknown language model provider '{provider}' for language model id '{lm_id}'",
                 )
 
-        return LanguageModelConf(
+        return LanguageModelsConf(
             openai_responses_language_model_confs=openai_dict,
             amazon_bedrock_language_model_confs=aws_bedrock_dict,
             openai_chat_completions_language_model_confs=openai_chat_completions_dict,
