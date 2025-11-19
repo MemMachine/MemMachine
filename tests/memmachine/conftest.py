@@ -344,6 +344,8 @@ async def episode_storage(sqlalchemy_engine: AsyncEngine):
 
     storage = SqlAlchemyEpisodeStore(engine)
     try:
+        await storage.delete_episode_messages()
         yield storage
     finally:
+        await storage.delete_episode_messages()
         await engine.dispose()
