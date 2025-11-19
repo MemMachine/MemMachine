@@ -16,7 +16,7 @@ class LanguageModel(ABC):
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         max_attempts: int = 1,
-    ) -> T:
+    ) -> T | None:
         """
         Generate a response with structured output parsing.
 

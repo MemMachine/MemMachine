@@ -29,6 +29,13 @@ class SessionManagerConf(BaseModel):
         description="The database ID to use for session manager",
     )
 
+class EpisodeStoreConf(BaseModel):
+    """Configuration for the episods storage database."""
+
+    database: str = Field(
+        default="",
+        description="The database ID to use for episode storage",
+    )
 
 class SemanticMemoryConf(BaseModel):
     """Configuration for semantic memory defaults."""
@@ -158,6 +165,7 @@ class Configuration(BaseModel):
     prompt: PromptConf = PromptConf()
     session_manager: SessionManagerConf
     resources: ResourcesConf
+    episode_store: EpisodeStoreConf
 
 
 def load_config_yml_file(config_file: str) -> Configuration:
