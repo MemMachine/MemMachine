@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine, Iterable, Mapping
-from typing import Any, cast
+from typing import cast
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
@@ -209,7 +209,7 @@ class EpisodicMemory:
         if self._closed:
             raise RuntimeError(f"Memory is closed {self._session_key}")
         # Add the episode to both memory stores concurrently
-        tasks: list[Coroutine[Any, Any, bool | None]] = []
+        tasks: list[Coroutine] = []
         if self._short_term_memory:
             tasks.append(self._short_term_memory.add_episode(episode))
         if self._long_term_memory:
