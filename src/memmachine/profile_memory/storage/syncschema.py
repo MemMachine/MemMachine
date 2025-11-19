@@ -71,7 +71,10 @@ async def sync_to(database: str, host: str, port: str, user: str, password: str)
 
 
 def main():
-    load_dotenv()
+    if os.path.isfile(os.path.expanduser("~/.config/memmachine/.env")):
+        load_dotenv(os.path.expanduser("~/.config/memmachine/.env"))
+    else:
+        load_dotenv()
 
     parser = argparse.ArgumentParser(
         prog="memmachine-sync-profile-schema",

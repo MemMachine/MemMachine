@@ -103,11 +103,11 @@ check_env_file() {
     if [ ! -f ".env" ]; then
         print_warning ".env file not found. Creating from template..."
         sleep 1
-        if [ -f "sample_configs/env.dockercompose" ]; then
-            cp sample_configs/env.dockercompose .env
-            print_success "Created .env file from sample_configs/env.dockercompose"
+        if [ -f "src/memmachine/sample_configs/env.dockercompose" ]; then
+            cp src/memmachine/sample_configs/env.dockercompose .env
+            print_success "Created .env file from src/memmachine/sample_configs/env.dockercompose"
         else
-            print_error "sample_configs/env.dockercompose file not found. Please create .env file manually."
+            print_error "src/memmachine/sample_configs/env.dockercompose file not found. Please create .env file manually."
             exit 1
         fi
     else
@@ -447,7 +447,7 @@ check_config_file() {
         local config_type=$(echo "${config_type_input:-CPU}" | tr '[:lower:]' '[:upper:]')
 
         if [ "$config_type" = "GPU" ]; then
-            CONFIG_SOURCE="sample_configs/episodic_memory_config.gpu.sample"
+            CONFIG_SOURCE="src/memmachine/sample_configs/episodic_memory_config.gpu.sample"
             MEMMACHINE_IMAGE="memmachine/memmachine:latest-gpu"
             print_info "GPU configuration selected."
         else
@@ -456,7 +456,7 @@ check_config_file() {
             else
                 print_info "CPU configuration selected."
             fi
-            CONFIG_SOURCE="sample_configs/episodic_memory_config.cpu.sample"
+            CONFIG_SOURCE="src/memmachine/sample_configs/episodic_memory_config.cpu.sample"
             MEMMACHINE_IMAGE="memmachine/memmachine:latest-cpu"
         fi
 
