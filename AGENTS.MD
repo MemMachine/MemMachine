@@ -129,7 +129,7 @@ import requests
 # Single user request (recommended)
 # Always set user-id explicitly for proper memory isolation
 response = requests.post(
-    "http://localhost:8000/v1/memories",
+    "http://localhost:8080/v1/memories",
     headers={"user-id": "alice@example.com"},
     json={"content": "I prefer dark mode"}
 )
@@ -138,7 +138,7 @@ response = requests.post(
 
 # Single user with explicit session
 response = requests.post(
-    "http://localhost:8000/v1/memories",
+    "http://localhost:8080/v1/memories",
     headers={
         "user-id": "alice@example.com",
         "session-id": "chat-2024-01-15"
@@ -148,7 +148,7 @@ response = requests.post(
 
 # Multi-user group conversation
 response = requests.post(
-    "http://localhost:8000/v1/memories",
+    "http://localhost:8080/v1/memories",
     headers={
         "group-id": "project-alpha",
         "session-id": "chat-thread-42",
@@ -167,7 +167,7 @@ MemMachine provides a Python SDK for easier integration:
 from memmachine import MemMachineClient, Memory
 
 # Initialize client
-client = MemMachineClient(base_url="http://localhost:8000")
+client = MemMachineClient(base_url="http://localhost:8080")
 
 # Create a memory context
 memory = Memory(
@@ -233,7 +233,7 @@ See `sample_configs/` directory for example configurations.
 ```python
 # Store a user message
 response = requests.post(
-    "http://localhost:8000/v1/memories",
+    "http://localhost:8080/v1/memories",
     headers={"user-id": "user123"},
     json={
         "content": "I'm working on a Python project",
@@ -247,7 +247,7 @@ response = requests.post(
 ```python
 # Search for relevant context before responding
 response = requests.post(
-    "http://localhost:8000/v1/memories/search",
+    "http://localhost:8080/v1/memories/search",
     headers={"user-id": "user123"},
     json={"query": "What projects is the user working on?"}
 )
@@ -261,7 +261,7 @@ context = response.json()
 ```python
 # Group chat scenario
 response = requests.post(
-    "http://localhost:8000/v1/memories",
+    "http://localhost:8080/v1/memories",
     headers={
         "group-id": "team-alpha",
         "session-id": "slack-channel-123",
