@@ -27,7 +27,7 @@ class EpisodeType(Enum):
 class Episode(BaseModel):
     """Conversation message stored in history together with persistence metadata."""
 
-    uid: EpisodeIdT | None = None
+    uid: EpisodeIdT
     content: str
     session_key: str
     created_at: datetime
@@ -36,9 +36,9 @@ class Episode(BaseModel):
     producer_role: str
     produced_for_id: str | None = None
 
-    sequence_num: int | None = None
+    sequence_num: int = 0
 
-    episode_type: EpisodeType | None = None
-    content_type: ContentType | None = None
+    episode_type: EpisodeType = EpisodeType.MESSAGE
+    content_type: ContentType = ContentType.STRING
     filterable_metadata: dict[str, FilterablePropertyValue] | None = None
     metadata: dict[str, JsonValue] | None = None

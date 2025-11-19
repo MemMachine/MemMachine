@@ -37,23 +37,23 @@ class ResourceManagerImpl:
         self._conf = conf
         self._conf.logging.apply()
         self._storage_manager: StorageManager = StorageManager(
-            self._conf.resources.storages
+            self._conf.resources.databases
         )
         self._embedder_manager: EmbedderManager = EmbedderManager(
             self._conf.resources.embedders
         )
         self._model_manager: LanguageModelManager = LanguageModelManager(
-            self._conf.model,
+            self._conf.resources.language_models,
         )
         self._reranker_manager: RerankerManager = RerankerManager(
-            self._conf.reranker,
+            self._conf.resources.rerankers,
             embedder_factory=self._embedder_manager,
         )
 
         self._session_data_manager: SessionDataManager | None = None
         self._episodic_memory_manager: EpisodicMemoryManager | None = None
 
-        self._history_storage: EpisodeStorage | None = None
+        self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
 
     async def build(self) -> None:
@@ -79,11 +79,11 @@ class ResourceManagerImpl:
 
     async def get_sql_engine(self, name: str) -> AsyncEngine:
         """Return a SQL engine by name."""
-        return self._storage_manager.get_sql_engine(name)
+        return await self._storage_manager.get_sql_engine(name)
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
-        return self._storage_manager.get_vector_graph_store(name)
+        return await self._storage_manager.get_vector_graph_store(name)
 
     async def get_embedder(self, name: str) -> Embedder:
         """Return an embedder by name."""
@@ -102,7 +102,9 @@ class ResourceManagerImpl:
         """Lazy-load the session data manager."""
         if self._session_data_manager is not None:
             return self._session_data_manager
-        engine = self._storage_manager.get_sql_engine(self._conf.session_db.storage_id)
+        engine = await self._storage_manager.get_sql_engine(
+            self._conf.session_db.storage_id
+        )
         self._session_data_manager = SessionDataManagerSQL(engine)
         return self._session_data_manager
 
@@ -119,17 +121,17 @@ class ResourceManagerImpl:
         return self._episodic_memory_manager
 
     @property
-    def history_storage(self) -> EpisodeStorage:
+    def episode_storage(self) -> EpisodeStorage:
         """Lazy-load the episode history storage."""
-        if self._history_storage is not None:
-            return self._history_storage
+        if self._episode_storage is not None:
+            return self._episode_storage
 
-        conf = self._conf.history_storage
-        engine = self._storage_manager.get_sql_engine(conf.database)
+        conf = self._conf.episode_storage
+        engine = await self._storage_manager.get_sql_engine(conf.database)
 
-        self._history_storage = SqlAlchemyEpisodeStore(engine)
+        self._episode_storage = SqlAlchemyEpisodeStore(engine)
 
-        return self._history_storage
+        return self._episode_storage
 
     async def get_semantic_manager(self) -> SemanticResourceManager:
         """Return the semantic resource manager, constructing if needed."""
