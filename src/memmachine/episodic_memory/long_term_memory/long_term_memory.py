@@ -155,7 +155,7 @@ class LongTermMemory:
         self,
         property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> None:
-        self._declarative_memory.delete_episodes(
+        await self._declarative_memory.delete_episodes(
             episode.uid
             for episode in await self._declarative_memory.get_matching_episodes(
                 property_filter=property_filter,
