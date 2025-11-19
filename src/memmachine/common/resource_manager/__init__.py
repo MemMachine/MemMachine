@@ -9,6 +9,7 @@ from memmachine.common.embedder import Embedder
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.reranker import Reranker
+from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.common.vector_graph_store import VectorGraphStore
 
 
@@ -50,4 +51,9 @@ class CommonResourceManager(Protocol):
 
     async def get_metrics_factory(self, name: str) -> MetricsFactory:
         """Return the metrics factory by name."""
+        raise NotImplementedError
+
+    @property
+    def session_data_manager(self) -> SessionDataManager:
+        """Return the session data manager."""
         raise NotImplementedError

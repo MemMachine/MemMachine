@@ -3,7 +3,7 @@
 import io
 import os
 import pickle
-from typing import Annotated
+from typing import Annotated, Any
 
 from sqlalchemy import (
     JSON,
@@ -177,7 +177,7 @@ class SessionDataManagerSQL(SessionDataManager):
         self,
         column: ColumnElement[object],
         filters: dict[str, object],
-    ) -> ColumnElement[object]:
+    ) -> ColumnElement[Any]:
         if self._engine.dialect.name == "mysql":
             return func.json_contains(column, func.json_quote(func.json(filters)))
 
@@ -199,14 +199,16 @@ class SessionDataManagerSQL(SessionDataManager):
 
     async def get_sessions(
         self,
-        filters: dict[str, str] | None = None,
+        filters: dict[str, object] | None = None,
     ) -> list[str]:
         """Retrieve session keys, optionally filtered by metadata."""
         if filters is None:
             stmt = select(self.SessionConfig.session_key)
         else:
             stmt = select(self.SessionConfig.session_key).where(
-                self._json_contains(self.SessionConfig.user_metadata, filters),
+                self._json_contains(
+                    self.SessionConfig.user_metadata.property.columns[0], filters
+                ),
             )
         async with self._async_session() as dbsession:
             sessions = await dbsession.execute(stmt)

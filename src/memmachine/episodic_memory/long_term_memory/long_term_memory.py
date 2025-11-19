@@ -87,12 +87,8 @@ class LongTermMemory:
                     for key, value in {
                         "sequence_num": episode.sequence_num,
                         "session_key": episode.session_key,
-                        "episode_type": episode.episode_type.value
-                        if episode.episode_type
-                        else None,
-                        "content_type": episode.content_type.value
-                        if episode.content_type
-                        else None,
+                        "episode_type": episode.episode_type.value,
+                        "content_type": episode.content_type.value,
                         "producer_id": episode.producer_id,
                         "producer_role": episode.producer_role,
                         "produced_for_id": episode.produced_for_id,

@@ -46,10 +46,10 @@ class ResourceManagerImpl:
             self._conf.resources.embedders
         )
         self._model_manager: LanguageModelManager = LanguageModelManager(
-            self._conf.model,
+            self._conf.resources.language_models,
         )
         self._reranker_manager: RerankerManager = RerankerManager(
-            self._conf.reranker,
+            self._conf.resources.rerankers,
             embedder_factory=self._embedder_manager,
         )
 

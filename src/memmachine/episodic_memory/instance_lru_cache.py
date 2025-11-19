@@ -1,5 +1,7 @@
 """LRU cache implementation for managing episodic memory instances."""
 
+import asyncio
+from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import cast
 
@@ -113,6 +115,17 @@ class MemoryInstanceCache:
         if key in self.cache:
             return self.cache[key].ref_count
         return -1
+
+    async def clear_cache(self) -> None:
+        """Clear all items from the cache."""
+        close_memory_coroutines: list[Coroutine] = []
+        close_memory_coroutines.extend(
+            cast(EpisodicMemory, node.value).close() for node in self.cache.values()
+        )
+        await asyncio.gather(*close_memory_coroutines)
+        self.cache.clear()
+        self.head.next = self.tail
+        self.tail.prev = self.head
 
     async def add(self, key: str, value: EpisodicMemory) -> None:
         """Add a new item to the cache."""

@@ -1,9 +1,8 @@
 """Factory and manager for per-session episodic memory instances."""
 
 import asyncio
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import cast
 
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -227,7 +226,7 @@ class EpisodicMemoryManager:
 
     async def get_episodic_memory_keys(
         self,
-        filters: dict[str, str] | None,
+        filters: dict[str, object] | None,
     ) -> list[str]:
         """
         Retrieve a list of all available episodic memory session keys.
@@ -272,15 +271,10 @@ class EpisodicMemoryManager:
 
     async def close(self) -> None:
         """Close all open episodic memory instances and the session storage."""
-        close_memory_coroutines: list[Coroutine] = []
         async with self._lock:
             if self._closed:
                 return
-            close_memory_coroutines.extend(
-                cast(EpisodicMemory, self._instance_cache.get(key)).close()
-                for key in self._instance_cache.cache
-            )
-            await asyncio.gather(*close_memory_coroutines)
+            await self._instance_cache.clear_cache()
             await self._session_data_manager.close()
             self._instance_cache.clear()
             self._closed = True

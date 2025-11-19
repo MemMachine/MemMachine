@@ -70,6 +70,7 @@ class ShortTermMemoryParams(BaseModel):
     @field_validator("summary_prompt_user")
     @classmethod
     def validate_summary_user_prompt(cls, v: str) -> str:
+        """Validate the user prompt for the summarization."""
         fields = [fname for _, fname, _, _ in string.Formatter().parse(v) if fname]
         if len(fields) != 3:
             raise ValueError(f"Expect 3 fields in {v}")
@@ -340,14 +341,23 @@ class ShortTermMemory:
                 if filters is not None:
                     if "producer" in filters and filters["producer"] != e.producer_id:
                         continue
-
                     matched = True
-                    for key, value in filters.items():
-                        if e.metadata.get(key) != value:
-                            matched = False
-                            break
+                    if e.filterable_metadata is not None:
+                        for key, value in filters.items():
+                            if e.filterable_metadata.get(key) != value:
+                                matched = False
+                                break
                     if not matched:
                         continue
+                    if e.metadata is not None:
+                        for key, value in filters.items():
+                            if e.metadata.get(key) != value:
+                                matched = False
+                                break
+                    if not matched:
+                        continue
+                episodes.appendleft(e)
+                length += len(e.content)
 
                 msg_len = self._compute_episode_length(e)
                 if length + msg_len > max_message_length > 0:
