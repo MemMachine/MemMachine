@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 
 class Neo4jConf(BaseModel):
@@ -20,6 +20,15 @@ class Neo4jConf(BaseModel):
         default=False,
         description="Whether to force exact similarity search",
     )
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def convert_password(cls, v: str | SecretStr) -> SecretStr:
+        if isinstance(v, SecretStr):
+            return v
+        if isinstance(v, str):
+            return SecretStr(v)
+        raise TypeError("password must be a string or SecretStr")
 
 
 class SqlAlchemyConf(BaseModel):
@@ -79,38 +88,42 @@ class SqlAlchemyConf(BaseModel):
 class SupportedDB(str, Enum):
     """Supported database providers."""
 
+    # <-- Add these annotations so mypy knows these attributes exist
+    conf_cls: type[Neo4jConf] | type[SqlAlchemyConf]
+    dialect: str | None
+    driver: str | None
+
     NEO4J = ("neo4j", Neo4jConf, None, None)
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
 
     def __new__(
-        cls, value: str, conf_cls: Neo4jConf | SqlAlchemyConf, dialect: str, driver: str
+        cls,
+        value: str,
+        conf_cls: type[Neo4jConf] | type[SqlAlchemyConf],
+        dialect: str | None,
+        driver: str | None,
     ) -> Self:
         obj = str.__new__(cls, value)
         obj._value_ = value
-        obj.conf_cls = conf_cls
+        obj.conf_cls = conf_cls  # mypy now knows these attributes exist
         obj.dialect = dialect
         obj.driver = driver
         return obj
 
     @classmethod
     def from_provider(cls, provider: str) -> Self:
-        """Convert provider string to enum with a clear error message."""
-        try:
-            return cls(provider)
-        except ValueError as e:
-            valid = ", ".join(str(e.value) for e in cls)
-            raise ValueError(
-                f"Unsupported provider '{provider}'. Supported providers are: {valid}"
-            ) from e
+        for m in cls:
+            if m.value == provider:
+                return m
+        valid = ", ".join(str(m.value) for m in cls)
+        raise ValueError(
+            f"Unsupported provider '{provider}'. Supported providers are: {valid}"
+        )
 
     def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf:
-        """Build the provider-specific config object."""
-        if self is self.NEO4J:
-            # Neo4j has its own config model
+        if self is SupportedDB.NEO4J:
             return self.conf_cls(**conf)
-
-        # All relational DB providers share SqlAlchemyConf
         return self.conf_cls(
             dialect=self.dialect,
             driver=self.driver,

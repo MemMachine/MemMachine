@@ -40,7 +40,7 @@ class ResourceManagerImpl:
         self._conf = conf
         self._conf.logging.apply()
         self._database_manager: DatabaseManager = DatabaseManager(
-            self._conf.resources.storages
+            self._conf.resources.databases
         )
         self._embedder_manager: EmbedderManager = EmbedderManager(
             self._conf.resources.embedders
@@ -161,4 +161,8 @@ class ResourceManagerImpl:
     @staticmethod
     async def get_metrics_factory(name: str) -> MetricsFactory:
         """Return the metrics factory by name."""
-        return WithMetricsFactoryId(metrics_factory_id=name).get_metrics_factory()
+        factory_cache = WithMetricsFactoryId(metrics_factory_id=name)
+        ret = factory_cache.get_metrics_factory()
+        if ret is None:
+            raise ValueError(f"MetricsFactory '{name}' could not be created.")
+        return ret

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeGuard
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -100,7 +101,7 @@ class PromptConf(BaseModel):
         file_path = self.episode_summary_system_prompt_path
         if not file_path:
             txt = "default_episode_summary_system_prompt.txt"
-            file_path = Path(__file__).parent / txt
+            file_path = str(Path(__file__).parent / txt)
         return _read_txt(file_path)
 
     @property
@@ -109,7 +110,7 @@ class PromptConf(BaseModel):
         file_path = self.episode_summary_user_prompt_path
         if not file_path:
             txt = "default_episode_summary_user_prompt.txt"
-            file_path = Path(__file__).parent / txt
+            file_path = str(Path(__file__).parent / txt)
         return _read_txt(file_path)
 
     @property
@@ -180,4 +181,11 @@ def load_config_yml_file(config_file: str) -> Configuration:
         return data
 
     yaml_config = config_to_lowercase(yaml_config)
+
+    def is_mapping(val: YamlValue) -> TypeGuard[dict[str, YamlValue]]:
+        return isinstance(val, dict)
+
+    if not is_mapping(yaml_config):
+        raise TypeError(f"Root of YAML config '{config_path}' must be a mapping")
+
     return Configuration(**yaml_config)

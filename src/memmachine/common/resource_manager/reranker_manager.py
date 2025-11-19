@@ -45,15 +45,15 @@ class RerankerManager:
         """Build all configured rerankers and return the cache."""
         names = [
             name
-            for reranker_conf in [
-                self.conf.bm25,
-                self.conf.cross_encoder,
-                self.conf.amazon_bedrock,
-                self.conf.embedder,
-                self.conf.identity,
-                self.conf.rrf_hybrid,
+            for keys in [
+                self.conf.bm25.keys(),
+                self.conf.cross_encoder.keys(),
+                self.conf.amazon_bedrock.keys(),
+                self.conf.embedder.keys(),
+                self.conf.identity.keys(),
+                self.conf.rrf_hybrid.keys(),
             ]
-            for name in reranker_conf
+            for name in keys
         ]
         tasks = [self.get_reranker(name) for name in names]
         await asyncio.gather(*tasks)

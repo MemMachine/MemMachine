@@ -75,7 +75,7 @@ class SemanticResourceManager:
         if self._semantic_session_resource_manager is not None:
             return self._semantic_session_resource_manager
 
-        semantic_categories_by_isolation = self._conf.prompt.default_semantic_categories
+        semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
 
         simple_session_id_manager = self.simple_semantic_session_id_manager
 

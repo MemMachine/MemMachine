@@ -14,7 +14,7 @@ def mock_conf():
     """Mock StoragesConf with dummy connection configurations."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {
-        "neo1": MagicMock(host="localhost", port=1234, user="neo", password="pw"),
+        "neo1": MagicMock(host="localhost", port=1234, user="neo", password=SecretStr("pw")),
     }
     conf.relational_db_confs = {
         "pg1": SqlAlchemyConf(

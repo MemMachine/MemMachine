@@ -117,7 +117,7 @@ class DatabaseManager:
 
             driver = AsyncGraphDatabase.driver(
                 neo4j_uri,
-                auth=(conf.user, conf.password),
+                auth=(conf.user, conf.password.get_secret_value()),
             )
             self.neo4j_drivers[name] = driver
             params = Neo4jVectorGraphStoreParams(
@@ -128,7 +128,7 @@ class DatabaseManager:
 
     async def _validate_neo4j(self) -> None:
         """Validate connectivity to each Neo4j instance."""
-        for name, driver in self.conf.neo4j_confs.items():
+        for name, driver in self.neo4j_drivers.items():
             try:
                 async with driver.session() as session:
                     result = await session.run("RETURN 1 AS ok")

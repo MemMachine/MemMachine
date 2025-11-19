@@ -5,7 +5,36 @@ from memmachine.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
     SqlAlchemyConf,
+    SupportedDB,
 )
+
+
+def test_parse_supported_db_enums():
+    assert SupportedDB.from_provider("neo4j") == SupportedDB.NEO4J
+    assert SupportedDB.from_provider("postgres") == SupportedDB.POSTGRES
+    assert SupportedDB.from_provider("sqlite") == SupportedDB.SQLITE
+
+    neo4j_db = SupportedDB.NEO4J
+    assert neo4j_db.is_neo4j
+    assert neo4j_db.conf_cls == Neo4jConf
+
+    pg_db = SupportedDB.POSTGRES
+    assert not pg_db.is_neo4j
+    assert pg_db.conf_cls == SqlAlchemyConf
+    assert pg_db.dialect == "postgresql"
+    assert pg_db.driver == "asyncpg"
+
+    sqlite_db = SupportedDB.SQLITE
+    assert not sqlite_db.is_neo4j
+    assert sqlite_db.conf_cls == SqlAlchemyConf
+    assert sqlite_db.dialect == "sqlite"
+    assert sqlite_db.driver == "aiosqlite"
+
+
+def test_invalid_provider_raises():
+    message = "Supported providers are"
+    with pytest.raises(ValueError, match=message):
+        SupportedDB.from_provider("invalid_db")
 
 
 def test_parse_valid_storage_dict():
@@ -46,6 +75,8 @@ def test_parse_valid_storage_dict():
     assert isinstance(neo_conf, Neo4jConf)
     assert neo_conf.host == "localhost"
     assert neo_conf.port == 7687
+    assert neo_conf.user == "neo4j"
+    assert neo_conf.password == SecretStr("secret")
 
     # Postgres check
     pg_conf = storage_conf.relational_db_confs["main_postgres"]

@@ -170,7 +170,7 @@ class LanguageModelsConf(BaseModel):
                     f"Unknown language model provider '{provider}' for language model id '{lm_id}'",
                 )
 
-        return LanguageModelsConf(
+        return cls(
             openai_responses_language_model_confs=openai_dict,
             amazon_bedrock_language_model_confs=aws_bedrock_dict,
             openai_chat_completions_language_model_confs=openai_chat_completions_dict,
