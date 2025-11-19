@@ -56,11 +56,11 @@ class SupportedDB(str, Enum):
         """Convert provider string to enum with a clear error message."""
         try:
             return cls(provider)
-        except ValueError:
+        except ValueError as e:
             valid = ", ".join(str(e.value) for e in cls)
             raise ValueError(
                 f"Unsupported provider '{provider}'. Supported providers are: {valid}"
-            )
+            ) from e
 
     def build_config(self, conf: dict) -> Neo4JConf | SqlAlchemyConf:
         """Build the provider-specific config object."""
