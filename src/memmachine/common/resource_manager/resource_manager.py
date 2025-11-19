@@ -133,7 +133,7 @@ class ResourceManagerImpl:
         if self._episode_storage is not None:
             return self._episode_storage
 
-        conf = self._conf.history_storage
+        conf = self._conf.episode_store
         engine = self._database_manager.get_sql_engine(conf.database)
 
         self._episode_storage = SqlAlchemyEpisodeStore(engine)

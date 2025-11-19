@@ -149,6 +149,15 @@ class ResourcesConf(BaseModel):
         self.databases = DatabasesConf.parse(data)
 
 
+class EpisodeStore(BaseModel):
+    """Configuration for episode storage."""
+
+    database: str = Field(
+        ...,
+        description="The database to use for episode storage",
+    )
+
+
 class Configuration(BaseModel):
     """Aggregate configuration for MemMachine services."""
 
@@ -158,6 +167,7 @@ class Configuration(BaseModel):
     prompt: PromptConf = PromptConf()
     session_manager: SessionManagerConf
     resources: ResourcesConf
+    episode_store: EpisodeStore
 
 
 def load_config_yml_file(config_file: str) -> Configuration:
