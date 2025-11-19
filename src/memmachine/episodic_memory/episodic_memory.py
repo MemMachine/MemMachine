@@ -246,12 +246,16 @@ class EpisodicMemory:
 
         uids = list(uids)
 
-        tasks = []
+        delete_episodes_coroutines: list[Coroutine] = []
         if self._short_term_memory:
-            tasks.extend(self._short_term_memory.delete_episode(uid) for uid in uids)
+            delete_episodes_coroutines.extend(
+                self._short_term_memory.delete_episode(uid) for uid in uids
+            )
         if self._long_term_memory:
-            tasks.append(self._long_term_memory.delete_episodes(uids))
-        await asyncio.gather(*tasks)
+            delete_episodes_coroutines.append(
+                self._long_term_memory.delete_episodes(uids)
+            )
+        await asyncio.gather(*delete_episodes_coroutines)
 
     async def delete_session_episodes(self) -> None:
         """Delete all data from both session and declarative memory for this context."""

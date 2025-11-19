@@ -76,7 +76,7 @@ class LongTermMemory:
         declarative_memory_episodes = [
             DeclarativeMemoryEpisode(
                 uid=episode.uid or str(uuid4()),
-                timestamp=episode.timestamp,
+                timestamp=episode.created_at,
                 source=episode.producer_id,
                 content_type=LongTermMemory._declarative_memory_content_type_from_episode(
                     episode,
@@ -87,8 +87,12 @@ class LongTermMemory:
                     for key, value in {
                         "sequence_num": episode.sequence_num,
                         "session_key": episode.session_key,
-                        "episode_type": episode.episode_type.value,
-                        "content_type": episode.content_type.value,
+                        "episode_type": episode.episode_type.value
+                        if episode.episode_type
+                        else None,
+                        "content_type": episode.content_type.value
+                        if episode.content_type
+                        else None,
                         "producer_id": episode.producer_id,
                         "producer_role": episode.producer_role,
                         "produced_for_id": episode.produced_for_id,

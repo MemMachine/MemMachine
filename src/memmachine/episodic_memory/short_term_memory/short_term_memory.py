@@ -13,6 +13,7 @@ import contextlib
 import logging
 import string
 from collections import deque
+from collections.abc import Mapping
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
 
@@ -301,7 +302,7 @@ class ShortTermMemory:
         query: str,
         limit: int = 0,
         max_message_length: int = 0,
-        filters: dict[str, FilterablePropertyValue] | None = None,
+        filters: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> tuple[list[Episode], str]:
         """
         Retrieve context from short-term memory for a given query.

@@ -277,7 +277,8 @@ class EpisodicMemoryManager:
             if self._closed:
                 return
             tasks.extend(
-                cast(EpisodicMemory, self._instance_cache.get(key)).close() for key in self._instance_cache.keys()
+                cast(EpisodicMemory, self._instance_cache.get(key)).close()
+                for key in self._instance_cache
             )
             await asyncio.gather(*tasks)
             await self._session_data_manager.close()
