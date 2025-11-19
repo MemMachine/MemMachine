@@ -10,6 +10,7 @@ import logging
 import re
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import Enum
+from typing import Any
 
 from neo4j import AsyncDriver
 from neo4j.graph import Node as Neo4jNode
@@ -163,9 +164,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         self._collection_node_counts: dict[str, int] = {}
         self._relation_edge_counts: dict[str, int] = {}
-        self._background_tasks: set[asyncio.Task[object]] = set()
+        self._background_tasks: set[asyncio.Task] = set()
 
-    def _track_task(self, task: asyncio.Task[object]) -> None:
+    def _track_task(self, task: asyncio.Task) -> None:
         """Keep background tasks from being garbage collected prematurely."""
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
@@ -234,10 +235,12 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             >= self._range_index_creation_threshold
         ):
             self._track_task(
-                self._create_initial_indexes_if_not_exist(
-                    EntityType.NODE,
-                    sanitized_collection,
-                ),
+                asyncio.create_task(
+                    self._create_initial_indexes_if_not_exist(
+                        EntityType.NODE,
+                        sanitized_collection,
+                    ),
+                )
             )
 
         if (
@@ -254,13 +257,15 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     not in self._index_state_cache
                 ):
                     self._track_task(
-                        self._create_vector_index_if_not_exists(
-                            entity_type=EntityType.NODE,
-                            sanitized_collection_or_relation=sanitized_collection,
-                            sanitized_embedding_name=sanitized_embedding_name,
-                            dimensions=len(embedding),
-                            similarity_metric=similarity_metric,
-                        ),
+                        asyncio.create_task(
+                            self._create_vector_index_if_not_exists(
+                                entity_type=EntityType.NODE,
+                                sanitized_collection_or_relation=sanitized_collection,
+                                sanitized_embedding_name=sanitized_embedding_name,
+                                dimensions=len(embedding),
+                                similarity_metric=similarity_metric,
+                            ),
+                        )
                     )
 
     async def add_edges(
@@ -337,10 +342,12 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         if self._relation_edge_counts[relation] >= self._range_index_creation_threshold:
             self._track_task(
-                self._create_initial_indexes_if_not_exist(
-                    EntityType.EDGE,
-                    sanitized_relation,
-                ),
+                asyncio.create_task(
+                    self._create_initial_indexes_if_not_exist(
+                        EntityType.EDGE,
+                        sanitized_relation,
+                    ),
+                )
             )
 
         if (
@@ -357,13 +364,15 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     not in self._index_state_cache
                 ):
                     self._track_task(
-                        self._create_vector_index_if_not_exists(
-                            entity_type=EntityType.EDGE,
-                            sanitized_collection_or_relation=sanitized_relation,
-                            sanitized_embedding_name=sanitized_embedding_name,
-                            dimensions=len(embedding),
-                            similarity_metric=similarity_metric,
-                        ),
+                        asyncio.create_task(
+                            self._create_vector_index_if_not_exists(
+                                entity_type=EntityType.EDGE,
+                                sanitized_collection_or_relation=sanitized_relation,
+                                sanitized_embedding_name=sanitized_embedding_name,
+                                dimensions=len(embedding),
+                                similarity_metric=similarity_metric,
+                            ),
+                        )
                     )
 
     async def search_similar_nodes(
@@ -985,7 +994,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     f"()-[e:{sanitized_collection_or_relation}]-()"
                 )
 
-        create_index_task = self._driver.execute_query(
+        create_index_awaitable = self._driver.execute_query(
             f"CREATE RANGE INDEX {range_index_name}\n"
             "IF NOT EXISTS\n"
             f"FOR {query_index_for_expression}\n"
@@ -999,7 +1008,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         await self._await_create_index_if_not_exists(
             range_index_name,
-            create_index_task,
+            create_index_awaitable,
         )
 
     async def _create_vector_index_if_not_exists(
@@ -1056,7 +1065,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     f"()-[e:{sanitized_collection_or_relation}]-()"
                 )
 
-        create_index_task = self._driver.execute_query(
+        create_index_awaitable = self._driver.execute_query(
             f"CREATE VECTOR INDEX {vector_index_name}\n"
             "IF NOT EXISTS\n"
             f"FOR {query_index_for_expression}\n"
@@ -1075,17 +1084,17 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         await self._await_create_index_if_not_exists(
             vector_index_name,
-            create_index_task,
+            create_index_awaitable,
         )
 
     @async_locked
     async def _await_create_index_if_not_exists(
         self,
         index_name: str,
-        create_index_task: Awaitable[None],
+        create_index_awaitable: Awaitable,
     ) -> None:
         """Await index creation and mark it online in the cache."""
-        await create_index_task
+        await create_index_awaitable
 
         await self._driver.execute_query(
             "CALL db.awaitIndex($index_name)",
@@ -1264,7 +1273,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         return nodes
 
     @staticmethod
-    def _python_value_from_neo4j_value(value: object) -> object:
+    def _python_value_from_neo4j_value(value: Any) -> Any:
         """
         Convert a Neo4j value to a native Python value.
 
