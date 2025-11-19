@@ -10,7 +10,7 @@ import logging
 import re
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import Enum
-from typing import Any
+from typing import cast
 
 from neo4j import AsyncDriver
 from neo4j.graph import Node as Neo4jNode
@@ -1241,10 +1241,11 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     node_properties[property_name] = property_value
                 elif is_mangled_embedding_name(desanitized_property_name):
                     embedding_name = demangle_embedding_name(desanitized_property_name)
-                    embedding_value = (
+                    embedding_value = cast(
+                        list[float],
                         Neo4jVectorGraphStore._python_value_from_neo4j_value(
                             neo4j_property_value,
-                        )
+                        ),
                     )
                     similarity_metric = SimilarityMetric(
                         Neo4jVectorGraphStore._python_value_from_neo4j_value(
@@ -1273,15 +1274,17 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         return nodes
 
     @staticmethod
-    def _python_value_from_neo4j_value(value: Any) -> Any:
+    def _python_value_from_neo4j_value(
+        value: PropertyValue | Neo4jDateTime,
+    ) -> PropertyValue:
         """
         Convert a Neo4j value to a native Python value.
 
         Args:
-            value (Any): The Neo4j value to convert.
+            value (PropertyValue | Neo4jDateTime): The Neo4j value to convert.
 
         Returns:
-            Any: The converted Python value.
+            PropertyValue: The converted Python value.
 
         """
         if isinstance(value, Neo4jDateTime):
