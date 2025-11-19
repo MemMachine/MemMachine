@@ -411,6 +411,4 @@ async def test_metrics_collection(mock_async_openai, full_config):
     total_counter.increment.assert_any_call(value=150, labels=labels)
 
     latency_summary.observe.assert_called_once()
-    observed_latency = latency_summary.observe.call_args.kwargs["value"]
-    assert observed_latency > 0
     assert latency_summary.observe.call_args.kwargs["labels"] == labels

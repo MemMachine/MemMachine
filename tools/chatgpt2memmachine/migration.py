@@ -113,7 +113,7 @@ class MigrationHack:
                 )
                 total_messages += len(messages)
                 self.messages[conv_id] = messages
-                with open(extract_file, "w") as f:
+                with open(extract_file, "w", encoding="utf-8") as f:
                     # Write each message line by line to the extract file
                     f.writelines(message + "\n" for message in self.messages[conv_id])
 

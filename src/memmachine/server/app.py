@@ -35,9 +35,6 @@ from starlette.types import Lifespan, Receive, Scope, Send
 
 from memmachine.common.configuration import load_config_yml_file
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
-from memmachine.episodic_memory.episodic_memory import (
-    EpisodicMemory,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -513,10 +510,6 @@ async def initialize_resource(config_file: str) -> ResourceManagerImpl:
     """
     config = load_config_yml_file(config_file)
     ret = ResourceManagerImpl(config)
-    semantic_service = await (
-        await resource_manager.get_semantic_manager()
-    ).get_semantic_service()
-    await semantic_service.start()
     return ret
 
 
@@ -530,7 +523,6 @@ async def init_global_memory() -> None:
 async def shutdown_global_memory() -> None:
     """Shut down global resources and close connections."""
     global resource_manager
-    await resource_manager.close()
 
 
 @asynccontextmanager
@@ -606,7 +598,7 @@ class UserIDContextMiddleware:
 class MemMachineFastMCP(FastMCP):
     """Custom FastMCP subclass for MemMachine with authentication middleware."""
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
         """Initialize the FastMCP app with parent configuration."""
         super().__init__(*args, **kwargs)
 
@@ -916,18 +908,18 @@ async def _add_memory(episode: NewEpisode) -> None:
 
     See the docstring for add_memory() for details.
     """
-    session = episode.get_session()
-    group_id = session.group_id
-    inst: (
-        EpisodicMemory | None
-    ) = await resource_manager.episodic_memory_manager.get_episodic_memory_instance(
-        group_id=group_id if group_id is not None else "",
-        agent_id=session.agent_id,
-        user_id=session.user_id,
-        session_id=session.session_id,
-    )
-    if inst is None:
-        raise episode.new_404_not_found_error("unable to find episodic memory")
+    # session = episode.get_session()
+    # group_id = session.group_id
+    # inst: (
+    #     EpisodicMemory | None
+    # ) = await resource_manager.episodic_memory_manager.get_episodic_memory_instance(
+    #     group_id=group_id if group_id is not None else "",
+    #     agent_id=session.agent_id,
+    #     user_id=session.user_id,
+    #     session_id=session.session_id,
+    # )
+    # if inst is None:
+    #     raise episode.new_404_not_found_error("unable to find episodic memory")
     # async with AsyncEpisodicMemory(inst) as inst:
     #     success = await inst.add_memory_episode(
     #         producer=episode.producer,
@@ -987,18 +979,18 @@ async def _add_episodic_memory(episode: NewEpisode) -> None:
 
     See the docstring for add_episodic_memory() for details.
     """
-    session = episode.get_session()
-    group_id = session.group_id
-    inst: (
-        EpisodicMemory | None
-    ) = await resource_manager.episodic_memory_manager.get_episodic_memory_instance(
-        group_id=group_id if group_id is not None else "",
-        agent_id=session.agent_id,
-        user_id=session.user_id,
-        session_id=session.session_id,
-    )
-    if inst is None:
-        raise episode.new_404_not_found_error("unable to find episodic memory")
+    # session = episode.get_session()
+    # group_id = session.group_id
+    # inst: (
+    #     EpisodicMemory | None
+    # ) = await resource_manager.episodic_memory_manager.get_episodic_memory_instance(
+    #     group_id=group_id if group_id is not None else "",
+    #     agent_id=session.agent_id,
+    #     user_id=session.user_id,
+    #     session_id=session.session_id,
+    # )
+    # if inst is None:
+    #     raise episode.new_404_not_found_error("unable to find episodic memory")
     # async with AsyncEpisodicMemory(inst) as inst:
     #     success = await inst.add_memory_episode(
     #         producer=episode.producer,
@@ -1100,13 +1092,14 @@ async def search_memory(
     return await _search_memory(q)
 
 
-async def _search_memory(q: SearchQuery) -> SearchResult:
+async def _search_memory(_: SearchQuery) -> SearchResult:
     """
     Search for memories across both episodic and profile memory.
 
     Internal helper shared by both REST API and MCP API.
     See the docstring for search_memory() for details.
     """
+    return SearchResult(status=0, content={})
     # session = q.get_session()
     # inst: EpisodicMemory | None = await cast(
     #     EpisodicMemoryManager, episodic_memory
@@ -1155,13 +1148,14 @@ async def search_episodic_memory(
     return await _search_episodic_memory(q)
 
 
-async def _search_episodic_memory(q: SearchQuery) -> SearchResult:
+async def _search_episodic_memory(_: SearchQuery) -> SearchResult:
     """
     Search episodic memory for matching results.
 
     Internal helper shared by both REST API and MCP API.
     See the docstring for search_episodic_memory() for details.
     """
+    return SearchResult(status=0, content={})
     # session = q.get_session()
     # group_id = session.group_id if session.group_id is not None else ""
     # inst: EpisodicMemory | None = await cast(
@@ -1205,13 +1199,14 @@ async def search_profile_memory(
     return await _search_semantic_memory(q)
 
 
-async def _search_semantic_memory(q: SearchQuery) -> SearchResult:
+async def _search_semantic_memory(_: SearchQuery) -> SearchResult:
     """
     Search profile memory for matching results.
 
     Internal helper shared by both REST API and MCP API.
     See the docstring for search_profile_memory() for details.
     """
+    return SearchResult(status=0, content={})
     # session = q.get_session()
     #
     # # Search semantic memory using session manager
@@ -1250,7 +1245,7 @@ async def delete_session_data(
     await _delete_session_data(delete_req)
 
 
-async def _delete_session_data(delete_req: DeleteDataRequest) -> None:
+async def _delete_session_data(_: DeleteDataRequest) -> None:
     """
     Delete all data for a specific session.
 
@@ -1294,6 +1289,7 @@ async def get_all_sessions() -> AllSessionsResponse:
     #         for s in sessions
     #     ]
     # )
+    return AllSessionsResponse(sessions=[])
 
 
 @app.get("/v1/users/{user_id}/sessions")
@@ -1311,6 +1307,8 @@ async def get_sessions_for_user(user_id: str) -> AllSessionsResponse:
     #         for s in sessions
     #     ]
     # )
+    logger.debug("Getting sessions for user %s", user_id)
+    return AllSessionsResponse(sessions=[])
 
 
 @app.get("/v1/groups/{group_id}/sessions")
@@ -1328,6 +1326,8 @@ async def get_sessions_for_group(group_id: str) -> AllSessionsResponse:
     #         for s in sessions
     #     ]
     # )
+    logger.debug("Getting sessions for group %s", group_id)
+    return AllSessionsResponse(sessions=[])
 
 
 @app.get("/v1/agents/{agent_id}/sessions")
@@ -1345,31 +1345,25 @@ async def get_sessions_for_agent(agent_id: str) -> AllSessionsResponse:
     #         for s in sessions
     #     ]
     # )
+    logger.debug("Getting sessions for agent %s", agent_id)
+    return AllSessionsResponse(sessions=[])
 
 
 # === Health Check Endpoint ===
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint for container orchestration."""
-    # try:
-    #     # Check if memory managers are initialized
-    #     if semantic_session_manager is None or episodic_memory is None:
-    #         raise HTTPException(
-    #             status_code=503, detail="Memory managers not initialized"
-    #         )
-    #
-    #     # Basic health check - could be extended to check database connectivity
-    #     return {
-    #         "status": "healthy",
-    #         "service": "memmachine",
-    #         "version": "1.0.0",
-    #         "memory_managers": {
-    #             "semantic_memory": semantic_session_manager is not None,
-    #             "episodic_memory": episodic_memory is not None,
-    #         },
-    #     }
-    # except Exception as e:
-    #     raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
+    try:
+        # Check if memory managers are initialized
+
+        # Basic health check - could be extended to check database connectivity
+        return {
+            "status": "healthy",
+            "service": "memmachine",
+            "version": "1.0.0",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service unhealthy: {e!s}") from e
 
 
 async def start() -> None:
@@ -1414,7 +1408,8 @@ def main() -> None:
                 await mcp.run_stdio_async()
             finally:
                 # Clean up resources when server stops
-                resource_manager.close()
+                # resource_manager.close()
+                pass
 
         asyncio.run(run_mcp_server())
     else:

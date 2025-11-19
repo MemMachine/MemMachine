@@ -42,7 +42,7 @@ class LogConf(BaseModel):
         description="Logging format string",
     )
     path: str = Field(
-        default="/tmp/MemMachine.log",
+        default="MemMachine.log",
         description="Path to log file (if empty, logs only to stdout).",
     )
 

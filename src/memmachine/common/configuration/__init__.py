@@ -29,6 +29,7 @@ class SessionManagerConf(BaseModel):
         description="The database ID to use for session manager",
     )
 
+
 class EpisodeStoreConf(BaseModel):
     """Configuration for the episod storage."""
 
@@ -36,6 +37,7 @@ class EpisodeStoreConf(BaseModel):
         default="",
         description="The database ID to use for episode storage",
     )
+
 
 class SemanticMemoryConf(BaseModel):
     """Configuration for semantic memory defaults."""
@@ -154,15 +156,6 @@ class ResourcesConf(BaseModel):
         self.language_models = LanguageModelsConf.parse(data)
         self.rerankers = RerankersConf.parse(data)
         self.databases = DatabasesConf.parse(data)
-
-
-class EpisodeStore(BaseModel):
-    """Configuration for episode storage."""
-
-    database: str = Field(
-        ...,
-        description="The database to use for episode storage",
-    )
 
 
 class Configuration(BaseModel):

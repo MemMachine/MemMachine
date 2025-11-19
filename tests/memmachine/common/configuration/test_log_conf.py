@@ -61,7 +61,7 @@ def test_logconf_format_validation_invalid(badfmt):
 
 
 def test_logconf_path_none_or_empty():
-    assert LogConf().path == "/tmp/MemMachine.log"
+    assert LogConf().path == "MemMachine.log"
     assert LogConf(path="").path is None
 
 

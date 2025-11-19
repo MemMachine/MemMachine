@@ -1,6 +1,9 @@
 logging:
-  path: /tmp/memory_log
+  path: mem-machine.log
   level: info #| debug | error
+
+episode_store:
+  database: profile_storage
 
 episodic_memory:
   long_term_memory:
