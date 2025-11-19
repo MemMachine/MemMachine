@@ -16,8 +16,8 @@ semantic_memory:
   embedding_model: openai_embedder
   database: profile_storage
 
-session_db:
-  uri: sqlitetest.db
+session_manager:
+  database: sqlite_test
 
 resources:
   databases:
@@ -35,6 +35,10 @@ resources:
         uri: 'bolt://localhost:7687'
         username: neo4j
         password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
+      config:
+        uri: sqlite_test.db
   embedders:
     openai_embedder:
       provider: openai

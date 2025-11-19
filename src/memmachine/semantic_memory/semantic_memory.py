@@ -38,7 +38,7 @@ class SemanticService:
         """Infrastructure dependencies and background-update configuration."""
 
         semantic_storage: InstanceOf[SemanticStorage]
-        episodic_storage: InstanceOf[EpisodeStorage]
+        episode_storage: InstanceOf[EpisodeStorage]
         consolidation_threshold: int = 20
 
         feature_update_interval_sec: float = 2.0
@@ -55,7 +55,7 @@ class SemanticService:
     ) -> None:
         """Set up semantic memory services and background ingestion tracking."""
         self._semantic_storage = params.semantic_storage
-        self._episodic_storage = params.episodic_storage
+        self._episode_storage = params.episode_storage
         self._background_ingestion_interval_sec = params.feature_update_interval_sec
 
         self._resource_retriever: ResourceRetriever = params.resource_retriever
@@ -274,7 +274,7 @@ class SemanticService:
             params=IngestionService.Params(
                 semantic_storage=self._semantic_storage,
                 resource_retriever=self._resource_retriever,
-                history_store=self._episodic_storage,
+                history_store=self._episode_storage,
             ),
         )
 

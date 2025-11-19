@@ -1,4 +1,4 @@
-"""Manage storage engines for SQL and Neo4j backends."""
+"""Manage database engines for SQL and Neo4j backends."""
 
 import asyncio
 import logging
@@ -9,7 +9,7 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from memmachine.common.configuration.storage_conf import DatabasesConf
+from memmachine.common.configuration.database_conf import DatabasesConf
 from memmachine.common.vector_graph_store import VectorGraphStore
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -19,11 +19,11 @@ from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
 logger = logging.getLogger(__name__)
 
 
-class StorageManager:
-    """Create and manage storage backends."""
+class DatabaseManager:
+    """Create and manage database backends."""
 
     def __init__(self, conf: DatabasesConf) -> None:
-        """Initialize with storage configuration."""
+        """Initialize with database configuration."""
         self.conf = conf
         self.graph_stores: dict[str, VectorGraphStore] = {}
         self.sql_engines: dict[str, AsyncEngine] = {}
@@ -49,38 +49,55 @@ class StorageManager:
         """Close all database connections."""
         async with self._lock:
             tasks = []
-            for name, store in self.graph_stores.items():
-                try:
-                    tasks.append(store.close())
-                except Exception:
-                    logger.exception("Error closing graph store '%s'", name)
-            tasks.extend(engine.dispose() for engine in self.sql_engines.values())
+            for name, driver in self.neo4j_drivers.items():
+                async def do_close():
+                    try:
+                        await driver.close()
+                    except Exception as ex:
+                        logger.warning(f"Error closing Neo4j driver '{name}': {ex}")
+                tasks.append(do_close())
+            for name, engine in self.sql_engines.items():
+                async def do_close():
+                    try:
+                        await engine.dispose()
+                    except Exception as ex:
+                        logger.warning(f"Error disposing SQL engine '{name}': {ex}")
+                tasks.append(do_close())
             await asyncio.gather(*tasks)
             # reset all connections
             self.graph_stores = {}
             self.sql_engines = {}
             self.neo4j_drivers = {}
 
-    async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
-        """Return a vector graph store by name."""
+    async def async_get_vector_graph_store(self, name: str) -> VectorGraphStore:
         async with self._lock:
             if name not in self.graph_stores:
                 raise ValueError(f"Neo4j driver '{name}' not found.")
             return self.graph_stores[name]
 
-    async def get_neo4j_driver(self, name: str) -> AsyncDriver:
-        """Return a Neo4j driver by name."""
+    def get_vector_graph_store(self, name: str) -> VectorGraphStore:
+        """Return a vector graph store by name."""
+        return asyncio.run(self.async_get_vector_graph_store(name))
+
+    async def async_get_neo4j_driver(self, name: str) -> AsyncDriver:
         async with self._lock:
             if name not in self.neo4j_drivers:
                 raise ValueError(f"Neo4j driver '{name}' not found.")
             return self.neo4j_drivers[name]
 
-    async def get_sql_engine(self, name: str) -> AsyncEngine:
-        """Return a SQL engine by name."""
+    def get_neo4j_driver(self, name: str) -> AsyncDriver:
+        """Return a Neo4j driver by name."""
+        return asyncio.run(self.async_get_neo4j_driver(name))
+
+    async def async_get_sql_engine(self, name: str) -> AsyncEngine:
         async with self._lock:
             if name not in self.sql_engines:
                 raise ValueError(f"SQL connection '{name}' not found.")
             return self.sql_engines[name]
+
+    def get_sql_engine(self, name: str) -> AsyncEngine:
+        """Return a SQL engine by name."""
+        return asyncio.run(self.async_get_sql_engine(name))
 
     async def _build_neo4j(self) -> None:
         """Establish Neo4j drivers for all configured graph stores."""
@@ -126,14 +143,10 @@ class StorageManager:
 
     async def _build_sql_engines(self) -> None:
         """Create async SQL engines for configured SQLite connections."""
-        schema = "sqlite+aiosqlite:///"
-        for name, conf in self.conf.sqlite_confs.items():
+        for name, conf in self.conf.relational_db_confs.items():
             if name in self.sql_engines:
                 continue
-            db_url = conf.file_path
-            if not conf.file_path.startswith(schema):
-                db_url = f"sqlite+aiosqlite:///{db_url}"
-            engine = create_async_engine(db_url, echo=False, future=True)
+            engine = create_async_engine(conf.uri, echo=False, future=True)
             self.sql_engines[name] = engine
 
     async def _validate_sql_engines(self) -> None:

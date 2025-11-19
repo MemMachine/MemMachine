@@ -2,11 +2,14 @@
 
 import asyncio
 
+from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine.common.configuration import Configuration
+from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
 from memmachine.common.embedder import Embedder
 from memmachine.common.language_model import LanguageModel
+from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.reranker import Reranker
 from memmachine.common.resource_manager.embedder_manager import EmbedderManager
 from memmachine.common.resource_manager.language_model_manager import (
@@ -14,7 +17,7 @@ from memmachine.common.resource_manager.language_model_manager import (
 )
 from memmachine.common.resource_manager.reranker_manager import RerankerManager
 from memmachine.common.resource_manager.semantic_manager import SemanticResourceManager
-from memmachine.common.resource_manager.storage_manager import StorageManager
+from memmachine.common.resource_manager.database_manager import DatabaseManager
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
@@ -36,7 +39,7 @@ class ResourceManagerImpl:
         """Initialize managers from configuration."""
         self._conf = conf
         self._conf.logging.apply()
-        self._storage_manager: StorageManager = StorageManager(
+        self._database_manager: DatabaseManager = DatabaseManager(
             self._conf.resources.storages
         )
         self._embedder_manager: EmbedderManager = EmbedderManager(
@@ -53,13 +56,13 @@ class ResourceManagerImpl:
         self._session_data_manager: SessionDataManager | None = None
         self._episodic_memory_manager: EpisodicMemoryManager | None = None
 
-        self._history_storage: EpisodeStorage | None = None
+        self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
 
     async def build(self) -> None:
         """Build all configured resources in parallel."""
         tasks = [
-            self._storage_manager.build_all(validate=True),
+            self._database_manager.build_all(validate=True),
             self._embedder_manager.build_all(),
             self._model_manager.build_all(),
             self._reranker_manager.build_all(),
@@ -73,17 +76,21 @@ class ResourceManagerImpl:
         if self._semantic_manager is not None:
             tasks.append(self._semantic_manager.close())
 
-        tasks.append(self._storage_manager.close())
+        tasks.append(self._database_manager.close())
 
         await asyncio.gather(*tasks)
 
     async def get_sql_engine(self, name: str) -> AsyncEngine:
         """Return a SQL engine by name."""
-        return self._storage_manager.get_sql_engine(name)
+        return self._database_manager.get_sql_engine(name)
+
+    async def get_neo4j_driver(self, name: str) -> AsyncDriver:
+        """Return a Neo4j driver by name."""
+        return self._database_manager.get_neo4j_driver(name)
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
-        return self._storage_manager.get_vector_graph_store(name)
+        return self._database_manager.get_vector_graph_store(name)
 
     async def get_embedder(self, name: str) -> Embedder:
         """Return an embedder by name."""
@@ -102,7 +109,8 @@ class ResourceManagerImpl:
         """Lazy-load the session data manager."""
         if self._session_data_manager is not None:
             return self._session_data_manager
-        engine = self._storage_manager.get_sql_engine(self._conf.session_db.storage_id)
+        database = self._conf.session_manager.database
+        engine = self._database_manager.get_sql_engine(database)
         self._session_data_manager = SessionDataManagerSQL(engine)
         return self._session_data_manager
 
@@ -111,25 +119,26 @@ class ResourceManagerImpl:
         """Lazy-load the episodic memory manager."""
         if self._episodic_memory_manager is not None:
             return self._episodic_memory_manager
+        session_data_manager = self.session_data_manager
         params = EpisodicMemoryManagerParams(
             resource_manager=self,
-            session_data_manager=self.session_data_manager,
+            session_data_manager=session_data_manager,
         )
         self._episodic_memory_manager = EpisodicMemoryManager(params)
         return self._episodic_memory_manager
 
     @property
-    def history_storage(self) -> EpisodeStorage:
+    def episode_storage(self) -> EpisodeStorage:
         """Lazy-load the episode history storage."""
-        if self._history_storage is not None:
-            return self._history_storage
+        if self._episode_storage is not None:
+            return self._episode_storage
 
         conf = self._conf.history_storage
-        engine = self._storage_manager.get_sql_engine(conf.database)
+        engine = self._database_manager.get_sql_engine(conf.database)
 
-        self._history_storage = SqlAlchemyEpisodeStore(engine)
+        self._episode_storage = SqlAlchemyEpisodeStore(engine)
 
-        return self._history_storage
+        return self._episode_storage
 
     async def get_semantic_manager(self) -> SemanticResourceManager:
         """Return the semantic resource manager, constructing if needed."""
@@ -140,7 +149,7 @@ class ResourceManagerImpl:
             semantic_conf=self._conf.semantic_memory,
             prompt_conf=self._conf.prompt,
             resource_manager=self,
-            history_storage=self.history_storage,
+            episode_storage=self.episode_storage,
         )
         return self._semantic_manager
 
@@ -148,3 +157,8 @@ class ResourceManagerImpl:
         """Return the semantic session manager."""
         semantic_manager = await self.get_semantic_manager()
         return await semantic_manager.get_semantic_session_manager()
+
+    @staticmethod
+    async def get_metrics_factory(name: str) -> MetricsFactory:
+        """Return the metrics factory by name."""
+        return WithMetricsFactoryId(metrics_factory_id=name).get_metrics_factory()

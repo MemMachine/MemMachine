@@ -35,13 +35,13 @@ class SemanticResourceManager:
         semantic_conf: SemanticMemoryConf,
         prompt_conf: PromptConf,
         resource_manager: InstanceOf[CommonResourceManager],
-        history_storage: EpisodeStorage,
+        episode_storage: EpisodeStorage,
     ) -> None:
         """Store configuration and supporting managers."""
         self._resource_manager = resource_manager
         self._conf = semantic_conf
         self._prompt_conf = prompt_conf
-        self._episodic_storage = history_storage
+        self._episode_storage = episode_storage
 
         self._simple_semantic_session_id_manager: SessionIdManager | None = None
         self._semantic_session_resource_manager: (
@@ -117,13 +117,13 @@ class SemanticResourceManager:
             return self._semantic_service
 
         semantic_storage = await self._get_semantic_storage()
-        episodic_store = self._episodic_storage
+        episode_store = self._episode_storage
         resource_retriever = await self.get_semantic_session_resource_manager()
 
         self._semantic_service = SemanticService(
             SemanticService.Params(
                 semantic_storage=semantic_storage,
-                episodic_storage=episodic_store,
+                episode_storage=episode_store,
                 resource_retriever=resource_retriever,
             ),
         )

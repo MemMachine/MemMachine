@@ -79,7 +79,7 @@ async def semantic_service(
 ):
     params = SemanticService.Params(
         semantic_storage=semantic_storage,
-        episodic_storage=episode_storage,
+        episode_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
         feature_update_message_limit=2,
@@ -146,7 +146,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     # Create service with message_limit=2 and very fast interval
     params = SemanticService.Params(
         semantic_storage=semantic_storage,
-        episodic_storage=episode_storage,
+        episode_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
         feature_update_message_limit=0,
@@ -302,7 +302,7 @@ async def test_multiple_sets_processed_independently(
     # Create service with message_limit=2
     params = SemanticService.Params(
         semantic_storage=semantic_storage,
-        episodic_storage=episode_storage,
+        episode_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
         feature_update_message_limit=0,
