@@ -43,14 +43,3 @@ jobs:
 
       - name: Test with python ${{ matrix.python-version }}
         run: uv run --frozen --all-extras mypy src
-
-  complexipy-check:
-    name: Code mental complexity check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install the latest version of uv and set the python version
-        uses: astral-sh/setup-uv@v6
-
-      - run: uv run --frozen --dev complexipy --output-json

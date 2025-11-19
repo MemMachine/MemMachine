@@ -121,8 +121,7 @@ async def semantic_service(
             episode_storage=episode_storage,
             resource_retriever=resource_retriever,
             feature_update_interval_sec=0.05,
-            feature_update_message_limit=10,
-            feature_update_time_limit_sec=0.05,
+            feature_update_message_limit=0,
             debug_fail_loudly=True,
         ),
     )
@@ -227,7 +226,7 @@ class TestLongMemEvalIngestion:
             conversation_sessions=[smoke_convos],
         )
         count = 1
-        for _i in range(90):
+        for _i in range(60):
             count = await semantic_memory.number_of_uningested_messages(
                 session_data=basic_session_data,
             )
