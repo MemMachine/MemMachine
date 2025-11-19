@@ -1,6 +1,7 @@
 import pytest
+from pydantic import SecretStr
 
-from memmachine.common.configuration.storage_conf import (
+from memmachine.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
     SqlAlchemyConf,
@@ -32,7 +33,7 @@ def test_parse_valid_storage_dict():
             "local_sqlite": {
                 "provider": "sqlite",
                 "config": {
-                    "host": "local.db",
+                    "path": "local.db",
                 },
             },
         },
@@ -49,13 +50,23 @@ def test_parse_valid_storage_dict():
     # Postgres check
     pg_conf = storage_conf.relational_db_confs["main_postgres"]
     assert isinstance(pg_conf, SqlAlchemyConf)
+    assert pg_conf.dialect == "postgresql"
+    assert pg_conf.driver == "asyncpg"
+    assert pg_conf.host == "db.example.com"
+    assert pg_conf.user == "admin"
+    assert pg_conf.password == SecretStr("pwd")
     assert pg_conf.db_name == "test_db"
     assert pg_conf.port == 5432
+    assert pg_conf.path is None
+    assert pg_conf.uri == "postgresql+asyncpg://admin:pwd@db.example.com:5432/test_db"
 
     # Sqlite check
     sqlite_conf = storage_conf.relational_db_confs["local_sqlite"]
+    assert sqlite_conf.dialect == "sqlite"
+    assert sqlite_conf.driver == "aiosqlite"
+    assert sqlite_conf.path == "local.db"
     assert isinstance(sqlite_conf, SqlAlchemyConf)
-    assert sqlite_conf.host == "local.db"
+    assert sqlite_conf.uri == "sqlite+aiosqlite:///local.db"
 
 
 def test_parse_unknown_provider_raises():

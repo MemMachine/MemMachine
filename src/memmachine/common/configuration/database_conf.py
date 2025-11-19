@@ -28,7 +28,8 @@ class SqlAlchemyConf(BaseModel):
     dialect: str = Field(..., description="SQL dialect")
     driver: str = Field(..., description="SQLAlchemy driver")
 
-    host: str = Field(..., description="DB connection host")
+    host: str | None = Field(default=None, description="DB connection host")
+    path: str | None = Field(default=None, description="DB file path")
     port: int | None = Field(default=None, description="DB connection port")
     user: str | None = Field(default=None, description="DB username")
     password: SecretStr | None = Field(
@@ -37,13 +38,54 @@ class SqlAlchemyConf(BaseModel):
     )
     db_name: str | None = Field(default=None, description="DB name")
 
+    @property
+    def schema_part(self) -> str:
+        """Construct the SQLAlchemy database schema."""
+        return f"{self.dialect}+{self.driver}://"
+
+    @property
+    def auth_part(self) -> str:
+        """Construct the SQLAlchemy database credentials part."""
+        auth_part = ""
+        if self.user and self.password:
+            auth_part = f"{self.user}:{self.password.get_secret_value()}@"
+        elif self.user:
+            auth_part = f"{self.user}@"
+        return auth_part
+
+    @property
+    def host_and_port(self) -> str:
+        """Construct the host and port part of the URI."""
+        host_part = self.host or ""
+        if self.port:
+            host_part += f":{self.port}"
+        return host_part
+
+    @property
+    def path_or_db(self) -> str:
+        """Construct the path part of the URI."""
+        ret = f"/{self.path}" if self.path else ""
+        ret += f"/{self.db_name}" if self.db_name else ""
+        return ret
+
+    @property
+    def uri(self) -> str:
+        """Construct the SQLAlchemy database URI."""
+        return (
+            f"{self.schema_part}{self.auth_part}{self.host_and_port}{self.path_or_db}"
+        )
+
 
 class SupportedDB(str, Enum):
+    """Supported database providers."""
+
     NEO4J = ("neo4j", Neo4jConf, None, None)
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
 
-    def __new__(cls, value, conf_cls: Neo4jConf | SqlAlchemyConf, dialect, driver):
+    def __new__(
+        cls, value: str, conf_cls: Neo4jConf | SqlAlchemyConf, dialect: str, driver: str
+    ) -> Self:
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.conf_cls = conf_cls
@@ -93,7 +135,7 @@ class DatabasesConf(BaseModel):
         neo4j_dict = {}
         relational_db_dict = {}
 
-        for storage_id, resource_definition in databases.items():
+        for database_id, resource_definition in databases.items():
             provider_str = resource_definition.get("provider")
             conf = resource_definition.get("config", {})
 
@@ -101,9 +143,9 @@ class DatabasesConf(BaseModel):
             config_obj = provider.build_config(conf)
 
             if provider.is_neo4j:
-                neo4j_dict[storage_id] = config_obj
+                neo4j_dict[database_id] = config_obj
             else:
-                relational_db_dict[storage_id] = config_obj
+                relational_db_dict[database_id] = config_obj
 
         return cls(
             neo4j_confs=neo4j_dict,

@@ -53,7 +53,8 @@ class MemoryInstanceCache:
         self.head.next = self.tail
         self.tail.prev = self.head
 
-    def _remove_node(self, node: Node) -> None:
+    @staticmethod
+    def _remove_node(node: Node) -> None:
         """Remove a node from the doubly linked list."""
         if node.prev and node.next:
             prev_node = node.prev
