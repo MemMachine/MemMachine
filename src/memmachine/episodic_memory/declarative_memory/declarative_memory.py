@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import functools
 import json
 import logging
 from collections.abc import Iterable, Mapping
@@ -575,8 +576,8 @@ class DeclarativeMemory:
 
                 def weighted_index_proximity(
                     episode: Episode,
-                    context: list[Episode] = list(context),
-                    nuclear_index: int = nuclear_index,
+                    context: list[Episode],
+                    nuclear_index: int,
                 ) -> float:
                     proximity = context.index(episode) - nuclear_index
                     if proximity >= 0:
@@ -586,7 +587,11 @@ class DeclarativeMemory:
 
                 nuclear_context = sorted(
                     context,
-                    key=weighted_index_proximity,
+                    key=functools.partial(
+                        weighted_index_proximity,
+                        context=context,
+                        nuclear_index=nuclear_index,
+                    ),
                 )
 
                 # Add episodes to unified context until limit is reached,
