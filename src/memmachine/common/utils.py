@@ -11,7 +11,7 @@ P = ParamSpec("P")
 
 
 async def async_with[T](
-    async_context_manager: AbstractAsyncContextManager[object],
+    async_context_manager: AbstractAsyncContextManager,
     awaitable: Awaitable[T],
 ) -> T:
     """
