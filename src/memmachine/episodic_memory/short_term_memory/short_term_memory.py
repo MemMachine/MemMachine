@@ -356,8 +356,6 @@ class ShortTermMemory:
                                 break
                     if not matched:
                         continue
-                episodes.appendleft(e)
-                length += len(e.content)
 
                 msg_len = self._compute_episode_length(e)
                 if length + msg_len > max_message_length > 0:
