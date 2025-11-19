@@ -54,7 +54,7 @@ class Episode(BaseEpisodeStore):
     produced_for_id = mapped_column(String, nullable=True)
     episode_type = mapped_column(
         SAEnum(EpisodeType, name="episode_type"),
-        nullable=True,
+        default=EpisodeType.MESSAGE,
     )
 
     json_metadata = mapped_column(
