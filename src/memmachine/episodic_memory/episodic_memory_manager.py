@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -276,7 +277,7 @@ class EpisodicMemoryManager:
             if self._closed:
                 return
             tasks.extend(
-                self._instance_cache.get(key).close() for key in self._instance_cache
+                cast(EpisodicMemory, self._instance_cache.get(key)).close() for key in self._instance_cache.keys()
             )
             await asyncio.gather(*tasks)
             await self._session_data_manager.close()

@@ -16,7 +16,10 @@ from collections import deque
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import (
+    ExternalServiceAPIError,
+    FilterablePropertyValue,
+)
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episode_store.episode_model import Episode
@@ -107,7 +110,7 @@ class ShortTermMemory:
         self._current_message_len = 0
         self._summary = summary
         self._session_key = param.session_key
-        self._summary_task = None
+        self._summary_task: asyncio.Task | None = None
         self._closed = False
         self._lock = asyncio.Lock()
         if episodes is not None:
@@ -298,7 +301,7 @@ class ShortTermMemory:
         query: str,
         limit: int = 0,
         max_message_length: int = 0,
-        filters: dict[str, str] | None = None,
+        filters: dict[str, FilterablePropertyValue] | None = None,
     ) -> tuple[list[Episode], str]:
         """
         Retrieve context from short-term memory for a given query.
