@@ -134,7 +134,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         max_attempts: int = 1,
-    ) -> T:
+    ) -> T | None:
         """Generate a structured response parsed into the given model."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")

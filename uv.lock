@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
@@ -1503,6 +1503,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
     { name = "testcontainers", extra = ["neo4j"] },
+    { name = "ty" },
 ]
 
 [package.metadata]
@@ -1543,6 +1544,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.13.2" },
     { name = "testcontainers", extras = ["neo4j", "postgres"], specifier = ">=4.13.1" },
+    { name = "ty", specifier = ">=0.0.1a26" },
 ]
 
 [[package]]

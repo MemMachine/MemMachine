@@ -67,6 +67,9 @@ async def llm_feature_update(
         output_format=_SemanticFeatureUpdateRes,
     )
 
+    if parsed_output is None:
+        return []
+
     validated_output = TypeAdapter(_SemanticFeatureUpdateRes).validate_python(
         parsed_output,
     )
@@ -101,6 +104,9 @@ async def llm_consolidate_features(
         user_prompt=json.dumps(_features_to_llm_format(features)),
         output_format=SemanticConsolidateMemoryRes,
     )
+
+    if parsed_output is None:
+        return None
 
     validated_output = TypeAdapter(SemanticConsolidateMemoryRes).validate_python(
         parsed_output,
