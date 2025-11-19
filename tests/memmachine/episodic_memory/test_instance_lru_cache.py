@@ -43,7 +43,6 @@ async def test_add_and_get(mock_episodic_memory):
 
     await cache.add("key1", mem1)
 
-    assert "key1" in cache
     assert cache.get_ref_count("key1") == 1
 
     retrieved_mem = cache.get("key1")
@@ -131,7 +130,8 @@ async def test_lru_eviction(mock_episodic_memory):
     await cache.add("key3", mem3)
 
     # Check that key1 is gone and its close method was called
-    assert "key1" not in cache
+    assert cache.get("key1") is None
+
     assert sorted(cache.keys()) == ["key2", "key3"]
     mem1.close.assert_awaited_once()
     mem2.close.assert_not_awaited()
@@ -156,7 +156,7 @@ async def test_lru_eviction_with_in_use_item(mock_episodic_memory):
     # Try to add key3. It should evict key2, not key1.
     await cache.add("key3", mem3)
 
-    assert "key2" not in cache
+    assert cache.get("key2") is None
     assert sorted(cache.keys()) == ["key1", "key3"]
     mem1.close.assert_not_awaited()
     mem2.close.assert_awaited_once()
@@ -184,7 +184,7 @@ async def test_lru_order_on_get(mock_episodic_memory):
     # Add key3. This should evict key2 (the new LRU)
     await cache.add("key3", mem3)
 
-    assert "key2" not in cache
+    assert cache.get("key2") is None
     assert sorted(cache.keys()) == ["key1", "key3"]
     mem2.close.assert_awaited_once()
     mem1.close.assert_not_awaited()
@@ -206,7 +206,6 @@ async def test_erase(mock_episodic_memory):
     assert cache.get_ref_count("key1") == 0
     cache.erase("key1")
 
-    assert "key1" not in cache
     assert cache.get("key1") is None
 
 
