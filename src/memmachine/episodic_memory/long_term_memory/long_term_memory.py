@@ -98,8 +98,12 @@ class LongTermMemory:
                         "produced_for_id": episode.produced_for_id,
                     }.items()
                     if value is not None
+                }
+                | {
+                    LongTermMemory._mangle_filterable_metadata_key(key): value
+                    for key, value in (episode.filterable_metadata or {}).items()
                 },
-                user_metadata=episode.user_metadata,
+                user_metadata=episode.metadata,
             )
             for episode in episodes
         ]
@@ -233,5 +237,28 @@ class LongTermMemory:
                 "str | None",
                 declarative_memory_episode.filterable_properties.get("produced_for_id"),
             ),
+            filterable_metadata={
+                LongTermMemory._demangle_filterable_metadata_key(key): value
+                for key, value in declarative_memory_episode.filterable_properties.items()
+                if LongTermMemory._is_mangled_filterable_metadata_key(key)
+            },
             metadata=declarative_memory_episode.user_metadata,
+        )
+
+    _MANGLE_FILTERABLE_METADATA_KEY_PREFIX = "filterable_"
+
+    @staticmethod
+    def _mangle_filterable_metadata_key(key: str) -> str:
+        return LongTermMemory._MANGLE_FILTERABLE_METADATA_KEY_PREFIX + key
+
+    @staticmethod
+    def _demangle_filterable_metadata_key(mangled_key: str) -> str:
+        return mangled_key.removeprefix(
+            LongTermMemory._MANGLE_FILTERABLE_METADATA_KEY_PREFIX
+        )
+
+    @staticmethod
+    def _is_mangled_filterable_metadata_key(candidate_key: str) -> bool:
+        return candidate_key.startswith(
+            LongTermMemory._MANGLE_FILTERABLE_METADATA_KEY_PREFIX
         )
