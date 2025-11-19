@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from uuid import UUID
 
 from pydantic import JsonValue
 
@@ -22,7 +21,7 @@ class ContentType(Enum):
 class Episode:
     """A single episodic memory entry."""
 
-    uuid: UUID
+    uid: str
     timestamp: datetime
     source: str
     content_type: ContentType
@@ -33,21 +32,21 @@ class Episode:
     user_metadata: JsonValue = None
 
     def __eq__(self, other: object) -> bool:
-        """Compare episodes by UUID."""
+        """Compare episodes by UID."""
         if not isinstance(other, Episode):
             return False
-        return self.uuid == other.uuid
+        return self.uid == other.uid
 
     def __hash__(self) -> int:
-        """Hash an episode by its UUID."""
-        return hash(self.uuid)
+        """Hash an episode by its UID."""
+        return hash(self.uid)
 
 
 @dataclass(kw_only=True)
 class Derivative:
     """A derived episodic memory linked to a source episode."""
 
-    uuid: UUID
+    uid: str
     timestamp: datetime
     source: str
     content_type: ContentType
@@ -57,14 +56,14 @@ class Derivative:
     )
 
     def __eq__(self, other: object) -> bool:
-        """Compare derivatives by UUID."""
+        """Compare derivatives by UID."""
         if not isinstance(other, Derivative):
             return False
-        return self.uuid == other.uuid
+        return self.uid == other.uid
 
     def __hash__(self) -> int:
-        """Hash a derivative by its UUID."""
-        return hash(self.uuid)
+        """Hash a derivative by its UID."""
+        return hash(self.uid)
 
 
 _MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX = "filterable_"

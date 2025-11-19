@@ -23,7 +23,7 @@ from memmachine.episodic_memory.short_term_memory.short_term_memory import (
 def create_test_episode(**kwargs):
     """Helper function to create a valid Episode for testing."""
     defaults = {
-        "uuid": str(uuid.uuid4()),
+        "uid": str(uuid.uuid4()),
         "sequence_num": 1,
         "session_key": "session1",
         "episode_type": "message",
@@ -211,7 +211,7 @@ class TestSessionMemoryPublicAPI:
         await memory.add_episode(ep2)
         await memory.add_episode(ep3)
 
-        await memory.delete_episode(ep2.uuid)
+        await memory.delete_episode(ep2.uid)
         episodes, _ = await memory.get_short_term_memory_context(query="test")
         assert episodes == [ep1, ep3]
 

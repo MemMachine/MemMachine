@@ -12,7 +12,6 @@ import asyncio
 import contextlib
 import logging
 import string
-import uuid
 from collections import deque
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
@@ -234,11 +233,11 @@ class ShortTermMemory:
             self._current_message_len = 0
             self._summary = ""
 
-    async def delete_episode(self, uuid: uuid.UUID) -> bool:
-        """Delete one episode by uuid."""
+    async def delete_episode(self, uid: str) -> bool:
+        """Delete one episode by UID."""
         async with self._lock:
             for e in self._memory:
-                if e.uuid == uuid:
+                if e.uid == uid:
                     self._current_episode_count -= 1
                     self._current_message_len -= len(e.content)
                     self._memory.remove(e)
@@ -267,7 +266,7 @@ class ShortTermMemory:
                         meta += f"[{k}: {v}] "
                 else:
                     meta = repr(entry.metadata)
-                episode_content += f"[{entry.uuid!s} : {meta} : {entry.content}]"
+                episode_content += f"[{entry.uid!s} : {meta} : {entry.content}]"
             msg = self._summary_user_prompt.format(
                 episodes=episode_content,
                 summary=self._summary,

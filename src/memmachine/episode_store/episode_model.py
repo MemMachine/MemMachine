@@ -28,7 +28,7 @@ FILTERABLE_VALUE = str | int | float | bool | datetime
 class Episode(BaseModel):
     """Conversation message stored in history together with persistence metadata."""
 
-    uuid: EpisodeIdT | None = None
+    uid: EpisodeIdT | None = None
     content: str
     session_key: str
     created_at: datetime

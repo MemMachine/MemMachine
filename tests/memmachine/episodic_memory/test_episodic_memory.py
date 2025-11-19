@@ -23,7 +23,7 @@ from memmachine.episodic_memory.short_term_memory.short_term_memory import (
 def create_test_episode(**kwargs):
     """Helper function to create a valid Episode for testing."""
     defaults = {
-        "uuid": str(uuid4()),
+        "uid": str(uuid4()),
         "session_key": "test_session",
         "sequence_num": 1,
         "content": "test content",
@@ -170,11 +170,11 @@ async def test_delete_episodes(
     mock_short_term_memory,
     mock_long_term_memory,
 ):
-    """Test deleting episodes by UUID."""
-    uuid1, uuid2 = uuid4(), uuid4()
-    await episodic_memory.delete_episodes([uuid1, uuid2])
-    mock_short_term_memory.delete_episode.assert_has_awaits([call(uuid1), call(uuid2)])
-    mock_long_term_memory.delete_episodes.assert_awaited_once_with([uuid1, uuid2])
+    """Test deleting episodes by UID."""
+    uid1, uid2 = str(uuid4()), str(uuid4())
+    await episodic_memory.delete_episodes([uid1, uid2])
+    mock_short_term_memory.delete_episode.assert_has_awaits([call(uid1), call(uid2)])
+    mock_long_term_memory.delete_episodes.assert_awaited_once_with([uid1, uid2])
 
 
 @pytest.mark.asyncio
@@ -196,9 +196,9 @@ async def test_query_memory_all_enabled(
     mock_long_term_memory,
 ):
     """Test querying memory with both short and long term memory enabled."""
-    ep1 = create_test_episode(uuid=str(uuid4()), content="short")
-    ep2 = create_test_episode(uuid=str(uuid4()), content="long")
-    ep3 = create_test_episode(uuid=ep1.uuid, content="duplicate")
+    ep1 = create_test_episode(uid=str(uuid4()), content="short")
+    ep2 = create_test_episode(uid=str(uuid4()), content="long")
+    ep3 = create_test_episode(uid=ep1.uid, content="duplicate")
 
     mock_short_term_memory.get_short_term_memory_context.return_value = (
         [ep1],

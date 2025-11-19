@@ -123,15 +123,15 @@ async def test_add_nodes(neo4j_driver, vector_graph_store):
 
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node1"},
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node2"},
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node3", "time": datetime.now(tz=UTC)},
             embeddings={
                 "embedding_name": (
@@ -150,21 +150,21 @@ async def test_add_nodes(neo4j_driver, vector_graph_store):
 
 @pytest.mark.asyncio
 async def test_add_edges(neo4j_driver, vector_graph_store):
-    node1_uuid = uuid4()
-    node2_uuid = uuid4()
-    node3_uuid = uuid4()
+    node1_uid = str(uuid4())
+    node2_uid = str(uuid4())
+    node3_uid = str(uuid4())
 
     nodes = [
         Node(
-            uuid=node1_uuid,
+            uid=node1_uid,
             properties={"name": "Node1"},
         ),
         Node(
-            uuid=node2_uuid,
+            uid=node2_uid,
             properties={"name": "Node2"},
         ),
         Node(
-            uuid=node3_uuid,
+            uid=node3_uid,
             properties={"name": "Node3", "time": datetime.now(tz=UTC)},
             embeddings={
                 "embedding_name": (
@@ -188,21 +188,21 @@ async def test_add_edges(neo4j_driver, vector_graph_store):
 
     related_to_edges = [
         Edge(
-            uuid=uuid4(),
-            source_uuid=node1_uuid,
-            target_uuid=node2_uuid,
+            uid=str(uuid4()),
+            source_uid=node1_uid,
+            target_uid=node2_uid,
             properties={"description": "Node1 to Node2", "time": datetime.now(tz=UTC)},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node2_uuid,
-            target_uuid=node1_uuid,
+            uid=str(uuid4()),
+            source_uid=node2_uid,
+            target_uid=node1_uid,
             properties={"description": "Node2 to Node1"},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node1_uuid,
-            target_uuid=node3_uuid,
+            uid=str(uuid4()),
+            source_uid=node1_uid,
+            target_uid=node3_uid,
             properties={"description": "Node1 to Node3"},
             embeddings={
                 "embedding_name": (
@@ -215,15 +215,15 @@ async def test_add_edges(neo4j_driver, vector_graph_store):
 
     is_edges = [
         Edge(
-            uuid=uuid4(),
-            source_uuid=node1_uuid,
-            target_uuid=node1_uuid,
+            uid=str(uuid4()),
+            source_uid=node1_uid,
+            target_uid=node1_uid,
             properties={"description": "Node1 loop"},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node2_uuid,
-            target_uuid=node2_uuid,
+            uid=str(uuid4()),
+            source_uid=node2_uid,
+            target_uid=node2_uid,
             properties={"description": "Node2 loop"},
         ),
     ]
@@ -244,7 +244,7 @@ async def test_add_edges(neo4j_driver, vector_graph_store):
 async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Node1",
             },
@@ -260,7 +260,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Node2",
                 "include?": "yes",
@@ -277,7 +277,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Node3",
                 "include?": "no",
@@ -294,7 +294,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Node4",
                 "include?": "no",
@@ -311,7 +311,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Node5",
                 "include?": "no",
@@ -328,7 +328,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Node6",
                 "include?": "no",
@@ -433,56 +433,56 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
 
 @pytest.mark.asyncio
 async def test_search_related_nodes(vector_graph_store):
-    node1_uuid = uuid4()
-    node2_uuid = uuid4()
-    node3_uuid = uuid4()
-    node4_uuid = uuid4()
+    node1_uid = str(uuid4())
+    node2_uid = str(uuid4())
+    node3_uid = str(uuid4())
+    node4_uid = str(uuid4())
 
     nodes = [
         Node(
-            uuid=node1_uuid,
+            uid=node1_uid,
             properties={"name": "Node1"},
         ),
         Node(
-            uuid=node2_uuid,
+            uid=node2_uid,
             properties={"name": "Node2", "extra!": "something"},
         ),
         Node(
-            uuid=node3_uuid,
+            uid=node3_uid,
             properties={"name": "Node3", "marker?": "A"},
         ),
         Node(
-            uuid=node4_uuid,
+            uid=node4_uid,
             properties={"name": "Node4", "marker?": "B"},
         ),
     ]
 
     related_to_edges = [
         Edge(
-            uuid=uuid4(),
-            source_uuid=node1_uuid,
-            target_uuid=node2_uuid,
+            uid=str(uuid4()),
+            source_uid=node1_uid,
+            target_uid=node2_uid,
             properties={"description": "Node1 to Node2"},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node2_uuid,
-            target_uuid=node1_uuid,
+            uid=str(uuid4()),
+            source_uid=node2_uid,
+            target_uid=node1_uid,
             properties={"description": "Node2 to Node1"},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node3_uuid,
-            target_uuid=node2_uuid,
+            uid=str(uuid4()),
+            source_uid=node3_uid,
+            target_uid=node2_uid,
             properties={
                 "description": "Node3 to Node2",
                 "extra": 1,
             },
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node3_uuid,
-            target_uuid=node4_uuid,
+            uid=str(uuid4()),
+            source_uid=node3_uid,
+            target_uid=node4_uid,
             properties={
                 "description": "Node3 to Node4",
                 "extra": 2,
@@ -492,21 +492,21 @@ async def test_search_related_nodes(vector_graph_store):
 
     is_edges = [
         Edge(
-            uuid=uuid4(),
-            source_uuid=node1_uuid,
-            target_uuid=node1_uuid,
+            uid=str(uuid4()),
+            source_uid=node1_uid,
+            target_uid=node1_uid,
             properties={"description": "Node1 loop"},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node2_uuid,
-            target_uuid=node2_uuid,
+            uid=str(uuid4()),
+            source_uid=node2_uid,
+            target_uid=node2_uid,
             properties={"description": "Node2 loop"},
         ),
         Edge(
-            uuid=uuid4(),
-            source_uuid=node3_uuid,
-            target_uuid=node3_uuid,
+            uid=str(uuid4()),
+            source_uid=node3_uid,
+            target_uid=node3_uid,
             properties={"description": "Node3 loop"},
         ),
     ]
@@ -524,7 +524,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node1_uuid,
+        this_node_uid=node1_uid,
     )
     assert len(results) == 2
     assert results[0].properties["name"] != results[1].properties["name"]
@@ -535,7 +535,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node1_uuid,
+        this_node_uid=node1_uid,
         required_node_properties={"extra!": "something"},
     )
     assert len(results) == 1
@@ -545,7 +545,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node2_uuid,
+        this_node_uid=node2_uid,
         find_sources=False,
     )
     assert len(results) == 2
@@ -557,7 +557,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node3_uuid,
+        this_node_uid=node3_uid,
         find_targets=False,
     )
     assert len(results) == 1
@@ -567,7 +567,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node3_uuid,
+        this_node_uid=node3_uid,
         required_node_properties={"marker?": "A"},
     )
     assert len(results) == 1
@@ -577,7 +577,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node3_uuid,
+        this_node_uid=node3_uid,
         required_node_properties={"marker?": "A"},
         include_missing_node_properties=True,
     )
@@ -587,7 +587,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node3_uuid,
+        this_node_uid=node3_uid,
         required_edge_properties={"extra": 1},
     )
     assert len(results) == 1
@@ -596,7 +596,7 @@ async def test_search_related_nodes(vector_graph_store):
         relation="RELATED_TO",
         other_collection="Entity",
         this_collection="Entity",
-        this_node_uuid=node3_uuid,
+        this_node_uid=node3_uid,
         required_edge_properties={"extra": 1},
         include_missing_edge_properties=True,
     )
@@ -610,14 +610,14 @@ async def test_search_directional_nodes(vector_graph_store):
 
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event1",
                 "timestamp": time,
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event2",
                 "timestamp": time + delta,
@@ -625,14 +625,14 @@ async def test_search_directional_nodes(vector_graph_store):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event3",
                 "timestamp": time + 2 * delta,
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event4",
                 "timestamp": time + 3 * delta,
@@ -725,7 +725,7 @@ async def test_search_directional_nodes_multiple_by_properties(
 
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event1",
                 "timestamp": time,
@@ -734,7 +734,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event2",
                 "timestamp": time,
@@ -743,7 +743,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event3",
                 "timestamp": time,
@@ -752,7 +752,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event4",
                 "timestamp": time,
@@ -761,7 +761,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event5",
                 "timestamp": time,
@@ -770,7 +770,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event6",
                 "timestamp": time,
@@ -779,7 +779,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event7",
                 "timestamp": time + delta,
@@ -788,7 +788,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event8",
                 "timestamp": time + delta,
@@ -797,7 +797,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event9",
                 "timestamp": time + delta,
@@ -806,7 +806,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event10",
                 "timestamp": time + delta,
@@ -815,7 +815,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event11",
                 "timestamp": time + delta,
@@ -824,7 +824,7 @@ async def test_search_directional_nodes_multiple_by_properties(
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Event12",
                 "timestamp": time + delta,
@@ -975,7 +975,7 @@ async def test_search_directional_nodes_multiple_by_properties(
 async def test_search_matching_nodes(vector_graph_store):
     person_nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Alice",
                 "age!with$pecialchars": 30,
@@ -984,7 +984,7 @@ async def test_search_matching_nodes(vector_graph_store):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Bob",
                 "age!with$pecialchars": 25,
@@ -993,14 +993,14 @@ async def test_search_matching_nodes(vector_graph_store):
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "Charlie",
                 "city": "New York",
             },
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={
                 "name": "David",
                 "age!with$pecialchars": 30,
@@ -1011,7 +1011,7 @@ async def test_search_matching_nodes(vector_graph_store):
 
     robot_nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Eve", "city": "Axiom"},
         ),
     ]
@@ -1096,15 +1096,15 @@ async def test_search_matching_nodes(vector_graph_store):
 async def test_get_nodes(vector_graph_store):
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node1", "time": datetime.now(tz=UTC)},
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node2"},
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node3"},
         ),
     ]
@@ -1113,16 +1113,16 @@ async def test_get_nodes(vector_graph_store):
 
     fetched_nodes = await vector_graph_store.get_nodes(
         "Entity",
-        [node.uuid for node in nodes],
+        [node.uid for node in nodes],
     )
     assert len(fetched_nodes) == 3
 
     for fetched_node in fetched_nodes:
-        assert fetched_node.uuid in {node.uuid for node in nodes}
+        assert fetched_node.uid in {node.uid for node in nodes}
 
     fetched_nodes = await vector_graph_store.get_nodes(
         "Entity",
-        [nodes[0].uuid, uuid4()],
+        [nodes[0].uid, uuid4()],
     )
     assert len(fetched_nodes) == 1
     assert fetched_nodes[0] == nodes[0]
@@ -1132,22 +1132,22 @@ async def test_get_nodes(vector_graph_store):
 async def test_delete_nodes(neo4j_driver, vector_graph_store):
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
     ]
 
@@ -1155,11 +1155,11 @@ async def test_delete_nodes(neo4j_driver, vector_graph_store):
     records, _, _ = await neo4j_driver.execute_query("MATCH (n) RETURN n")
     assert len(records) == 6
 
-    await vector_graph_store.delete_nodes("Bad", [node.uuid for node in nodes[:-3]])
+    await vector_graph_store.delete_nodes("Bad", [node.uid for node in nodes[:-3]])
     records, _, _ = await neo4j_driver.execute_query("MATCH (n) RETURN n")
     assert len(records) == 6
 
-    await vector_graph_store.delete_nodes("Entity", [node.uuid for node in nodes[:-3]])
+    await vector_graph_store.delete_nodes("Entity", [node.uid for node in nodes[:-3]])
     records, _, _ = await neo4j_driver.execute_query("MATCH (n) RETURN n")
     assert len(records) == 3
 
@@ -1168,22 +1168,22 @@ async def test_delete_nodes(neo4j_driver, vector_graph_store):
 async def test_delete_all_data(neo4j_driver, vector_graph_store):
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
         ),
     ]
 
@@ -1576,15 +1576,15 @@ async def test__nodes_from_neo4j_nodes(neo4j_driver, vector_graph_store):
 
     nodes = [
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node1"},
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node2"},
         ),
         Node(
-            uuid=uuid4(),
+            uid=str(uuid4()),
             properties={"name": "Node3", "time": datetime.now(tz=UTC)},
             embeddings={
                 "embedding_name": (

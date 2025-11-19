@@ -166,7 +166,7 @@ class TestHistoryMessage:
 
         assert msg.content == "Test message"
         assert msg.created_at == now
-        assert msg.uuid is None
+        assert msg.uid is None
         assert msg.metadata is None
 
     def test_history_message_with_metadata(self):
@@ -176,7 +176,7 @@ class TestHistoryMessage:
         msg = Episode(
             content="Test message",
             created_at=now,
-            uuid="123",
+            uid="123",
             metadata={"source": "test", "priority": "high"},
             session_key="session_key",
             producer_id="profile_id",
@@ -185,7 +185,7 @@ class TestHistoryMessage:
 
         assert msg.content == "Test message"
         assert msg.created_at == now
-        assert msg.uuid == "123"
+        assert msg.uid == "123"
         assert msg.metadata == {"source": "test", "priority": "high"}
 
 
@@ -216,7 +216,7 @@ class TestSemanticFeature:
         citation = Episode(
             content="I love pasta",
             created_at=now,
-            uuid="456aw3w",
+            uid="456aw3w",
             session_key="session_key",
             producer_id="profile_id",
             producer_role="user_role",
@@ -230,7 +230,7 @@ class TestSemanticFeature:
             value="pasta",
             metadata=SemanticFeature.Metadata(
                 id="a789",
-                citations=[citation.uuid],
+                citations=[citation.uid],
                 other={"confidence": 0.95},
             ),
         )

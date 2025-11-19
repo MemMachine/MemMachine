@@ -7,7 +7,6 @@ and deleting nodes and edges.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
-from uuid import UUID
 
 from memmachine.common.data_types import SimilarityMetric
 
@@ -110,7 +109,7 @@ class VectorGraphStore(ABC):
         relation: str,
         other_collection: str,
         this_collection: str,
-        this_node_uuid: UUID,
+        this_node_uid: str,
         find_sources: bool = True,
         find_targets: bool = True,
         limit: int | None = None,
@@ -129,8 +128,8 @@ class VectorGraphStore(ABC):
                 Collection that the related nodes belong to.
             this_collection (str):
                 Collection that the specified node belongs to.
-            this_node_uuid (UUID):
-                UUID of the node to find related nodes for.
+            this_node_uid (str):
+                UID of the node to find related nodes for.
             find_sources (bool):
                 Whether to return nodes
                 that are sources of edges
@@ -257,7 +256,7 @@ class VectorGraphStore(ABC):
     async def get_nodes(
         self,
         collection: str,
-        node_uuids: Iterable[UUID],
+        node_uids: Iterable[str],
     ) -> list[Node]:
         """
         Get nodes from the collection.
@@ -265,12 +264,12 @@ class VectorGraphStore(ABC):
         Args:
             collection (str):
                 Name of the collection containing the nodes.
-            node_uuids (Iterable[UUID]):
-                Iterable of UUIDs of the nodes to retrieve.
+            node_uids (Iterable[str]):
+                Iterable of UIDs of the nodes to retrieve.
 
         Returns:
             list[Node]:
-                List of Node objects with the specified UUIDs.
+                List of Node objects with the specified UIDs.
                 Order is not guaranteed.
 
         """
@@ -280,7 +279,7 @@ class VectorGraphStore(ABC):
     async def delete_nodes(
         self,
         collection: str,
-        node_uuids: Iterable[UUID],
+        node_uids: Iterable[str],
     ) -> None:
         """
         Delete nodes from the collection.
@@ -288,8 +287,8 @@ class VectorGraphStore(ABC):
         Args:
             collection (str):
                 Name of the collection containing the nodes.
-            node_uuids (Iterable[UUID]):
-                Iterable of UUIDs of the nodes to delete.
+            node_uids (Iterable[str]):
+                Iterable of UIDs of the nodes to delete.
 
         """
         raise NotImplementedError

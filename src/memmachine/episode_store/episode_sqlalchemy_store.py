@@ -85,7 +85,7 @@ class History(BaseHistoryStore):
             else self.created_at
         )
         return Episode(
-            uuid=EpisodeIdT(self.id),
+            uid=EpisodeIdT(self.id),
             content=self.content,
             session_key=self.session_key,
             producer_id=self.producer_id,

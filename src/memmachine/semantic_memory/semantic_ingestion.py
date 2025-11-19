@@ -96,7 +96,7 @@ class IngestionService:
             semantic_category: InstanceOf[SemanticCategory],
         ) -> None:
             for message in messages:
-                if message.uuid is None:
+                if message.uid is None:
                     raise ValueError(
                         "Message ID is None for message %s",
                         message.model_dump(),
@@ -117,7 +117,7 @@ class IngestionService:
                 except Exception:
                     logger.exception(
                         "Failed to process message %s for semantic type %s",
-                        message.uuid,
+                        message.uid,
                         semantic_category.name,
                     )
                     if self._debug_fail_loudly:
@@ -129,11 +129,11 @@ class IngestionService:
                     commands=commands,
                     set_id=set_id,
                     category_name=semantic_category.name,
-                    citation_id=message.uuid,
+                    citation_id=message.uid,
                     embedder=resources.embedder,
                 )
 
-                mark_messages.append(message.uuid)
+                mark_messages.append(message.uid)
 
         mark_messages: list[EpisodeIdT] = []
         semantic_category_runners = []

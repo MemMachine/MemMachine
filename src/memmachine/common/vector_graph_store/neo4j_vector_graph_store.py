@@ -10,7 +10,6 @@ import logging
 import re
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import Enum
-from uuid import UUID
 
 from neo4j import AsyncDriver
 from neo4j.graph import Node as Neo4jNode
@@ -216,14 +215,14 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 )
 
             query_node: dict[str, PropertyValue | dict[str, PropertyValue]] = {
-                "uuid": str(node.uuid),
+                "uid": str(node.uid),
                 "properties": query_node_properties,
             }
             query_nodes.append(query_node)
 
         await self._driver.execute_query(
             "UNWIND $nodes AS node\n"
-            f"CREATE (n:{sanitized_collection} {{uuid: node.uuid}})\n"
+            f"CREATE (n:{sanitized_collection} {{uid: node.uid}})\n"
             "SET n += node.properties",
             nodes=query_nodes,
         )
@@ -309,9 +308,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 )
 
             query_edge = {
-                "uuid": str(edge.uuid),
-                "source_uuid": str(edge.source_uuid),
-                "target_uuid": str(edge.target_uuid),
+                "uid": str(edge.uid),
+                "source_uid": str(edge.source_uid),
+                "target_uid": str(edge.target_uid),
                 "properties": query_edge_properties,
             }
             query_edges.append(query_edge)
@@ -325,10 +324,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         await self._driver.execute_query(
             "UNWIND $edges AS edge\n"
             "MATCH"
-            f"    (source:{sanitized_source_collection} {{uuid: edge.source_uuid}}),"
-            f"    (target:{sanitized_target_collection} {{uuid: edge.target_uuid}})\n"
+            f"    (source:{sanitized_source_collection} {{uid: edge.source_uid}}),"
+            f"    (target:{sanitized_target_collection} {{uid: edge.target_uid}})\n"
             "CREATE (source)"
-            f"    -[r:{sanitized_relation} {{uuid: edge.uuid}}]->"
+            f"    -[r:{sanitized_relation} {{uid: edge.uid}}]->"
             "    (target)\n"
             "SET r += edge.properties",
             edges=query_edges,
@@ -500,7 +499,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         relation: str,
         other_collection: str,
         this_collection: str,
-        this_node_uuid: UUID,
+        this_node_uid: str,
         find_sources: bool = True,
         find_targets: bool = True,
         limit: int | None = None,
@@ -528,7 +527,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         records, _, _ = await self._driver.execute_query(
             "MATCH\n"
-            f"    (m:{sanitized_this_collection} {{uuid: $node_uuid}})"
+            f"    (m:{sanitized_this_collection} {{uid: $node_uid}})"
             f"    {'-' if find_targets else '<-'}"
             f"    [r:{sanitized_relation}]"
             f"    {'-' if find_sources else '->'}"
@@ -551,7 +550,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             }\n"
             "RETURN DISTINCT n\n"
             f"{'LIMIT $limit' if limit is not None else ''}",
-            node_uuid=str(this_node_uuid),
+            node_uid=str(this_node_uid),
             limit=limit,
             required_edge_properties=Neo4jVectorGraphStore._sanitize_properties(
                 {
@@ -755,16 +754,16 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     async def get_nodes(
         self,
         collection: str,
-        node_uuids: Iterable[UUID],
+        node_uids: Iterable[str],
     ) -> list[Node]:
-        """Retrieve nodes by uuid from a specific collection."""
+        """Retrieve nodes by uid from a specific collection."""
         sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
         records, _, _ = await self._driver.execute_query(
-            "UNWIND $node_uuids AS node_uuid\n"
-            f"MATCH (n:{sanitized_collection} {{uuid: node_uuid}})\n"
+            "UNWIND $node_uids AS node_uid\n"
+            f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
             "RETURN n",
-            node_uuids=[str(node_uuid) for node_uuid in node_uuids],
+            node_uids=[str(node_uid) for node_uid in node_uids],
         )
 
         neo4j_nodes = [record["n"] for record in records]
@@ -773,16 +772,16 @@ class Neo4jVectorGraphStore(VectorGraphStore):
     async def delete_nodes(
         self,
         collection: str,
-        node_uuids: Iterable[UUID],
+        node_uids: Iterable[str],
     ) -> None:
-        """Delete nodes by uuid from a collection."""
+        """Delete nodes by uid from a collection."""
         sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
         await self._driver.execute_query(
-            "UNWIND $node_uuids AS node_uuid\n"
-            f"MATCH (n:{sanitized_collection} {{uuid: node_uuid}})\n"
+            "UNWIND $node_uids AS node_uid\n"
+            f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
             "DETACH DELETE n",
-            node_uuids=[str(node_uuid) for node_uuid in node_uuids],
+            node_uids=[str(node_uid) for node_uid in node_uids],
         )
 
     async def delete_all_data(self) -> None:
@@ -847,7 +846,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             self._create_unique_constraint_if_not_exists(
                 entity_type=entity_type,
                 sanitized_collection_or_relation=sanitized_collection_or_relation,
-                sanitized_property_name="uuid",
+                sanitized_property_name="uid",
             ),
         ]
         tasks += [
@@ -1256,7 +1255,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
             nodes.append(
                 Node(
-                    uuid=UUID(neo4j_node["uuid"]),
+                    uid=neo4j_node["uid"],
                     properties=node_properties,
                     embeddings=node_embeddings,
                 ),

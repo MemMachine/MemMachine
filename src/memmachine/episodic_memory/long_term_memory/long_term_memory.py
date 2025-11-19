@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from typing import cast
-from uuid import UUID
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -75,7 +75,7 @@ class LongTermMemory:
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         declarative_memory_episodes = [
             DeclarativeMemoryEpisode(
-                uuid=episode.uuid,
+                uid=episode.uid or str(uuid4()),
                 timestamp=episode.timestamp,
                 source=episode.producer_id,
                 content_type=LongTermMemory._declarative_memory_content_type_from_episode(
@@ -119,8 +119,8 @@ class LongTermMemory:
             for declarative_memory_episode in declarative_memory_episodes
         ]
 
-    async def get_episodes(self, uuids: Iterable[UUID]) -> list[Episode]:
-        declarative_memory_episodes = await self._declarative_memory.get_episodes(uuids)
+    async def get_episodes(self, uids: Iterable[str]) -> list[Episode]:
+        declarative_memory_episodes = await self._declarative_memory.get_episodes(uids)
         return [
             LongTermMemory._episode_from_declarative_memory_episode(
                 declarative_memory_episode,
@@ -144,15 +144,15 @@ class LongTermMemory:
             for declarative_memory_episode in declarative_memory_episodes
         ]
 
-    async def delete_episodes(self, uuids: Iterable[UUID]) -> None:
-        await self._declarative_memory.delete_episodes(uuids)
+    async def delete_episodes(self, uids: Iterable[str]) -> None:
+        await self._declarative_memory.delete_episodes(uids)
 
     async def delete_matching_episodes(
         self,
         property_filter: Mapping[str, FilterablePropertyValue] | None = None,
     ) -> None:
         self._declarative_memory.delete_episodes(
-            episode.uuid
+            episode.uid
             for episode in await self._declarative_memory.get_matching_episodes(
                 property_filter=property_filter,
             )
@@ -185,7 +185,7 @@ class LongTermMemory:
         declarative_memory_episode: DeclarativeMemoryEpisode,
     ) -> Episode:
         return Episode(
-            uuid="declarative-" + str(declarative_memory_episode.uuid),
+            uid=declarative_memory_episode.uid,
             sequence_num=cast(
                 "int",
                 declarative_memory_episode.filterable_properties.get("sequence_num", 0),

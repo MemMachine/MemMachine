@@ -80,7 +80,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
     assert type(history_id) is EpisodeIdT
 
     history = await episode_storage.get_history(history_id)
-    assert history.uuid == history_id
+    assert history.uid == history_id
     assert history.metadata == {"role": "user"}
     assert history.content == "hello"
     assert history.session_key == "chat-session"
@@ -124,22 +124,22 @@ async def test_history_identity_filters(episode_storage: EpisodeStorage):
         by_session = await episode_storage.get_history_messages(
             session_keys=["session-assistant"],
         )
-        assert [m.uuid for m in by_session] == [assistant_message]
+        assert [m.uid for m in by_session] == [assistant_message]
 
         by_producer_id = await episode_storage.get_history_messages(
             producer_ids=["system-id"],
         )
-        assert [m.uuid for m in by_producer_id] == [system_message]
+        assert [m.uid for m in by_producer_id] == [system_message]
 
         by_producer_role = await episode_storage.get_history_messages(
             producer_roles=["user"],
         )
-        assert [m.uuid for m in by_producer_role] == [user_message]
+        assert [m.uid for m in by_producer_role] == [user_message]
 
         by_produced_for = await episode_storage.get_history_messages(
             produced_for_ids=["user-id"],
         )
-        assert [m.uuid for m in by_produced_for] == [assistant_message]
+        assert [m.uid for m in by_produced_for] == [assistant_message]
 
     finally:
         await episode_storage.delete_history(
@@ -184,7 +184,7 @@ async def test_history_time_filters(
 
     assert len(window) == expected_count
     if expected_count:
-        assert window[0].uuid == message.uuid
+        assert window[0].uid == message.uid
 
 
 @pytest.mark.asyncio
@@ -201,7 +201,7 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
     )
 
     results = await episode_storage.get_history_messages(metadata={"scope": "b"})
-    assert [entry.uuid for entry in results] == [second]
+    assert [entry.uid for entry in results] == [second]
 
     await episode_storage.delete_history([first, second])
 
@@ -229,7 +229,7 @@ async def test_delete_history_messages_by_range(episode_storage: EpisodeStorage)
     await episode_storage.delete_history_messages(end_time=cutoff)
 
     remaining = await episode_storage.get_history_messages()
-    assert [entry.uuid for entry in remaining] == [newer]
+    assert [entry.uid for entry in remaining] == [newer]
 
     await episode_storage.delete_history([newer])
 
@@ -252,7 +252,7 @@ async def test_delete_history_messages_with_identity_filters(
     await episode_storage.delete_history_messages(producer_roles=["assistant"])
 
     remaining = await episode_storage.get_history_messages()
-    assert [entry.uuid for entry in remaining] == [keep_history]
+    assert [entry.uid for entry in remaining] == [keep_history]
 
     await episode_storage.delete_history([keep_history])
 
@@ -279,11 +279,11 @@ async def test_history_time_window_workflow(episode_storage: EpisodeStorage):
     )
 
     before_third = await episode_storage.get_history_messages(end_time=cutoff)
-    assert [m.uuid for m in before_third] == [first, second]
+    assert [m.uid for m in before_third] == [first, second]
 
     await episode_storage.delete_history_messages(end_time=cutoff)
     remaining = await episode_storage.get_history_messages()
-    assert [m.uuid for m in remaining] == [third]
+    assert [m.uid for m in remaining] == [third]
 
     await episode_storage.delete_history_messages()
     assert await episode_storage.get_history_messages() == []

@@ -18,9 +18,8 @@ Key responsibilities include:
 import asyncio
 import logging
 import time
-from collections.abc import Iterable, Mapping
-from typing import cast
-from uuid import UUID
+from collections.abc import Coroutine, Iterable, Mapping
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
@@ -210,7 +209,7 @@ class EpisodicMemory:
         if self._closed:
             raise RuntimeError(f"Memory is closed {self._session_key}")
         # Add the episode to both memory stores concurrently
-        tasks = []
+        tasks: list[Coroutine[Any, Any, bool | None]] = []
         if self._short_term_memory:
             tasks.append(self._short_term_memory.add_episode(episode))
         if self._long_term_memory:
@@ -240,18 +239,18 @@ class EpisodicMemory:
             tasks.append(self._long_term_memory.close())
         await asyncio.gather(*tasks)
 
-    async def delete_episodes(self, uuids: Iterable[UUID]) -> None:
-        """Delete one episode by uuid."""
+    async def delete_episodes(self, uids: Iterable[str]) -> None:
+        """Delete episodes by UID."""
         if not self._enabled:
             return
 
-        uuids = list(uuids)
+        uids = list(uids)
 
         tasks = []
         if self._short_term_memory:
-            tasks.extend(self._short_term_memory.delete_episode(uuid) for uuid in uuids)
+            tasks.extend(self._short_term_memory.delete_episode(uid) for uid in uids)
         if self._long_term_memory:
-            tasks.append(self._long_term_memory.delete_episodes(uuids))
+            tasks.append(self._long_term_memory.delete_episodes(uids))
         await asyncio.gather(*tasks)
 
     async def delete_session_episodes(self) -> None:
@@ -329,12 +328,12 @@ class EpisodicMemory:
 
         # Deduplicate episodes from both memory stores, prioritizing
         # short-term memory
-        uuid_set = {episode.uuid for episode in short_episode}
+        episode_uid_set = {episode.uid for episode in short_episode}
 
         unique_long_episodes = []
         for episode in long_episode:
-            if episode.uuid not in uuid_set:
-                uuid_set.add(episode.uuid)
+            if episode.uid not in episode_uid_set:
+                episode_uid_set.add(episode.uid)
                 unique_long_episodes.append(episode)
 
         end_time = time.monotonic_ns()

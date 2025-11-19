@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from uuid import UUID
 
 from memmachine.common.data_types import SimilarityMetric
 
@@ -36,52 +35,52 @@ class EntityType(Enum):
 class Node:
     """Graph node representation with properties and embeddings."""
 
-    uuid: UUID
+    uid: str
     properties: dict[str, PropertyValue] = field(default_factory=dict)
     embeddings: dict[str, tuple[list[float], SimilarityMetric]] = field(
         default_factory=dict,
     )
 
     def __eq__(self, other: object) -> bool:
-        """Compare nodes by uuid, properties, and embeddings."""
+        """Compare nodes by UID, properties, and embeddings."""
         if not isinstance(other, Node):
             return False
         return (
-            self.uuid == other.uuid
+            self.uid == other.uid
             and self.properties == other.properties
             and self.embeddings == other.embeddings
         )
 
     def __hash__(self) -> int:
-        """Hash a node by its UUID."""
-        return hash(self.uuid)
+        """Hash a node by its UID."""
+        return hash(self.uid)
 
 
 @dataclass(kw_only=True)
 class Edge:
     """Graph edge representation with properties and embeddings."""
 
-    uuid: UUID
-    source_uuid: UUID
-    target_uuid: UUID
+    uid: str
+    source_uid: str
+    target_uid: str
     properties: dict[str, PropertyValue] = field(default_factory=dict)
     embeddings: dict[str, tuple[list[float], SimilarityMetric]] = field(
         default_factory=dict,
     )
 
     def __eq__(self, other: object) -> bool:
-        """Compare edges by uuid, properties, and embeddings."""
+        """Compare edges by uid, properties, and embeddings."""
         if not isinstance(other, Edge):
             return False
         return (
-            self.uuid == other.uuid
+            self.uid == other.uid
             and self.properties == other.properties
             and self.embeddings == other.embeddings
         )
 
     def __hash__(self) -> int:
-        """Hash an edge by its UUID."""
-        return hash(self.uuid)
+        """Hash an edge by its UID."""
+        return hash(self.uid)
 
 
 _MANGLE_PROPERTY_NAME_PREFIX = "property_"

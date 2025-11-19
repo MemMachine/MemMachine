@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Iterable, Mapping
 from typing import cast
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from nltk import sent_tokenize
 from pydantic import BaseModel, Field, InstanceOf
@@ -94,7 +94,7 @@ class DeclarativeMemory:
         Add episodes.
 
         Episodes are sorted by timestamp.
-        Episodes with the same timestamp are sorted by UUID.
+        Episodes with the same timestamp are sorted by UID.
 
         Args:
             episodes (Iterable[Episode]): The episodes to add.
@@ -102,13 +102,13 @@ class DeclarativeMemory:
         """
         episodes = sorted(
             episodes,
-            key=lambda episode: (episode.timestamp, episode.uuid),
+            key=lambda episode: (episode.timestamp, episode.uid),
         )
         episode_nodes = [
             Node(
-                uuid=episode.uuid,
+                uid=episode.uid,
                 properties={
-                    "uuid": str(episode.uuid),
+                    "uid": str(episode.uid),
                     "timestamp": episode.timestamp,
                     "source": episode.source,
                     "content_type": episode.content_type.value,
@@ -141,9 +141,9 @@ class DeclarativeMemory:
 
         derivative_nodes = [
             Node(
-                uuid=derivative.uuid,
+                uid=derivative.uid,
                 properties={
-                    "uuid": str(derivative.uuid),
+                    "uid": derivative.uid,
                     "timestamp": derivative.timestamp,
                     "source": derivative.source,
                     "content_type": derivative.content_type.value,
@@ -169,9 +169,9 @@ class DeclarativeMemory:
 
         derivative_episode_edges = [
             Edge(
-                uuid=uuid4(),
-                source_uuid=derivative.uuid,
-                target_uuid=episode.uuid,
+                uid=str(uuid4()),
+                source_uid=derivative.uid,
+                target_uid=episode.uid,
             )
             for episode, episode_derivatives in zip(
                 episodes,
@@ -226,7 +226,7 @@ class DeclarativeMemory:
                 )
                 return [
                     Derivative(
-                        uuid=uuid4(),
+                        uid=str(uuid4()),
                         timestamp=episode.timestamp,
                         source=episode.source,
                         content_type=ContentType.MESSAGE,
@@ -239,7 +239,7 @@ class DeclarativeMemory:
                 text_content = episode.content
                 return [
                     Derivative(
-                        uuid=uuid4(),
+                        uid=str(uuid4()),
                         timestamp=episode.timestamp,
                         source=episode.source,
                         content_type=ContentType.TEXT,
@@ -312,7 +312,7 @@ class DeclarativeMemory:
                 relation=self._derived_from_relation,
                 other_collection=self._episode_collection,
                 this_collection=self._derivative_collection,
-                this_node_uuid=matched_derivative_node.uuid,
+                this_node_uid=matched_derivative_node.uid,
                 find_sources=False,
                 find_targets=True,
                 required_node_properties={
@@ -387,10 +387,10 @@ class DeclarativeMemory:
         previous_episode_nodes = (
             await self._vector_graph_store.search_directional_nodes(
                 collection=self._episode_collection,
-                by_properties=("timestamp", "uuid"),
+                by_properties=("timestamp", "uid"),
                 starting_at=(
                     nuclear_episode.timestamp,
-                    str(nuclear_episode.uuid),
+                    str(nuclear_episode.uid),
                 ),
                 order_ascending=(False, False),
                 include_equal_start=False,
@@ -404,10 +404,10 @@ class DeclarativeMemory:
 
         next_episode_nodes = await self._vector_graph_store.search_directional_nodes(
             collection=self._episode_collection,
-            by_properties=("timestamp", "uuid"),
+            by_properties=("timestamp", "uid"),
             starting_at=(
                 nuclear_episode.timestamp,
-                str(nuclear_episode.uuid),
+                str(nuclear_episode.uid),
             ),
             order_ascending=(True, True),
             include_equal_start=False,
@@ -476,11 +476,11 @@ class DeclarativeMemory:
         """Format the time as a string."""
         return time.strftime("%I:%M %p")
 
-    async def get_episodes(self, uuids: Iterable[UUID]) -> list[Episode]:
-        """Get episodes by their UUIDs."""
+    async def get_episodes(self, uids: Iterable[str]) -> list[Episode]:
+        """Get episodes by their UIDs."""
         episode_nodes = await self._vector_graph_store.get_nodes(
             collection=self._episode_collection,
-            node_uuids=uuids,
+            node_uids=uids,
         )
 
         episodes = [
@@ -513,18 +513,18 @@ class DeclarativeMemory:
 
         return matching_episodes
 
-    async def delete_episodes(self, uuids: Iterable[UUID]) -> None:
-        """Delete episodes by their UUIDs."""
+    async def delete_episodes(self, uids: Iterable[str]) -> None:
+        """Delete episodes by their UIDs."""
         search_derived_derivative_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
                 relation=self._derived_from_relation,
                 other_collection=self._derivative_collection,
                 this_collection=self._episode_collection,
-                this_node_uuid=episode_uuid,
+                this_node_uid=episode_uid,
                 find_sources=True,
                 find_targets=False,
             )
-            for episode_uuid in uuids
+            for episode_uid in uids
         ]
 
         derived_derivative_nodes = [
@@ -538,12 +538,12 @@ class DeclarativeMemory:
         delete_nodes_tasks = [
             self._vector_graph_store.delete_nodes(
                 collection=self._episode_collection,
-                node_uuids=uuids,
+                node_uids=uids,
             ),
             self._vector_graph_store.delete_nodes(
                 collection=self._derivative_collection,
-                node_uuids=[
-                    derivative_node.uuid for derivative_node in derived_derivative_nodes
+                node_uids=[
+                    derivative_node.uid for derivative_node in derived_derivative_nodes
                 ],
             ),
         ]
@@ -576,8 +576,8 @@ class DeclarativeMemory:
 
                 def weighted_index_proximity(
                     episode: Episode,
-                    nuclear_index: int = nuclear_index,
                     context: list[Episode] = context,
+                    nuclear_index: int = nuclear_index,
                 ) -> float:
                     proximity = context.index(episode) - nuclear_index
                     if proximity >= 0:
@@ -601,7 +601,7 @@ class DeclarativeMemory:
             episode_set,
             key=lambda episode: (
                 episode.timestamp,
-                episode.uuid,
+                episode.uid,
             ),
         )
 
@@ -610,7 +610,7 @@ class DeclarativeMemory:
     @staticmethod
     def _episode_from_episode_node(episode_node: Node) -> Episode:
         return Episode(
-            uuid=UUID(cast("str", episode_node.properties["uuid"])),
+            uid=cast("str", episode_node.properties["uid"]),
             timestamp=cast("datetime.datetime", episode_node.properties["timestamp"]),
             source=cast("str", episode_node.properties["source"]),
             content_type=ContentType(episode_node.properties["content_type"]),
