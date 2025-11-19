@@ -31,16 +31,21 @@ class MemMachineClient:
             base_url="http://localhost:8080"
         )
 
-        # Create a memory instance
+        # Create a memory instance (v2 API requires org_id and project_id)
         memory = client.memory(
-            group_id="my_group",
-            agent_id="my_agent",
-            user_id="user123",
-            session_id="session456"
+            org_id="my_org",
+            project_id="my_project",
+            group_id="my_group",  # Optional: stored in metadata
+            agent_id="my_agent",  # Optional: stored in metadata
+            user_id="user123",    # Optional: stored in metadata
+            session_id="session456"  # Optional: stored in metadata
         )
 
-        # Add memory
+        # Add memory (role defaults to "user")
         memory.add("I like pizza", metadata={"type": "preference"})
+        
+        # Add assistant response
+        memory.add("I understand you like pizza", role="assistant")
 
         # Search memories
         results = memory.search("What do I like to eat?")
@@ -110,6 +115,8 @@ class MemMachineClient:
 
     def memory(
         self,
+        org_id: str,
+        project_id: str,
         group_id: str | None = None,
         agent_id: str | list[str] | None = None,
         user_id: str | list[str] | None = None,
@@ -120,10 +127,12 @@ class MemMachineClient:
         Create a Memory instance for a specific context.
 
         Args:
-            group_id: Group identifier for the memory context
-            agent_id: Agent identifier(s) for the memory context
-            user_id: User identifier(s) for the memory context
-            session_id: Session identifier for the memory context
+            org_id: Organization identifier (required for v2 API)
+            project_id: Project identifier (required for v2 API)
+            group_id: Group identifier (optional, will be stored in metadata)
+            agent_id: Agent identifier(s) (optional, will be stored in metadata)
+            user_id: User identifier(s) (optional, will be stored in metadata)
+            session_id: Session identifier (optional, will be stored in metadata)
             **kwargs: Additional configuration options
 
         Returns:
@@ -132,6 +141,8 @@ class MemMachineClient:
         """
         memory = Memory(
             client=self,
+            org_id=org_id,
+            project_id=project_id,
             group_id=group_id,
             agent_id=agent_id,
             user_id=user_id,

@@ -13,9 +13,11 @@ class MemMachineTools:
         self,
         client: MemMachineClient | None = None,
         base_url: str = "http://localhost:8080",
-        group_id: str = "langgraph_group",
-        agent_id: str = "langgraph_agent",
-        user_id: str = "default_user",
+        org_id: str = "langgraph_org",
+        project_id: str = "langgraph_project",
+        group_id: str | None = None,
+        agent_id: str | None = None,
+        user_id: str | None = None,
         session_id: str | None = None,
     ) -> None:
         """Initialize MemMachine tools.
@@ -23,13 +25,17 @@ class MemMachineTools:
         Args:
             client: Optional MemMachineClient instance. If not provided, creates a new one.
             base_url: Base URL for MemMachine server
-            group_id: Default group ID for memory operations
-            agent_id: Default agent ID for memory operations
-            user_id: Default user ID for memory operations
-            session_id: Optional session ID. If not provided, will be auto-generated.
+            org_id: Organization ID for v2 API (required)
+            project_id: Project ID for v2 API (required)
+            group_id: Optional group ID (stored in metadata)
+            agent_id: Optional agent ID (stored in metadata)
+            user_id: Optional user ID (stored in metadata)
+            session_id: Optional session ID (stored in metadata)
 
         """
         self.client = client or MemMachineClient(base_url=base_url)
+        self.org_id = org_id
+        self.project_id = project_id
         self.group_id = group_id
         self.agent_id = agent_id
         self.user_id = user_id
@@ -37,6 +43,8 @@ class MemMachineTools:
 
     def get_memory(
         self,
+        org_id: str | None = None,
+        project_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         group_id: str | None = None,
@@ -45,16 +53,20 @@ class MemMachineTools:
         """Get or create a memory instance for the specified context.
 
         Args:
-            user_id: User ID (overrides default)
-            agent_id: Agent ID (overrides default)
-            group_id: Group ID (overrides default)
-            session_id: Session ID (overrides default)
+            org_id: Organization ID (overrides default)
+            project_id: Project ID (overrides default)
+            user_id: User ID (overrides default, stored in metadata)
+            agent_id: Agent ID (overrides default, stored in metadata)
+            group_id: Group ID (overrides default, stored in metadata)
+            session_id: Session ID (overrides default, stored in metadata)
 
         Returns:
             Memory instance
 
         """
         return self.client.memory(
+            org_id=org_id or self.org_id,
+            project_id=project_id or self.project_id,
             group_id=group_id or self.group_id,
             agent_id=agent_id or self.agent_id,
             user_id=user_id or self.user_id,
@@ -64,6 +76,9 @@ class MemMachineTools:
     def add_memory(
         self,
         content: str,
+        role: str = "user",
+        org_id: str | None = None,
+        project_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         group_id: str | None = None,
@@ -79,11 +94,14 @@ class MemMachineTools:
 
         Args:
             content: The content to store in memory. Should include full conversation context.
-            user_id: User ID (overrides default)
-            agent_id: Agent ID (overrides default)
-            group_id: Group ID (overrides default)
-            session_id: Session ID (overrides default)
-            episode_type: Type of episode (default: "text")
+            role: Message role - "user", "assistant", or "system" (default: "user")
+            org_id: Organization ID (overrides default)
+            project_id: Project ID (overrides default)
+            user_id: User ID (overrides default, stored in metadata)
+            agent_id: Agent ID (overrides default, stored in metadata)
+            group_id: Group ID (overrides default, stored in metadata)
+            session_id: Session ID (overrides default, stored in metadata)
+            episode_type: Type of episode (default: "text", stored in metadata)
             metadata: Additional metadata for the episode
 
         Returns:
@@ -91,9 +109,10 @@ class MemMachineTools:
 
         """
         try:
-            memory = self.get_memory(user_id, agent_id, group_id, session_id)
+            memory = self.get_memory(org_id, project_id, user_id, agent_id, group_id, session_id)
             success = memory.add(
                 content=content,
+                role=role,
                 episode_type=episode_type,
                 metadata=metadata or {},
             )
@@ -116,6 +135,8 @@ class MemMachineTools:
     def search_memory(
         self,
         query: str,
+        org_id: str | None = None,
+        project_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         group_id: str | None = None,
@@ -133,10 +154,12 @@ class MemMachineTools:
 
         Args:
             query: Search query string
-            user_id: User ID (overrides default)
-            agent_id: Agent ID (overrides default)
-            group_id: Group ID (overrides default)
-            session_id: Session ID (overrides default)
+            org_id: Organization ID (overrides default)
+            project_id: Project ID (overrides default)
+            user_id: User ID (overrides default, stored in metadata)
+            agent_id: Agent ID (overrides default, stored in metadata)
+            group_id: Group ID (overrides default, stored in metadata)
+            session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 5)
             filter_dict: Additional filters for the search
 
@@ -145,7 +168,7 @@ class MemMachineTools:
 
         """
         try:
-            memory = self.get_memory(user_id, agent_id, group_id, session_id)
+            memory = self.get_memory(org_id, project_id, user_id, agent_id, group_id, session_id)
             results = memory.search(
                 query=query,
                 limit=limit,
@@ -153,6 +176,7 @@ class MemMachineTools:
             )
 
             # Format results for easier consumption
+            # v2 API returns "semantic_memory" instead of "profile_memory"
             formatted_results = {
                 "query": query,
                 "episodic_memory": [],
@@ -169,9 +193,12 @@ class MemMachineTools:
                         else:
                             formatted_results["episodic_memory"] = episodic
 
-                # Extract profile memories
+                # Extract profile/semantic memories (v2 API uses "semantic_memory")
                 if "profile_memory" in results:
                     formatted_results["profile_memory"] = results["profile_memory"]
+                elif "semantic_memory" in results:
+                    # Map semantic_memory to profile_memory for backward compatibility
+                    formatted_results["profile_memory"] = results["semantic_memory"]
 
             return {
                 "status": "success",
@@ -214,6 +241,8 @@ class MemMachineTools:
 
     def get_context(
         self,
+        org_id: str | None = None,
+        project_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         group_id: str | None = None,
@@ -222,6 +251,8 @@ class MemMachineTools:
         """Get the current memory context.
 
         Args:
+            org_id: Organization ID (overrides default)
+            project_id: Project ID (overrides default)
             user_id: User ID (overrides default)
             agent_id: Agent ID (overrides default)
             group_id: Group ID (overrides default)
@@ -231,7 +262,7 @@ class MemMachineTools:
             Dictionary containing context information
 
         """
-        memory = self.get_memory(user_id, agent_id, group_id, session_id)
+        memory = self.get_memory(org_id, project_id, user_id, agent_id, group_id, session_id)
         return memory.get_context()
 
     def close(self) -> None:
