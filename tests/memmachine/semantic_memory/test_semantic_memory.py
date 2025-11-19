@@ -124,7 +124,7 @@ async def semantic_service(
 
 
 async def add_history(history_storage: EpisodeStorage, content: str):
-    history_id = await history_storage.add_history(
+    history_id = await history_storage.add_episode(
         content=content,
         session_key="session_id",
         producer_id="profile_id",

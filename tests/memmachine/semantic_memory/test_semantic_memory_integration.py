@@ -150,7 +150,7 @@ class TestLongMemEvalIngestion:
     ):
         for convo in conversation_sessions:
             for turn in convo:
-                h_id = await history_storage.add_history(
+                h_id = await history_storage.add_episode(
                     content=turn["content"],
                     session_key="session_id",
                     producer_id="profile_id",

@@ -55,7 +55,7 @@ def llm_model(mock_llm_model):
 
 
 async def add_history(history_storage: EpisodeStorage, content: str):
-    return await history_storage.add_history(
+    return await history_storage.add_episode(
         content=content,
         session_key="session_id",
         producer_id="profile_id",

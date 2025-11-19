@@ -249,7 +249,7 @@ async def feature_and_citations(
     semantic_storage: SemanticStorage,
     episode_storage,
 ):
-    h1_id = await episode_storage.add_history(
+    h1_id = await episode_storage.add_episode(
         content="first",
         session_key="session_id",
         producer_id="profile_id",
@@ -259,7 +259,7 @@ async def feature_and_citations(
         set_id="user",
         history_id=h1_id,
     )
-    h2_id = await episode_storage.add_history(
+    h2_id = await episode_storage.add_episode(
         content="second",
         session_key="session_id",
         producer_id="profile_id",
@@ -282,7 +282,7 @@ async def feature_and_citations(
     yield feature_id, {h1_id, h2_id}
 
     await semantic_storage.delete_features([feature_id])
-    await episode_storage.delete_history([h1_id, h2_id])
+    await episode_storage.delete_episode([h1_id, h2_id])
 
 
 @pytest.mark.asyncio
@@ -355,19 +355,19 @@ async def test_history_message_counts_by_set(
     semantic_storage: SemanticStorage,
     episode_storage,
 ):
-    h1_id = await episode_storage.add_history(
+    h1_id = await episode_storage.add_episode(
         content="first",
         session_key="session_id",
         producer_id="profile_id",
         producer_role="dev",
     )
-    h2_id = await episode_storage.add_history(
+    h2_id = await episode_storage.add_episode(
         content="second",
         session_key="session_id",
         producer_id="profile_id",
         producer_role="dev",
     )
-    h3_id = await episode_storage.add_history(
+    h3_id = await episode_storage.add_episode(
         content="third",
         session_key="session_id",
         producer_id="profile_id",
@@ -460,7 +460,7 @@ async def test_complex_semantic_search_and_citations(
     semantic_storage: SemanticStorage,
     episode_storage,
 ):
-    history_id = await episode_storage.add_history(
+    history_id = await episode_storage.add_episode(
         content="context note",
         metadata={"source": "chat"},
         session_key="session_key",
@@ -546,7 +546,7 @@ async def test_history_ingestion_tracking(
     episode_storage,
 ):
     history_ids = [
-        await episode_storage.add_history(
+        await episode_storage.add_episode(
             content=f"message-{idx}",
             session_key="session_id",
             producer_id="profile_id",

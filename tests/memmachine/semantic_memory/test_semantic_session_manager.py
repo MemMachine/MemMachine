@@ -187,7 +187,7 @@ async def test_add_message_records_history_and_uningested_counts(
     session_data,
 ):
     # Given a session with both session and profile identifiers
-    history_id = await episode_storage.add_history(
+    history_id = await episode_storage.add_episode(
         content="Alpha memory",
         session_key="session_id",
         producer_id="profile_id",

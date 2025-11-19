@@ -29,7 +29,7 @@ from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModelParams,
 )
 from memmachine.episode_store.episode_sqlalchemy_store import (
-    BaseHistoryStore,
+    BaseEpisodeStore,
     SqlAlchemyEpisodeStore,
 )
 from memmachine.semantic_memory.storage.neo4j_semantic_storage import (
@@ -340,7 +340,7 @@ def semantic_storage(request):
 async def episode_storage(sqlalchemy_engine: AsyncEngine):
     engine = sqlalchemy_engine
     async with engine.begin() as conn:
-        await conn.run_sync(BaseHistoryStore.metadata.create_all)
+        await conn.run_sync(BaseEpisodeStore.metadata.create_all)
 
     storage = SqlAlchemyEpisodeStore(engine)
     try:

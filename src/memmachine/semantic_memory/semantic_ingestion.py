@@ -84,7 +84,7 @@ class IngestionService:
             return
 
         raw_messages = await asyncio.gather(
-            *[self._history_store.get_history(h_id) for h_id in history_ids],
+            *[self._history_store.get_episode(h_id) for h_id in history_ids],
         )
 
         if len(raw_messages) != len([m for m in raw_messages if m is not None]):

@@ -11,7 +11,7 @@ class EpisodeStorage(ABC):
     """Abstract interface for persisting and retrieving episodic history."""
 
     @abstractmethod
-    async def add_history(
+    async def add_episode(
         self,
         *,
         content: str,
@@ -26,14 +26,14 @@ class EpisodeStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_history(
+    async def get_episode(
         self,
         history_id: EpisodeIdT,
     ) -> Episode | None:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_history_messages(
+    async def get_episode_messages(
         self,
         *,
         session_keys: list[str] | None = None,
@@ -48,14 +48,14 @@ class EpisodeStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_history(
+    async def delete_episode(
         self,
         history_ids: list[EpisodeIdT],
     ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_history_messages(
+    async def delete_episode_messages(
         self,
         *,
         session_keys: list[str] | None = None,
