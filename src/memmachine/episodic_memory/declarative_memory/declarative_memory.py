@@ -569,14 +569,13 @@ class DeclarativeMemory:
             else:
                 # It is possible that the context exceeds the limit.
                 # Prioritize episodes near the nuclear episode.
-                context = list(context)
 
                 # Sort chronological episodes by weighted index-proximity to the nuclear episode.
                 nuclear_index = context.index(nuclear_episode)
 
                 def weighted_index_proximity(
                     episode: Episode,
-                    context: Iterable[Episode] = context,
+                    context: list[Episode] = list(context),
                     nuclear_index: int = nuclear_index,
                 ) -> float:
                     proximity = context.index(episode) - nuclear_index
