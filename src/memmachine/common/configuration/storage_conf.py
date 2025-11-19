@@ -43,7 +43,7 @@ class SupportedDB(str, Enum):
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
 
-    def __new__(cls, value, conf_cls, dialect, driver):
+    def __new__(cls, value, conf_cls: Neo4JConf | SqlAlchemyConf, dialect, driver):
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.conf_cls = conf_cls
