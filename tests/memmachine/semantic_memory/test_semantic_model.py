@@ -167,7 +167,7 @@ class TestHistoryMessage:
 
         assert msg.content == "Test message"
         assert msg.created_at == now
-        assert msg.uid is None
+        assert msg.uid == "123"
         assert msg.metadata is None
 
     def test_history_message_with_metadata(self):
