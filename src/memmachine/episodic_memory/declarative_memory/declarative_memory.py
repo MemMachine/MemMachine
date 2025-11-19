@@ -2,7 +2,6 @@
 
 import asyncio
 import datetime
-import functools
 import json
 import logging
 from collections.abc import Iterable, Mapping
@@ -574,21 +573,10 @@ class DeclarativeMemory:
                 # Sort chronological episodes by weighted index-proximity to the nuclear episode.
                 nuclear_index = context.index(nuclear_episode)
 
-                def weighted_index_proximity(
-                    episode: Episode,
-                    context: list[Episode],
-                    nuclear_index: int,
-                ) -> float:
-                    proximity = context.index(episode) - nuclear_index
-                    if proximity >= 0:
-                        # Forward recall is better than backward recall.
-                        return (proximity - 0.5) / 2
-                    return -proximity
-
                 nuclear_context = sorted(
                     context,
-                    key=functools.partial(
-                        weighted_index_proximity,
+                    key=lambda episode: DeclarativeMemory._weighted_index_proximity(
+                        episode=episode,
                         context=context,
                         nuclear_index=nuclear_index,
                     ),
@@ -610,6 +598,18 @@ class DeclarativeMemory:
         )
 
         return unified_episode_context
+
+    @staticmethod
+    def _weighted_index_proximity(
+        episode: Episode,
+        context: list[Episode],
+        nuclear_index: int,
+    ) -> float:
+        proximity = context.index(episode) - nuclear_index
+        if proximity >= 0:
+            # Forward recall is better than backward recall.
+            return (proximity - 0.5) / 2
+        return -proximity
 
     @staticmethod
     def _episode_from_episode_node(episode_node: Node) -> Episode:
