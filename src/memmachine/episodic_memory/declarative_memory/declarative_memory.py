@@ -576,7 +576,7 @@ class DeclarativeMemory:
 
                 def weighted_index_proximity(
                     episode: Episode,
-                    context: list[Episode] = context,
+                    context: Iterable[Episode] = context,
                     nuclear_index: int = nuclear_index,
                 ) -> float:
                     proximity = context.index(episode) - nuclear_index
