@@ -62,8 +62,8 @@ class SupportedDB(str, Enum):
                 f"Unsupported provider '{provider}'. Supported providers are: {valid}"
             )
 
-    def build_config(self, conf: dict):
-        """Factory method for building the provider-specific config object."""
+    def build_config(self, conf: dict) -> Neo4JConf | SqlAlchemyConf:
+        """Build the provider-specific config object."""
         if self is self.NEO4J:
             # Neo4J has its own config model
             return self.conf_cls(**conf)
