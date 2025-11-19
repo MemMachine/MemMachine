@@ -37,10 +37,10 @@ def llm_model(real_llm_model):
     return real_llm_model
 
 
-@pytest.fixture
-def storage(pgvector_semantic_storage):
+@pytest_asyncio.fixture
+async def storage(pgvector_semantic_storage):
     yield pgvector_semantic_storage
-    pgvector_semantic_storage.delete_all()
+    await pgvector_semantic_storage.delete_all()
 
 
 @pytest.fixture
