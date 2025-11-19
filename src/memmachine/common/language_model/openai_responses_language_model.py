@@ -293,7 +293,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
     def _collect_metrics(
         self,
-        response: object,
+        response: openai.types.responses.Response,
         start_time: float,
         end_time: float,
     ) -> None:
