@@ -2,7 +2,7 @@ import pytest
 
 from memmachine.common.configuration.storage_conf import (
     DatabasesConf,
-    Neo4JConf,
+    Neo4jConf,
     SqlAlchemyConf,
 )
 
@@ -40,9 +40,9 @@ def test_parse_valid_storage_dict():
 
     storage_conf = DatabasesConf.parse(input_dict)
 
-    # Neo4J check
+    # Neo4j check
     neo_conf = storage_conf.neo4j_confs["my_neo4j"]
-    assert isinstance(neo_conf, Neo4JConf)
+    assert isinstance(neo_conf, Neo4jConf)
     assert neo_conf.host == "localhost"
     assert neo_conf.port == 7687
 

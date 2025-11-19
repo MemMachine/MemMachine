@@ -65,14 +65,14 @@ class StorageManager:
         """Return a vector graph store by name."""
         async with self._lock:
             if name not in self.graph_stores:
-                raise ValueError(f"Neo4J driver '{name}' not found.")
+                raise ValueError(f"Neo4j driver '{name}' not found.")
             return self.graph_stores[name]
 
     async def get_neo4j_driver(self, name: str) -> AsyncDriver:
         """Return a Neo4j driver by name."""
         async with self._lock:
             if name not in self.neo4j_drivers:
-                raise ValueError(f"Neo4J driver '{name}' not found.")
+                raise ValueError(f"Neo4j driver '{name}' not found.")
             return self.neo4j_drivers[name]
 
     async def get_sql_engine(self, name: str) -> AsyncEngine:
@@ -115,13 +115,13 @@ class StorageManager:
             except Exception as e:
                 await driver.close()
                 raise ConnectionError(
-                    f"Neo4J config '{name}' failed verification: {e}",
+                    f"Neo4j config '{name}' failed verification: {e}",
                 ) from e
 
             if not record or record["ok"] != 1:
                 await driver.close()
                 raise ConnectionError(
-                    f"Verification failed for Neo4J config '{name}'",
+                    f"Verification failed for Neo4j config '{name}'",
                 )
 
     async def _build_sql_engines(self) -> None:

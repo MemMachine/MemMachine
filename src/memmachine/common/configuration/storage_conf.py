@@ -6,7 +6,7 @@ from typing import Self
 from pydantic import BaseModel, Field, SecretStr
 
 
-class Neo4JConf(BaseModel):
+class Neo4jConf(BaseModel):
     """Configuration options for a Neo4j instance."""
 
     host: str = Field(default="localhost", description="neo4j connection host")
@@ -39,11 +39,11 @@ class SqlAlchemyConf(BaseModel):
 
 
 class SupportedDB(str, Enum):
-    NEO4J = ("neo4j", Neo4JConf, None, None)
+    NEO4J = ("neo4j", Neo4jConf, None, None)
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
 
-    def __new__(cls, value, conf_cls: Neo4JConf | SqlAlchemyConf, dialect, driver):
+    def __new__(cls, value, conf_cls: Neo4jConf | SqlAlchemyConf, dialect, driver):
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.conf_cls = conf_cls
@@ -62,10 +62,10 @@ class SupportedDB(str, Enum):
                 f"Unsupported provider '{provider}'. Supported providers are: {valid}"
             ) from e
 
-    def build_config(self, conf: dict) -> Neo4JConf | SqlAlchemyConf:
+    def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf:
         """Build the provider-specific config object."""
         if self is self.NEO4J:
-            # Neo4J has its own config model
+            # Neo4j has its own config model
             return self.conf_cls(**conf)
 
         # All relational DB providers share SqlAlchemyConf
@@ -83,7 +83,7 @@ class SupportedDB(str, Enum):
 class DatabasesConf(BaseModel):
     """Top-level storage configuration mapping identifiers to backends."""
 
-    neo4j_confs: dict[str, Neo4JConf] = {}
+    neo4j_confs: dict[str, Neo4jConf] = {}
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
 
     @classmethod
