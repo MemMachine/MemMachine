@@ -1,12 +1,13 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
 from datetime import UTC
-from typing import TypeVar, Any
+from typing import Any, TypeVar
 
 from pydantic import AwareDatetime, JsonValue, validate_call
 from sqlalchemy import (
     JSON,
     DateTime,
+    Delete,
     Index,
     Integer,
     String,
@@ -15,7 +16,6 @@ from sqlalchemy import (
     func,
     insert,
     select,
-    Delete,
 )
 from sqlalchemy import (
     Enum as SAEnum,
@@ -25,7 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
 
-from memmachine.episode_store.episode_model import Episode as EpisodeE, EpisodeType
+from memmachine.episode_store.episode_model import Episode as EpisodeE
+from memmachine.episode_store.episode_model import EpisodeType
 from memmachine.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
 
 
@@ -232,7 +233,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         metadata_str: dict[str, str] | None = None
         if metadata is not None:
             metadata_str = {}
-            for key in metadata.keys():
+            for key in metadata:
                 metadata_str[key] = str(metadata[key])
 
         stmt = self._apply_episode_filter(
@@ -281,7 +282,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         metadata_str: dict[str, str] | None = None
         if metadata is not None:
             metadata_str = {}
-            for key in metadata.keys():
+            for key in metadata:
                 metadata_str[key] = str(metadata[key])
 
         stmt = self._apply_episode_filter(
