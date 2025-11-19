@@ -11,13 +11,13 @@ from memmachine.common.embedder import Embedder
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.reranker import Reranker
+from memmachine.common.resource_manager.database_manager import DatabaseManager
 from memmachine.common.resource_manager.embedder_manager import EmbedderManager
 from memmachine.common.resource_manager.language_model_manager import (
     LanguageModelManager,
 )
 from memmachine.common.resource_manager.reranker_manager import RerankerManager
 from memmachine.common.resource_manager.semantic_manager import SemanticResourceManager
-from memmachine.common.resource_manager.database_manager import DatabaseManager
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,

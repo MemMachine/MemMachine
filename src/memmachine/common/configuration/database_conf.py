@@ -71,16 +71,21 @@ class SqlAlchemyConf(BaseModel):
     @property
     def uri(self) -> str:
         """Construct the SQLAlchemy database URI."""
-        return (f"{self.schema_part}{self.auth_part}"
-                f"{self.host_and_port}{self.path_or_db}")
+        return (
+            f"{self.schema_part}{self.auth_part}{self.host_and_port}{self.path_or_db}"
+        )
 
 
 class SupportedDB(str, Enum):
+    """Supported database providers."""
+
     NEO4J = ("neo4j", Neo4jConf, None, None)
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
 
-    def __new__(cls, value, conf_cls: Neo4jConf | SqlAlchemyConf, dialect, driver):
+    def __new__(
+        cls, value: str, conf_cls: Neo4jConf | SqlAlchemyConf, dialect: str, driver: str
+    ) -> Self:
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj.conf_cls = conf_cls

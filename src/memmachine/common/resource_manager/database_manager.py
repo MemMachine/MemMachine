@@ -45,24 +45,28 @@ class DatabaseManager:
                 )
         return self
 
+    @staticmethod
+    async def _close_async_driver(name: str, driver: AsyncDriver) -> None:
+        try:
+            await driver.close()
+        except Exception as ex:
+            logger.warning("Error closing Neo4j driver '%s': %s", name, ex)
+
+    @staticmethod
+    async def _close_async_engine(name: str, engine: AsyncEngine) -> None:
+        try:
+            await engine.dispose()
+        except Exception as ex:
+            logger.warning("Error disposing SQL engine '%s': %s", name, ex)
+
     async def close(self) -> None:
         """Close all database connections."""
         async with self._lock:
             tasks = []
             for name, driver in self.neo4j_drivers.items():
-                async def do_close():
-                    try:
-                        await driver.close()
-                    except Exception as ex:
-                        logger.warning(f"Error closing Neo4j driver '{name}': {ex}")
-                tasks.append(do_close())
+                tasks.append(self._close_async_driver(name, driver))
             for name, engine in self.sql_engines.items():
-                async def do_close():
-                    try:
-                        await engine.dispose()
-                    except Exception as ex:
-                        logger.warning(f"Error disposing SQL engine '{name}': {ex}")
-                tasks.append(do_close())
+                tasks.append(self._close_async_engine(name, engine))
             await asyncio.gather(*tasks)
             # reset all connections
             self.graph_stores = {}

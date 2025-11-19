@@ -58,11 +58,13 @@ async def test_build_sqlite(mock_conf):
 async def test_build_and_validate_sqlite():
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {"sqlite1": SqlAlchemyConf(
+    conf.relational_db_confs = {
+        "sqlite1": SqlAlchemyConf(
             dialect="sqlite",
             driver="aiosqlite",
             path=":memory:",
-        )}
+        )
+    }
     builder = DatabaseManager(conf)
     await builder.build_all(validate=True)
     # If no exception is raised, validation passed

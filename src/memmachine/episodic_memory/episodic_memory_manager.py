@@ -278,7 +278,7 @@ class EpisodicMemoryManager:
                 return
             close_memory_coroutines.extend(
                 cast(EpisodicMemory, self._instance_cache.get(key)).close()
-                for key in self._instance_cache
+                for key in self._instance_cache.cache
             )
             await asyncio.gather(*close_memory_coroutines)
             await self._session_data_manager.close()

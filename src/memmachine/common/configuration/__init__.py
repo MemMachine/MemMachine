@@ -7,12 +7,12 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from memmachine.common.configuration.database_conf import DatabasesConf
 from memmachine.common.configuration.embedder_conf import EmbeddersConf
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConfPartial
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
 from memmachine.common.configuration.reranker_conf import RerankersConf
-from memmachine.common.configuration.database_conf import DatabasesConf
 from memmachine.semantic_memory.semantic_model import SemanticCategory
 from memmachine.semantic_memory.semantic_session_resource import IsolationType
 from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGORIES
@@ -22,6 +22,7 @@ YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | boo
 
 class SessionManagerConf(BaseModel):
     """Configuration for the session database connection."""
+
     database: str = Field(
         default="",
         description="The database ID to use for session manager",
