@@ -82,23 +82,30 @@ class LongTermMemory:
                     episode,
                 ),
                 content=episode.content,
-                filterable_properties={
-                    key: value
-                    for key, value in {
-                        "sequence_num": episode.sequence_num,
-                        "session_key": episode.session_key,
-                        "episode_type": episode.episode_type.value,
-                        "content_type": episode.content_type.value,
-                        "producer_id": episode.producer_id,
-                        "producer_role": episode.producer_role,
-                        "produced_for_id": episode.produced_for_id,
-                    }.items()
-                    if value is not None
-                }
-                | {
-                    LongTermMemory._mangle_filterable_metadata_key(key): value
-                    for key, value in (episode.filterable_metadata or {}).items()
-                },
+                filterable_properties=dict(
+                    cast(
+                        dict[str, FilterablePropertyValue],
+                        {
+                            key: value
+                            for key, value in {
+                                "sequence_num": episode.sequence_num,
+                                "session_key": episode.session_key,
+                                "episode_type": episode.episode_type.value,
+                                "content_type": episode.content_type.value,
+                                "producer_id": episode.producer_id,
+                                "producer_role": episode.producer_role,
+                                "produced_for_id": episode.produced_for_id,
+                            }.items()
+                            if value is not None
+                        }
+                        | {
+                            LongTermMemory._mangle_filterable_metadata_key(key): value
+                            for key, value in (
+                                episode.filterable_metadata or {}
+                            ).items()
+                        },
+                    )
+                ),
                 user_metadata=episode.metadata,
             )
             for episode in episodes
