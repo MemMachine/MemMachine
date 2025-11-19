@@ -1,15 +1,15 @@
 import pytest
 
 from memmachine.common.configuration.storage_conf import (
+    DatabasesConf,
     Neo4JConf,
     SqlAlchemyConf,
-    StoragesConf,
 )
 
 
 def test_parse_valid_storage_dict():
     input_dict = {
-        "storages": {
+        "databases": {
             "my_neo4j": {
                 "provider": "neo4j",
                 "config": {
@@ -38,7 +38,7 @@ def test_parse_valid_storage_dict():
         },
     }
 
-    storage_conf = StoragesConf.parse_storage_conf(input_dict)
+    storage_conf = DatabasesConf.parse(input_dict)
 
     # Neo4J check
     neo_conf = storage_conf.neo4j_confs["my_neo4j"]
@@ -60,14 +60,15 @@ def test_parse_valid_storage_dict():
 
 def test_parse_unknown_provider_raises():
     input_dict = {
-        "storages": {"bad_storage": {"provider": "unknown_db", "host": "localhost"}},
+        "databases": {"bad_storage": {"provider": "unknown_db", "host": "localhost"}},
     }
-    with pytest.raises(ValueError, match="Unknown provider 'unknown_db'"):
-        StoragesConf.parse_storage_conf(input_dict)
+    message = "Supported providers are: neo4j, postgres, sqlite"
+    with pytest.raises(ValueError, match=message):
+        DatabasesConf.parse(input_dict)
 
 
 def test_parse_empty_storage_returns_empty_conf():
-    input_dict = {"storages": {}}
-    storage_conf = StoragesConf.parse_storage_conf(input_dict)
+    input_dict = {"databases": {}}
+    storage_conf = DatabasesConf.parse(input_dict)
     assert storage_conf.neo4j_confs == {}
     assert storage_conf.relational_db_confs == {}

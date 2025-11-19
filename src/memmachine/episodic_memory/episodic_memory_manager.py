@@ -11,7 +11,7 @@ from memmachine.common.resource_manager import CommonResourceManager
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory.episodic_memory import EpisodicMemory
 from memmachine.episodic_memory.service_locator import (
-    epsiodic_memory_params_from_config,
+    episodic_memory_params_from_config,
 )
 
 from .instance_lru_cache import MemoryInstanceCache
@@ -124,7 +124,7 @@ class EpisodicMemoryManager:
                     _,
                     episodic_memory_config,
                 ) = await self._session_data_manager.get_session_info(session_key)
-                episodic_memory_params = await epsiodic_memory_params_from_config(
+                episodic_memory_params = await episodic_memory_params_from_config(
                     episodic_memory_config,
                     self._resource_manager,
                 )
@@ -174,7 +174,7 @@ class EpisodicMemoryManager:
                 description,
                 metadata,
             )
-            episodic_memory_params = await epsiodic_memory_params_from_config(
+            episodic_memory_params = await episodic_memory_params_from_config(
                 episodic_memory_config,
                 self._resource_manager,
             )
@@ -215,7 +215,7 @@ class EpisodicMemoryManager:
                     _,
                     episodic_memory_config,
                 ) = await self._session_data_manager.get_session_info(session_key)
-                params = await epsiodic_memory_params_from_config(
+                params = await episodic_memory_params_from_config(
                     episodic_memory_config,
                     self._resource_manager,
                 )

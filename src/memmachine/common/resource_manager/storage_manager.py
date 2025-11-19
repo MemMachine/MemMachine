@@ -9,7 +9,7 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from memmachine.common.configuration.storage_conf import StoragesConf
+from memmachine.common.configuration.storage_conf import DatabasesConf
 from memmachine.common.vector_graph_store import VectorGraphStore
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class StorageManager:
     """Create and manage storage backends."""
 
-    def __init__(self, conf: StoragesConf) -> None:
+    def __init__(self, conf: DatabasesConf) -> None:
         """Initialize with storage configuration."""
         self.conf = conf
         self.graph_stores: dict[str, VectorGraphStore] = {}

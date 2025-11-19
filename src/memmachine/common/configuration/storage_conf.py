@@ -39,48 +39,71 @@ class SqlAlchemyConf(BaseModel):
 
 
 class SupportedDB(str, Enum):
-    """Supported database provider identifiers."""
+    NEO4J = ("neo4j", Neo4JConf, None, None)
+    POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
+    SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
 
-    NEO4J = "neo4j"
-    POSTGRES = "postgres"
-    SQLITE = "sqlite"
+    def __new__(cls, value, conf_cls, dialect, driver):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.conf_cls = conf_cls
+        obj.dialect = dialect
+        obj.driver = driver
+        return obj
+
+    @classmethod
+    def from_provider(cls, provider: str) -> Self:
+        """Convert provider string to enum with a clear error message."""
+        try:
+            return cls(provider)
+        except ValueError:
+            valid = ", ".join(str(e.value) for e in cls)
+            raise ValueError(
+                f"Unsupported provider '{provider}'. Supported providers are: {valid}"
+            )
+
+    def build_config(self, conf: dict):
+        """Factory method for building the provider-specific config object."""
+        if self is self.NEO4J:
+            # Neo4J has its own config model
+            return self.conf_cls(**conf)
+
+        # All relational DB providers share SqlAlchemyConf
+        return self.conf_cls(
+            dialect=self.dialect,
+            driver=self.driver,
+            **conf,
+        )
+
+    @property
+    def is_neo4j(self) -> bool:
+        return self is SupportedDB.NEO4J
 
 
-class StoragesConf(BaseModel):
+class DatabasesConf(BaseModel):
     """Top-level storage configuration mapping identifiers to backends."""
 
     neo4j_confs: dict[str, Neo4JConf] = {}
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
 
     @classmethod
-    def parse_storage_conf(cls, input_dict: dict) -> Self:
-        """Parse storage configuration from a raw mapping."""
-        storage = input_dict.get("storages", {})
+    def parse(cls, input_dict: dict) -> Self:
+        databases = input_dict.get("databases", {})
 
-        neo4j_dict, relational_db_dict = {}, {}
+        neo4j_dict = {}
+        relational_db_dict = {}
 
-        for storage_id, resource_definition in storage.items():
-            provider = resource_definition.get("provider")
+        for storage_id, resource_definition in databases.items():
+            provider_str = resource_definition.get("provider")
             conf = resource_definition.get("config", {})
 
-            if provider == "neo4j":
-                neo4j_dict[storage_id] = Neo4JConf(**conf)
-            elif provider == "postgres":
-                relational_db_dict[storage_id] = SqlAlchemyConf(
-                    dialect="postgresql",
-                    driver="asyncpg",
-                    **conf,
-                )
-            elif provider == "sqlite":
-                relational_db_dict[storage_id] = SqlAlchemyConf(
-                    dialect="sqlite",
-                    driver="aiosqlite",
-                    **conf,
-                )
+            provider = SupportedDB.from_provider(provider_str)
+            config_obj = provider.build_config(conf)
+
+            if provider.is_neo4j:
+                neo4j_dict[storage_id] = config_obj
             else:
-                raise ValueError(
-                    f"Unknown provider '{provider}' for storage_id '{storage_id}'",
-                )
+                relational_db_dict[storage_id] = config_obj
 
         return cls(
             neo4j_confs=neo4j_dict,

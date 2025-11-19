@@ -12,7 +12,7 @@ from memmachine.common.configuration.episodic_config import EpisodicMemoryConfPa
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
 from memmachine.common.configuration.reranker_conf import RerankersConf
-from memmachine.common.configuration.storage_conf import StoragesConf
+from memmachine.common.configuration.storage_conf import DatabasesConf
 from memmachine.semantic_memory.semantic_model import SemanticCategory
 from memmachine.semantic_memory.semantic_session_resource import IsolationType
 from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGORIES
@@ -140,16 +140,16 @@ class ResourcesConf(BaseModel):
     embedders: EmbeddersConf
     language_models: LanguageModelsConf
     rerankers: RerankersConf
-    storages: StoragesConf
+    databases: DatabasesConf
 
     def __init__(self, **data: object) -> None:
         """Parse nested configuration sections into typed models."""
         data = data.copy()  # avoid mutating caller's dict
         super().__init__(**data)
-        self.embedders = EmbeddersConf.parse_embedder_conf(data)
-        self.language_models = LanguageModelsConf.parse_language_model_conf(data)
-        self.rerankers = RerankersConf.parse_reranker_conf(data)
-        self.storages = StoragesConf.parse_storage_conf(data)
+        self.embedders = EmbeddersConf.parse(data)
+        self.language_models = LanguageModelsConf.parse(data)
+        self.rerankers = RerankersConf.parse(data)
+        self.databases = DatabasesConf.parse(data)
 
 
 class Configuration(BaseModel):

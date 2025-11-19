@@ -95,7 +95,7 @@ def test_init_no_memory_configured_raises_error(episodic_memory_params):
     """Test that initialization fails if no memory stores are provided when enabled."""
     episodic_memory_params.short_term_memory = None
     episodic_memory_params.long_term_memory = None
-    with pytest.raises(ValueError, match="short_term_memory or long_term_memory"):
+    with pytest.raises(ValueError, match="No memory is configured"):
         EpisodicMemory(episodic_memory_params)
 
 

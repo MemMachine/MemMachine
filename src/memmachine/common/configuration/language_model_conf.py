@@ -146,7 +146,7 @@ class LanguageModelsConf(BaseModel):
     amazon_bedrock_language_model_confs: dict[str, AmazonBedrockLanguageModelConf] = {}
 
     @classmethod
-    def parse_language_model_conf(cls, input_dict: dict) -> Self:
+    def parse(cls, input_dict: dict) -> Self:
         """Parse language model config definitions into typed models."""
         lm = input_dict.get("language_models", {})
 

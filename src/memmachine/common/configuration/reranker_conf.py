@@ -92,7 +92,7 @@ class RerankersConf(BaseModel):
     rrf_hybrid: dict[str, RRFHybridRerankerConf] = {}
 
     @classmethod
-    def parse_reranker_conf(cls, input_dict: dict) -> Self:
+    def parse(cls, input_dict: dict) -> Self:
         """Parse reranker configuration from a raw mapping."""
         reranker = input_dict.get("rerankers", {})
 

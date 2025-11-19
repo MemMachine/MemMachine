@@ -20,7 +20,7 @@ session_db:
   uri: sqlitetest.db
 
 resources:
-  storages:
+  databases:
     profile_storage:
       provider: postgres
       config:

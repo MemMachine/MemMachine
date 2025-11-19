@@ -109,7 +109,7 @@ def test_load_sample_cpu_config():
         ].model
         == "llama3"
     )
-    postgres_conf = resources_conf.storages.relational_db_confs["profile_storage"]
+    postgres_conf = resources_conf.databases.relational_db_confs["profile_storage"]
     assert postgres_conf.password == SecretStr("<YOUR_PASSWORD_HERE>")
     assert conf.semantic_memory.database == "profile_storage"
     embedder_conf = resources_conf.embedders.openai["openai_embedder"]

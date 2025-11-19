@@ -100,7 +100,7 @@ class EmbeddersConf(BaseModel):
     sentence_transformer: dict[str, SentenceTransformerEmbedderConfig] = {}
 
     @classmethod
-    def parse_embedder_conf(cls, input_dict: dict) -> Self:
+    def parse(cls, input_dict: dict) -> Self:
         """Parse embedder config by provider and return the structured model."""
         embedder = input_dict.get("embedders", {})
 

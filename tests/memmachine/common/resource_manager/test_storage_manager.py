@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from memmachine.common.configuration.storage_conf import StoragesConf
+from memmachine.common.configuration.storage_conf import DatabasesConf
 from memmachine.common.resource_manager.storage_manager import StorageManager
 from memmachine.common.vector_graph_store import VectorGraphStore
 
@@ -11,7 +11,7 @@ from memmachine.common.vector_graph_store import VectorGraphStore
 @pytest.fixture
 def mock_conf():
     """Mock StoragesConf with dummy connection configurations."""
-    conf = MagicMock(spec=StoragesConf)
+    conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {
         "neo1": MagicMock(host="localhost", port=1234, user="neo", password="pw"),
     }

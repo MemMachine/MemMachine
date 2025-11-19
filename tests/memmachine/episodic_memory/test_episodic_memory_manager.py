@@ -133,7 +133,7 @@ async def test_create_episodic_memory_success(
 
     # Patch the service locator function
     with patch(
-        "memmachine.episodic_memory.episodic_memory_manager.epsiodic_memory_params_from_config",
+        "memmachine.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
         new_callable=AsyncMock,
     ) as mock_params_from_config:
         mock_params_from_config.return_value = MagicMock(spec=EpisodicMemoryParams)
@@ -182,7 +182,7 @@ async def test_create_episodic_memory_already_exists(
 
 @pytest.mark.asyncio
 @patch(
-    "memmachine.episodic_memory.episodic_memory_manager.epsiodic_memory_params_from_config",
+    "memmachine.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
     new_callable=AsyncMock,
 )
 @patch("memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory")
