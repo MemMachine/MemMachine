@@ -16,7 +16,9 @@ Here's how they help:
 
 By providing this durable, organized, and accessible memory, databases empower MemMachine to deliver the ability for agents to **intelligently interact** with users, making every conversation truly personalized and informed.
 
-MemMachine, by default, utilizes the following Databases:
+MemMachine can be configured to use different supported databases.  In choosing which databases you wish to use, it is important to understand how MemMachine utilizes databases.
+
+By default, it utilizes the following Databases:
 
 ## neo4j
 Neo4j is a leading **graph database**, which means it's specially designed to store and manage highly connected data. Instead of rows and columns, Neo4j works with three fundamental building blocks:
@@ -46,15 +48,15 @@ For information on the table structures utilized by MemMachine in neo4j, please 
 
 PostgreSQL is an advanced, open-source **relational database management system (RDBMS)**. This means it stores data in structured tables, with defined rows and columns, and allows you to create explicit relationships between different pieces of data. It's known for its reliability, feature richness, and strong compliance with SQL standards, making it a trusted choice for applications that need durable and organized data storage.
 
-### How MemMachine Uses PostgreSQL for Profile Memory 
+### How MemMachine Uses PostgreSQL for Semantic Memory 
 
 MemMachine leverages PostgreSQL's strengths to build and maintain rich, dynamic **user profiles** for your AI agents:
 
 - **Structured User Data:** PostgreSQL's table-based structure is ideal for organizing profile information. MemMachine can store core user details, preferences, settings, and other structured attributes in clearly defined tables. This ensures consistency and makes it easy to manage distinct pieces of user data.
-- **Reliable Persistence:** Profile memory is critical - agents can't forget user preferences! PostgreSQL provides **durable storage**, meaning once a user's preference or detail is saved, it remains safely in the database. This ensures that MemMachine's profile memory is persistent across sessions and even agent reboots.
+- **Reliable Persistence:** Semantic memory is critical - agents can't forget user preferences! PostgreSQL provides **durable storage**, meaning once a user's preference or detail is saved, it remains safely in the database. This ensures that MemMachine's profile memory is persistent across sessions and even agent reboots.
 - **Efficient Querying:** When an AI agent interacts with a user, MemMachine must quickly retrieve the user's specific profile details. PostgreSQL's powerful SQL querying capabilities allow MemMachine to rapidly retrieve precise information, such as "What is this user's preferred language?" or "Has this user expressed interest in feature X before?".
 - **Scalable Profile Management:** As your AI agents interact with an increasing number of users, MemMachine can rely on PostgreSQL to **scale efficiently**. It handles a growing number of user profiles and the rising complexity of their associated data without compromising performance.
 
-By integrating PostgreSQL, MemMachine ensures that its profile memory is not only robust and persistent but also meticulously organized and instantly accessible, empowering AI agents to deliver truly personalized and context-aware interactions.
+By integrating PostgreSQL, MemMachine ensures that its semantic memory is not only robust and persistent but also meticulously organized and instantly accessible, empowering AI agents to deliver truly personalized and context-aware interactions.
 
 For information on the table structure utilized by MemMachine in PostgreSQL, please check out the Profile Memory portion of our [Memory Types](./memory_types) section.
