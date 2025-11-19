@@ -475,10 +475,10 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         return stmt
 
     def _apply_vector_search_opts(
-            self,
-            *,
-            stmt: Select[Any],
-            vector_search_opts: SemanticStorage.VectorSearchOpts,
+        self,
+        *,
+        stmt: Select[Any],
+        vector_search_opts: SemanticStorage.VectorSearchOpts,
     ) -> Select[Any]:
         if vector_search_opts.min_distance is not None:
             threshold = 1 - vector_search_opts.min_distance
@@ -496,7 +496,6 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         )
 
         return stmt
-
 
     def _apply_feature_select_filter(
         self,

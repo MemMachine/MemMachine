@@ -14,7 +14,8 @@ from sqlalchemy import (
     delete,
     func,
     insert,
-    select, Delete,
+    select,
+    Delete,
 )
 from sqlalchemy import (
     Enum as SAEnum,
@@ -35,6 +36,7 @@ class BaseEpisodeStore(DeclarativeBase):
 JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
 
 StmtT = TypeVar("StmtT", Select[Any], Delete)
+
 
 class Episode(BaseEpisodeStore):
     """SQLAlchemy mapping for stored conversation messages."""
