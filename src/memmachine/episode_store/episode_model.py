@@ -5,6 +5,8 @@ from enum import Enum
 
 from pydantic import BaseModel, JsonValue
 
+from memmachine.common.data_types import FilterablePropertyValue
+
 EpisodeIdT = str
 
 
@@ -20,9 +22,6 @@ class EpisodeType(Enum):
 
     MESSAGE = "message"
     # Other episode types like 'thought', 'action' could be added here.
-
-
-FILTERABLE_VALUE = str | int | float | bool | datetime
 
 
 class Episode(BaseModel):
@@ -41,5 +40,5 @@ class Episode(BaseModel):
 
     episode_type: EpisodeType | None = None
     content_type: ContentType | None = None
-    filterable_metadata: dict[str, FILTERABLE_VALUE] | None = None
+    filterable_metadata: dict[str, FilterablePropertyValue] | None = None
     metadata: dict[str, JsonValue] | None = None

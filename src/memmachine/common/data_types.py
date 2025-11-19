@@ -1,8 +1,9 @@
 """Common data types for MemMachine."""
 
+from datetime import datetime
 from enum import Enum
 
-FilterablePropertyValue = bool | int | str
+FilterablePropertyValue = bool | int | float | str | datetime
 
 
 class SimilarityMetric(Enum):
