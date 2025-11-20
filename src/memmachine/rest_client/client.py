@@ -31,6 +31,13 @@ class MemMachineClient:
             base_url="http://localhost:8080"
         )
 
+        # Create a project (optional, project is auto-created on first use)
+        client.create_project(
+            org_id="my_org",
+            project_id="my_project",
+            description="My project description"
+        )
+
         # Create a memory instance (v2 API requires org_id and project_id)
         memory = client.memory(
             org_id="my_org",
@@ -42,7 +49,7 @@ class MemMachineClient:
         )
 
         # Add memory (role defaults to "user")
-        memory.add("I like pizza", metadata={"type": "preference"})
+        memory.add("I like pizza")
         
         # Add assistant response
         memory.add("I understand you like pizza", role="assistant")
@@ -112,6 +119,65 @@ class MemMachineClient:
 
         if api_key:
             self._session.headers["Authorization"] = f"Bearer {api_key}"
+
+    def create_project(
+        self,
+        org_id: str,
+        project_id: str,
+        description: str = "",
+        embedder: str = "default",
+        reranker: str = "default",
+    ) -> bool:
+        """
+        Create a new project in MemMachine.
+
+        Args:
+            org_id: Organization identifier (required)
+            project_id: Project identifier (required)
+            description: Optional description for the project (default: "")
+            embedder: Embedder model name to use (default: "default")
+            reranker: Reranker model name to use (default: "default")
+
+        Returns:
+            True if the project was created successfully
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        Example:
+            ```python
+            client = MemMachineClient(base_url="http://localhost:8080")
+            client.create_project(
+                org_id="my_org",
+                project_id="my_project",
+                description="My new project"
+            )
+            ```
+
+        """
+        if self._closed:
+            raise RuntimeError("Cannot create project: client has been closed")
+
+        url = f"{self.base_url}/api/v2/projects"
+        data = {
+            "org_id": org_id,
+            "project_id": project_id,
+            "description": description,
+            "config": {
+                "embedder": embedder,
+                "reranker": reranker,
+            },
+        }
+
+        try:
+            response = self._session.post(url, json=data, timeout=self.timeout)
+            response.raise_for_status()
+            logger.debug(f"Project created: {org_id}/{project_id}")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Failed to create project {org_id}/{project_id}: {e}")
+            raise
 
     def memory(
         self,
