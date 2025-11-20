@@ -139,6 +139,10 @@
   "navbar": {
     "links": [
       {
+        "label": "Playground",
+        "href": "https://huggingface.co/spaces/Memverge/MemMachine-Playground"
+      },
+      {
         "label": "Support",
         "href": "mailto:support@memmachine.ai"
       }
