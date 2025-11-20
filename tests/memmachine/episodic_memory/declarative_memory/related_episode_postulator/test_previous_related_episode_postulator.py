@@ -21,12 +21,15 @@ async def test_previous_related_episode_postulator():
     vector_graph_store = MagicMock(spec=VectorGraphStore)
     timestamp = datetime.now()
 
+    same_uuid = uuid4()
+
     def side_effect(*args, **kwargs):
+        first_uuid = uuid4()
         nodes = [
             Node(
-                uuid=uuid4(),
-                labels={"Episode"},
+                uuid=first_uuid,
                 properties={
+                    "uuid": str(first_uuid),
                     "episode_type": "test",
                     "content_type": ContentType.STRING,
                     "content": "first",
@@ -36,9 +39,9 @@ async def test_previous_related_episode_postulator():
                 },
             ),
             Node(
-                uuid=uuid4(),
-                labels={"Episode"},
+                uuid=same_uuid,
                 properties={
+                    "uuid": str(same_uuid),
                     "episode_type": "test",
                     "content_type": ContentType.STRING,
                     "content": "second",
@@ -53,8 +56,14 @@ async def test_previous_related_episode_postulator():
             node
             for node in nodes
             if (
-                node.properties["timestamp"] < kwargs.get("start_at_value")
-                if "start_at_value" in kwargs
+                (
+                    (node.properties["timestamp"] < kwargs.get("starting_at")[0])
+                    or (
+                        node.properties["timestamp"] == kwargs.get("starting_at")[0]
+                        and node.properties["uuid"] < str(kwargs.get("starting_at")[1])
+                    )
+                )
+                if "starting_at" in kwargs
                 else True
             )
             and all(
@@ -98,7 +107,7 @@ async def test_previous_related_episode_postulator():
     assert len(related_episodes) == 1
 
     episode = Episode(
-        uuid=uuid4(),
+        uuid=same_uuid,
         episode_type="test",
         content_type=ContentType.STRING,
         content="Hello, world!",
