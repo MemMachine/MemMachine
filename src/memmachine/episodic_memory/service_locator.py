@@ -31,7 +31,7 @@ async def episodic_memory_params_from_config(
 
     short_term_memory: ShortTermMemory | None = None
     if config.short_term_memory and config.short_term_memory_enabled:
-        short_term_memory_params = short_term_memory_params_from_config(
+        short_term_memory_params = await short_term_memory_params_from_config(
             config.short_term_memory,
             resource_manager,
         )

@@ -8,14 +8,14 @@ from memmachine.common.resource_manager import CommonResourceManager
 from .short_term_memory import ShortTermMemoryParams
 
 
-def short_term_memory_params_from_config(
+async def short_term_memory_params_from_config(
     config: ShortTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> ShortTermMemoryParams:
     """Create ShortTermMemoryParams from configuration and common resources."""
     return ShortTermMemoryParams(
         session_key=config.session_key,
-        llm_model=resource_manager.get_language_model(config.llm_model),
+        llm_model=await resource_manager.get_language_model(config.llm_model),
         data_manager=resource_manager.session_data_manager,
         summary_prompt_system=config.summary_prompt_system,
         summary_prompt_user=config.summary_prompt_user,

@@ -512,6 +512,7 @@ async def initialize_resource(config_file: str) -> ResourceManagerImpl:
     """
     config = load_config_yml_file(config_file)
     ret = ResourceManagerImpl(config)
+    await ret.build()
     return ret
 
 

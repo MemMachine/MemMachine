@@ -70,6 +70,12 @@ class ResourceManagerImpl:
 
         await asyncio.gather(*tasks)
 
+        if self._session_data_manager is None:
+            database = self._conf.session_manager.database
+            engine = await self._database_manager.async_get_sql_engine(database)
+            self._session_data_manager = SessionDataManagerSQL(engine)
+            await self._session_data_manager.create_tables()
+
     async def close(self) -> None:
         """Close resources and clean up state."""
         tasks = []
@@ -82,15 +88,15 @@ class ResourceManagerImpl:
 
     async def get_sql_engine(self, name: str) -> AsyncEngine:
         """Return a SQL engine by name."""
-        return self._database_manager.get_sql_engine(name)
+        return await self._database_manager.async_get_sql_engine(name)
 
     async def get_neo4j_driver(self, name: str) -> AsyncDriver:
         """Return a Neo4j driver by name."""
-        return self._database_manager.get_neo4j_driver(name)
+        return await self._database_manager.async_get_neo4j_driver(name)
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
-        return self._database_manager.get_vector_graph_store(name)
+        return await self._database_manager.async_get_vector_graph_store(name)
 
     async def get_embedder(self, name: str) -> Embedder:
         """Return an embedder by name."""
@@ -106,12 +112,7 @@ class ResourceManagerImpl:
 
     @property
     def session_data_manager(self) -> SessionDataManager:
-        """Lazy-load the session data manager."""
-        if self._session_data_manager is not None:
-            return self._session_data_manager
-        database = self._conf.session_manager.database
-        engine = self._database_manager.get_sql_engine(database)
-        self._session_data_manager = SessionDataManagerSQL(engine)
+        """Return the session data manager."""
         return self._session_data_manager
 
     @property
