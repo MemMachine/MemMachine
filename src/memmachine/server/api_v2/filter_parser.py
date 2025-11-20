@@ -14,7 +14,7 @@ def parse_filter(filter_str: str) -> dict[str, FilterablePropertyValue]:
         dict: A dictionary representation of the filter.
 
     """
-    filter_dict = {}
+    filter_dict: dict[str, FilterablePropertyValue] = {}
     if not filter_str:
         return filter_dict
 
@@ -23,6 +23,7 @@ def parse_filter(filter_str: str) -> dict[str, FilterablePropertyValue]:
         for condition in conditions:
             if "=" in condition:
                 key, value = condition.split("=", 1)
+                # Store as string for now - could be enhanced to parse types
                 filter_dict[key.strip()] = value.strip()
     except Exception as e:
         raise ValueError(f"Invalid filter format: {filter_str}") from e

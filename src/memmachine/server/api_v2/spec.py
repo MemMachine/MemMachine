@@ -1,3 +1,5 @@
+"""API v2 specification models for request and response structures."""
+
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field

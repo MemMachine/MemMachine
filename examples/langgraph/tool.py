@@ -109,7 +109,9 @@ class MemMachineTools:
 
         """
         try:
-            memory = self.get_memory(org_id, project_id, user_id, agent_id, group_id, session_id)
+            memory = self.get_memory(
+                org_id, project_id, user_id, agent_id, group_id, session_id
+            )
             success = memory.add(
                 content=content,
                 role=role,
@@ -168,7 +170,9 @@ class MemMachineTools:
 
         """
         try:
-            memory = self.get_memory(org_id, project_id, user_id, agent_id, group_id, session_id)
+            memory = self.get_memory(
+                org_id, project_id, user_id, agent_id, group_id, session_id
+            )
             results = memory.search(
                 query=query,
                 limit=limit,
@@ -262,7 +266,9 @@ class MemMachineTools:
             Dictionary containing context information
 
         """
-        memory = self.get_memory(org_id, project_id, user_id, agent_id, group_id, session_id)
+        memory = self.get_memory(
+            org_id, project_id, user_id, agent_id, group_id, session_id
+        )
         return memory.get_context()
 
     def close(self) -> None:

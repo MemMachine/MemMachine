@@ -58,7 +58,7 @@ async def get_episodic_memory_manager(request: Request) -> EpisodicMemoryManager
 
 async def get_global_config(request: Request) -> Configuration:
     """Get global configuration instance."""
-    return request.app.state.resource_manager._conf
+    return request.app.state.resource_manager.config
 
 
 async def get_episodic_memory(
@@ -76,19 +76,10 @@ async def get_episodic_memory(
         session_manager=session_manager,
         session_key=session_key,
     )
-    open_successful = False
-    try:
-        async with episodic_memory_manager.open_episodic_memory(
-            session_key=session_key
-        ) as episodic_memory:
-            open_successful = True
-            yield episodic_memory
-    except Exception as e:
-        # if not open_successful:
-        #     raise HTTPException(
-        #         status_code=404, detail="Episode memory not found"
-        #     ) from e
-        raise
+    async with episodic_memory_manager.open_episodic_memory(
+        session_key=session_key
+    ) as episodic_memory:
+        yield episodic_memory
 
 
 async def _session_exists(
@@ -111,18 +102,25 @@ async def _create_new_session(
     reranker: str,
 ) -> None:
     """Create a new session."""
+    # Get default prompts from config, with fallbacks
+    short_term = conf.episodic_memory.short_term_memory
     summary_prompt_system = (
-        conf.episodic_memory.short_term_memory.summary_prompt_system
-        or "You are a helpful assistant."
+        short_term.summary_prompt_system
+        if short_term and short_term.summary_prompt_system
+        else "You are a helpful assistant."
     )
     summary_prompt_user = (
-        conf.episodic_memory.short_term_memory.summary_prompt_user
-        or "Based on the following episodes: {episodes}, and the previous summary: {summary}, please update the summary. Keep it under {max_length} characters."
+        short_term.summary_prompt_user
+        if short_term and short_term.summary_prompt_user
+        else "Based on the following episodes: {episodes}, and the previous summary: {summary}, please update the summary. Keep it under {max_length} characters."
     )
-    if embedder == "default":
-        embedder = conf.episodic_memory.long_term_memory.embedder
-    if reranker == "default":
-        reranker = conf.episodic_memory.long_term_memory.reranker
+
+    # Get default embedder and reranker from config
+    long_term = conf.episodic_memory.long_term_memory
+    if embedder == "default" and long_term and long_term.embedder:
+        embedder = long_term.embedder
+    if reranker == "default" and long_term and long_term.reranker:
+        reranker = long_term.reranker
     await session_manager.create_new_session(
         session_key=session_key,
         configuration={},
@@ -130,13 +128,21 @@ async def _create_new_session(
             session_key=session_key,
             long_term_memory=LongTermMemoryConf(
                 session_id=session_key,
-                vector_graph_store=conf.episodic_memory.long_term_memory.vector_graph_store,
+                vector_graph_store=(
+                    long_term.vector_graph_store
+                    if long_term and long_term.vector_graph_store
+                    else "default_store"
+                ),
                 embedder=embedder,
                 reranker=reranker,
             ),
             short_term_memory=ShortTermMemoryConf(
                 session_key=session_key,
-                llm_model=conf.episodic_memory.short_term_memory.llm_model,
+                llm_model=(
+                    short_term.llm_model
+                    if short_term and short_term.llm_model
+                    else "gpt-4.1"
+                ),
                 summary_prompt_system=summary_prompt_system,
                 summary_prompt_user=summary_prompt_user,
             ),
@@ -223,7 +229,7 @@ async def search_memories(
     episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
 ) -> SearchResult:
     """Search memories in a project."""
-    ret = SearchResult(content={"episodic_memory": [], "semantic_memory": []})
+    ret = SearchResult(status=0, content={"episodic_memory": [], "semantic_memory": []})
     if "episodic" in spec.types:
         episodic_result = await episodic_memory.query_memory(
             query=spec.query,
@@ -239,11 +245,13 @@ async def search_memories(
 
 @router.post("/memories/list")
 async def list_memories(
-    spec: ListMemoriesSpec,
-    episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
-) -> None:
+    _spec: ListMemoriesSpec,
+    _episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
+) -> SearchResult:
     """List memories in a project."""
-    return SearchResult(content={"episodic_memory": [], "semantic_memory": []})
+    return SearchResult(
+        status=0, content={"episodic_memory": [], "semantic_memory": []}
+    )
 
 
 @router.post("/memories/delete")
@@ -257,7 +265,7 @@ async def delete_memories(
         property_filter=parse_filter(spec.filter),
     )
     await episodic_memory.delete_episodes(
-        episode_ids=[ep.uid for ep in short_term + long_term if ep.uid is not None]
+        uids=[ep.uid for ep in short_term + long_term if ep.uid is not None]
     )
 
 
@@ -267,7 +275,7 @@ async def delete_episodic_memory(
     episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
 ) -> None:
     """Delete episodic memories in a project."""
-    await episodic_memory.delete_episodes(episode_ids=[spec.episodic_id])
+    await episodic_memory.delete_episodes(uids=[spec.episodic_id])
 
 
 @router.post("/memories/semantic/delete")

@@ -111,8 +111,17 @@ class ResourceManagerImpl:
         return await self._reranker_manager.get_reranker(name)
 
     @property
+    def config(self) -> Configuration:
+        """Return the configuration instance."""
+        return self._conf
+
+    @property
     def session_data_manager(self) -> SessionDataManager:
         """Return the session data manager."""
+        if self._session_data_manager is None:
+            raise RuntimeError(
+                "session_data_manager must be initialized via build() first"
+            )
         return self._session_data_manager
 
     @property

@@ -8,8 +8,8 @@ operations for a specific context.
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 import requests
 
@@ -42,10 +42,10 @@ class Memory:
 
         # Add a memory (role defaults to "user")
         memory.add("I like pizza", metadata={"type": "preference"})
-        
+
         # Add assistant response
         memory.add("I understand you like pizza", role="assistant")
-        
+
         # Add system message
         memory.add("System initialized", role="system")
 
@@ -89,7 +89,7 @@ class Memory:
             raise ValueError("org_id is required for v2 API")
         if not project_id:
             raise ValueError("project_id is required for v2 API")
-        
+
         self.__org_id = org_id
         self.__project_id = project_id
 
@@ -178,7 +178,9 @@ class Memory:
         """
         return self.__session_id
 
-    def _build_metadata(self, additional_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _build_metadata(
+        self, additional_metadata: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Build metadata dictionary including old context fields.
 
@@ -190,17 +192,21 @@ class Memory:
 
         """
         metadata = additional_metadata.copy() if additional_metadata else {}
-        
+
         # Add old context fields to metadata if they exist
         if self.__group_id:
             metadata["group_id"] = self.__group_id
         if self.__user_id:
-            metadata["user_id"] = self.__user_id if len(self.__user_id) > 1 else self.__user_id[0]
+            metadata["user_id"] = (
+                self.__user_id if len(self.__user_id) > 1 else self.__user_id[0]
+            )
         if self.__agent_id:
-            metadata["agent_id"] = self.__agent_id if len(self.__agent_id) > 1 else self.__agent_id[0]
+            metadata["agent_id"] = (
+                self.__agent_id if len(self.__agent_id) > 1 else self.__agent_id[0]
+            )
         if self.__session_id:
             metadata["session_id"] = self.__session_id
-        
+
         return metadata
 
     def add(  # noqa: C901
@@ -267,37 +273,42 @@ class Memory:
         try:
             # Use v2 API: convert to v2 format
             from datetime import datetime
-            
+
             # Validate role
             valid_roles = {"user", "assistant", "system"}
             if role not in valid_roles:
                 logger.warning(
-                    f"Role '{role}' is not a standard role. Expected one of {valid_roles}. "
-                    "Using as-is."
+                    "Role '%s' is not a standard role. Expected one of %s. Using as-is.",
+                    role,
+                    valid_roles,
                 )
-            
+
             # Build metadata including old context fields and episode_type
             combined_metadata = self._build_metadata(metadata)
             if episode_type:
                 combined_metadata["episode_type"] = episode_type
-            
+
             # Convert to v2 API format
             v2_data = {
                 "org_id": self.__org_id,
                 "project_id": self.__project_id,
-                "messages": [{
-                    "content": content,
-                    "producer": producer,
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "role": role,  # "user", "assistant", or "system"
-                    "metadata": combined_metadata
-                }]
+                "messages": [
+                    {
+                        "content": content,
+                        "producer": producer,
+                        "timestamp": datetime.now(tz=UTC)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        "role": role,  # "user", "assistant", or "system"
+                        "metadata": combined_metadata,
+                    }
+                ],
             }
-            
-            response = self.client._session.post(
+
+            response = self.client.request(
+                "POST",
                 f"{self.client.base_url}/api/v2/memories",
                 json=v2_data,
-                timeout=self.client.timeout,
             )
             response.raise_for_status()
         except requests.RequestException as e:
@@ -348,8 +359,9 @@ class Memory:
         if filter_dict:
             # Simple conversion - you may need to adjust based on your filter format
             import json
+
             filter_str = json.dumps(filter_dict)
-        
+
         # Convert to v2 API format
         v2_search_data = {
             "org_id": self.__org_id,
@@ -357,14 +369,14 @@ class Memory:
             "query": query,
             "top_k": limit or 10,
             "filter": filter_str,
-            "types": ["episodic", "semantic"]  # Search both types
+            "types": ["episodic", "semantic"],  # Search both types
         }
 
         try:
-            response = self.client._session.post(
+            response = self.client.request(
+                "POST",
                 f"{self.client.base_url}/api/v2/memories/search",
                 json=v2_search_data,
-                timeout=self.client.timeout,
             )
             response.raise_for_status()
             data = response.json()

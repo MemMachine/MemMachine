@@ -35,7 +35,6 @@ from starlette.types import Lifespan, Receive, Scope, Send
 
 from memmachine.common.configuration import load_config_yml_file
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
-
 from memmachine.server.api_v2.router import load_v2_api_router
 
 logger = logging.getLogger(__name__)

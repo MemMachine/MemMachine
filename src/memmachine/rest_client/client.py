@@ -50,7 +50,7 @@ class MemMachineClient:
 
         # Add memory (role defaults to "user")
         memory.add("I like pizza")
-        
+
         # Add assistant response
         memory.add("I understand you like pizza", role="assistant")
 
@@ -120,6 +120,29 @@ class MemMachineClient:
         if api_key:
             self._session.headers["Authorization"] = f"Bearer {api_key}"
 
+    def request(
+        self,
+        method: str,
+        url: str,
+        **kwargs: dict[str, Any],
+    ) -> requests.Response:
+        """
+        Make an HTTP request using the client's session.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            **kwargs: Additional arguments passed to requests.Session.request()
+
+        Returns:
+            Response object from the request
+
+        Raises:
+            requests.RequestException: If the request fails
+
+        """
+        return self._session.request(method, url, timeout=self.timeout, **kwargs)
+
     def create_project(
         self,
         org_id: str,
@@ -173,11 +196,12 @@ class MemMachineClient:
         try:
             response = self._session.post(url, json=data, timeout=self.timeout)
             response.raise_for_status()
-            logger.debug(f"Project created: {org_id}/{project_id}")
-            return True
-        except requests.RequestException as e:
-            logger.error(f"Failed to create project {org_id}/{project_id}: {e}")
+        except requests.RequestException:
+            logger.exception("Failed to create project %s/%s", org_id, project_id)
             raise
+        else:
+            logger.debug("Project created: %s/%s", org_id, project_id)
+            return True
 
     def memory(
         self,
