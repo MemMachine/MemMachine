@@ -194,12 +194,12 @@ class EpisodicMemory:
         """
         return self._session_key
 
-    async def add_memory_episode(self, episode: Episode) -> None:
+    async def add_memory_episodes(self, episodes: list[Episode]) -> None:
         """
         Add a new memory episode to both session and declarative memory.
 
         Args:
-            episode: Episode instance to ingest.
+            episodes: Episode instances to ingest.
 
         """
         if not self._enabled:
@@ -211,9 +211,9 @@ class EpisodicMemory:
         # Add the episode to both memory stores concurrently
         tasks: list[Coroutine] = []
         if self._short_term_memory:
-            tasks.append(self._short_term_memory.add_episode(episode))
+            tasks.append(self._short_term_memory.add_episodes(episodes))
         if self._long_term_memory:
-            tasks.append(self._long_term_memory.add_episodes([episode]))
+            tasks.append(self._long_term_memory.add_episodes(episodes))
         await asyncio.gather(
             *tasks,
         )

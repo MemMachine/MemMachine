@@ -117,8 +117,8 @@ async def test_add_memory_episode(
 ):
     """Test adding a memory episode."""
     episode = create_test_episode()
-    await episodic_memory.add_memory_episode(episode)
-    mock_short_term_memory.add_episode.assert_awaited_once_with(episode)
+    await episodic_memory.add_memory_episodes([episode])
+    mock_short_term_memory.add_episodes.assert_awaited_once_with([episode])
     mock_long_term_memory.add_episodes.assert_awaited_once_with([episode])
 
 
@@ -132,8 +132,8 @@ async def test_add_memory_episode_when_disabled(
     episodic_memory_params.enabled = False
     memory = EpisodicMemory(episodic_memory_params)
     episode = create_test_episode()
-    await memory.add_memory_episode(episode)
-    mock_short_term_memory.add_episode.assert_not_awaited()
+    await memory.add_memory_episodes([episode])
+    mock_short_term_memory.add_episodes.assert_not_awaited()
     mock_long_term_memory.add_episodes.assert_not_awaited()
 
 
@@ -142,7 +142,7 @@ async def test_add_memory_episode_when_closed(episodic_memory):
     """Test that adding an episode to a closed memory raises RuntimeError."""
     await episodic_memory.close()
     with pytest.raises(RuntimeError, match="Memory is closed test_session"):
-        await episodic_memory.add_memory_episode(create_test_episode())
+        await episodic_memory.add_memory_episodes([create_test_episode()])
 
 
 @pytest.mark.asyncio

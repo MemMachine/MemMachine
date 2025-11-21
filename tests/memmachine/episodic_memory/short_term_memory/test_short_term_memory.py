@@ -164,7 +164,7 @@ class TestSessionMemoryPublicAPI:
     async def test_add_episode(self, memory):
         """Test adding an episode to the session memory."""
         episode1 = create_test_episode(content="Hello")
-        await memory.add_episode(episode1)
+        await memory.add_episodes([episode1])
 
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         # session memory is not full
@@ -172,7 +172,7 @@ class TestSessionMemoryPublicAPI:
         assert summary == ""
 
         episode2 = create_test_episode(content="World")
-        await memory.add_episode(episode2)
+        await memory.add_episodes([episode2])
 
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         assert episodes == [episode1, episode2]
@@ -180,21 +180,22 @@ class TestSessionMemoryPublicAPI:
 
         # session memory is full
         episode3 = create_test_episode(content="!" * 7)
-        await memory.add_episode(episode3)
+        await memory.add_episodes([episode3])
+
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         assert episodes == [episode1, episode2, episode3]
         assert summary == "summary"
 
         # New episode push out the oldest one: episode1
         episode4 = create_test_episode(content="??")
-        await memory.add_episode(episode4)
+        await memory.add_episodes([episode4])
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         assert episodes == [episode3, episode4]
         assert summary == "summary"
 
     async def test_clear_memory(self, memory):
         """Test clearing the memory."""
-        await memory.add_episode(create_test_episode(content="test"))
+        await memory.add_episodes([create_test_episode(content="test")])
 
         await memory.clear_memory()
 
@@ -207,9 +208,7 @@ class TestSessionMemoryPublicAPI:
         ep1 = create_test_episode(content="a")
         ep2 = create_test_episode(content="b")
         ep3 = create_test_episode(content="c")
-        await memory.add_episode(ep1)
-        await memory.add_episode(ep2)
-        await memory.add_episode(ep3)
+        await memory.add_episodes([ep1, ep2, ep3])
 
         await memory.delete_episode(ep2.uid)
         episodes, _ = await memory.get_short_term_memory_context(query="test")
@@ -217,10 +216,10 @@ class TestSessionMemoryPublicAPI:
 
     async def test_close(self, memory):
         """Test closing the memory."""
-        await memory.add_episode(create_test_episode(content="test"))
+        await memory.add_episodes([create_test_episode(content="test")])
         await memory.close()
         with pytest.raises(RuntimeError):
-            await memory.add_episode(create_test_episode)
+            await memory.add_episodes([create_test_episode(content="test")])
         with pytest.raises(RuntimeError):
             _, _ = await memory.get_short_term_memory_context(query="test")
 
@@ -229,9 +228,7 @@ class TestSessionMemoryPublicAPI:
         ep1 = create_test_episode(content="a" * 6)
         ep2 = create_test_episode(content="b" * 6)
         ep3 = create_test_episode(content="c" * 6)
-        await memory.add_episode(ep1)
-        await memory.add_episode(ep2)
-        await memory.add_episode(ep3)
+        await memory.add_episodes([ep1, ep2, ep3])
 
         # Test with message length limit that fits all
         episodes, summary = await memory.get_short_term_memory_context(

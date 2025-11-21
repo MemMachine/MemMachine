@@ -153,12 +153,12 @@ class ShortTermMemory:
         result = self._current_message_len + len(self._summary) > self._max_message_len
         return result
 
-    async def add_episode(self, episode: Episode) -> bool:
+    async def add_episodes(self, episodes: list[Episode]) -> bool:
         """
-        Add a new episode to the short-term memory.
+        Add new episodes to the short-term memory.
 
         Args:
-            episode: The episode to add.
+            episodes: The episodes to add.
 
         Returns:
             True if the memory is full after adding the event, False
@@ -168,10 +168,10 @@ class ShortTermMemory:
         async with self._lock:
             if self._closed:
                 raise RuntimeError(f"Memory is closed {self._session_key}")
-            self._memory.append(episode)
+            self._memory.extend(episodes)
 
-            self._current_episode_count += 1
-            self._current_message_len += len(episode.content)
+            self._current_episode_count += len(episodes)
+            self._current_message_len += sum(len(e.content) for e in episodes)
             full = self._is_full()
             if full:
                 await self._do_evict()
