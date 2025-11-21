@@ -21,6 +21,13 @@ class CreateProjectSpec(BaseModel):
     config: Annotated[ProjectConfig, Field(default_factory=ProjectConfig)]
 
 
+class GetProjectSpec(BaseModel):
+    """Specification model for getting a project."""
+
+    org_id: Annotated[str, Field(...)]
+    project_id: Annotated[str, Field(...)]
+
+
 class SessionInfo(BaseModel):
     """Model representing session information."""
 
@@ -42,6 +49,7 @@ class MemoryMessage(BaseModel):
 
     content: Annotated[str, Field(...)]
     producer: Annotated[str, Field(...)]
+    produced_for: Annotated[str, Field(default="")]
     timestamp: Annotated[str, Field(...)]
     role: Annotated[str, Field(...)]
     metadata: Annotated[dict[str, str], Field(default_factory=dict)]

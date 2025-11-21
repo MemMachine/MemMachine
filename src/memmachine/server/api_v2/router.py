@@ -13,10 +13,14 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConf,
     ShortTermMemoryConf,
 )
+from memmachine.common.resource_manager.semantic_manager import SemanticResourceManager
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episode_store.episode_model import Episode
 from memmachine.episodic_memory.episodic_memory import EpisodicMemory
 from memmachine.episodic_memory.episodic_memory_manager import EpisodicMemoryManager
+from memmachine.semantic_memory.semantic_session_resource import (
+    IsolationType,
+)
 from memmachine.server.api_v2.filter_parser import parse_filter
 from memmachine.server.api_v2.spec import (
     AddMemoriesSpec,
@@ -25,6 +29,7 @@ from memmachine.server.api_v2.spec import (
     DeleteMemoriesSpec,
     DeleteProjectSpec,
     DeleteSemanticMemorySpec,
+    GetProjectSpec,
     ListMemoriesSpec,
     SearchMemoriesSpec,
     SearchResult,
@@ -54,6 +59,11 @@ async def get_session_manager(request: Request) -> SessionDataManager:
 async def get_episodic_memory_manager(request: Request) -> EpisodicMemoryManager:
     """Get episodic memory manager instance."""
     return request.app.state.resource_manager.episodic_memory_manager
+
+
+async def get_semantic_memory_manager(request: Request) -> SemanticResourceManager:
+    """Get semantic memory manager instance."""
+    return await request.app.state.resource_manager.get_semantic_manager()
 
 
 async def get_global_config(request: Request) -> Configuration:
@@ -190,6 +200,47 @@ async def create_project(
     )
 
 
+@router.post("/projects/get")
+async def get_project(
+    spec: GetProjectSpec,
+    session_manager: Annotated[SessionDataManager, Depends(get_session_manager)],
+) -> dict:
+    """Get a project."""
+    session_key = f"{spec.org_id}/{spec.project_id}"
+    try:
+        config, description, metadata, params = await session_manager.get_session_info(
+            session_key=session_key
+        )
+    except Exception:
+        return {}
+    else:
+        return {
+            "org_id": spec.org_id,
+            "project_id": spec.project_id,
+            "configuration": config,
+            "description": description,
+            "metadata": metadata,
+            "params": params,
+        }
+
+
+@router.post("/projects/list")
+async def list_projects(
+    session_manager: Annotated[SessionDataManager, Depends(get_session_manager)],
+) -> list[dict]:
+    """List all projects."""
+    sessions = await session_manager.get_sessions()
+    return [
+        {
+            "org_id": org_id,
+            "project_id": project_id,
+        }
+        for org_id, project_id in (
+            session.split("/", 1) for session in sessions if "/" in session
+        )
+    ]
+
+
 @router.post("/projects/delete")
 async def delete_project(
     spec: DeleteProjectSpec,
@@ -204,31 +255,97 @@ async def delete_project(
 async def add_memories(
     spec: AddMemoriesSpec,
     episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
+    semantic_manager: Annotated[
+        SemanticResourceManager, Depends(get_semantic_memory_manager)
+    ],
 ) -> None:
     """Add memories to a project."""
     session_key = f"{spec.org_id}/{spec.project_id}"
 
-    for message in spec.messages:
-        await episodic_memory.add_memory_episode(
-            episode=Episode(
-                uid=str(uuid4()),
-                content=message.content,
-                session_key=session_key,
-                created_at=message.timestamp,
-                producer_id=message.producer,
-                producer_role=message.role,
-                produced_for_id=None,
-                filterable_metadata=message.metadata,
-            )
+    episodes: list[Episode] = [
+        Episode(
+            uid=str(uuid4()),
+            content=message.content,
+            session_key=session_key,
+            created_at=message.timestamp,
+            producer_id=message.producer,
+            producer_role=message.role,
+            produced_for_id=message.produced_for,
+            filterable_metadata=message.metadata,
         )
+        for message in spec.messages
+    ]
+    await episodic_memory.add_memory_episodes(episodes=episodes)
+
+    session_id_manager = semantic_manager.simple_semantic_session_id_manager
+    semantic_session_manager = await semantic_manager.get_semantic_session_manager()
+    semantic_session = session_id_manager.generate_session_data(
+        session_id=session_key,
+    )
+    await semantic_session_manager.add_message(
+        episode_ids=[ep.uid for ep in episodes],
+        session_data=semantic_session,
+        memory_type=[IsolationType.SESSION],
+    )
+
+
+@router.post("/memories/episodic/add")
+async def add_episodic_memories(
+    spec: AddMemoriesSpec,
+    episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
+) -> None:
+    """Add episodic memories to a project."""
+    session_key = f"{spec.org_id}/{spec.project_id}"
+
+    episodes: list[Episode] = [
+        Episode(
+            uid=str(uuid4()),
+            content=message.content,
+            session_key=session_key,
+            created_at=message.timestamp,
+            producer_id=message.producer,
+            producer_role=message.role,
+            produced_for_id=message.produced_for,
+            filterable_metadata=message.metadata,
+        )
+        for message in spec.messages
+    ]
+    await episodic_memory.add_memory_episodes(episodes=episodes)
+
+
+@router.post("/memories/semantic/add")
+async def add_semantic_memories(
+    spec: AddMemoriesSpec,
+    semantic_manager: Annotated[
+        SemanticResourceManager, Depends(get_semantic_memory_manager)
+    ],
+) -> None:
+    """Add semantic memories to a project."""
+    session_key = f"{spec.org_id}/{spec.project_id}"
+
+    session_id_manager = semantic_manager.simple_semantic_session_id_manager
+    semantic_session_manager = await semantic_manager.get_semantic_session_manager()
+    semantic_session = session_id_manager.generate_session_data(
+        session_id=session_key,
+    )
+    episode_ids = [str(uuid4()) for _ in spec.messages]
+    await semantic_session_manager.add_message(
+        episode_ids=episode_ids,
+        session_data=semantic_session,
+        memory_type=[IsolationType.SESSION],
+    )
 
 
 @router.post("/memories/search")
 async def search_memories(
     spec: SearchMemoriesSpec,
     episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
+    semantic_manager: Annotated[
+        SemanticResourceManager, Depends(get_semantic_memory_manager)
+    ],
 ) -> SearchResult:
     """Search memories in a project."""
+    session_key = f"{spec.org_id}/{spec.project_id}"
     ret = SearchResult(status=0, content={"episodic_memory": [], "semantic_memory": []})
     if "episodic" in spec.types:
         episodic_result = await episodic_memory.query_memory(
@@ -238,20 +355,51 @@ async def search_memories(
         )
         ret.content["episodic_memory"] = episodic_result
     if "semantic" in spec.types:
-        # Placeholder for semantic memory search
-        ret.content["semantic_memory"] = []
+        session_id_manager = semantic_manager.simple_semantic_session_id_manager
+        semantic_session_manager = await semantic_manager.get_semantic_session_manager()
+        semantic_session = session_id_manager.generate_session_data(
+            session_id=session_key,
+        )
+        ret.content["semantic_memory"] = await semantic_session_manager.search(
+            message=spec.query,
+            session_data=semantic_session,
+            memory_type=[IsolationType.SESSION],
+            limit=spec.top_k,
+        )
     return ret
 
 
 @router.post("/memories/list")
 async def list_memories(
-    _spec: ListMemoriesSpec,
-    _episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
+    spec: ListMemoriesSpec,
+    episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
+    semantic_manager: Annotated[
+        SemanticResourceManager, Depends(get_semantic_memory_manager)
+    ],
 ) -> SearchResult:
     """List memories in a project."""
-    return SearchResult(
-        status=0, content={"episodic_memory": [], "semantic_memory": []}
-    )
+    session_key = f"{spec.org_id}/{spec.project_id}"
+    ret = SearchResult(status=0, content={"episodic_memory": [], "semantic_memory": []})
+    if spec.type == "episodic":
+        episodic_result = await episodic_memory.query_memory(
+            query="",
+            limit=10000,
+            property_filter=parse_filter(spec.filter),
+        )
+        ret.content["episodic_memory"] = episodic_result
+    if spec.type == "semantic":
+        session_id_manager = semantic_manager.simple_semantic_session_id_manager
+        semantic_session_manager = await semantic_manager.get_semantic_session_manager()
+        semantic_session = session_id_manager.generate_session_data(
+            session_id=session_key,
+        )
+        ret.content["semantic_memory"] = await semantic_session_manager.search(
+            message="",
+            session_data=semantic_session,
+            memory_type=[IsolationType.SESSION],
+            limit=10000,
+        )
+    return ret
 
 
 @router.post("/memories/delete")
@@ -284,7 +432,7 @@ async def delete_semantic_memory(
     episodic_memory: Annotated[EpisodicMemory, Depends(get_episodic_memory)],
 ) -> None:
     """Delete semantic memories in a project."""
-    # Placeholder for semantic memory deletion
+    raise NotImplementedError("Semantic memory deletion is not implemented yet.")
 
 
 def load_v2_api_router(app: FastAPI) -> APIRouter:

@@ -87,7 +87,14 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         self,
         session_key: str,
     ) -> tuple[dict, str, dict, EpisodicMemoryConf]:
-        return {}, "", {}, EpisodicMemoryConf(metrics_factory_id="prometheus", session_key=session_key)
+        return (
+            {},
+            "",
+            {},
+            EpisodicMemoryConf(
+                metrics_factory_id="prometheus", session_key=session_key
+            ),
+        )
 
     async def get_sessions(self, filters: dict[str, object] | None = None) -> list[str]:
         return []
@@ -259,34 +266,53 @@ class TestSessionMemoryPublicAPI:
         assert len(episodes) == 1
         assert episodes == [ep3]
 
-
     async def test_get_short_term_memory_context_with_filters(self, memory):
         """Test retrieving session memory context."""
-        ep1 = create_test_episode(content="a" * 6, producer_id="user1", producer_role="user", filterable_metadata={"type": "message"})
-        ep2 = create_test_episode(content="b" * 6, producer_id="user2", producer_role="assistant", filterable_metadata={"type": "message", "category": "greeting"})
+        ep1 = create_test_episode(
+            content="a" * 6,
+            producer_id="user1",
+            producer_role="user",
+            filterable_metadata={"type": "message"},
+        )
+        ep2 = create_test_episode(
+            content="b" * 6,
+            producer_id="user2",
+            producer_role="assistant",
+            filterable_metadata={"type": "message", "category": "greeting"},
+        )
         await memory.add_episodes([ep1, ep2])
 
         # Test with filter that matches one episode
-        episodes, _ = await memory.get_short_term_memory_context("test", filters={"producer_id": "user1"})
+        episodes, _ = await memory.get_short_term_memory_context(
+            "test", filters={"producer_id": "user1"}
+        )
         assert len(episodes) == 1
         assert episodes == [ep1]
 
         # Test with filter that matches no episodes
-        episodes, _ = await memory.get_short_term_memory_context("test", filters={"producer_id": "nonexistent"})
+        episodes, _ = await memory.get_short_term_memory_context(
+            "test", filters={"producer_id": "nonexistent"}
+        )
         assert len(episodes) == 0
         assert episodes == []
 
         # Test with filter that matches both episodes
-        episodes, _ = await memory.get_short_term_memory_context("test", filters={"m.type": "message"})
+        episodes, _ = await memory.get_short_term_memory_context(
+            "test", filters={"m.type": "message"}
+        )
         assert len(episodes) == 2
         assert episodes == [ep1, ep2]
 
         # Test with filter that matches one episode based on filterable metadata
-        episodes, _ = await memory.get_short_term_memory_context("test", filters={"m.category": "greeting"})
+        episodes, _ = await memory.get_short_term_memory_context(
+            "test", filters={"m.category": "greeting"}
+        )
         assert len(episodes) == 1
         assert episodes == [ep2]
 
         # Test with filter that matches one episodes based on filterable metadata with "metadata." as prefix
-        episodes, _ = await memory.get_short_term_memory_context("test", filters={"metadata.category": "greeting"})
+        episodes, _ = await memory.get_short_term_memory_context(
+            "test", filters={"metadata.category": "greeting"}
+        )
         assert len(episodes) == 1
         assert episodes == [ep2]

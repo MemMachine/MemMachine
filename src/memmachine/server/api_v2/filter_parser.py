@@ -19,7 +19,7 @@ def parse_filter(filter_str: str) -> dict[str, FilterablePropertyValue]:
         return filter_dict
 
     try:
-        conditions = filter_str.split("and")
+        conditions = filter_str.split("AND")
         for condition in conditions:
             if "=" in condition:
                 key, value = condition.split("=", 1)
