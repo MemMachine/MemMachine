@@ -31,6 +31,7 @@ from memmachine.server.api_v2.spec import (
     DeleteSemanticMemorySpec,
     GetProjectSpec,
     ListMemoriesSpec,
+    MemoryType,
     SearchMemoriesSpec,
     SearchResult,
     SessionInfo,
@@ -187,17 +188,28 @@ async def create_project(
     spec: CreateProjectSpec,
     conf: Annotated[Configuration, Depends(get_global_config)],
     session_manager: Annotated[SessionDataManager, Depends(get_session_manager)],
-) -> None:
+) -> dict:
     """Create a new project."""
     session_key = f"{spec.org_id}/{spec.project_id}"
-    await _create_new_session(
-        conf=conf,
-        session_manager=session_manager,
-        session_key=session_key,
-        description=spec.description,
-        embedder=spec.config.embedder,
-        reranker=spec.config.reranker,
-    )
+    try:
+        await _create_new_session(
+            conf=conf,
+            session_manager=session_manager,
+            session_key=session_key,
+            description=spec.description,
+            embedder=spec.config.embedder,
+            reranker=spec.config.reranker,
+        )
+    except ValueError as e:
+        if f"Session {session_key} already exists" == str(e):
+            raise HTTPException(status_code=400, detail="Project already exists") from e
+        raise
+    return {
+        "org_id": spec.org_id,
+        "project_id": spec.project_id,
+        "description": spec.description,
+        "config": spec.config,
+    }
 
 
 @router.post("/projects/get")
@@ -347,14 +359,14 @@ async def search_memories(
     """Search memories in a project."""
     session_key = f"{spec.org_id}/{spec.project_id}"
     ret = SearchResult(status=0, content={"episodic_memory": [], "semantic_memory": []})
-    if "episodic" in spec.types:
+    if MemoryType.EPISODIC in spec.types:
         episodic_result = await episodic_memory.query_memory(
             query=spec.query,
             limit=spec.top_k,
             property_filter=parse_filter(spec.filter),
         )
         ret.content["episodic_memory"] = episodic_result
-    if "semantic" in spec.types:
+    if MemoryType.SEMANTIC in spec.types:
         session_id_manager = semantic_manager.simple_semantic_session_id_manager
         semantic_session_manager = await semantic_manager.get_semantic_session_manager()
         semantic_session = session_id_manager.generate_session_data(
@@ -380,14 +392,14 @@ async def list_memories(
     """List memories in a project."""
     session_key = f"{spec.org_id}/{spec.project_id}"
     ret = SearchResult(status=0, content={"episodic_memory": [], "semantic_memory": []})
-    if spec.type == "episodic":
+    if spec.type == MemoryType.EPISODIC:
         episodic_result = await episodic_memory.query_memory(
             query="",
             limit=10000,
             property_filter=parse_filter(spec.filter),
         )
         ret.content["episodic_memory"] = episodic_result
-    if spec.type == "semantic":
+    if spec.type == MemoryType.SEMANTIC:
         session_id_manager = semantic_manager.simple_semantic_session_id_manager
         semantic_session_manager = await semantic_manager.get_semantic_session_manager()
         semantic_session = session_id_manager.generate_session_data(

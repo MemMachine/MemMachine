@@ -102,7 +102,7 @@ def test_load_sample_cpu_config():
     conf = load_config_yml_file(str(config_path))
     resources_conf = conf.resources
     assert conf.logging.level == LogLevel.INFO
-    assert conf.session_manager.database == "sqlite_test"
+    assert conf.session_manager.database == "profile_storage"
     assert (
         resources_conf.language_models.openai_chat_completions_language_model_confs[
             "ollama_model"

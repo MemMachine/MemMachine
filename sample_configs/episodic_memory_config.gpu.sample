@@ -20,10 +20,7 @@ semantic_memory:
   database: profile_storage
 
 session_manager:
-  database: sqlite_test
-
-episode_store:
-  database: sqlite_test
+  database: profile_storage
 
 resources:
   databases:
