@@ -338,22 +338,35 @@ class ShortTermMemory:
                 if len(episodes) >= limit > 0:
                     break
                 # check if should filter the message
+                matched = True
                 if filters is not None:
-                    if "producer" in filters and filters["producer"] != e.producer_id:
-                        continue
-                    matched = True
-                    if e.filterable_metadata is not None:
-                        for key, value in filters.items():
-                            if e.filterable_metadata.get(key) != value:
+                    for key, value in filters.items():
+                        if key == "producer_id" and e.producer_id != value:
+                            matched = False
+                            break
+                        if key == "producer_role" and e.producer_role != value:
+                            matched = False
+                            break
+                        if key == "produced_for_id" and e.produced_for_id != value:
+                            matched = False
+                            break
+                        if key.startswith(("m.", "metadata.")):
+                            if e.filterable_metadata is None:
                                 matched = False
                                 break
-                    if not matched:
-                        continue
-                    if e.metadata is not None:
-                        for key, value in filters.items():
-                            if e.metadata.get(key) != value:
+                            if key.startswith("m."):
+                                key = key[len("m.") :]
+                            elif key.startswith("metadata."):
+                                key = key[len("metadata.") :]
+                            if key not in e.filterable_metadata:
                                 matched = False
                                 break
+                            if e.filterable_metadata[key] != value:
+                                matched = False
+                                break
+                        else:
+                            logger.warning("Unsupported filter key: %s", key)
+
                     if not matched:
                         continue
 
