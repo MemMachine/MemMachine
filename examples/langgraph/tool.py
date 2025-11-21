@@ -1,5 +1,7 @@
 from typing import Any
 
+import requests
+
 from memmachine import MemMachineClient
 
 
@@ -64,9 +66,20 @@ class MemMachineTools:
             Memory instance
 
         """
-        return self.client.memory(
-            org_id=org_id or self.org_id,
-            project_id=project_id or self.project_id,
+        # Get or create project
+        try:
+            project = self.client.get_project(
+                org_id=org_id or self.org_id,
+                project_id=project_id or self.project_id,
+            )
+        except requests.RequestException:
+            # Project doesn't exist, create it
+            project = self.client.create_project(
+                org_id=org_id or self.org_id,
+                project_id=project_id or self.project_id,
+            )
+
+        return project.memory(
             group_id=group_id or self.group_id,
             agent_id=agent_id or self.agent_id,
             user_id=user_id or self.user_id,

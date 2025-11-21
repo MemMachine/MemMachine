@@ -30,10 +30,15 @@ class Memory:
         ```python
         from memmachine import MemMachineClient
 
-        client = MemMachineClient()
-        memory = client.memory(
-            org_id="my_org",
-            project_id="my_project",
+        client = MemMachineClient(base_url="http://localhost:8080")
+
+        # Get or create a project
+        project = client.get_project(org_id="my_org", project_id="my_project")
+        # Or create a new project
+        # project = client.create_project(org_id="my_org", project_id="my_project")
+
+        # Create memory from project
+        memory = project.memory(
             group_id="my_group",  # Optional: stored in metadata
             agent_id="my_agent",  # Optional: stored in metadata
             user_id="user123",    # Optional: stored in metadata
@@ -217,6 +222,7 @@ class Memory:
         produced_for: str | None = None,
         episode_type: str = "text",
         metadata: dict[str, Any] | None = None,
+        timeout: int | None = None,
     ) -> bool:
         """
         Add a memory episode.
@@ -228,6 +234,7 @@ class Memory:
             produced_for: Who this content is for (defaults to first agent_id)
             episode_type: Type of episode (default: "text") - stored in metadata
             metadata: Additional metadata for the episode
+            timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
             True if the memory was added successfully
@@ -296,6 +303,7 @@ class Memory:
                     {
                         "content": content,
                         "producer": producer,
+                        "produced_for": produced_for or "",
                         "timestamp": datetime.now(tz=UTC)
                         .isoformat()
                         .replace("+00:00", "Z"),
@@ -309,6 +317,7 @@ class Memory:
                 "POST",
                 f"{self.client.base_url}/api/v2/memories",
                 json=v2_data,
+                timeout=timeout,
             )
             response.raise_for_status()
         except requests.RequestException as e:
@@ -333,6 +342,7 @@ class Memory:
         query: str,
         limit: int | None = None,
         filter_dict: dict[str, Any] | None = None,
+        timeout: int | None = None,
     ) -> dict[str, Any]:
         """
         Search for memories.
@@ -341,6 +351,7 @@ class Memory:
             query: Search query string
             limit: Maximum number of results to return
             filter_dict: Additional filters for the search
+            timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
             Dictionary containing search results from both episodic and profile memory
@@ -377,6 +388,7 @@ class Memory:
                 "POST",
                 f"{self.client.base_url}/api/v2/memories/search",
                 json=v2_search_data,
+                timeout=timeout,
             )
             response.raise_for_status()
             data = response.json()

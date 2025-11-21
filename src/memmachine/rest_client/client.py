@@ -3,13 +3,12 @@
 import logging
 from types import TracebackType
 from typing import Any
-from weakref import WeakSet
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .memory import Memory
+from .project import Project
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +31,16 @@ class MemMachineClient:
         )
 
         # Create a project (optional, project is auto-created on first use)
-        client.create_project(
+        project = client.create_project(
             org_id="my_org",
             project_id="my_project",
             description="My project description"
         )
+        # Or if you know the project already exists
+        # project = client.get_project(org_id="my_org", project_id="my_project")
 
-        # Create a memory instance (v2 API requires org_id and project_id)
-        memory = client.memory(
-            org_id="my_org",
-            project_id="my_project",
+        # Create a memory instance from project
+        memory = project.memory(
             group_id="my_group",  # Optional: stored in metadata
             agent_id="my_agent",  # Optional: stored in metadata
             user_id="user123",    # Optional: stored in metadata
@@ -95,9 +94,6 @@ class MemMachineClient:
         self.max_retries = max_retries
         self._closed = False
 
-        # Track Memory objects created by this client (using WeakSet to avoid circular references)
-        self._memory_objects: WeakSet[Memory] = WeakSet()
-
         # Setup session with retry strategy
         self._session = requests.Session()
         retry_strategy = Retry(
@@ -124,6 +120,7 @@ class MemMachineClient:
         self,
         method: str,
         url: str,
+        timeout: int | None = None,
         **kwargs: dict[str, Any],
     ) -> requests.Response:
         """
@@ -132,6 +129,7 @@ class MemMachineClient:
         Args:
             method: HTTP method (GET, POST, etc.)
             url: Request URL
+            timeout: Request timeout in seconds (uses client default if not provided)
             **kwargs: Additional arguments passed to requests.Session.request()
 
         Returns:
@@ -141,7 +139,8 @@ class MemMachineClient:
             requests.RequestException: If the request fails
 
         """
-        return self._session.request(method, url, timeout=self.timeout, **kwargs)
+        request_timeout = timeout if timeout is not None else self.timeout
+        return self._session.request(method, url, timeout=request_timeout, **kwargs)
 
     def create_project(
         self,
@@ -150,7 +149,8 @@ class MemMachineClient:
         description: str = "",
         embedder: str = "default",
         reranker: str = "default",
-    ) -> bool:
+        timeout: int | None = None,
+    ) -> Project:
         """
         Create a new project in MemMachine.
 
@@ -160,9 +160,10 @@ class MemMachineClient:
             description: Optional description for the project (default: "")
             embedder: Embedder model name to use (default: "default")
             reranker: Reranker model name to use (default: "default")
+            timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
-            True if the project was created successfully
+            Project instance representing the created project
 
         Raises:
             requests.RequestException: If the request fails
@@ -171,11 +172,12 @@ class MemMachineClient:
         Example:
             ```python
             client = MemMachineClient(base_url="http://localhost:8080")
-            client.create_project(
+            project = client.create_project(
                 org_id="my_org",
                 project_id="my_project",
                 description="My new project"
             )
+            memory = project.memory(user_id="user123")
             ```
 
         """
@@ -193,59 +195,86 @@ class MemMachineClient:
             },
         }
 
+        request_timeout = timeout if timeout is not None else self.timeout
         try:
-            response = self._session.post(url, json=data, timeout=self.timeout)
+            response = self._session.post(url, json=data, timeout=request_timeout)
             response.raise_for_status()
         except requests.RequestException:
             logger.exception("Failed to create project %s/%s", org_id, project_id)
             raise
         else:
             logger.debug("Project created: %s/%s", org_id, project_id)
-            return True
+            return Project(
+                client=self,
+                org_id=org_id,
+                project_id=project_id,
+                description=description,
+            )
 
-    def memory(
+    def get_project(
         self,
         org_id: str,
         project_id: str,
-        group_id: str | None = None,
-        agent_id: str | list[str] | None = None,
-        user_id: str | list[str] | None = None,
-        session_id: str | None = None,
-        **kwargs: dict[str, Any],
-    ) -> Memory:
+        timeout: int | None = None,
+    ) -> Project:
         """
-        Create a Memory instance for a specific context.
+        Get an existing project from MemMachine.
 
         Args:
-            org_id: Organization identifier (required for v2 API)
-            project_id: Project identifier (required for v2 API)
-            group_id: Group identifier (optional, will be stored in metadata)
-            agent_id: Agent identifier(s) (optional, will be stored in metadata)
-            user_id: User identifier(s) (optional, will be stored in metadata)
-            session_id: Session identifier (optional, will be stored in metadata)
-            **kwargs: Additional configuration options
+            org_id: Organization identifier (required)
+            project_id: Project identifier (required)
+            timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
-            Memory instance configured for the specified context
+            Project instance representing the project
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        Example:
+            ```python
+            client = MemMachineClient(base_url="http://localhost:8080")
+            project = client.get_project(
+                org_id="my_org",
+                project_id="my_project"
+            )
+            memory = project.memory(user_id="user123")
+            ```
 
         """
-        memory = Memory(
-            client=self,
-            org_id=org_id,
-            project_id=project_id,
-            group_id=group_id,
-            agent_id=agent_id,
-            user_id=user_id,
-            session_id=session_id,
-            **kwargs,
-        )
-        # Track the Memory object
-        self._memory_objects.add(memory)
-        return memory
+        if self._closed:
+            raise RuntimeError("Cannot get project: client has been closed")
 
-    def health_check(self) -> dict[str, Any]:
+        url = f"{self.base_url}/api/v2/projects/get"
+        data = {
+            "org_id": org_id,
+            "project_id": project_id,
+        }
+
+        try:
+            response = self.request("POST", url, json=data, timeout=timeout)
+            response.raise_for_status()
+            project_data = response.json()
+
+            return Project(
+                client=self,
+                org_id=org_id,
+                project_id=project_id,
+                description=project_data.get("description", ""),
+                configuration=project_data.get("configuration"),
+                metadata=project_data.get("metadata"),
+            )
+        except requests.RequestException:
+            logger.exception("Failed to get project %s/%s", org_id, project_id)
+            raise
+
+    def health_check(self, timeout: int | None = None) -> dict[str, Any]:
         """
         Check the health status of the MemMachine server.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
             Dictionary containing health status information
@@ -254,10 +283,11 @@ class MemMachineClient:
             requests.RequestException: If the health check fails
 
         """
+        request_timeout = timeout if timeout is not None else self.timeout
         try:
             response = self._session.get(
                 f"{self.base_url}/health",
-                timeout=self.timeout,
+                timeout=request_timeout,
             )
             response.raise_for_status()
             return response.json()
@@ -271,13 +301,6 @@ class MemMachineClient:
             return
 
         self._closed = True
-
-        # Mark all tracked Memory objects as closed
-        for memory in self._memory_objects:
-            memory.mark_client_closed()
-
-        # Clear the tracking set
-        self._memory_objects.clear()
 
         # Close the session
         if hasattr(self, "_session"):
@@ -304,3 +327,8 @@ class MemMachineClient:
     def session(self) -> requests.Session:
         """Expose the underlying requests session for advanced usage."""
         return self._session
+
+    @property
+    def closed(self) -> bool:
+        """Check if the client has been closed."""
+        return self._closed

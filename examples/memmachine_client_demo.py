@@ -59,8 +59,14 @@ def demo_advanced_memory_features() -> None:
     base_url = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
     client = MemMachineClient(base_url=base_url)
 
+    # Get or create project
+    try:
+        project = client.get_project(org_id="demo_org", project_id="advanced_demo")
+    except Exception:
+        project = client.create_project(org_id="demo_org", project_id="advanced_demo")
+
     # Create memory instance with specific context
-    memory = client.memory(
+    memory = project.memory(
         group_id="advanced_demo",
         agent_id="smart_agent",
         user_id="demo_user",
@@ -174,9 +180,16 @@ def demo_memory_operations() -> None:
     base_url = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
     client = MemMachineClient(base_url=base_url)
 
+    # Get or create project
+    print("Getting or creating project...")
+    try:
+        project = client.get_project(org_id="demo_org", project_id="demo_project")
+    except Exception:
+        project = client.create_project(org_id="demo_org", project_id="demo_project")
+
     # Create memory instance
     print("Creating memory instance...")
-    memory = client.memory(
+    memory = project.memory(
         group_id="demo_group",
         agent_id="demo_agent",
         user_id="demo_user",
@@ -230,6 +243,12 @@ def demo_multiple_users() -> None:
     base_url = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
     client = MemMachineClient(base_url=base_url)
 
+    # Get or create project
+    try:
+        project = client.get_project(org_id="demo_org", project_id="multi_user_demo")
+    except Exception:
+        project = client.create_project(org_id="demo_org", project_id="multi_user_demo")
+
     # Create memory instances for multiple users
     users = ["alice", "bob", "charlie"]
     memories = {}
@@ -237,7 +256,7 @@ def demo_multiple_users() -> None:
     print("Creating memory instances for multiple users...")
     for user in users:
         # Each user should have their own session_id to avoid conflicts
-        memories[user] = client.memory(
+        memories[user] = project.memory(
             group_id="team_group",
             agent_id="team_agent",
             user_id=user,
