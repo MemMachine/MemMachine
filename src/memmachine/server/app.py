@@ -512,6 +512,10 @@ async def initialize_resource(config_file: str) -> ResourceManagerImpl:
     config = load_config_yml_file(config_file)
     ret = ResourceManagerImpl(config)
     await ret.build()
+    # Start semantic service to enable background ingestion
+    semantic_manager = await ret.get_semantic_manager()
+    semantic_service = await semantic_manager.get_semantic_service()
+    await semantic_service.start()
     return ret
 
 

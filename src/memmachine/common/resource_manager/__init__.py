@@ -11,6 +11,7 @@ from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.reranker import Reranker
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.common.vector_graph_store import VectorGraphStore
+from memmachine.episode_store.episode_storage import EpisodeStorage
 
 
 @runtime_checkable
@@ -56,4 +57,9 @@ class CommonResourceManager(Protocol):
     @property
     def session_data_manager(self) -> SessionDataManager:
         """Return the session data manager."""
+        raise NotImplementedError
+
+    @property
+    def episode_storage(self) -> EpisodeStorage:
+        """Return the episode storage instance."""
         raise NotImplementedError

@@ -85,12 +85,44 @@ class IngestionService:
 
         raw_messages = await asyncio.gather(
             *[self._history_store.get_episode(h_id) for h_id in history_ids],
+            return_exceptions=True,
         )
 
-        if len(raw_messages) != len([m for m in raw_messages if m is not None]):
-            raise ValueError("Failed to retrieve messages. Invalid history_ids")
+        # Filter out None values and exceptions, log warnings for missing episodes
+        valid_messages = []
+        invalid_ids = []
+        for i, msg in enumerate(raw_messages):
+            if isinstance(msg, Exception):
+                logger.warning(
+                    "Failed to retrieve episode %s: %s",
+                    history_ids[i],
+                    msg,
+                )
+                invalid_ids.append(history_ids[i])
+            elif msg is None:
+                logger.warning(
+                    "Episode %s not found in storage",
+                    history_ids[i],
+                )
+                invalid_ids.append(history_ids[i])
+            else:
+                valid_messages.append(msg)
 
-        messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
+        # Mark invalid history_ids as ingested to avoid retrying
+        if invalid_ids:
+            await self._semantic_storage.mark_messages_ingested(
+                set_id=set_id,
+                history_ids=invalid_ids,
+            )
+
+        if len(valid_messages) == 0:
+            logger.warning(
+                "No valid messages found for set_id %s, skipping",
+                set_id,
+            )
+            return
+
+        messages = TypeAdapter(list[Episode]).validate_python(valid_messages)
 
         async def process_semantic_type(
             semantic_category: InstanceOf[SemanticCategory],

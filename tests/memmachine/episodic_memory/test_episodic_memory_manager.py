@@ -1,6 +1,6 @@
 """Tests for the EpisodicMemoryManager class."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 import pytest_asyncio
@@ -82,6 +82,12 @@ def mock_resource_manager(mock_metrics_factory):
     resource_manager = MagicMock(spec=CommonResourceManager)
     resource_manager.get_language_model.return_value = AsyncMock(spec=LanguageModel)
     resource_manager.get_metrics_factory.return_value = mock_metrics_factory
+    # Configure episode_storage to raise RuntimeError when accessed (matching real behavior)
+    type(resource_manager).episode_storage = PropertyMock(
+        side_effect=RuntimeError(
+            "episode_storage must be initialized via build() first"
+        )
+    )
     return resource_manager
 
 
@@ -124,6 +130,7 @@ async def test_create_episodic_memory_success(
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
+    mock_metrics_factory,
 ):
     """Test successfully creating a new episodic memory instance."""
     session_key = "new_session"
@@ -136,7 +143,14 @@ async def test_create_episodic_memory_success(
         "memmachine.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
         new_callable=AsyncMock,
     ) as mock_params_from_config:
-        mock_params_from_config.return_value = MagicMock(spec=EpisodicMemoryParams)
+        mock_params_from_config.return_value = EpisodicMemoryParams(
+            session_key=session_key,
+            metrics_factory=mock_metrics_factory,
+            short_term_memory=None,
+            long_term_memory=None,
+            episode_storage=None,
+            enabled=False,
+        )
 
         async with manager.create_episodic_memory(
             session_key,
@@ -192,11 +206,19 @@ async def test_open_episodic_memory_new_instance(
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
+    mock_metrics_factory,
 ):
     """Test opening a session for the first time, loading it from storage."""
     session_key = "session_to_open"
     mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
-    mock_params = MagicMock(spec=EpisodicMemoryParams)
+    mock_params = EpisodicMemoryParams(
+        session_key=session_key,
+        metrics_factory=mock_metrics_factory,
+        short_term_memory=None,
+        long_term_memory=None,
+        episode_storage=None,
+        enabled=False,
+    )
     mock_params_from_config.return_value = mock_params
 
     async with manager.create_episodic_memory(
@@ -396,12 +418,36 @@ async def test_close_session_in_use_raises_error(
 
 
 @pytest.mark.asyncio
-async def test_manager_close(manager: EpisodicMemoryManager, mock_episodic_memory_conf):
+@patch(
+    "memmachine.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
+    new_callable=AsyncMock,
+)
+async def test_manager_close(
+    mock_params_from_config,
+    manager: EpisodicMemoryManager,
+    mock_episodic_memory_conf,
+    mock_metrics_factory,
+):
     """Test the main close method of the manager."""
     session_key1 = "s1"
     session_key2 = "s2"
     mock_instance1 = AsyncMock(spec=EpisodicMemory, name="instance1")
     mock_instance2 = AsyncMock(spec=EpisodicMemory, name="instance2")
+
+    # Setup mock to return proper EpisodicMemoryParams
+    def create_mock_params(session_key: str):
+        return EpisodicMemoryParams(
+            session_key=session_key,
+            metrics_factory=mock_metrics_factory,
+            short_term_memory=None,
+            long_term_memory=None,
+            episode_storage=None,
+            enabled=False,
+        )
+
+    mock_params_from_config.side_effect = lambda conf, rm: create_mock_params(
+        conf.session_key
+    )
 
     with patch(
         "memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory",

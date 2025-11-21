@@ -22,6 +22,7 @@ class EpisodeStorage(ABC):
         episode_type: EpisodeType | None = None,
         metadata: dict[str, JsonValue] | None = None,
         created_at: AwareDatetime | None = None,
+        uid: str | None = None,
     ) -> EpisodeIdT:
         raise NotImplementedError
 

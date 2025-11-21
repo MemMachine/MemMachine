@@ -87,9 +87,13 @@ class ResourceManagerImpl:
             engine = await self._database_manager.async_get_sql_engine(database)
             self._episode_storage = SqlAlchemyEpisodeStore(engine)
             async with engine.begin() as conn:
-                await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+                # Only create vector extension for PostgreSQL
+                if engine.dialect.name == "postgresql":
+                    await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
-                await conn.run_sync(BaseSemanticStorage.metadata.create_all)
+                # Only create semantic storage tables for PostgreSQL
+                if engine.dialect.name == "postgresql":
+                    await conn.run_sync(BaseSemanticStorage.metadata.create_all)
 
     async def close(self) -> None:
         """Close resources and clean up state."""

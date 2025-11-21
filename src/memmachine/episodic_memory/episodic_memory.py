@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, InstanceOf, model_validator
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.episode_store.episode_model import Episode
+from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.episodic_memory.long_term_memory.long_term_memory import LongTermMemory
 from memmachine.episodic_memory.short_term_memory.short_term_memory import (
     ShortTermMemory,
@@ -63,6 +64,10 @@ class EpisodicMemoryParams(BaseModel):
     short_term_memory: InstanceOf[ShortTermMemory] | None = Field(
         default=None,
         description="The short-term memory",
+    )
+    episode_storage: InstanceOf[EpisodeStorage] | None = Field(
+        default=None,
+        description="The episode storage for persisting episodes to SQL database",
     )
     enabled: bool = Field(
         default=True,
@@ -109,6 +114,7 @@ class EpisodicMemory:
 
         self._short_term_memory: ShortTermMemory | None = params.short_term_memory
         self._long_term_memory: LongTermMemory | None = params.long_term_memory
+        self._episode_storage: EpisodeStorage | None = params.episode_storage
 
         self._enabled = params.enabled
         if not self._enabled:
@@ -214,6 +220,24 @@ class EpisodicMemory:
             tasks.append(self._short_term_memory.add_episodes(episodes))
         if self._long_term_memory:
             tasks.append(self._long_term_memory.add_episodes(episodes))
+        # Also store episodes to episode_storage for semantic ingestion
+        if self._episode_storage:
+            tasks.extend(
+                [
+                    self._episode_storage.add_episode(
+                        content=ep.content,
+                        session_key=ep.session_key,
+                        producer_id=ep.producer_id,
+                        producer_role=ep.producer_role,
+                        produced_for_id=ep.produced_for_id,
+                        episode_type=ep.episode_type,
+                        metadata=ep.metadata,
+                        created_at=ep.created_at,
+                        uid=ep.uid,
+                    )
+                    for ep in episodes
+                ]
+            )
         await asyncio.gather(
             *tasks,
         )
