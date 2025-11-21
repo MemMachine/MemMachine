@@ -44,6 +44,7 @@ class Episode(BaseEpisodeStore):
 
     __tablename__ = "episodestore"
     id = mapped_column(Integer, primary_key=True)
+    uid = mapped_column(String, nullable=True, unique=True, index=True)
 
     content = mapped_column(String, nullable=False)
 
@@ -90,7 +91,7 @@ class Episode(BaseEpisodeStore):
             else self.created_at
         )
         return EpisodeE(
-            uid=EpisodeIdT(self.id),
+            uid=EpisodeIdT(self.uid if self.uid else str(self.id)),
             content=self.content,
             session_key=self.session_key,
             producer_id=self.producer_id,
@@ -128,6 +129,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         episode_type: EpisodeType | None = None,
         metadata: dict[str, JsonValue] | None = None,
         created_at: AwareDatetime | None = None,
+        uid: str | None = None,
     ) -> EpisodeIdT:
         stmt = (
             insert(Episode)
@@ -137,7 +139,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                 producer_id=producer_id,
                 producer_role=producer_role,
             )
-            .returning(Episode.id)
+            .returning(Episode.id, Episode.uid)
         )
 
         if produced_for_id is not None:
@@ -152,19 +154,28 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         if created_at is not None:
             stmt = stmt.values(created_at=created_at)
 
+        if uid is not None:
+            stmt = stmt.values(uid=uid)
+
         async with self._create_session() as session:
             result = await session.execute(stmt)
             await session.commit()
-            episode_id = result.scalar_one()
+            row = result.first()
+            if row is None:
+                raise RuntimeError("Failed to insert episode")
+            episode_id = row[0]  # id is first column
+            stored_uid = row[1] if len(row) > 1 else None  # uid is second column
 
-        return EpisodeIdT(episode_id)
+        # Return uid if available, otherwise return id as string
+        return EpisodeIdT(stored_uid if stored_uid else str(episode_id))
 
     @validate_call
     async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:
-        stmt = (
-            select(Episode)
-            .where(Episode.id == int(episode_id))
-            .order_by(Episode.created_at.asc())
+        # Try to query by uid first (for UUID strings), then by id (for integer strings)
+        episode_id_str = str(episode_id)
+        stmt = select(Episode).where(
+            (Episode.uid == episode_id_str)
+            | (cast(Episode.id, String) == episode_id_str)
         )
 
         async with self._create_session() as session:

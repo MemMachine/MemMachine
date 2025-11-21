@@ -1,5 +1,7 @@
 """Factory helpers for wiring episodic memory components."""
 
+from contextlib import suppress
+
 from pydantic import InstanceOf
 
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
@@ -37,6 +39,11 @@ async def episodic_memory_params_from_config(
         )
         short_term_memory = await ShortTermMemory.create(short_term_memory_params)
 
+    # Get episode_storage from resource_manager if available
+    episode_storage = None
+    with suppress(AttributeError, RuntimeError):
+        episode_storage = resource_manager.episode_storage
+
     return EpisodicMemoryParams(
         session_key=config.session_key,
         metrics_factory=await resource_manager.get_metrics_factory(
@@ -44,5 +51,6 @@ async def episodic_memory_params_from_config(
         ),
         long_term_memory=long_term_memory,
         short_term_memory=short_term_memory,
+        episode_storage=episode_storage,
         enabled=config.enabled,
     )
