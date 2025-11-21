@@ -60,7 +60,6 @@ def test_valid_openai_model(openai_model_conf):
     conf = OpenAIResponsesLanguageModelConf(**openai_model_conf["config"])
     assert conf.model == "gpt-4o-mini"
     assert conf.api_key == SecretStr("open-ai-key")
-    assert conf.max_retry_interval_seconds == 120
 
 
 def test_valid_aws_model(aws_model_conf):
@@ -69,7 +68,6 @@ def test_valid_aws_model(aws_model_conf):
     assert conf.aws_access_key_id == SecretStr("aws-key-id")
     assert conf.aws_secret_access_key == SecretStr("aws-secret-key")
     assert conf.model_id == "openai.gpt-oss-20b-1:0"
-    assert conf.max_retry_interval_seconds == 120
 
 
 def test_valid_openai_chat_completions_model(ollama_model_conf):
@@ -77,7 +75,6 @@ def test_valid_openai_chat_completions_model(ollama_model_conf):
     assert conf.model == "llama3"
     assert conf.api_key == SecretStr("EMPTY")
     assert conf.base_url == "http://host.docker.internal:11434/v1"
-    assert conf.max_retry_interval_seconds == 120
 
 
 def test_full_language_model_conf(full_model_conf):

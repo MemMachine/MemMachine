@@ -26,11 +26,6 @@ class OpenAIResponsesLanguageModelConf(WithMetricsFactoryId):
         default=None,
         description="OpenAI Responses API base URL",
     )
-    max_retry_interval_seconds: int = Field(
-        default=120,
-        description="Maximal retry interval in seconds when retrying API calls",
-        gt=0,
-    )
 
     @field_validator("base_url")
     @classmethod
@@ -59,11 +54,6 @@ class OpenAIChatCompletionsLanguageModelConf(WithMetricsFactoryId):
         default=None,
         description="OpenAI Chat Completions API base URL",
         examples=["http://host.docker.internal:11434/v1"],
-    )
-    max_retry_interval_seconds: int = Field(
-        default=120,
-        description="Maximal retry interval in seconds when retrying API calls",
-        gt=0,
     )
 
     @field_validator("base_url")

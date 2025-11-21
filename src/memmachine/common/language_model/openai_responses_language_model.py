@@ -1,6 +1,5 @@
-"""OpenAI-based language model implementation."""
+"""OpenAI Responses API-based language model implementation."""
 
-import asyncio
 import json
 import logging
 import time
@@ -28,11 +27,8 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
         client (openai.AsyncOpenAI):
             AsyncOpenAI client to use for making API calls.
         model (str):
-            Name of the OpenAI model to use
+            Name of the OpenAI Responses API model to use
             (e.g. 'gpt-5-nano').
-        max_retry_interval_seconds (int):
-            Maximal retry interval in seconds when retrying API calls
-            (default: 120).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory
             for collecting usage metrics
@@ -49,12 +45,7 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
     )
     model: str = Field(
         ...,
-        description="Name of the OpenAI model to use (e.g. 'gpt-5-nano')",
-    )
-    max_retry_interval_seconds: int = Field(
-        120,
-        description="Maximal retry interval in seconds when retrying API calls",
-        gt=0,
+        description="Name of the OpenAI Responses API model to use (e.g. 'gpt-5-nano')",
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
@@ -67,11 +58,11 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
 
 
 class OpenAIResponsesLanguageModel(LanguageModel):
-    """Language model that uses OpenAI's responses API."""
+    """Language model that uses OpenAI Responses API."""
 
     def __init__(self, params: OpenAIResponsesLanguageModelParams) -> None:
         """
-        Initialize the responses language model with configuration.
+        Initialize the OpenAI Responses language model.
 
         Args:
             params (OpenAIResponsesLanguageModelParams):
@@ -84,8 +75,6 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         self._model = params.model
 
-        self._max_retry_interval_seconds = params.max_retry_interval_seconds
-
         metrics_factory = params.metrics_factory
 
         self._should_collect_metrics = False
@@ -95,36 +84,38 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_input_tokens",
-                "Number of input tokens used for OpenAI language model",
+                "language_model_openai_responses_usage_input_tokens",
+                "Number of input tokens used for OpenAI Responses API language model",
                 label_names=label_names,
             )
             self._input_cached_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_input_cached_tokens",
+                "language_model_openai_responses_usage_input_cached_tokens",
                 (
                     "Number of tokens retrieved from cache "
-                    "used for OpenAI language model"
+                    "used for OpenAI Responses API language model"
                 ),
                 label_names=label_names,
             )
             self._output_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_output_tokens",
-                "Number of output tokens used for OpenAI language model",
+                "language_model_openai_responses_usage_output_tokens",
+                "Number of output tokens used for OpenAI Responses API language model",
                 label_names=label_names,
             )
             self._output_reasoning_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_output_reasoning_tokens",
-                ("Number of reasoning tokens used for OpenAI language model"),
+                "language_model_openai_responses_usage_output_reasoning_tokens",
+                (
+                    "Number of reasoning tokens used for OpenAI Responses API language model"
+                ),
                 label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_total_tokens",
-                "Number of tokens used for OpenAI language model",
+                "language_model_openai_responses_usage_total_tokens",
+                "Number of tokens used for OpenAI Responses API language model",
                 label_names=label_names,
             )
             self._latency_summary = metrics_factory.get_summary(
-                "language_model_openai_latency_seconds",
-                "Latency in seconds for OpenAI language model requests",
+                "language_model_openai_responses_latency_seconds",
+                "Latency in seconds for OpenAI Responses API language model requests",
                 label_names=label_names,
             )
 
@@ -148,9 +139,16 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         start_time = time.monotonic()
 
+        logger.debug(
+            "[call uuid: %s] "
+            "Attempting to generate parsed response using %s OpenAI Responses API language model",
+            generate_response_call_uuid,
+            self._model,
+        )
+
         try:
             response = await self._client.with_options(
-                max_retries=max_attempts,
+                max_retries=max_attempts - 1,
             ).responses.parse(
                 model=self._model,  # type: ignore[arg-type]
                 input=input_prompts,  # type: ignore[arg-type]
@@ -160,12 +158,17 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             error_message = (
                 f"[call uuid: {generate_response_call_uuid}] "
                 "Giving up generating response "
-                f"due to non-retryable {type(e).__name__}"
+                f"due to {type(e).__name__}"
             )
             logger.exception(error_message)
             raise ExternalServiceAPIError(error_message) from e
 
         end_time = time.monotonic()
+        logger.debug(
+            "[call uuid: %s] Parsed response generated in %.3f seconds",
+            generate_response_call_uuid,
+            end_time - start_time,
+        )
 
         self._collect_metrics(
             response,
@@ -196,64 +199,33 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         start_time = time.monotonic()
 
-        sleep_seconds = 1
-        for attempt in range(1, max_attempts + 1):
-            try:
-                logger.debug(
-                    "[call uuid: %s] "
-                    "Attempting to generate response using %s OpenAI language model: "
-                    "on attempt %d with max attempts %d",
-                    generate_response_call_uuid,
-                    self._model,
-                    attempt,
-                    max_attempts,
-                )
-                response = await self._client.responses.create(
-                    model=self._model,
-                    input=input_prompts,
-                    tools=tools,
-                    tool_choice=tool_choice if tool_choice is not None else "auto",
-                )  # type: ignore
-                break
-            except (
-                openai.RateLimitError,
-                openai.APITimeoutError,
-                openai.APIConnectionError,
-            ) as e:
-                # Exception may be retried.
-                if attempt >= max_attempts:
-                    error_message = (
-                        f"[call uuid: {generate_response_call_uuid}] "
-                        "Giving up generating response "
-                        f"after failed attempt {attempt} "
-                        f"due to retryable {type(e).__name__}: "
-                        f"max attempts {max_attempts} reached"
-                    )
-                    logger.exception(error_message)
-                    raise ExternalServiceAPIError(error_message) from e
+        logger.debug(
+            "[call uuid: %s] "
+            "Attempting to generate response using %s OpenAI Responses API language model",
+            generate_response_call_uuid,
+            self._model,
+        )
 
-                logger.info(
-                    "[call uuid: %s] "
-                    "Retrying generating response in %d seconds "
-                    "after failed attempt %d due to retryable %s...",
-                    generate_response_call_uuid,
-                    sleep_seconds,
-                    attempt,
-                    type(e).__name__,
-                )
-                await asyncio.sleep(sleep_seconds)
-                sleep_seconds *= 2
-                sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
-                continue
-            except openai.OpenAIError as e:
-                error_message = (
-                    f"[call uuid: {generate_response_call_uuid}] "
-                    "Giving up generating response "
-                    f"after failed attempt {attempt} "
-                    f"due to non-retryable {type(e).__name__}"
-                )
-                logger.exception(error_message)
-                raise ExternalServiceAPIError(error_message) from e
+        try:
+            args: dict = {
+                "model": self._model,
+                "input": input_prompts,
+            }
+            if tools:
+                args["tools"] = tools
+                args["tool_choice"] = tool_choice if tool_choice is not None else "auto"
+
+            response = await self._client.with_options(
+                max_retries=max_attempts - 1,
+            ).responses.create(**args)
+        except openai.OpenAIError as e:
+            error_message = (
+                f"[call uuid: {generate_response_call_uuid}] "
+                "Giving up generating response "
+                f"due to {type(e).__name__}"
+            )
+            logger.exception(error_message)
+            raise ExternalServiceAPIError(error_message) from e
 
         end_time = time.monotonic()
         logger.debug(

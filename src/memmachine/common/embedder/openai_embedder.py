@@ -1,6 +1,5 @@
-"""OpenAI-based embedder implementation."""
+"""OpenAI Embeddings API-based embedder implementation."""
 
-import asyncio
 import logging
 import time
 from typing import Any
@@ -18,7 +17,26 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIEmbedderParams(BaseModel):
-    """Parameters for OpenAIEmbedder."""
+    """
+    Parameters for OpenAIEmbedder.
+
+    Attributes:
+        client (openai.AsyncOpenAI):
+            AsyncOpenAI client to use for making API calls.
+        model (str):
+            Name of the OpenAI Embeddings API model to use
+            (e.g. 'text-embedding-3-small').
+        dimensions (int):
+            Dimensionality of the embedding vectors
+            produced by the embedding model.
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory for collecting usage metrics
+            (default: None).
+        user_metrics_labels (dict[str, str]):
+            Labels to attach to the collected metrics
+            (default: {}).
+
+    """
 
     client: InstanceOf[openai.AsyncOpenAI] = Field(
         ...,
@@ -27,20 +45,14 @@ class OpenAIEmbedderParams(BaseModel):
     model: str = Field(
         ...,
         description=(
-            "Name of the OpenAI embedding model to use (e.g. 'text-embedding-3-small')"
+            "Name of the OpenAI Embeddings API model to use (e.g. 'text-embedding-3-small')"
         ),
     )
     dimensions: int = Field(
         ...,
         description=(
-            "Dimensionality of the embedding vectors "
-            "produced by the OpenAI embedding model"
+            "Dimensionality of the embedding vectors produced by the embedding model"
         ),
-        gt=0,
-    )
-    max_retry_interval_seconds: int = Field(
-        120,
-        description="Maximal retry interval in seconds when retrying API calls",
         gt=0,
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
@@ -68,8 +80,6 @@ class OpenAIEmbedder(Embedder):
         self._dimensions = params.dimensions
         self._use_dimensions_parameter = True
 
-        self._max_retry_interval_seconds = params.max_retry_interval_seconds
-
         metrics_factory = params.metrics_factory
 
         self._collect_metrics = False
@@ -80,17 +90,17 @@ class OpenAIEmbedder(Embedder):
 
             self._prompt_tokens_usage_counter = metrics_factory.get_counter(
                 "embedder_openai_usage_prompt_tokens",
-                "Number of tokens used by prompts to OpenAI embedder",
+                "Number of tokens used by prompts to OpenAI Embeddings API embedder",
                 label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
                 "embedder_openai_usage_total_tokens",
-                "Number of tokens used by requests to OpenAI embedder",
+                "Number of tokens used by requests to OpenAI Embeddings API embedder",
                 label_names=label_names,
             )
             self._latency_summary = metrics_factory.get_summary(
                 "embedder_openai_latency_seconds",
-                "Latency in seconds for OpenAI embedder requests",
+                "Latency in seconds for OpenAI Embeddings API embedder requests",
                 label_names=label_names,
             )
 
@@ -110,7 +120,7 @@ class OpenAIEmbedder(Embedder):
         """Embed search queries with retries."""
         return await self._embed(queries, max_attempts)
 
-    async def _embed(  # noqa: C901
+    async def _embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
@@ -127,86 +137,47 @@ class OpenAIEmbedder(Embedder):
 
         start_time = time.monotonic()
 
-        sleep_seconds = 1
-        for attempt in range(1, max_attempts + 1):
-            try:
-                logger.debug(
-                    "[call uuid: %s] "
-                    "Attempting to create embeddings using %s OpenAI model: "
-                    "on attempt %d with max attempts %d",
-                    embed_call_uuid,
-                    self._model,
-                    attempt,
-                    max_attempts,
-                )
-                # Internal try-except is required
-                # for models that do not support dimensions parameter
-                try:
-                    response = (
-                        await self._client.embeddings.create(
-                            input=inputs,
-                            model=self._model,
-                            dimensions=self._dimensions,
-                        )
-                        if self._use_dimensions_parameter
-                        else await self._client.embeddings.create(
-                            input=inputs,
-                            model=self._model,
-                        )
-                    )
-                except openai.BadRequestError as err:
-                    if (
-                        "dimension" in str(err).lower()
-                        and self._use_dimensions_parameter
-                    ):
-                        response = await self._client.embeddings.create(
-                            input=inputs,
-                            model=self._model,
-                        )
-                        self._use_dimensions_parameter = False
-                        break
-                    raise
-                break
-            except (
-                openai.RateLimitError,
-                openai.APITimeoutError,
-                openai.APIConnectionError,
-            ) as err:
-                # Exception may be retried.
-                if attempt >= max_attempts:
-                    error_message = (
-                        f"[call uuid: {embed_call_uuid}] "
-                        "Giving up creating embeddings "
-                        f"after failed attempt {attempt} "
-                        f"due to retryable {type(err).__name__}: "
-                        f"max attempts {max_attempts} reached"
-                    )
-                    logger.exception(error_message)
-                    raise ExternalServiceAPIError(error_message) from err
+        logger.debug(
+            "[call uuid: %s] "
+            "Attempting to create embeddings for %d inputs using %s OpenAI Embeddings API embedding model",
+            embed_call_uuid,
+            len(inputs),
+            self._model,
+        )
 
-                logger.info(
-                    "[call uuid: %s] "
-                    "Retrying creating embeddings in %d seconds "
-                    "after failed attempt %d due to retryable %s...",
-                    embed_call_uuid,
-                    sleep_seconds,
-                    attempt,
-                    type(err).__name__,
+        try:
+            # Internal try-except is required
+            # for models that do not support dimensions parameter
+            try:
+                response = (
+                    await self._client.embeddings.create(
+                        input=inputs,
+                        model=self._model,
+                        dimensions=self._dimensions,
+                    )
+                    if self._use_dimensions_parameter
+                    else await self._client.embeddings.create(
+                        input=inputs,
+                        model=self._model,
+                    )
                 )
-                await asyncio.sleep(
-                    min(sleep_seconds, self._max_retry_interval_seconds),
-                )
-                sleep_seconds *= 2
-                continue
-            except (openai.APIError, openai.OpenAIError) as err:
-                error_message = (
-                    f"[call uuid: {embed_call_uuid}] "
-                    "Giving up creating embeddings "
-                    f"after failed attempt {attempt} "
-                    f"due to non-retryable {type(err).__name__}"
-                )
-                logger.exception(error_message)
-                raise ExternalServiceAPIError(error_message) from err
+            except openai.BadRequestError as e:
+                if "dimension" in str(e).lower() and self._use_dimensions_parameter:
+                    response = await self._client.embeddings.create(
+                        input=inputs,
+                        model=self._model,
+                    )
+                    self._use_dimensions_parameter = False
+                else:
+                    raise
+        except openai.OpenAIError as e:
+            error_message = (
+                f"[call uuid: {embed_call_uuid}] "
+                "Giving up creating embeddings "
+                f"due to {type(e).__name__}"
+            )
+            logger.exception(error_message)
+            raise ExternalServiceAPIError(error_message) from e
 
         end_time = time.monotonic()
         logger.debug(

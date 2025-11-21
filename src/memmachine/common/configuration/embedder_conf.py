@@ -65,11 +65,6 @@ class OpenAIEmbedderConf(WithMetricsFactoryId):
         default=None,
         description=("OpenAI Embeddings API base URL"),
     )
-    max_retry_interval_seconds: int = Field(
-        default=120,
-        description="Maximal retry interval in seconds when retrying API calls",
-        gt=0,
-    )
 
     @field_validator("base_url")
     @classmethod

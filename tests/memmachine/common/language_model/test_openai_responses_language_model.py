@@ -46,6 +46,7 @@ def mock_async_openai():
     """Fixture for mocking openai.AsyncOpenAI."""
     with patch("openai.AsyncOpenAI", spec=openai.AsyncOpenAI) as mock_async_openai:
         mock_client = mock_async_openai.return_value
+        mock_client.with_options.return_value = mock_client
         mock_client.responses.create = AsyncMock()
         yield mock_async_openai
 
@@ -70,21 +71,8 @@ def full_config(mock_async_openai, mock_metrics_factory):
             base_url="http://localhost:8080",
         ),
         model="test-model",
-        max_retry_interval_seconds=60,
         metrics_factory=mock_metrics_factory,
         user_metrics_labels={"user": "test-user"},
-    )
-
-
-@pytest.fixture
-def max_retry_interval_seconds_config(mock_async_openai):
-    """Fixture for a valid configuration with small max_retry_interval_seconds."""
-    return OpenAIResponsesLanguageModelParams(
-        client=openai.AsyncOpenAI(
-            api_key="test_api_key",
-        ),
-        model="test-model",
-        max_retry_interval_seconds=4,
     )
 
 
@@ -121,25 +109,6 @@ def test_init_missing_model():
                     api_key="test_api_key",
                 ),
             ),
-        )
-
-
-def test_init_invalid_max_retry_interval_seconds_type(minimal_config):
-    """Test initialization fails with non-integer max_retry_interval_seconds."""
-    with pytest.raises(ValidationError):
-        OpenAIResponsesLanguageModelParams(
-            **(
-                minimal_config.model_dump()
-                | {"max_retry_interval_seconds": "not-an-int"}
-            ),
-        )
-
-
-def test_init_invalid_max_retry_interval_seconds_value(minimal_config):
-    """Test initialization fails with non-positive max_retry_interval_seconds."""
-    with pytest.raises(ValidationError):
-        OpenAIResponsesLanguageModelParams(
-            **(minimal_config.model_dump() | {"max_retry_interval_seconds": 0}),
         )
 
 
@@ -261,90 +230,6 @@ async def test_generate_response_tool_call_json_error(
             system_prompt="System prompt",
             user_prompt="User prompt",
         )
-
-
-@pytest.mark.asyncio
-@patch("asyncio.sleep", new_callable=AsyncMock)
-async def test_generate_response_retry_on_rate_limit(
-    mock_sleep,
-    mock_async_openai,
-    minimal_config,
-):
-    """Test retry logic on RateLimitError."""
-    mock_response = MagicMock()
-    mock_response.output_text = "Success after retry"
-    mock_response.output = None
-    mock_response.usage = None
-
-    mock_client = mock_async_openai.return_value
-    mock_client.responses.create.side_effect = [
-        openai.RateLimitError("rate limited", response=MagicMock(), body=None),
-        mock_response,
-    ]
-
-    lm = OpenAIResponsesLanguageModel(minimal_config)
-    content, _ = await lm.generate_response(max_attempts=2)
-
-    assert content == "Success after retry"
-    assert mock_client.responses.create.call_count == 2
-    mock_sleep.assert_awaited_once_with(1)
-
-
-@pytest.mark.asyncio
-@patch("asyncio.sleep", new_callable=AsyncMock)
-async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_seconds(
-    mock_sleep,
-    mock_async_openai,
-    max_retry_interval_seconds_config,
-):
-    """Test retry logic on RateLimitError."""
-    mock_response = MagicMock()
-    mock_response.output_text = "Success after retry"
-    mock_response.output = None
-    mock_response.usage = None
-
-    mock_client = mock_async_openai.return_value
-    mock_client.responses.create.side_effect = openai.RateLimitError(
-        "rate limited",
-        response=MagicMock(),
-        body=None,
-    )
-
-    lm = OpenAIResponsesLanguageModel(max_retry_interval_seconds_config)
-    with pytest.raises(ExternalServiceAPIError):
-        await lm.generate_response(max_attempts=6)
-
-    assert mock_client.responses.create.call_count == 6
-    mock_sleep.assert_has_awaits(
-        [
-            ((1,),),
-            ((2,),),
-            ((4,),),
-            ((4,),),
-            ((4,),),
-        ],
-    )
-
-
-@pytest.mark.asyncio
-@patch("asyncio.sleep", new_callable=AsyncMock)
-async def test_generate_response_fail_after_max_retries(
-    mock_sleep,
-    mock_async_openai,
-    minimal_config,
-):
-    """Test that an IOError is raised after max_attempts are exhausted."""
-    mock_client = mock_async_openai.return_value
-    mock_client.responses.create.side_effect = openai.APITimeoutError(None)
-
-    lm = OpenAIResponsesLanguageModel(minimal_config)
-    with pytest.raises(ExternalServiceAPIError):
-        await lm.generate_response(max_attempts=3)
-
-    assert mock_client.responses.create.call_count == 3
-    assert mock_sleep.call_count == 2
-    mock_sleep.assert_any_await(1)
-    mock_sleep.assert_any_await(2)
 
 
 @pytest.mark.asyncio

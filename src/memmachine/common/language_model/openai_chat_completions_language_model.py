@@ -1,6 +1,5 @@
-"""OpenAI-completions API based language model implementation."""
+"""OpenAI Chat Completions API-based language model implementation."""
 
-import asyncio
 import json
 import logging
 import time
@@ -28,11 +27,8 @@ class OpenAIChatCompletionsLanguageModelParams(BaseModel):
         client (openai.AsyncOpenAI):
             AsyncOpenAI client to use for making API calls.
         model (str):
-            Name of the OpenAI model to use
+            Name of the OpenAI Chat Completions API model to use
             (e.g. 'gpt-5-nano').
-        max_retry_interval_seconds (int):
-            Maximal retry interval in seconds when retrying API calls
-            (default: 120).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory
             for collecting usage metrics
@@ -49,12 +45,7 @@ class OpenAIChatCompletionsLanguageModelParams(BaseModel):
     )
     model: str = Field(
         ...,
-        description="Name of the OpenAI model to use (e.g. 'gpt-5-nano')",
-    )
-    max_retry_interval_seconds: int = Field(
-        120,
-        description="Maximal retry interval in seconds when retrying API calls",
-        gt=0,
+        description="Name of the OpenAI Chat Completions API model to use (e.g. 'gpt-5-nano')",
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
@@ -67,11 +58,11 @@ class OpenAIChatCompletionsLanguageModelParams(BaseModel):
 
 
 class OpenAIChatCompletionsLanguageModel(LanguageModel):
-    """Language model that uses OpenAI's chat completions API."""
+    """Language model that uses OpenAI Chat Completions API."""
 
     def __init__(self, params: OpenAIChatCompletionsLanguageModelParams) -> None:
         """
-        Initialize the chat completions language model.
+        Initialize the OpenAI Chat Completions language model.
 
         Args:
             params (OpenAIChatCompletionsLanguageModelParams):
@@ -84,8 +75,6 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
 
         self._model = params.model
 
-        self._max_retry_interval_seconds = params.max_retry_interval_seconds
-
         metrics_factory = params.metrics_factory
 
         self._should_collect_metrics = False
@@ -95,23 +84,23 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_input_tokens",
-                "Number of input tokens used for OpenAI language model",
+                "language_model_openai_chat_completions_usage_input_tokens",
+                "Number of input tokens used for OpenAI Chat Completions API language model",
                 label_names=label_names,
             )
             self._output_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_output_tokens",
-                "Number of output tokens used for OpenAI language model",
+                "language_model_openai_chat_completions_usage_output_tokens",
+                "Number of output tokens used for OpenAI Chat Completions API language model",
                 label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_total_tokens",
-                "Number of tokens used for OpenAI language model",
+                "language_model_openai_chat_completions_usage_total_tokens",
+                "Number of tokens used for OpenAI Chat Completions language model",
                 label_names=label_names,
             )
             self._latency_summary = metrics_factory.get_summary(
-                "language_model_openai_latency_seconds",
-                "Latency in seconds for OpenAI language model requests",
+                "language_model_openai_chat_completions_latency_seconds",
+                "Latency in seconds for OpenAI Chat Completions language model requests",
                 label_names=label_names,
             )
 
@@ -135,6 +124,13 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
 
         start_time = time.monotonic()
 
+        logger.debug(
+            "[call uuid: %s] "
+            "Attempting to generate parsed response using %s OpenAI Chat Completions API language model",
+            generate_response_call_uuid,
+            self._model,
+        )
+
         try:
             response = await self._client.with_options(
                 max_retries=max_attempts,
@@ -147,12 +143,17 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             error_message = (
                 f"[call uuid: {generate_response_call_uuid}] "
                 "Giving up generating response "
-                f"due to non-retryable {type(e).__name__}"
+                f"due to {type(e).__name__}"
             )
             logger.exception(error_message)
             raise ExternalServiceAPIError(error_message) from e
 
         end_time = time.monotonic()
+        logger.debug(
+            "[call uuid: %s] Parsed response generated in %.3f seconds",
+            generate_response_call_uuid,
+            end_time - start_time,
+        )
 
         self._collect_metrics(
             response,
@@ -164,7 +165,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             response.choices[0].message.parsed
         )
 
-    async def generate_response(  # noqa: C901
+    async def generate_response(
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
@@ -183,61 +184,40 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         generate_response_call_uuid = uuid4()
 
         start_time = time.monotonic()
-        sleep_seconds = 1
-        for attempt in range(1, max_attempts + 1):
-            try:
-                args: dict = {
-                    "model": self._model,
-                    "messages": input_prompts,
-                }
-                if tools:
-                    args["tools"] = tools
-                    args["tool_choice"] = (
-                        tool_choice if tool_choice is not None else "auto"
-                    )
-                response = await self._client.chat.completions.create(**args)  # type: ignore
-                break
-            except (
-                openai.RateLimitError,
-                openai.APITimeoutError,
-                openai.APIConnectionError,
-            ) as e:
-                # Exception may be retried.
-                if attempt >= max_attempts:
-                    error_message = (
-                        f"[call uuid: {generate_response_call_uuid}] "
-                        "Giving up generating response "
-                        f"after failed attempt {attempt} "
-                        f"due to retryable {type(e).__name__}: "
-                        f"max attempts {max_attempts} reached"
-                    )
-                    logger.exception(error_message)
-                    raise ExternalServiceAPIError(error_message) from e
 
-                logger.info(
-                    "[call uuid: %s] "
-                    "Retrying generating response in %d seconds "
-                    "after failed attempt %d due to retryable %s...",
-                    generate_response_call_uuid,
-                    sleep_seconds,
-                    attempt,
-                    type(e).__name__,
-                )
-                await asyncio.sleep(sleep_seconds)
-                sleep_seconds *= 2
-                sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
-                continue
-            except openai.OpenAIError as e:
-                error_message = (
-                    f"[call uuid: {generate_response_call_uuid}] "
-                    "Giving up generating response "
-                    f"after failed attempt {attempt} "
-                    f"due to non-retryable {type(e).__name__}"
-                )
-                logger.exception(error_message)
-                raise ExternalServiceAPIError(error_message) from e
+        logger.debug(
+            "[call uuid: %s] "
+            "Attempting to generate response using %s OpenAI Chat Completions API language model",
+            generate_response_call_uuid,
+            self._model,
+        )
+
+        try:
+            args: dict = {
+                "model": self._model,
+                "messages": input_prompts,
+            }
+            if tools:
+                args["tools"] = tools
+                args["tool_choice"] = tool_choice if tool_choice is not None else "auto"
+            response = await self._client.with_options(
+                max_retries=max_attempts - 1,
+            ).chat.completions.create(**args)
+        except openai.OpenAIError as e:
+            error_message = (
+                f"[call uuid: {generate_response_call_uuid}] "
+                "Giving up generating response "
+                f"due to {type(e).__name__}"
+            )
+            logger.exception(error_message)
+            raise ExternalServiceAPIError(error_message) from e
 
         end_time = time.monotonic()
+        logger.debug(
+            "[call uuid: %s] Response generated in %.3f seconds",
+            generate_response_call_uuid,
+            end_time - start_time,
+        )
 
         self._collect_metrics(
             response,
