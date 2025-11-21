@@ -341,15 +341,21 @@ class ShortTermMemory:
                 matched = True
                 if filters is not None:
                     for key, value in filters.items():
-                        if key == "producer_id" and e.producer_id != value:
-                            matched = False
-                            break
-                        if key == "producer_role" and e.producer_role != value:
-                            matched = False
-                            break
-                        if key == "produced_for_id" and e.produced_for_id != value:
-                            matched = False
-                            break
+                        if key == "producer_id":
+                            if e.producer_id != value:
+                                matched = False
+                                break
+                            continue
+                        if key == "producer_role":
+                            if e.producer_role != value:
+                                matched = False
+                                break
+                            continue
+                        if key == "produced_for_id":
+                            if e.produced_for_id != value:
+                                matched = False
+                                break
+                            continue
                         if key.startswith(("m.", "metadata.")):
                             if e.filterable_metadata is None:
                                 matched = False
