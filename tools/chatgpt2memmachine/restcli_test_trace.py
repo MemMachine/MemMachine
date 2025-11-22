@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Test script to demonstrate the API tracing functionality
-"""
+"""Test script to demonstrate the API tracing functionality"""
 
 from restcli import MemMachineRestClient
 

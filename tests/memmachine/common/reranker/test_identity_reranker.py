@@ -19,7 +19,7 @@ def query(request):
         ["Apples are fruits.", "Tomatoes are red.", ""],
         [""],
         [],
-    ]
+    ],
 )
 def candidates(request):
     return request.param

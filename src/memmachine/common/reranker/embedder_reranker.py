@@ -1,48 +1,34 @@
-"""
-Embedder-based reranker implementation.
-"""
+"""Embedder-based reranker implementation."""
 
 import numpy as np
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.embedder import Embedder, SimilarityMetric
+from memmachine.common.data_types import SimilarityMetric
+from memmachine.common.embedder import Embedder
 
 from .reranker import Reranker
 
 
 class EmbedderRerankerParams(BaseModel):
-    """
-    Parameters for EmbedderReranker.
-
-    Attributes:
-        embedder (Embedder):
-            Embedder instance.
-    """
+    """Parameters for EmbedderReranker."""
 
     embedder: InstanceOf[Embedder] = Field(
-        ..., description="An instance of an Embedder to use for generating embeddings"
+        ...,
+        description="An instance of an Embedder to use for generating embeddings",
     )
 
 
 class EmbedderReranker(Reranker):
-    """
-    Reranker that uses an embedder
-    to score relevance of candidates to a query.
-    """
+    """Reranker that uses an embedder to score candidate relevance."""
 
-    def __init__(self, params: EmbedderRerankerParams):
-        """
-        Initialize an EmbedderReranker with the provided configuration.
-
-        Args:
-            params (EmbedderRerankerParams):
-                Parameters for the EmbedderReranker.
-        """
+    def __init__(self, params: EmbedderRerankerParams) -> None:
+        """Initialize an EmbedderReranker with the provided configuration."""
         super().__init__()
 
         self._embedder = params.embedder
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
+        """Score candidates for a query using embedder similarity."""
         if len(candidates) == 0:
             return []
 
@@ -52,7 +38,8 @@ class EmbedderReranker(Reranker):
         match self._embedder.similarity_metric:
             case SimilarityMetric.COSINE:
                 magnitude_products = np.linalg.norm(
-                    candidate_embeddings, axis=-1
+                    candidate_embeddings,
+                    axis=-1,
                 ) * np.linalg.norm(query_embedding)
                 magnitude_products[magnitude_products == 0] = float("inf")
 
@@ -63,16 +50,19 @@ class EmbedderReranker(Reranker):
                 scores = np.dot(candidate_embeddings, query_embedding)
             case SimilarityMetric.EUCLIDEAN:
                 scores = -np.linalg.norm(
-                    candidate_embeddings - query_embedding, axis=-1
+                    candidate_embeddings - query_embedding,
+                    axis=-1,
                 )
             case SimilarityMetric.MANHATTAN:
                 scores = -np.sum(
-                    np.abs(candidate_embeddings - query_embedding), axis=-1
+                    np.abs(candidate_embeddings - query_embedding),
+                    axis=-1,
                 )
             case _:
                 # Default to cosine similarity.
                 magnitude_products = np.linalg.norm(
-                    candidate_embeddings, axis=-1
+                    candidate_embeddings,
+                    axis=-1,
                 ) * np.linalg.norm(query_embedding)
                 magnitude_products[magnitude_products == 0] = float("inf")
 

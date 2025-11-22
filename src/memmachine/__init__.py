@@ -1,12 +1,18 @@
-# Export REST client classes for convenient import
+"""Public package exports and utilities for MemMachine."""
+
+from memmachine.main.memmachine import MemMachine
 from memmachine.rest_client import MemMachineClient, Memory
 
 
-def setup_nltk():
-    """Checks for and downloads required NLTK data packages."""
+def setup_nltk() -> None:
+    """Check for and download required NLTK data packages."""
+    import logging
+
     import nltk
 
-    print("Checking for required NLTK data...")
+    logger = logging.getLogger(__name__)
+
+    logger.info("Checking for required NLTK data...")
     packages = [
         ("tokenizers/punkt", "punkt"),
         ("tokenizers/punkt_tab", "punkt_tab"),
@@ -15,11 +21,11 @@ def setup_nltk():
     for path, pkg_id in packages:
         try:
             nltk.data.find(path)
-            print(f"✅ - NLTK package '{pkg_id}' is already installed.")
+            logger.info("NLTK package '%s' is already installed.", pkg_id)
         except LookupError:
-            print(f"⚠️ - NLTK package '{pkg_id}' not found. Downloading...")
+            logger.warning("NLTK package '%s' not found. Downloading...", pkg_id)
             nltk.download(pkg_id)
-    print("\nNLTK data setup is complete. ✨")
+    logger.info("NLTK data setup is complete.")
 
 
-__all__ = ["setup_nltk", "MemMachineClient", "Memory"]
+__all__ = ["MemMachine", "MemMachineClient", "Memory", "setup_nltk"]

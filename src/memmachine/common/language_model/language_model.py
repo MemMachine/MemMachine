@@ -1,15 +1,52 @@
-"""
-Abstract base class for a language model.
-"""
+"""Abstract base class for a language model."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 
 class LanguageModel(ABC):
-    """
-    Abstract base class for a language model.
-    """
+    """Abstract base class for a language model."""
+
+    @abstractmethod
+    async def generate_parsed_response(
+        self,
+        output_format: type[T],
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        max_attempts: int = 1,
+    ) -> T | None:
+        """
+        Generate a response with structured output parsing.
+
+        Args:
+            system_prompt (str | None, optional):
+                The system prompt to guide the model's behavior
+                (default: None).
+            user_prompt (str | None, optional):
+                The user prompt containing the main input
+                (default: None).
+            max_attempts (int, optional):
+                The maximum number of attempts to make before giving up
+                (default: 1).
+            output_format (type[T]):
+                The expected output format or schema for parsing the response.
+                Implementation-specific (e.g., Pydantic model, JSON schema)
+                (default: None).
+
+        Returns:
+            Any:
+                The parsed response conforming to the specified output_format.
+
+        Raises:
+            ExternalServiceAPIError:
+                Errors from the underlying language model API.
+            ValueError:
+                Invalid input or max_attempts.
+
+        """
+        raise NotImplementedError
 
     @abstractmethod
     async def generate_response(
@@ -54,5 +91,6 @@ class LanguageModel(ABC):
                 Errors from the underlying embedding API.
             ValueError:
                 Invalid input or max_attempts.
+
         """
         raise NotImplementedError

@@ -9,6 +9,8 @@ from tool import MemMachineTools, create_add_memory_tool, create_search_memory_t
 # ============================================================================
 # Configuration values can be set via environment variables or use defaults
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
+LANGGRAPH_ORG_ID = os.getenv("LANGGRAPH_ORG_ID", "langgraph_org")
+LANGGRAPH_PROJECT_ID = os.getenv("LANGGRAPH_PROJECT_ID", "langgraph_project")
 LANGGRAPH_GROUP_ID = os.getenv("LANGGRAPH_GROUP_ID", "langgraph_demo")
 LANGGRAPH_AGENT_ID = os.getenv("LANGGRAPH_AGENT_ID", "demo_agent")
 LANGGRAPH_USER_ID = os.getenv("LANGGRAPH_USER_ID", "demo_user")
@@ -25,9 +27,8 @@ class AgentState(TypedDict):
     memory_tool_results: Annotated[list, "Results from memory tool calls"]
 
 
-def simple_memory_workflow_demo():
-    """
-    Simple demo showing basic memory operations without LangGraph dependency.
+def simple_memory_workflow_demo() -> None:
+    """Simple demo showing basic memory operations without LangGraph dependency.
 
     This demonstrates the MemMachine tools functionality that can be integrated
     into LangGraph workflows.
@@ -40,6 +41,8 @@ def simple_memory_workflow_demo():
     print("\n1. Initializing MemMachine tools...")
     print("   Configuration:")
     print(f"     - Backend URL: {MEMORY_BACKEND_URL}")
+    print(f"     - Org ID: {LANGGRAPH_ORG_ID}")
+    print(f"     - Project ID: {LANGGRAPH_PROJECT_ID}")
     print(f"     - Group ID: {LANGGRAPH_GROUP_ID}")
     print(f"     - Agent ID: {LANGGRAPH_AGENT_ID}")
     print(f"     - User ID: {LANGGRAPH_USER_ID}")
@@ -47,20 +50,16 @@ def simple_memory_workflow_demo():
 
     tools = MemMachineTools(
         base_url=MEMORY_BACKEND_URL,
+        org_id=LANGGRAPH_ORG_ID,
+        project_id=LANGGRAPH_PROJECT_ID,
         group_id=LANGGRAPH_GROUP_ID,
         agent_id=LANGGRAPH_AGENT_ID,
         user_id=LANGGRAPH_USER_ID,
         session_id=LANGGRAPH_SESSION_ID,
     )
 
-    # Check if server is available
-    try:
-        health = tools.client.health_check()
-        print(f"✅ MemMachine server is healthy: {health.get('status', 'ok')}")
-    except Exception as e:
-        print(f"❌ MemMachine server not available: {e}")
-        print(f"   Please start MemMachine server on {MEMORY_BACKEND_URL}")
-        return
+    # Server connection will be checked automatically on first use
+    print(f"✅ MemMachine tools initialized, server: {MEMORY_BACKEND_URL}")
 
     # Create tool functions
     add_memory = create_add_memory_tool(tools)
@@ -134,7 +133,7 @@ def simple_memory_workflow_demo():
     tools.close()
 
 
-def main():
+def main() -> None:
     """Main demo function."""
     try:
         # Run simple demo

@@ -1,7 +1,9 @@
+"""Metrics factory interfaces and implementations."""
+
 from .metrics_factory import MetricsFactory
-from .metrics_factory_builder import MetricsFactoryBuilder
+from .prometheus_metrics_factory import PrometheusMetricsFactory
 
 __all__ = [
     "MetricsFactory",
-    "MetricsFactoryBuilder",
+    "PrometheusMetricsFactory",
 ]

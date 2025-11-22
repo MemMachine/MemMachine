@@ -1,10 +1,16 @@
 """
-CRM-specific prompts for Intelligent Memory System
-Handles company profiles with direct feature/value pairs (no tags)
+CRM-specific prompts for Intelligent Memory System.
+
+Handles company profiles with direct feature/value pairs (no tags).
 """
 
 import zoneinfo
 from datetime import datetime
+
+from memmachine.semantic_memory.semantic_model import (
+    RawSemanticPrompt,
+    SemanticCategory,
+)
 
 # --- Canonical enumerations ---
 SALES_STAGE_ENUM = [
@@ -66,11 +72,11 @@ def _features_inline_list() -> str:
     return ", ".join(CRM_FEATURES)
 
 
-def _enum_list(enum_values) -> str:
+def _enum_list(enum_values: list[str]) -> str:
     return ", ".join(f'"{v}"' for v in enum_values)
 
 
-def _current_date_dow(tz="America/Los_Angeles") -> str:
+def _current_date_dow(tz: str = "America/Los_Angeles") -> str:
     dt = datetime.now(zoneinfo.ZoneInfo(tz))
     return f"{dt.strftime('%Y-%m-%d')}[{dt.strftime('%a')}]"
 
@@ -554,3 +560,14 @@ The final output schema is:
 
 
 CONSOLIDATION_PROMPT = _build_consolidation_prompt()
+
+
+CrmSemanticCategory = SemanticCategory(
+    name="crm_prompt",
+    prompt=RawSemanticPrompt(
+        update_prompt=UPDATE_PROMPT,
+        consolidation_prompt=CONSOLIDATION_PROMPT,
+    ),
+)
+
+SEMANTIC_TYPE = CrmSemanticCategory

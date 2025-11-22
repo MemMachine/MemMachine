@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class WritingAssistantQueryConstructor(BaseQueryConstructor):
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompt_template = """
 You are a writing assistant that helps users write content in their writing style.
 
@@ -94,47 +94,46 @@ Use the "/submit" command followed by the content type and your writing sample:
                 "writing_sample": parts[0],
                 "original_query": query,
             }
-        else:
-            # Has content type and writing sample
-            content_type = parts[0].lower()
-            writing_sample = parts[1]
+        # Has content type and writing sample
+        content_type = parts[0].lower()
+        writing_sample = parts[1]
 
-            # Common content types
-            valid_types = [
-                "email",
-                "blog",
-                "linkedin",
-                "twitter",
-                "facebook",
-                "instagram",
-                "report",
-                "proposal",
-                "memo",
-                "letter",
-                "essay",
-                "article",
-                "creative",
-                "technical",
-                "formal",
-                "casual",
-                "general",
-            ]
+        # Common content types
+        valid_types = [
+            "email",
+            "blog",
+            "linkedin",
+            "twitter",
+            "facebook",
+            "instagram",
+            "report",
+            "proposal",
+            "memo",
+            "letter",
+            "essay",
+            "article",
+            "creative",
+            "technical",
+            "formal",
+            "casual",
+            "general",
+        ]
 
-            if content_type not in valid_types:
-                # If first word is not a recognized content type, treat it as general
-                return {
-                    "is_submission": True,
-                    "content_type": "general",
-                    "writing_sample": remaining,
-                    "original_query": query,
-                }
-
+        if content_type not in valid_types:
+            # If first word is not a recognized content type, treat it as general
             return {
                 "is_submission": True,
-                "content_type": content_type,
-                "writing_sample": writing_sample,
+                "content_type": "general",
+                "writing_sample": remaining,
                 "original_query": query,
             }
+
+        return {
+            "is_submission": True,
+            "content_type": content_type,
+            "writing_sample": writing_sample,
+            "original_query": query,
+        }
 
     def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a writing assistant query using the prompt template"""
@@ -147,26 +146,28 @@ Use the "/submit" command followed by the content type and your writing sample:
         if submit_info["is_submission"]:
             # For submissions, create a specialized prompt
             return self.create_submission_query(profile, context, submit_info)
-        else:
-            # For regular queries, use the standard template
-            profile_str = profile or ""
-            context_block = f"{context}\n\n" if context else ""
-            current_date = datetime.now().strftime("%Y-%m-%d")
+        # For regular queries, use the standard template
+        profile_str = profile or ""
+        context_block = f"{context}\n\n" if context else ""
+        current_date = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
-            try:
-                return self.prompt_template.format(
-                    current_date=current_date,
-                    profile=profile_str,
-                    context_block=context_block,
-                    query=query,
-                )
-            except Exception as e:
-                logger.error(f"Error creating writing assistant query: {e}")
-                # Fallback to simple format
-                return f"{profile_str}\n\n{context_block}{query}"
+        try:
+            return self.prompt_template.format(
+                current_date=current_date,
+                profile=profile_str,
+                context_block=context_block,
+                query=query,
+            )
+        except Exception as e:
+            logger.exception("Error creating writing assistant query: %s", e)
+            # Fallback to simple format
+            return f"{profile_str}\n\n{context_block}{query}"
 
     def create_submission_query(
-        self, profile: str | None, context: str | None, submit_info: dict
+        self,
+        profile: str | None,
+        context: str | None,
+        submit_info: dict,
     ) -> str:
         """Create a specialized query for writing sample submissions"""
         content_type = submit_info["content_type"]

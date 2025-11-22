@@ -23,8 +23,8 @@ def reranker():
             rerankers=[
                 FakeReranker([1.0, 2.0, 4.0]),
                 FakeReranker([2.0, 1.0, 4.0]),
-            ]
-        )
+            ],
+        ),
     )
 
 
@@ -39,7 +39,7 @@ def query(request):
         ["Apples are fruits.", "Tomatoes are red.", ""],
         [""],
         [],
-    ]
+    ],
 )
 def candidates(request):
     return request.param
@@ -52,8 +52,8 @@ async def test_shape(query, candidates):
             rerankers=[
                 FakeReranker([-1.0] * len(candidates)),
                 FakeReranker([1.0] * len(candidates)),
-            ]
-        )
+            ],
+        ),
     )
 
     scores = await reranker.score(query, candidates)

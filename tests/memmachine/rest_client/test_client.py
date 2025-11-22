@@ -1,4 +1,4 @@
-"""Unit tests for MemMachineClient class."""
+"""Unit tests for MemMachineClient class (v2 API)."""
 
 from unittest.mock import Mock, patch
 
@@ -7,6 +7,7 @@ import requests
 
 from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.memory import Memory
+from memmachine.rest_client.project import Project
 
 
 class TestMemMachineClient:
@@ -25,7 +26,10 @@ class TestMemMachineClient:
     def test_init_custom_values(self):
         """Test client initialization with custom values."""
         client = MemMachineClient(
-            api_key="test_key", base_url="http://test:9000", timeout=60, max_retries=5
+            api_key="test_key",
+            base_url="http://test:9000",
+            timeout=60,
+            max_retries=5,
         )
 
         assert client.api_key == "test_key"
@@ -45,34 +49,127 @@ class TestMemMachineClient:
         with pytest.raises(ValueError, match="base_url is required"):
             MemMachineClient()
 
-    def test_memory_creation(self):
-        """Test creating a Memory instance."""
+    def test_project_memory_creation(self):
+        """Test creating a Memory instance from a Project."""
         client = MemMachineClient(base_url="http://localhost:8080")
-        memory = client.memory(
-            group_id="test_group",
-            agent_id="test_agent",
-            user_id="test_user",
-            session_id="test_session",
+        # Mock project creation
+        with patch.object(client, "_session") as mock_session:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = Mock()
+            mock_session.post.return_value = mock_response
+
+            project = client.create_project(
+                org_id="test_org",
+                project_id="test_project",
+            )
+
+            memory = project.memory(
+                group_id="test_group",
+                agent_id="test_agent",
+                user_id="test_user",
+                session_id="test_session",
+            )
+
+            assert isinstance(memory, Memory)
+            assert memory.client == client
+            assert memory.org_id == "test_org"
+            assert memory.project_id == "test_project"
+            assert memory.group_id == "test_group"
+            assert memory.agent_id == ["test_agent"]
+            assert memory.user_id == ["test_user"]
+            assert memory.session_id == "test_session"
+
+    def test_project_memory_creation_with_lists(self):
+        """Test creating Memory with list IDs from Project."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        # Mock project creation
+        with patch.object(client, "_session") as mock_session:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = Mock()
+            mock_session.post.return_value = mock_response
+
+            project = client.create_project(
+                org_id="test_org",
+                project_id="test_project",
+            )
+
+            memory = project.memory(
+                group_id="test_group",
+                agent_id=["agent1", "agent2"],
+                user_id=["user1", "user2"],
+            )
+
+            assert memory.org_id == "test_org"
+            assert memory.project_id == "test_project"
+            assert memory.agent_id == ["agent1", "agent2"]
+            assert memory.user_id == ["user1", "user2"]
+
+    def test_project_memory_creation_without_optional_params(self):
+        """Test creating Memory with only required params from Project."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        # Mock project creation
+        with patch.object(client, "_session") as mock_session:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = Mock()
+            mock_session.post.return_value = mock_response
+
+            project = client.create_project(
+                org_id="test_org",
+                project_id="test_project",
+            )
+
+            memory = project.memory()
+
+            assert memory.org_id == "test_org"
+            assert memory.project_id == "test_project"
+            assert memory.group_id is None
+            assert memory.agent_id is None
+            assert memory.user_id is None
+
+    def test_create_project_success(self):
+        """Test successful project creation."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        client._session.post = Mock(return_value=mock_response)
+
+        result = client.create_project(
+            org_id="test_org",
+            project_id="test_project",
+            description="Test project",
+            embedder="default",
+            reranker="default",
         )
 
-        assert isinstance(memory, Memory)
-        assert memory.client == client
-        assert memory.group_id == "test_group"
-        assert memory.agent_id == ["test_agent"]
-        assert memory.user_id == ["test_user"]
-        assert memory.session_id == "test_session"
+        assert isinstance(result, Project)
+        assert result.org_id == "test_org"
+        assert result.project_id == "test_project"
+        assert result.description == "Test project"
+        client._session.post.assert_called_once()
+        call_args = client._session.post.call_args
+        assert "/api/v2/projects" in call_args[0][0]
+        assert call_args[1]["json"]["org_id"] == "test_org"
+        assert call_args[1]["json"]["project_id"] == "test_project"
+        assert call_args[1]["json"]["description"] == "Test project"
+        assert call_args[1]["json"]["config"]["embedder"] == "default"
+        assert call_args[1]["json"]["config"]["reranker"] == "default"
 
-    def test_memory_creation_with_lists(self):
-        """Test creating Memory with list IDs."""
+    def test_create_project_failure(self):
+        """Test project creation failure."""
         client = MemMachineClient(base_url="http://localhost:8080")
-        memory = client.memory(
-            group_id="test_group",
-            agent_id=["agent1", "agent2"],
-            user_id=["user1", "user2"],
+        client._session.post = Mock(
+            side_effect=requests.RequestException("Connection failed")
         )
 
-        assert memory.agent_id == ["agent1", "agent2"]
-        assert memory.user_id == ["user1", "user2"]
+        with pytest.raises(requests.RequestException):
+            client.create_project(
+                org_id="test_org",
+                project_id="test_project",
+            )
 
     @patch("requests.Session.get")
     def test_health_check_success(self, mock_get):
@@ -109,14 +206,15 @@ class TestMemMachineClient:
         client.close()
 
         mock_session.close.assert_called_once()
+        assert client._closed is True
 
     def test_context_manager(self):
         """Test using client as context manager."""
         with MemMachineClient(base_url="http://localhost:8080") as client:
             assert isinstance(client, MemMachineClient)
 
-        # After context exit, session should be closed
-        # Note: We can't easily verify this without more complex mocking
+        # After context exit, client should be closed
+        assert client._closed is True
 
     def test_repr(self):
         """Test string representation."""
@@ -140,3 +238,16 @@ class TestMemMachineClient:
         """Test authorization header is not set when API key is not provided."""
         client = MemMachineClient(base_url="http://localhost:8080")
         assert "Authorization" not in client._session.headers
+
+    def test_request_method(self):
+        """Test the request method delegates to session.request."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        client._session.request = Mock(return_value=mock_response)
+
+        result = client.request("GET", "http://example.com", json={"key": "value"})
+
+        assert result == mock_response
+        client._session.request.assert_called_once_with(
+            "GET", "http://example.com", timeout=30, json={"key": "value"}
+        )

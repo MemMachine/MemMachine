@@ -1,17 +1,20 @@
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import requests
 from fastapi import FastAPI
 from query_constructor import WritingAssistantQueryConstructor
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
 WRITING_ASSISTANT_PORT = int(os.getenv("WRITING_ASSISTANT_PORT", "8000"))
 
 app = FastAPI(
-    title="Writing Assistant Server", description="Writing Assistant middleware"
+    title="Writing Assistant Server",
+    description="Writing Assistant middleware",
 )
 
 writing_assistant_constructor = WritingAssistantQueryConstructor()
@@ -39,7 +42,7 @@ async def store_data(user_id: str, query: str):
             "episode_type": "message",
             "metadata": {
                 "speaker": user_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "type": "message",
                 "is_submission": submit_info["is_submission"],
                 "content_type": (
@@ -56,7 +59,9 @@ async def store_data(user_id: str, query: str):
         }
 
         response = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories", json=episode_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories",
+            json=episode_data,
+            timeout=1000,
         )
         response.raise_for_status()
 
@@ -66,18 +71,17 @@ async def store_data(user_id: str, query: str):
                 "data": response.json(),
                 "message": "Say this: 'Thank you for submitting your writing sample. Your writing sample has been analyzed and stored.'",
             }
-        else:
-            return {
-                "status": "success",
-                "data": response.json(),
-                "message": "Message stored successfully",
-            }
+        return {
+            "status": "success",
+            "data": response.json(),
+            "message": "Message stored successfully",
+        }
 
     except Exception as e:
-        logging.exception("Error occurred in /memory store_data")
+        logger.exception("Error occurred in /memory store_data")
         return {
             "status": "error",
-            "message": f"Internal error in /memory store_data: {str(e)}",
+            "message": f"Internal error in /memory store_data: {e!s}",
         }
 
 
@@ -99,27 +103,34 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "filter": {"producer_id": user_id},
         }
 
-        logging.debug(
-            f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search"
+        logger.debug(
+            "Sending POST request to %s/v1/memories/search",
+            MEMORY_BACKEND_URL,
         )
-        logging.debug(f"Search data: {search_data}")
+        logger.debug("Search data: %s", search_data)
 
         response = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories/search",
+            json=search_data,
+            timeout=1000,
         )
 
-        logging.debug(f"Response status: {response.status_code}")
-        logging.debug(f"Response headers: {dict(response.headers)}")
+        logger.debug("Response status: %s", response.status_code)
+        logger.debug("Response headers: %s", dict(response.headers))
 
         if response.status_code != 200:
-            logging.error(f"Backend returned {response.status_code}: {response.text}")
+            logger.error(
+                "Backend returned %s: %s",
+                response.status_code,
+                response.text,
+            )
             return {
                 "status": "error",
                 "message": "Failed to retrieve memory data",
             }
 
         response_data = response.json()
-        logging.debug(f"Response data: {response_data}")
+        logger.debug("Response data: %s", response_data)
 
         content = response_data.get("content", {})
         episodic_memory = content.get("episodic_memory", [])
@@ -143,7 +154,9 @@ async def get_data(query: str, user_id: str, timestamp: str):
 
         # Create formatted query using the writing assistant constructor
         formatted_query = writing_assistant_constructor.create_query(
-            profile=profile_str, context=context_str, query=query
+            profile=profile_str,
+            context=context_str,
+            query=query,
         )
 
         # Check if this is a submission request
@@ -162,10 +175,10 @@ async def get_data(query: str, user_id: str, timestamp: str):
         }
 
     except Exception as e:
-        logging.exception("Error occurred in /memory get_data")
+        logger.exception("Error occurred in /memory get_data")
         return {
             "status": "error",
-            "message": f"Internal error in /memory get_data: {str(e)}",
+            "message": f"Internal error in /memory get_data: {e!s}",
         }
 
 
@@ -191,7 +204,7 @@ async def store_and_search_data(user_id: str, query: str):
             "episode_type": "message",
             "metadata": {
                 "speaker": user_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "type": "message",
                 "is_submission": submit_info["is_submission"],
                 "content_type": (
@@ -208,12 +221,14 @@ async def store_and_search_data(user_id: str, query: str):
         }
 
         resp = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories", json=episode_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories",
+            json=episode_data,
+            timeout=1000,
         )
 
-        logging.debug(f"Store-and-search response status: {resp.status_code}")
+        logger.debug("Store-and-search response status: %s", resp.status_code)
         if resp.status_code != 200:
-            logging.error(f"Store failed with {resp.status_code}: {resp.text}")
+            logger.error("Store failed with %s: %s", resp.status_code, resp.text)
             return {
                 "status": "error",
                 "message": "Failed to store memory data",
@@ -228,13 +243,18 @@ async def store_and_search_data(user_id: str, query: str):
         }
 
         search_resp = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories/search",
+            json=search_data,
+            timeout=1000,
         )
 
-        logging.debug(f"Store-and-search response status: {search_resp.status_code}")
+        logger.debug(
+            "Store-and-search response status: %s",
+            search_resp.status_code,
+        )
         if search_resp.status_code != 200:
-            logging.error(
-                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            logger.error(
+                "Search failed with %s: %s", search_resp.status_code, search_resp.text
             )
             return {
                 "status": "error",
@@ -266,27 +286,28 @@ async def store_and_search_data(user_id: str, query: str):
 
         # Create formatted query using the writing assistant constructor
         formatted_response = writing_assistant_constructor.create_query(
-            profile=profile_str, context=context_str, query=query
+            profile=profile_str,
+            context=context_str,
+            query=query,
         )
 
         # Create response message
         if submit_info["is_submission"]:
             message = "Say this: 'Thank you for submitting your writing sample. Your writing sample has been analyzed and stored.'"
             return message
-        elif profile_memory and episodic_memory:
+        if profile_memory and episodic_memory:
             return f"Profile: {profile_memory}\n\nContext: {episodic_memory}\n\nFormatted Response:\n{formatted_response}"
-        elif profile_memory:
+        if profile_memory:
             return f"Profile: {profile_memory}\n\nFormatted Response:\n{formatted_response}"
-        elif episodic_memory:
+        if episodic_memory:
             return f"Context: {episodic_memory}\n\nFormatted Response:\n{formatted_response}"
-        else:
-            return f"Message ingested successfully. No relevant context found yet.\n\nFormatted Response:\n{formatted_response}"
+        return f"Message ingested successfully. No relevant context found yet.\n\nFormatted Response:\n{formatted_response}"
 
     except Exception as e:
-        logging.exception("Error occurred in store_and_search_data")
+        logger.exception("Error occurred in store_and_search_data")
         return {
             "status": "error",
-            "message": f"Internal error in store_and_search: {str(e)}",
+            "message": f"Internal error in store_and_search: {e!s}",
         }
 
 
@@ -324,12 +345,14 @@ async def analyze_writing_style(user_id: str, query: str):
         }
 
         search_resp = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories/search",
+            json=search_data,
+            timeout=1000,
         )
 
         if search_resp.status_code != 200:
-            logging.error(
-                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            logger.error(
+                "Search failed with %s: %s", search_resp.status_code, search_resp.text
             )
             return {
                 "status": "error",
@@ -350,7 +373,9 @@ async def analyze_writing_style(user_id: str, query: str):
 
         # Create specialized analysis prompt
         analysis_prompt = writing_assistant_constructor.create_submission_query(
-            profile=profile_str, context="", submit_info=submit_info
+            profile=profile_str,
+            context="",
+            submit_info=submit_info,
         )
 
         return {
@@ -365,10 +390,10 @@ async def analyze_writing_style(user_id: str, query: str):
         }
 
     except Exception as e:
-        logging.exception("Error occurred in analyze_writing_style")
+        logger.exception("Error occurred in analyze_writing_style")
         return {
             "status": "error",
-            "message": f"Internal error in analyze_writing_style: {str(e)}",
+            "message": f"Internal error in analyze_writing_style: {e!s}",
         }
 
 
@@ -392,7 +417,9 @@ async def get_user_writing_styles(user_id: str):
         }
 
         search_resp = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories/search",
+            json=search_data,
+            timeout=1000,
         )
 
         if search_resp.status_code != 200:
@@ -422,7 +449,7 @@ async def get_user_writing_styles(user_id: str):
         }
 
     except Exception:
-        logging.exception("Error occurred in get_user_writing_styles")
+        logger.exception("Error occurred in get_user_writing_styles")
         return {"status": "error", "message": "Internal server error"}
 
 

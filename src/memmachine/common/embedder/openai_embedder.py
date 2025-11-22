@@ -1,6 +1,4 @@
-"""
-OpenAI-based embedder implementation.
-"""
+"""OpenAI-based embedder implementation."""
 
 import asyncio
 import logging
@@ -11,39 +9,16 @@ from uuid import uuid4
 import openai
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
 
-from .data_types import SimilarityMetric
 from .embedder import Embedder
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAIEmbedderParams(BaseModel):
-    """
-    Parameters for OpenAIEmbedder.
-
-    Attributes:
-        client (openai.AsyncOpenAI):
-            AsyncOpenAI client to use for making API calls.
-        model (str):
-            Name of the OpenAI embedding model to use
-            (e.g. 'text-embedding-3-small').
-        dimensions (int):
-            Dimensionality of the embedding vectors
-            produced by the OpenAI embedding model
-        max_retry_interval_seconds (int):
-            Maximal retry interval in seconds when retrying API calls
-            (default: 120).
-        metrics_factory (MetricsFactory | None):
-            An instance of MetricsFactory
-            for collecting usage metrics
-            (default: None).
-        user_metrics_labels (dict[str, str]):
-            Labels to attach to the collected metrics
-            (default: {}).
-    """
+    """Parameters for OpenAIEmbedder."""
 
     client: InstanceOf[openai.AsyncOpenAI] = Field(
         ...,
@@ -79,19 +54,10 @@ class OpenAIEmbedderParams(BaseModel):
 
 
 class OpenAIEmbedder(Embedder):
-    """
-    Embedder that uses OpenAI's embedding models
-    to generate embeddings for inputs and queries.
-    """
+    """Embedder that uses OpenAI embedding models."""
 
-    def __init__(self, params: OpenAIEmbedderParams):
-        """
-        Initialize an OpenAIEmbedder with the provided parameters.
-
-        Args:
-            params (OpenAIEmbedderParams):
-                Parameters for the OpenAIEmbedder.
-        """
+    def __init__(self, params: OpenAIEmbedderParams) -> None:
+        """Initialize the OpenAI embedder with configuration parameters."""
         super().__init__()
 
         self._client = params.client
@@ -133,6 +99,7 @@ class OpenAIEmbedder(Embedder):
         inputs: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
+        """Embed the provided inputs with retries."""
         return await self._embed(inputs, max_attempts)
 
     async def search_embed(
@@ -140,19 +107,21 @@ class OpenAIEmbedder(Embedder):
         queries: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
+        """Embed search queries with retries."""
         return await self._embed(queries, max_attempts)
 
-    async def _embed(
+    async def _embed(  # noqa: C901
         self,
         inputs: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
+        """Shared retrying embed logic."""
         if not inputs:
             return []
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        inputs = [input.replace("\n", " ") if input else "\n" for input in inputs]
+        inputs = [item.replace("\n", " ") if item else "\n" for item in inputs]
 
         embed_call_uuid = uuid4()
 
@@ -185,32 +154,35 @@ class OpenAIEmbedder(Embedder):
                             model=self._model,
                         )
                     )
-                except openai.BadRequestError as e:
-                    if "dimension" in str(e).lower() and self._use_dimensions_parameter:
+                except openai.BadRequestError as err:
+                    if (
+                        "dimension" in str(err).lower()
+                        and self._use_dimensions_parameter
+                    ):
                         response = await self._client.embeddings.create(
                             input=inputs,
                             model=self._model,
                         )
                         self._use_dimensions_parameter = False
                         break
-                    raise e
+                    raise
                 break
             except (
                 openai.RateLimitError,
                 openai.APITimeoutError,
                 openai.APIConnectionError,
-            ) as e:
+            ) as err:
                 # Exception may be retried.
                 if attempt >= max_attempts:
                     error_message = (
                         f"[call uuid: {embed_call_uuid}] "
                         "Giving up creating embeddings "
                         f"after failed attempt {attempt} "
-                        f"due to retryable {type(e).__name__}: "
+                        f"due to retryable {type(err).__name__}: "
                         f"max attempts {max_attempts} reached"
                     )
-                    logger.error(error_message)
-                    raise ExternalServiceAPIError(error_message)
+                    logger.exception(error_message)
+                    raise ExternalServiceAPIError(error_message) from err
 
                 logger.info(
                     "[call uuid: %s] "
@@ -219,22 +191,22 @@ class OpenAIEmbedder(Embedder):
                     embed_call_uuid,
                     sleep_seconds,
                     attempt,
-                    type(e).__name__,
+                    type(err).__name__,
                 )
                 await asyncio.sleep(
-                    min(sleep_seconds, self._max_retry_interval_seconds)
+                    min(sleep_seconds, self._max_retry_interval_seconds),
                 )
                 sleep_seconds *= 2
                 continue
-            except (openai.APIError, openai.OpenAIError) as e:
+            except (openai.APIError, openai.OpenAIError) as err:
                 error_message = (
                     f"[call uuid: {embed_call_uuid}] "
                     "Giving up creating embeddings "
                     f"after failed attempt {attempt} "
-                    f"due to non-retryable {type(e).__name__}"
+                    f"due to non-retryable {type(err).__name__}"
                 )
-                logger.error(error_message)
-                raise ExternalServiceAPIError(error_message)
+                logger.exception(error_message)
+                raise ExternalServiceAPIError(error_message) from err
 
         end_time = time.monotonic()
         logger.debug(
@@ -249,7 +221,7 @@ class OpenAIEmbedder(Embedder):
                 f"Received embedding dimensionality {len(response.data[0].embedding)} "
                 f"does not match expected dimensionality {self._dimensions}"
             )
-            logger.error(error_message)
+            logger.exception(error_message)
             raise ExternalServiceAPIError(error_message)
 
         if self._collect_metrics:
@@ -270,13 +242,16 @@ class OpenAIEmbedder(Embedder):
 
     @property
     def model_id(self) -> str:
+        """Return the embedding model identifier."""
         return self._model
 
     @property
     def dimensions(self) -> int:
+        """Return the embedding dimensionality."""
         return self._dimensions
 
     @property
     def similarity_metric(self) -> SimilarityMetric:
+        """Return the similarity metric used by this embedder."""
         # https://platform.openai.com/docs/guides/embeddings
         return SimilarityMetric.COSINE

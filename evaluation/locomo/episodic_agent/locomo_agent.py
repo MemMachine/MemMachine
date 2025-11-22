@@ -66,13 +66,13 @@ set_tracing_export_api_key(os.getenv("TRACE_API_KEY"))
 set_default_openai_key(os.getenv("OPENAI_API_KEY"))
 
 memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
-    "locomo_config.yaml"
+    "locomo_config.yaml",
 )
 
 
 async def search_memories(group_id, session_id, user_ids, agent_ids, context, query):
     memory = cast(
-        EpisodicMemory,
+        "EpisodicMemory",
         await memory_manager.get_episodic_memory_instance(
             group_id=group_id,
             session_id=session_id,
@@ -86,7 +86,7 @@ async def search_memories(group_id, session_id, user_ids, agent_ids, context, qu
     def rename_property(property_key):
         if property_key == "source_timestamp":
             return "timestamp"
-        elif property_key == "producer_id":
+        if property_key == "producer_id":
             return "speaker"
         return property_key
 
@@ -120,9 +120,7 @@ async def search_memories(group_id, session_id, user_ids, agent_ids, context, qu
 
 
 async def locomo_response(group_id: int, query: str, users: list[str], model: str):
-    """
-    Answer a locomo benchmark question using an OpenAI Agents SDK agent.
-    """
+    """Answer a locomo benchmark question using an OpenAI Agents SDK agent."""
     search_result = await search_memories(
         f"group_{group_id}",
         f"group_{group_id}",
@@ -140,13 +138,16 @@ async def locomo_response(group_id: int, query: str, users: list[str], model: st
 
     class LocomoPrefetches(AgentHooks):
         async def on_start(
-            self, wrapper: RunContextWrapper[Memory], agent: Agent[Memory]
-        ):
+            self,
+            wrapper: RunContextWrapper[Memory],
+            agent: Agent[Memory],
+        ) -> None:
             wrapper.context.memory = search_result
             wrapper.context.turn += 1
 
     def executor_instructions(
-        wrapped_memory: RunContextWrapper[Memory], agent: Agent[Memory]
+        wrapped_memory: RunContextWrapper[Memory],
+        agent: Agent[Memory],
     ) -> str:
         turns = wrapped_memory.context.turn
         return f"""{LOCOMO_EXECUTOR_INSTRUCTIONS.format(turns=turns)}
@@ -207,14 +208,14 @@ def convert_for_json(obj: Any) -> Any:
     """Recursively convert objects to JSON-serializable format"""
     if isinstance(obj, BaseModel):
         return obj.model_dump()  # Pydantic v2
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {key: convert_for_json(value) for key, value in obj.items()}
-    elif isinstance(obj, (list, tuple)):
+    if isinstance(obj, (list, tuple)):
         return [convert_for_json(item) for item in obj]
-    elif hasattr(obj, "__dict__"):
+    if hasattr(obj, "__dict__"):
         # Handle regular Python objects
         return {key: convert_for_json(value) for key, value in obj.__dict__.items()}
-    elif isinstance(obj, str):
+    if isinstance(obj, str):
         try:
             return convert_for_json(json.loads(obj))
         except Exception:

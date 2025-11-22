@@ -1,4 +1,4 @@
-"""Unit tests for Memory class."""
+"""Unit tests for Memory class (v2 API)."""
 
 from unittest.mock import Mock
 
@@ -18,27 +18,62 @@ class TestMemory:
         client = Mock(spec=MemMachineClient)
         client.base_url = "http://localhost:8080"
         client.timeout = 30
-        client._session = Mock()
+        client.request = Mock()
         return client
 
     def test_init_with_required_params(self, mock_client):
-        """Test Memory initialization with required parameters."""
+        """Test Memory initialization with required parameters (org_id and project_id)."""
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             group_id="test_group",
             agent_id="test_agent",
             user_id="test_user",
         )
 
         assert memory.client == mock_client
+        assert memory.org_id == "test_org"
+        assert memory.project_id == "test_project"
         assert memory.group_id == "test_group"
         assert memory.agent_id == ["test_agent"]
         assert memory.user_id == ["test_user"]
-        assert memory.session_id is not None  # Auto-generated
+        assert memory.session_id is None  # Not auto-generated in v2
+
+    def test_init_with_only_required_params(self, mock_client):
+        """Test Memory initialization with only org_id and project_id."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        assert memory.org_id == "test_org"
+        assert memory.project_id == "test_project"
+        assert memory.group_id is None
+        assert memory.agent_id is None
+        assert memory.user_id is None
+        assert memory.session_id is None
+
+    def test_init_missing_org_id_raises_error(self, mock_client):
+        """Test that missing org_id raises TypeError."""
+        with pytest.raises(TypeError, match=r"missing.*required.*argument.*org_id"):
+            Memory(client=mock_client, project_id="test_project")
+
+    def test_init_missing_project_id_raises_error(self, mock_client):
+        """Test that missing project_id raises TypeError."""
+        with pytest.raises(TypeError, match=r"missing.*required.*argument.*project_id"):
+            Memory(client=mock_client, org_id="test_org")
 
     def test_init_with_string_ids(self, mock_client):
         """Test Memory initialization with string IDs."""
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
         assert memory.agent_id == ["agent1"]
         assert memory.user_id == ["user1"]
@@ -47,6 +82,8 @@ class TestMemory:
         """Test Memory initialization with list IDs."""
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             agent_id=["agent1", "agent2"],
             user_id=["user1", "user2"],
         )
@@ -58,6 +95,8 @@ class TestMemory:
         """Test Memory initialization with custom session_id."""
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             agent_id="agent1",
             user_id="user1",
             session_id="custom_session",
@@ -65,36 +104,17 @@ class TestMemory:
 
         assert memory.session_id == "custom_session"
 
-    def test_init_missing_user_id_raises_error(self, mock_client):
-        """Test that missing user_id raises ValueError."""
-        with pytest.raises(ValueError, match="Both user_id and agent_id are required"):
-            Memory(client=mock_client, agent_id="agent1")
-
-    def test_init_missing_agent_id_raises_error(self, mock_client):
-        """Test that missing agent_id raises ValueError."""
-        with pytest.raises(ValueError, match="Both user_id and agent_id are required"):
-            Memory(client=mock_client, user_id="user1")
-
-    def test_init_empty_user_id_raises_error(self, mock_client):
-        """Test that empty user_id raises ValueError."""
-        with pytest.raises(ValueError, match="cannot be empty"):
-            Memory(client=mock_client, agent_id="agent1", user_id=[])
-
-    def test_init_defaults_group_id(self, mock_client):
-        """Test that group_id defaults to first user_id if not provided."""
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
-
-        assert memory.group_id == "user1"
-
     def test_add_success(self, mock_client):
-        """Test successful memory addition."""
+        """Test successful memory addition with v2 API format."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             group_id="test_group",
             agent_id="test_agent",
             user_id="test_user",
@@ -103,146 +123,130 @@ class TestMemory:
         result = memory.add("Test content")
 
         assert result is True
-        mock_client._session.post.assert_called_once()
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["episode_content"] == "Test content"
-        assert call_kwargs["json"]["producer"] == "test_user"
-        assert call_kwargs["json"]["produced_for"] == "test_agent"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["org_id"] == "test_org"
+        assert json_data["project_id"] == "test_project"
+        assert len(json_data["messages"]) == 1
+        assert json_data["messages"][0]["content"] == "Test content"
+        assert json_data["messages"][0]["role"] == "user"
+        assert json_data["messages"][0]["producer"] == "test_user"
+        assert "timestamp" in json_data["messages"][0]
+        assert "metadata" in json_data["messages"][0]
 
     def test_add_with_metadata(self, mock_client):
         """Test adding memory with metadata."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
         metadata = {"type": "preference", "category": "food"}
         memory.add("I like pizza", metadata=metadata)
 
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["metadata"] == metadata
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        message_metadata = json_data["messages"][0]["metadata"]
+        assert message_metadata["type"] == "preference"
+        assert message_metadata["category"] == "food"
+        # Context fields should also be in metadata
+        assert message_metadata["user_id"] == "user1"
+        assert message_metadata["agent_id"] == "agent1"
+
+    def test_add_with_role(self, mock_client):
+        """Test adding memory with different roles."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+        )
+
+        # Test user role (default)
+        memory.add("User message", role="user")
+        call_args = mock_client.request.call_args
+        assert call_args[1]["json"]["messages"][0]["role"] == "user"
+
+        # Test assistant role
+        memory.add("Assistant message", role="assistant")
+        call_args = mock_client.request.call_args
+        assert call_args[1]["json"]["messages"][0]["role"] == "assistant"
+
+        # Test system role
+        memory.add("System message", role="system")
+        call_args = mock_client.request.call_args
+        assert call_args[1]["json"]["messages"][0]["role"] == "system"
 
     def test_add_with_custom_producer(self, mock_client):
-        """Test adding memory with custom producer and produced_for that are in the context."""
+        """Test adding memory with custom producer and produced_for."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             agent_id=["agent1", "agent2"],
             user_id=["user1", "user2"],
         )
 
-        # Use valid producer and produced_for from the context
         memory.add("Content", producer="user2", produced_for="agent2")
 
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["producer"] == "user2"
-        assert call_kwargs["json"]["produced_for"] == "agent2"
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["messages"][0]["producer"] == "user2"
+        # produced_for should be a direct field in the message
+        assert json_data["messages"][0]["produced_for"] == "agent2"
 
-    def test_add_with_invalid_producer_raises_error(self, mock_client):
-        """Test that invalid producer raises ValueError."""
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
-
-        with pytest.raises(ValueError, match="producer.*must be in"):
-            memory.add("Content", producer="invalid_user")
-
-    def test_add_with_invalid_produced_for_raises_error(self, mock_client):
-        """Test that invalid produced_for raises ValueError."""
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
-
-        with pytest.raises(ValueError, match="produced_for.*must be in"):
-            memory.add("Content", produced_for="invalid_agent")
-
-    def test_add_with_valid_producer_from_agent_list(self, mock_client):
-        """Test that producer can be from agent_id list."""
+    def test_add_with_episode_type(self, mock_client):
+        """Test adding memory with episode_type."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
-
-        memory = Memory(
-            client=mock_client, agent_id=["agent1", "agent2"], user_id="user1"
-        )
-
-        # Producer can be an agent
-        memory.add("Content", producer="agent1")
-
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["producer"] == "agent1"
-
-    def test_add_with_valid_produced_for_from_user_list(self, mock_client):
-        """Test that produced_for can be from user_id list."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
-
-        memory = Memory(
-            client=mock_client, agent_id="agent1", user_id=["user1", "user2"]
-        )
-
-        # produced_for can be a user
-        memory.add("Content", produced_for="user2")
-
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["produced_for"] == "user2"
-
-    def test_add_sets_headers(self, mock_client):
-        """Test that add sets correct headers."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
-            group_id="test_group",
-            agent_id="agent1",
+            org_id="test_org",
+            project_id="test_project",
             user_id="user1",
-            session_id="test_session",
         )
 
-        memory.add("Content")
+        memory.add("Content", episode_type="text")
 
-        call_kwargs = mock_client._session.post.call_args[1]
-        headers = call_kwargs["headers"]
-        assert headers["group-id"] == "test_group"
-        assert headers["session-id"] == "test_session"
-        assert headers["agent-id"] == "agent1"
-        assert headers["user-id"] == "user1"
-
-    def test_add_with_multiple_users_agents(self, mock_client):
-        """Test add with multiple users and agents."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
-
-        memory = Memory(
-            client=mock_client,
-            agent_id=["agent1", "agent2"],
-            user_id=["user1", "user2"],
-        )
-
-        memory.add("Content")
-
-        call_kwargs = mock_client._session.post.call_args[1]
-        headers = call_kwargs["headers"]
-        assert headers["agent-id"] == "agent1,agent2"
-        assert headers["user-id"] == "user1,user2"
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["messages"][0]["metadata"]["episode_type"] == "text"
 
     def test_add_request_exception(self, mock_client):
         """Test add raises exception on request failure."""
-        mock_client._session.post.side_effect = requests.RequestException(
-            "Network error"
-        )
+        mock_client.request.side_effect = requests.RequestException("Network error")
 
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
         with pytest.raises(requests.RequestException):
             memory.add("Content")
@@ -253,70 +257,136 @@ class TestMemory:
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
         mock_response.raise_for_status.side_effect = requests.HTTPError()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
         with pytest.raises(requests.RequestException):
             memory.add("Content")
 
+    def test_add_client_closed(self, mock_client):
+        """Test add raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(RuntimeError, match="client has been closed"):
+            memory.add("Content")
+
     def test_search_success(self, mock_client):
-        """Test successful memory search."""
+        """Test successful memory search with v2 API format."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
+            "status": 0,
             "content": {
                 "episodic_memory": [["result1", "result2"]],
-                "profile_memory": [],
-            }
+                "semantic_memory": [],
+            },
         }
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
         results = memory.search("test query")
 
         assert "episodic_memory" in results
-        mock_client._session.post.assert_called_once()
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["query"] == "test query"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/search" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["org_id"] == "test_org"
+        assert json_data["project_id"] == "test_project"
+        assert json_data["query"] == "test query"
+        assert json_data["top_k"] == 10
+        assert "episodic" in json_data["types"]
+        assert "semantic" in json_data["types"]
 
     def test_search_with_limit(self, mock_client):
         """Test search with limit parameter."""
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"content": {}}
+        mock_response.json.return_value = {"status": 0, "content": {}}
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
-        memory.search("query", limit=10)
+        memory.search("query", limit=20)
 
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["limit"] == 10
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["top_k"] == 20
 
     def test_search_with_filters(self, mock_client):
         """Test search with filter dictionary."""
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"content": {}}
+        mock_response.json.return_value = {"status": 0, "content": {}}
         mock_response.raise_for_status = Mock()
-        mock_client._session.post.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
-        memory = Memory(client=mock_client, agent_id="agent1", user_id="user1")
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id="agent1",
+            user_id="user1",
+        )
 
         filters = {"category": "work", "type": "preference"}
         memory.search("query", filter_dict=filters)
 
-        call_kwargs = mock_client._session.post.call_args[1]
-        assert call_kwargs["json"]["filter"] == filters
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        # Filter should be JSON string in v2 API
+        import json
+
+        filter_dict = json.loads(json_data["filter"])
+        assert filter_dict["category"] == "work"
+        assert filter_dict["type"] == "preference"
+
+    def test_search_client_closed(self, mock_client):
+        """Test search raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(RuntimeError, match="client has been closed"):
+            memory.search("query")
 
     def test_get_context(self, mock_client):
         """Test getting memory context."""
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             group_id="test_group",
             agent_id="agent1",
             user_id="user1",
@@ -325,6 +395,8 @@ class TestMemory:
 
         context = memory.get_context()
 
+        assert context["org_id"] == "test_org"
+        assert context["project_id"] == "test_project"
         assert context["group_id"] == "test_group"
         assert context["agent_id"] == ["agent1"]
         assert context["user_id"] == ["user1"]
@@ -334,6 +406,8 @@ class TestMemory:
         """Test string representation."""
         memory = Memory(
             client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
             group_id="test_group",
             agent_id="agent1",
             user_id="user1",
@@ -341,5 +415,55 @@ class TestMemory:
         )
 
         repr_str = repr(memory)
+        assert "test_org" in repr_str
+        assert "test_project" in repr_str
         assert "test_group" in repr_str
         assert "test_session" in repr_str
+
+    def test_mark_client_closed(self, mock_client):
+        """Test marking memory as closed by client."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        assert memory._client_closed is False
+        memory.mark_client_closed()
+        assert memory._client_closed is True
+
+    def test_build_metadata(self, mock_client):
+        """Test that _build_metadata includes context fields."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            group_id="test_group",
+            agent_id="agent1",
+            user_id="user1",
+            session_id="test_session",
+        )
+
+        metadata = memory._build_metadata({"custom": "value"})
+
+        assert metadata["custom"] == "value"
+        assert metadata["group_id"] == "test_group"
+        assert metadata["user_id"] == "user1"
+        assert metadata["agent_id"] == "agent1"
+        assert metadata["session_id"] == "test_session"
+
+    def test_build_metadata_with_list_ids(self, mock_client):
+        """Test that _build_metadata handles list IDs correctly."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            agent_id=["agent1", "agent2"],
+            user_id=["user1", "user2"],
+        )
+
+        metadata = memory._build_metadata({})
+
+        # When multiple IDs, should keep as list
+        assert metadata["agent_id"] == ["agent1", "agent2"]
+        assert metadata["user_id"] == ["user1", "user2"]

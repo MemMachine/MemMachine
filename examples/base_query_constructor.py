@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 class BaseQueryConstructor:
     """Base class for query constructors"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompt_template = ""
 
     def create_query(self, **kwargs) -> str:

@@ -13,7 +13,6 @@ on:
   pull_request:
     paths:
       - 'docs/**'
-    branches: [ main ]
   release:
     types: [published]
 jobs:
