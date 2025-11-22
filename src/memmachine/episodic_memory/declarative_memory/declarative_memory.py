@@ -257,6 +257,7 @@ class DeclarativeMemory:
     async def search(
         self,
         query: str,
+        *,
         max_num_episodes: int = 20,
         property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
     ) -> list[Episode]:
