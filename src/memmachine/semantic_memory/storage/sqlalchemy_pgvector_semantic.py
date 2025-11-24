@@ -1,7 +1,7 @@
 """SQLAlchemy-backed semantic storage implementation using pgvector."""
 
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, overload
 
 import numpy as np
 from alembic import command
@@ -51,8 +51,6 @@ from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
 )
-
-StmtT = TypeVar("StmtT", Select[Any], Delete)
 
 
 class BaseSemanticStorage(DeclarativeBase):
@@ -487,22 +485,15 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
     def _apply_feature_select_filter(
         self,
-        stmt: StmtT,
+        stmt: Select[Any],
         *,
         k: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
-    ) -> StmtT:
+    ) -> Select[Any]:
         if k is not None:
-            if type(stmt) is not Select:
-                raise RuntimeError("k is only supported for select statements")
             stmt = stmt.limit(k)
 
         if vector_search_opts is not None:
-            if type(stmt) is not Select:
-                raise RuntimeError(
-                    "vector_search_opts is only supported for select statements"
-                )
-
             stmt = self._apply_vector_search_opts(
                 stmt=stmt,
                 vector_search_opts=vector_search_opts,
@@ -510,25 +501,56 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         return stmt
 
+    @overload
     def _apply_feature_filter(
         self,
-        stmt: StmtT,
+        stmt: Select[Any],
         *,
         k: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         filter_expr: FilterExpr | None = None,
-    ) -> StmtT:
-        stmt = self._apply_feature_select_filter(
-            stmt,
-            k=k,
-            vector_search_opts=vector_search_opts,
-        )
+    ) -> Select[Any]: ...
 
+    @overload
+    def _apply_feature_filter(
+        self,
+        stmt: Delete,
+        *,
+        k: int | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
+        filter_expr: FilterExpr | None = None,
+    ) -> Delete: ...
+
+    def _apply_feature_filter(
+        self,
+        stmt: Select[Any] | Delete,
+        *,
+        k: int | None = None,
+        vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
+        filter_expr: FilterExpr | None = None,
+    ) -> Select[Any] | Delete:
+        if isinstance(stmt, Select):
+            working_stmt: Select[Any] | Delete = self._apply_feature_select_filter(
+                stmt,
+                k=k,
+                vector_search_opts=vector_search_opts,
+            )
+            if filter_expr is not None:
+                clause = self._compile_feature_filter_expr(filter_expr, Feature)
+                working_stmt = working_stmt.where(clause)
+            return working_stmt
+
+        if k is not None or vector_search_opts is not None:
+            raise RuntimeError(
+                "k and vector_search_opts are only supported for select statements"
+            )
+
+        delete_stmt = stmt
         if filter_expr is not None:
             clause = self._compile_feature_filter_expr(filter_expr, Feature)
-            stmt = stmt.where(clause)
+            delete_stmt = delete_stmt.where(clause)
 
-        return stmt
+        return delete_stmt
 
     def _compile_feature_comparison_expr(
         self,

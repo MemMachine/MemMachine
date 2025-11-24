@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -198,4 +198,6 @@ def load_config_yml_file(config_file: str) -> Configuration:
     if not is_mapping(yaml_config):
         raise TypeError(f"Root of YAML config '{config_path}' must be a mapping")
 
-    return Configuration(**yaml_config)
+    mapping_config = cast(dict[str, YamlValue], yaml_config)
+
+    return Configuration(**mapping_config)

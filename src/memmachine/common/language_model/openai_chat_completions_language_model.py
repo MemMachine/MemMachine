@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+from openai.types.chat import ChatCompletion, ChatCompletionMessageFunctionToolCall
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -251,7 +252,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                 for tool_call in response.choices[0].message.tool_calls:
                     if isinstance(
                         tool_call,
-                        openai.types.chat.ChatCompletionMessageFunctionToolCall,
+                        ChatCompletionMessageFunctionToolCall,
                     ):
                         function_calls_arguments.append(
                             {
@@ -279,7 +280,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
 
     def _collect_metrics(
         self,
-        response: openai.types.chat.ChatCompletion,
+        response: ChatCompletion,
         start_time: float,
         end_time: float,
     ) -> None:

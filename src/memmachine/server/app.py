@@ -18,7 +18,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Self, cast
 
 import uvicorn
 from dotenv import load_dotenv
@@ -542,9 +542,12 @@ async def global_memory_lifespan() -> AsyncIterator[None]:
 
 
 # Context variable to hold the current user for this request
-user_id_context_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "user_id_context",
-    default=None,
+user_id_context_var: contextvars.ContextVar[str | None] = cast(
+    contextvars.ContextVar[str | None],
+    contextvars.ContextVar(
+        "user_id_context",
+        default=None,
+    ),
 )
 
 

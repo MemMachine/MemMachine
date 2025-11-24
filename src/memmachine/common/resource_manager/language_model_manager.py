@@ -109,7 +109,7 @@ class LanguageModelManager:
 
     def _build_amazon_bedrock_language_model(self, name: str) -> LanguageModel:
         import boto3
-        import botocore
+        from botocore.config import Config
 
         from memmachine.common.language_model.amazon_bedrock_language_model import (
             AmazonBedrockLanguageModel,
@@ -129,7 +129,7 @@ class LanguageModelManager:
             aws_access_key_id=_get_secret_value(conf.aws_access_key_id),
             aws_secret_access_key=_get_secret_value(conf.aws_secret_access_key),
             aws_session_token=_get_secret_value(conf.aws_session_token),
-            config=botocore.config.Config(
+            config=Config(
                 retries={
                     "total_max_attempts": 1,
                     "mode": "standard",

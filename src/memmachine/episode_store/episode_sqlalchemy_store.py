@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import UTC
-from typing import Any, TypeVar
+from typing import Any, overload
 
 from pydantic import AwareDatetime, JsonValue, validate_call
 from sqlalchemy import (
@@ -39,8 +39,6 @@ class BaseEpisodeStore(DeclarativeBase):
 
 
 JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
-
-StmtT = TypeVar("StmtT", Select[Any], Delete)
 
 
 class Episode(BaseEpisodeStore):
@@ -240,9 +238,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return episode.to_typed_model() if episode else None
 
-    def _apply_episode_filter(
+    def _build_episode_filters(
         self,
-        stmt: StmtT,
         *,
         session_keys: list[str] | None = None,
         producer_ids: list[str] | None = None,
@@ -252,7 +249,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
         metadata: dict[str, JsonValue] | None = None,
-    ) -> StmtT:
+    ) -> list[ColumnElement[bool]]:
         filters: list[ColumnElement[bool]] = []
 
         filter_definitions: list[
@@ -279,8 +276,68 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         if metadata_filter is not None:
             filters.append(metadata_filter)
 
+        return filters
+
+    @overload
+    def _apply_episode_filter(
+        self,
+        stmt: Select[Any],
+        *,
+        session_keys: list[str] | None = None,
+        producer_ids: list[str] | None = None,
+        producer_roles: list[str] | None = None,
+        produced_for_ids: list[str] | None = None,
+        episode_types: list[EpisodeType] | None = None,
+        start_time: AwareDatetime | None = None,
+        end_time: AwareDatetime | None = None,
+        metadata: dict[str, JsonValue] | None = None,
+    ) -> Select[Any]: ...
+
+    @overload
+    def _apply_episode_filter(
+        self,
+        stmt: Delete,
+        *,
+        session_keys: list[str] | None = None,
+        producer_ids: list[str] | None = None,
+        producer_roles: list[str] | None = None,
+        produced_for_ids: list[str] | None = None,
+        episode_types: list[EpisodeType] | None = None,
+        start_time: AwareDatetime | None = None,
+        end_time: AwareDatetime | None = None,
+        metadata: dict[str, JsonValue] | None = None,
+    ) -> Delete: ...
+
+    def _apply_episode_filter(
+        self,
+        stmt: Select[Any] | Delete,
+        *,
+        session_keys: list[str] | None = None,
+        producer_ids: list[str] | None = None,
+        producer_roles: list[str] | None = None,
+        produced_for_ids: list[str] | None = None,
+        episode_types: list[EpisodeType] | None = None,
+        start_time: AwareDatetime | None = None,
+        end_time: AwareDatetime | None = None,
+        metadata: dict[str, JsonValue] | None = None,
+    ) -> Select[Any] | Delete:
+        filters = self._build_episode_filters(
+            session_keys=session_keys,
+            producer_ids=producer_ids,
+            producer_roles=producer_roles,
+            produced_for_ids=produced_for_ids,
+            episode_types=episode_types,
+            start_time=start_time,
+            end_time=end_time,
+            metadata=metadata,
+        )
+
         if filters:
-            stmt = stmt.where(*filters)
+            if isinstance(stmt, Select):
+                return stmt.where(*filters)
+            if isinstance(stmt, Delete):
+                return stmt.where(*filters)
+            raise TypeError(f"Unsupported statement type: {type(stmt)}")
 
         return stmt
 

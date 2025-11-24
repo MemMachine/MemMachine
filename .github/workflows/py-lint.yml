@@ -26,6 +26,24 @@ jobs:
         with:
           args: "format --check --diff"
 
+  ty-static-check:
+    name: ty static check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.12", "3.13", "3.14" ]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest version of uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Test with python ${{ matrix.python-version }}
+        run: uv run --frozen --all-extras ty check src
+
   mypy-type-check:
     name: Mypy type check
     runs-on: ubuntu-latest
