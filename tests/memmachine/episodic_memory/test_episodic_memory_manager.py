@@ -181,6 +181,49 @@ async def test_create_episodic_memory_already_exists(
 
 
 @pytest.mark.asyncio
+async def test_create_or_open_episodic_memory_success(
+    manager: EpisodicMemoryManager,
+    mock_episodic_memory_conf,
+):
+    """Test successfully creating or opening an episodic memory instance."""
+    session_key = "create_or_open_session"
+    description = "A test session"
+    metadata = {"owner": "tester"}
+
+    # Create a new session
+    async with manager.open_or_create_episodic_memory(
+        session_key,
+        mock_episodic_memory_conf,
+        description,
+        metadata,
+    ) as instance:
+        assert instance is not None
+        assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from add
+
+    # Open the same session again
+    async with manager.open_or_create_episodic_memory(
+        session_key,
+        mock_episodic_memory_conf,
+        description,
+        metadata,
+    ) as instance:
+        assert instance is not None
+        assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from open
+
+    assert manager._instance_cache.get_ref_count(session_key) == 0  # put is called
+    await manager.close_session(session_key)
+
+    # Open the same session again, should load from storage
+    async with manager.open_or_create_episodic_memory(
+        session_key,
+        mock_episodic_memory_conf,
+        description,
+        metadata,
+    ) as instance:
+        assert instance is not None
+        assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from add
+
+@pytest.mark.asyncio
 @patch(
     "memmachine.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
     new_callable=AsyncMock,
