@@ -22,6 +22,10 @@ semantic_memory:
 session_manager:
   database: profile_storage
 
+prompt:
+  session:
+  - profile_prompt
+
 resources:
   databases:
     profile_storage:

@@ -394,7 +394,36 @@ class Memory:
             data = response.json()
             logger.info("Search completed for query: %s", query)
             # v2 API returns SearchResult with content field
-            return data.get("content", {})
+            content = data.get("content", {})
+            
+            # Process episodic_memory: it's now a QueryResponse object with
+            # long_term_memory, short_term_memory, and episode_summary fields
+            episodic_memory = content.get("episodic_memory", {})
+            if isinstance(episodic_memory, dict):
+                # Extract episodes from long_term_memory and short_term_memory
+                long_term = episodic_memory.get("long_term_memory", [])
+                short_term = episodic_memory.get("short_term_memory", [])
+                episode_summary = episodic_memory.get("episode_summary", [])
+                
+                # Combine episodes for backward compatibility
+                combined_episodes = []
+                if isinstance(long_term, list):
+                    combined_episodes.extend(long_term)
+                if isinstance(short_term, list):
+                    combined_episodes.extend(short_term)
+                
+                # Return in a format compatible with old API
+                return {
+                    "episodic_memory": combined_episodes if combined_episodes else [],
+                    "episode_summary": episode_summary if isinstance(episode_summary, list) else [],
+                    "semantic_memory": content.get("semantic_memory", []),
+                }
+            else:
+                # Fallback: return as-is if it's already a list
+                return {
+                    "episodic_memory": episodic_memory if isinstance(episodic_memory, list) else [],
+                    "semantic_memory": content.get("semantic_memory", []),
+                }
         except Exception:
             logger.exception("Failed to search memories")
             raise

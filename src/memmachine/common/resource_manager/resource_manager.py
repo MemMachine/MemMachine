@@ -117,7 +117,7 @@ class ResourceManagerImpl:
         if self._session_data_manager is not None:
             return self._session_data_manager
         database = self._conf.session_manager.database
-        engine = self._database_manager.get_sql_engine(database)
+        engine = await self._database_manager.async_get_sql_engine(database)
 
         self._session_data_manager = SessionDataManagerSQL(engine)
         await self._session_data_manager.create_tables()

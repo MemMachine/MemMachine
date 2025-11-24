@@ -25,6 +25,7 @@ from memmachine.common.session_manager.session_data_manager import SessionDataMa
 from memmachine.episode_store.episode_model import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
+from memmachine.semantic_memory.semantic_session_resource import IsolationType
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +64,10 @@ ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
 class MemMachine:
     """MemMachine class."""
 
-    def __init__(self, conf: Configuration) -> None:
+    def __init__(self, conf: Configuration, resources: ResourceManagerImpl) -> None:
         """Create a MemMachine using the provided configuration."""
         self._conf = conf
-        self._resources = ResourceManagerImpl(
-            conf=conf,
-        )
+        self._resources = resources
 
     async def start(self) -> None:
         await self._resources.build()
@@ -81,6 +80,14 @@ class MemMachine:
         await semantic_service.stop()
 
         await self._resources.close()
+
+    async def session_exists(self, session_key: str) -> bool:
+        # Check if session exists
+        try:
+            session_info = await self.get_session(session_key=session_key)
+        except RuntimeError:
+            return False
+        return session_info is not None
 
     def _with_default_episodic_memory_conf(
         self,
@@ -105,14 +112,22 @@ class MemMachine:
         # Get default embedder and reranker from config
         long_term = self._conf.episodic_memory.long_term_memory
 
-        if embedder_name is None and long_term and long_term.embedder:
+        if (
+            (embedder_name is None or embedder_name == "default")
+            and long_term
+            and long_term.embedder
+        ):
             target_embedder = long_term.embedder
         elif embedder_name is not None:
             target_embedder = embedder_name
         else:
             raise RuntimeError("No default embedder is configured.")
 
-        if reranker_name is None and long_term and long_term.reranker:
+        if (
+            (reranker_name is None or reranker_name == "default")
+            and long_term
+            and long_term.reranker
+        ):
             target_reranker = long_term.reranker
         elif reranker_name is not None:
             target_reranker = reranker_name
@@ -198,10 +213,25 @@ class MemMachine:
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
     ) -> None:
+        if not await self.session_exists(session_data.session_key):
+            await self.create_session(
+                session_data.session_key,
+                description="",
+                embedder_name="default",
+                reranker_name="default",
+            )
+
         episode_storage = await self._resources.get_episode_storage()
         episodes = await episode_storage.add_episodes(
             session_data.session_key,
             episode_entries,
+        )
+
+        semantic_manager = await self._resources.get_semantic_manager()
+        semantic_session_data = (
+            semantic_manager.simple_semantic_session_id_manager.generate_session_data(
+                session_id=session_data.session_id,
+            )
         )
 
         tasks = []
@@ -222,8 +252,9 @@ class MemMachine:
             )
             tasks.append(
                 semantic_session_manager.add_message(
+                    memory_type=[IsolationType.SESSION],
                     episode_ids=episode_ids,
-                    session_data=session_data,
+                    session_data=semantic_session_data,
                 )
             )
 
@@ -251,7 +282,7 @@ class MemMachine:
             response = await episodic_session.query_memory(
                 query=query,
                 limit=limit,
-                property_filter=to_property_filter(search_filter),
+                property_filter=to_property_filter(parse_filter(search_filter)),
             )
 
         return response
@@ -269,6 +300,18 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
+        semantic_manager = await self._resources.get_semantic_manager()
+        semantic_session_data = (
+            semantic_manager.simple_semantic_session_id_manager.generate_session_data(
+                session_id=session_data.session_id,
+            )
+        )
+
+        if not await self.session_exists(session_data.session_key):
+            raise RuntimeError(
+                f"No session info found for session {session_data.session_key}"
+            )
+
         if MemoryType.Episodic in target_memories:
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(
@@ -283,10 +326,11 @@ class MemMachine:
             semantic_session = await self._resources.get_semantic_session_manager()
             semantic_task = asyncio.create_task(
                 semantic_session.search(
+                    memory_type=[IsolationType.SESSION],
                     message=query,
-                    session_data=session_data,
+                    session_data=semantic_session_data,
                     limit=limit,
-                    search_filter=search_filter,
+                    search_filter=parse_filter(search_filter),
                 )
             )
 

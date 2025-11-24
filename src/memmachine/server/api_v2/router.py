@@ -69,7 +69,7 @@ async def get_session_info(request: Request) -> SessionInfo:
 # Placeholder dependency injection function
 async def get_memmachine(request: Request) -> MemMachine:
     """Get session data manager instance."""
-    return request.app.state.resource_manager.memmachine
+    return request.app.state.memmachine
 
 
 # async def _session_exists(
@@ -284,9 +284,14 @@ async def search_memories(
     target_memories = (
         [_MEMORY_TYPE_MAP[m] for m in spec.types] if spec.types else ALL_MEMORY_TYPES
     )
-    return await _search_target_memories(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        return await _search_target_memories(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except RuntimeError as e:
+        if "No session info found for session" in str(e):
+            raise HTTPException(status_code=400, detail="Project does not exist") from e
+        raise
 
 
 async def _list_target_memories(
