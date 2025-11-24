@@ -1,20 +1,22 @@
 """API v2 router for MemMachine project and memory management endpoints."""
 
-from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from memmachine import MemMachine
-from memmachine.episode_store.episode_model import EpisodeEntry
-from memmachine.main.memmachine import ALL_MEMORY_TYPES
-from memmachine.main.memmachine import MemoryType as MemoryTypeE
+from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine.main.memmachine_errors import ConfigurationError, InvalidArgumentError
+from memmachine.server.api_v2.service import (
+    _add_messages_to,
+    _search_target_memories,
+    _SessionData,
+    get_memmachine,
+)
 from memmachine.server.api_v2.spec import (
     AddMemoriesResponse,
     AddMemoriesSpec,
-    AddMemoryResult,
     CreateProjectSpec,
     DeleteEpisodicMemorySpec,
     DeleteMemoriesSpec,
@@ -22,59 +24,13 @@ from memmachine.server.api_v2.spec import (
     DeleteSemanticMemorySpec,
     GetProjectSpec,
     ListMemoriesSpec,
-    MemoryType,
     ProjectConfig,
     ProjectResponse,
     SearchMemoriesSpec,
     SearchResult,
-    SessionInfo,
 )
 
 router = APIRouter()
-
-_MEMORY_TYPE_MAP: dict[MemoryType, MemoryTypeE] = {
-    MemoryType.EPISODIC: MemoryTypeE.Episodic,
-    MemoryType.SEMANTIC: MemoryTypeE.Semantic,
-}
-
-
-@dataclass
-class _SessionData:
-    org_id: str
-    project_id: str
-
-    @property
-    def session_key(self) -> str:
-        return f"{self.org_id}/{self.project_id}"
-
-    @property
-    def user_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return None
-
-    @property
-    def role_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return None
-
-    @property
-    def session_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return self.session_key
-
-
-async def get_session_info(request: Request) -> SessionInfo:
-    """Get session info instance."""
-    try:
-        body = await request.json()
-        return SessionInfo.model_validate(body)
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors()) from e
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid JSON body") from e
-
-
-# Placeholder dependency injection function
-async def get_memmachine(request: Request) -> MemMachine:
-    """Get session data manager instance."""
-    return request.app.state.memmachine
 
 
 @router.post("/projects")
@@ -185,33 +141,6 @@ async def delete_project(
         raise HTTPException(status_code=400, detail="Project does not exist") from e
 
 
-async def _add_messages_to(
-    target_memories: list[MemoryTypeE],
-    spec: AddMemoriesSpec,
-    memmachine: MemMachine,
-) -> list[AddMemoryResult]:
-    episodes: list[EpisodeEntry] = [
-        EpisodeEntry(
-            content=message.content,
-            producer_id=message.producer,
-            produced_for_id=message.produced_for,
-            producer_role=message.role,
-            created_at=message.timestamp,
-            metadata=message.metadata,
-        )
-        for message in spec.messages
-    ]
-
-    return await memmachine.add_episodes(
-        session_data=_SessionData(
-            org_id=spec.org_id,
-            project_id=spec.project_id,
-        ),
-        episode_entries=episodes,
-        target_memories=target_memories,
-    )
-
-
 @router.post("/memories")
 async def add_memories(
     spec: AddMemoriesSpec,
@@ -231,7 +160,7 @@ async def add_episodic_memories(
 ) -> None:
     """Add episodic memories to a project."""
     await _add_messages_to(
-        target_memories=[MemoryTypeE.Episodic], spec=spec, memmachine=memmachine
+        target_memories=[MemoryType.Episodic], spec=spec, memmachine=memmachine
     )
 
 
@@ -242,35 +171,7 @@ async def add_semantic_memories(
 ) -> None:
     """Add semantic memories to a project."""
     await _add_messages_to(
-        target_memories=[MemoryTypeE.Semantic], spec=spec, memmachine=memmachine
-    )
-
-
-async def _search_target_memories(
-    target_memories: list[MemoryTypeE],
-    spec: SearchMemoriesSpec,
-    memmachine: MemMachine,
-) -> SearchResult:
-    results = await memmachine.query_search(
-        session_data=_SessionData(
-            org_id=spec.org_id,
-            project_id=spec.project_id,
-        ),
-        query=spec.query,
-        target_memories=target_memories,
-        search_filter=spec.filter,
-        limit=spec.top_k,
-    )
-    return SearchResult(
-        status=0,
-        content={
-            "episodic_memory": results.episodic_memory.model_dump()
-            if results.episodic_memory
-            else [],
-            "semantic_memory": results.semantic_memory
-            if results.semantic_memory
-            else [],
-        },
+        target_memories=[MemoryType.Semantic], spec=spec, memmachine=memmachine
     )
 
 
@@ -280,9 +181,7 @@ async def search_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> SearchResult:
     """Search memories in a project."""
-    target_memories = (
-        [_MEMORY_TYPE_MAP[m] for m in spec.types] if spec.types else ALL_MEMORY_TYPES
-    )
+    target_memories = spec.types if spec.types else ALL_MEMORY_TYPES
     try:
         return await _search_target_memories(
             target_memories=target_memories, spec=spec, memmachine=memmachine
@@ -294,7 +193,6 @@ async def search_memories(
 
 
 async def _list_target_memories(
-    target_memories: list[MemoryTypeE],
     spec: ListMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
@@ -303,7 +201,7 @@ async def _list_target_memories(
             org_id=spec.org_id,
             project_id=spec.project_id,
         ),
-        target_memories=target_memories,
+        target_memories=[spec.type],
         search_filter=spec.filter,
         limit=spec.limit,
     )
@@ -327,16 +225,7 @@ async def list_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> SearchResult:
     """List memories in a project."""
-    if spec.type == MemoryType.EPISODIC:
-        target_memories = [MemoryTypeE.Episodic]
-    elif spec.type == MemoryType.SEMANTIC:
-        target_memories = [MemoryTypeE.Semantic]
-    else:
-        raise ValueError(f"Invalid memory type: {spec.type}")
-
-    return await _list_target_memories(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    return await _list_target_memories(spec=spec, memmachine=memmachine)
 
 
 @router.post("/memories/delete")
@@ -379,6 +268,24 @@ async def delete_semantic_memory(
     await memmachine.delete_features(
         feature_ids=[spec.semantic_id],
     )
+
+
+@router.get("/metrics")
+async def metrics() -> Response:
+    """Expose Prometheus metrics endpoint."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@router.get("/health")
+async def health_check() -> dict[str, str]:
+    """Health check endpoint for container orchestration."""
+    try:
+        return {
+            "status": "healthy",
+            "service": "memmachine",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Service unhealthy: {e!s}") from e
 
 
 def load_v2_api_router(app: FastAPI) -> APIRouter:
