@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-
 from memmachine.semantic_memory.semantic_session_resource import SessionIdManager
+
 from memmachine.server.app import app
 
 """

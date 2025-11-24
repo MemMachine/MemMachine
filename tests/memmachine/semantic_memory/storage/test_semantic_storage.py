@@ -5,13 +5,39 @@ import pytest
 import pytest_asyncio
 
 from memmachine.common.filter.filter_parser import FilterExpr, parse_filter
-from memmachine.episode_store.episode_model import EpisodeIdT
+from memmachine.episode_store.episode_model import EpisodeEntry, EpisodeIdT
+from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
 
 def _expr(spec: str | None) -> FilterExpr | None:
     return parse_filter(spec) if spec else None
+
+
+async def _add_episode(
+    episode_storage: EpisodeStorage,
+    *,
+    content: str,
+    session_key: str = "session_id",
+    producer_id: str = "profile_id",
+    producer_role: str = "dev",
+    produced_for_id: str | None = None,
+    metadata: dict | None = None,
+):
+    episodes = await episode_storage.add_episodes(
+        session_key=session_key,
+        episodes=[
+            EpisodeEntry(
+                content=content,
+                producer_id=producer_id,
+                producer_role=producer_role,
+                produced_for_id=produced_for_id,
+                metadata=metadata,
+            )
+        ],
+    )
+    return episodes[0].uid
 
 
 @pytest.mark.asyncio
@@ -269,28 +295,30 @@ async def test_update_feature_respects_set_embedding_length(
 @pytest_asyncio.fixture
 async def feature_and_citations(
     semantic_storage: SemanticStorage,
-    episode_storage,
+    episode_storage: EpisodeStorage,
 ):
-    h1_id = await episode_storage.add_episode(
-        content="first",
+    episodes = await episode_storage.add_episodes(
+        episodes=[
+            EpisodeEntry(
+                content="first",
+                producer_id="profile_id",
+                producer_role="dev",
+            ),
+            EpisodeEntry(
+                content="second",
+                producer_id="profile_id",
+                producer_role="dev",
+            ),
+        ],
         session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
     )
-    await semantic_storage.add_history_to_set(
-        set_id="user",
-        history_id=h1_id,
-    )
-    h2_id = await episode_storage.add_episode(
-        content="second",
-        session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
-    )
-    await semantic_storage.add_history_to_set(
-        set_id="user",
-        history_id=h2_id,
-    )
+
+    episode_ids = [e.uid for e in episodes]
+    for e_uid in episode_ids:
+        await semantic_storage.add_history_to_set(
+            set_id="user",
+            history_id=e_uid,
+        )
 
     feature_id = await semantic_storage.add_feature(
         set_id="user",
@@ -301,10 +329,10 @@ async def feature_and_citations(
         embedding=np.array([1.0, 0.0]),
     )
 
-    yield feature_id, {h1_id, h2_id}
+    yield feature_id, episode_ids
 
     await semantic_storage.delete_features([feature_id])
-    await episode_storage.delete_episodes([h1_id, h2_id])
+    await episode_storage.delete_episodes(episode_ids)
 
 
 @pytest.mark.asyncio
@@ -377,24 +405,9 @@ async def test_history_message_counts_by_set(
     semantic_storage: SemanticStorage,
     episode_storage,
 ):
-    h1_id = await episode_storage.add_episode(
-        content="first",
-        session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
-    )
-    h2_id = await episode_storage.add_episode(
-        content="second",
-        session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
-    )
-    h3_id = await episode_storage.add_episode(
-        content="third",
-        session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
-    )
+    h1_id = await _add_episode(episode_storage, content="first")
+    h2_id = await _add_episode(episode_storage, content="second")
+    h3_id = await _add_episode(episode_storage, content="third")
 
     await semantic_storage.add_history_to_set(set_id="only 1", history_id=h1_id)
     await semantic_storage.add_history_to_set(set_id="has 2", history_id=h1_id)
@@ -527,12 +540,11 @@ async def test_complex_semantic_search_and_citations(
     semantic_storage: SemanticStorage,
     episode_storage,
 ):
-    history_id = await episode_storage.add_episode(
+    history_id = await _add_episode(
+        episode_storage,
         content="context note",
         metadata={"source": "chat"},
         session_key="session_key",
-        producer_id="profile_id",
-        producer_role="dev",
     )
     await semantic_storage.add_history_to_set(
         set_id="user",
@@ -612,12 +624,7 @@ async def test_history_ingestion_tracking(
     episode_storage,
 ):
     history_ids = [
-        await episode_storage.add_episode(
-            content=f"message-{idx}",
-            session_key="session_id",
-            producer_id="profile_id",
-            producer_role="dev",
-        )
+        await _add_episode(episode_storage, content=f"message-{idx}")
         for idx in range(3)
     ]
 

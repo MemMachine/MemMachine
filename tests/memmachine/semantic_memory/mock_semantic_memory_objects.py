@@ -12,6 +12,10 @@ from memmachine.semantic_memory.semantic_model import (
     Resources,
     SemanticFeature,
 )
+from memmachine.semantic_memory.semantic_session_manager import (
+    IsolationType,
+    SemanticSessionManager,
+)
 from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
 
@@ -198,3 +202,19 @@ class MockResourceRetriever:
     def get_resources(self, set_id: str) -> Resources:
         self.seen_ids.append(set_id)
         return self._resources
+
+
+class SimpleSessionResourceRetriever:
+    """Resolves the `Resources` bundle for a set_id, falling back to isolation defaults."""
+
+    def __init__(
+        self,
+        default_resources: dict[IsolationType, Resources],
+    ) -> None:
+        """Initialize the retriever with isolation defaults and a session checker."""
+        self._default_resources = default_resources
+
+    def get_resources(self, set_id: str) -> Resources:
+        set_id_type = SemanticSessionManager.set_id_isolation_type(set_id)
+
+        return self._default_resources[set_id_type]

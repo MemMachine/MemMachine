@@ -6,6 +6,7 @@ import pytest_asyncio
 from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.embedder import Embedder
 from memmachine.common.filter.filter_parser import parse_filter
+from memmachine.episode_store.episode_model import EpisodeEntry
 from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
@@ -125,13 +126,17 @@ async def semantic_service(
 
 
 async def add_history(history_storage: EpisodeStorage, content: str):
-    history_id = await history_storage.add_episode(
-        content=content,
+    episodes = await history_storage.add_episodes(
         session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
+        episodes=[
+            EpisodeEntry(
+                content=content,
+                producer_id="profile_id",
+                producer_role="dev",
+            )
+        ],
     )
-    return history_id
+    return episodes[0].uid
 
 
 async def test_add_new_feature_stores_entry(

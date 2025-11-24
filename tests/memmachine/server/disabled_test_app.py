@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 from memmachine.episodic_memory_manager import EpisodicMemoryManager
+from memmachine.semantic_memory.semantic_session_resource import SessionIdManager
 
 from memmachine.common.embedder import Embedder
 from memmachine.common.language_model import LanguageModel
@@ -14,7 +15,6 @@ from memmachine.semantic_memory.semantic_model import (
     SemanticCategory,
 )
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
-from memmachine.semantic_memory.semantic_session_resource import SessionIdManager
 from memmachine.server.app import initialize_resource
 
 

@@ -14,9 +14,6 @@ from memmachine.semantic_memory.semantic_model import (
     SetIdT,
 )
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
-from memmachine.semantic_memory.semantic_session_resource import (
-    SessionIdManager,
-)
 from memmachine.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
@@ -43,7 +40,6 @@ class SemanticResourceManager:
         self._prompt_conf = prompt_conf
         self._episode_storage = episode_storage
 
-        self._simple_semantic_session_id_manager: SessionIdManager | None = None
         self._semantic_session_resource_manager: (
             InstanceOf[ResourceRetriever] | None
         ) = None
@@ -59,15 +55,6 @@ class SemanticResourceManager:
 
         await asyncio.gather(*tasks)
 
-    @property
-    def simple_semantic_session_id_manager(self) -> SessionIdManager:
-        """Return the basic session id manager used for semantic isolation."""
-        if self._simple_semantic_session_id_manager is not None:
-            return self._simple_semantic_session_id_manager
-
-        self._simple_semantic_session_id_manager = SessionIdManager()
-        return self._simple_semantic_session_id_manager
-
     async def get_semantic_session_resource_manager(
         self,
     ) -> InstanceOf[ResourceRetriever]:
@@ -76,8 +63,6 @@ class SemanticResourceManager:
             return self._semantic_session_resource_manager
 
         semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
-
-        simple_session_id_manager = self.simple_semantic_session_id_manager
 
         default_embedder = await self._resource_manager.get_embedder(
             self._conf.embedding_model,
@@ -88,7 +73,7 @@ class SemanticResourceManager:
 
         class SemanticResourceRetriever:
             def get_resources(self, set_id: SetIdT) -> Resources:
-                isolation_type = simple_session_id_manager.set_id_isolation_type(set_id)
+                isolation_type = SemanticSessionManager.set_id_isolation_type(set_id)
 
                 return Resources(
                     language_model=default_model,

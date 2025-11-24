@@ -132,7 +132,7 @@ async def delete_project(
         project_id=spec.project_id,
     )
     try:
-        await memmachine.delete_session(session_key=session_data.session_key)
+        await memmachine.delete_session(session_data)
     except ValueError as e:
         if f"Session {session_data.session_key} does not exists" == str(e):
             raise HTTPException(status_code=400, detail="Project does not exist") from e

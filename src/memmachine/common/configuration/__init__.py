@@ -23,7 +23,7 @@ from memmachine.main.memmachine_errors import (
     RerankerNotFoundError,
 )
 from memmachine.semantic_memory.semantic_model import SemanticCategory
-from memmachine.semantic_memory.semantic_session_resource import IsolationType
+from memmachine.semantic_memory.semantic_session_manager import IsolationType
 from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGORIES
 
 YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | bool | None

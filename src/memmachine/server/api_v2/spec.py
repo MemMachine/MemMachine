@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, Field
 
-from memmachine.main.memmachine import AddMemoryResult, MemoryType
+from memmachine.main.memmachine import MemoryType
 
 
 def _validate_no_slash(v: str) -> str:
@@ -82,6 +82,12 @@ class AddMemoriesSpec(BaseModel):
     org_id: SafeId = Field(default="universal")
     project_id: SafeId = Field(default="universal")
     messages: Annotated[list[MemoryMessage], Field(...)]
+
+
+class AddMemoryResult(BaseModel):
+    """Response model for adding memories."""
+
+    uid: Annotated[str, Field(...)]
 
 
 class AddMemoriesResponse(BaseModel):
