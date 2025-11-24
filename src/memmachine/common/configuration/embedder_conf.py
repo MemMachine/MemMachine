@@ -3,7 +3,7 @@
 from typing import Self
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, SecretStr, field_validator
 
 from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
 from memmachine.common.data_types import SimilarityMetric
@@ -98,6 +98,11 @@ class EmbeddersConf(BaseModel):
     amazon_bedrock: dict[str, AmazonBedrockEmbedderConfig] = {}
     openai: dict[str, OpenAIEmbedderConf] = {}
     sentence_transformer: dict[str, SentenceTransformerEmbedderConfig] = {}
+    _saved_embedder_ids: set[str] = PrivateAttr(default_factory=set)
+
+    def contains_embedder(self, embedder_id: str) -> bool:
+        """Return if the embedder id is known."""
+        return embedder_id in self._saved_embedder_ids
 
     @classmethod
     def parse(cls, input_dict: dict) -> Self:
@@ -107,6 +112,7 @@ class EmbeddersConf(BaseModel):
         amazon_bedrock_dict = {}
         openai_dict = {}
         sentence_transformer_dict = {}
+        saved_embedder_ids = set(embedder.keys())
 
         for embedder_id, resource_definition in embedder.items():
             provider = resource_definition.get("provider")
@@ -123,8 +129,10 @@ class EmbeddersConf(BaseModel):
                 raise ValueError(
                     f"Unknown embedder provider '{provider}' for embedder id {embedder_id}",
                 )
-        return cls(
+        ret = cls(
             amazon_bedrock=amazon_bedrock_dict,
             openai=openai_dict,
             sentence_transformer=sentence_transformer_dict,
         )
+        ret._saved_embedder_ids = saved_embedder_ids
+        return ret
