@@ -10,8 +10,11 @@ from memmachine import MemMachine
 from memmachine.episode_store.episode_model import EpisodeEntry
 from memmachine.main.memmachine import ALL_MEMORY_TYPES
 from memmachine.main.memmachine import MemoryType as MemoryTypeE
+from memmachine.main.memmachine_errors import ConfigurationError, InvalidArgumentError
 from memmachine.server.api_v2.spec import (
+    AddMemoriesResponse,
     AddMemoriesSpec,
+    AddMemoryResult,
     CreateProjectSpec,
     DeleteEpisodicMemorySpec,
     DeleteMemoriesSpec,
@@ -20,6 +23,8 @@ from memmachine.server.api_v2.spec import (
     GetProjectSpec,
     ListMemoriesSpec,
     MemoryType,
+    ProjectConfig,
+    ProjectResponse,
     SearchMemoriesSpec,
     SearchResult,
     SessionInfo,
@@ -69,71 +74,55 @@ async def get_session_info(request: Request) -> SessionInfo:
 # Placeholder dependency injection function
 async def get_memmachine(request: Request) -> MemMachine:
     """Get session data manager instance."""
-    return request.app.state.resource_manager.memmachine
-
-
-# async def _session_exists(
-#     session_manager: SessionDataManager, session_key: str
-# ) -> bool:
-#     """Check if a session exists."""
-#     try:
-#         await session_manager.get_session_info(session_key=session_key)
-#     except Exception:
-#         return False
-#     return True
-#
-#
-# async def _create_session_if_not_exists(
-#     conf: Configuration,
-#     session_manager: SessionDataManager,
-#     session_key: str,
-# ) -> None:
-#     """Create a session if it does not exist."""
-#     if not await _session_exists(session_manager, session_key):
-#         await _create_new_session(
-#             conf=conf,
-#             session_manager=session_manager,
-#             session_key=session_key,
-#             description="",
-#             embedder="default",
-#             reranker="default",
-#         )
+    return request.app.state.memmachine
 
 
 @router.post("/projects")
 async def create_project(
     spec: CreateProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> dict:
+) -> ProjectResponse:
     """Create a new project."""
     session_data = _SessionData(
         org_id=spec.org_id,
         project_id=spec.project_id,
     )
     try:
-        await memmachine.create_session(
+        session = await memmachine.create_session(
             session_key=session_data.session_key,
             description=spec.description,
             embedder_name=spec.config.embedder,
             reranker_name=spec.config.reranker,
         )
+    except InvalidArgumentError as e:
+        raise HTTPException(
+            status_code=400, detail="invalid argument: " + str(e)
+        ) from e
+    except ConfigurationError as e:
+        raise HTTPException(
+            status_code=500, detail="configuration error: " + str(e)
+        ) from e
     except ValueError as e:
         if f"Session {session_data.session_key} already exists" == str(e):
             raise HTTPException(status_code=400, detail="Project already exists") from e
         raise
-    return {
-        "org_id": spec.org_id,
-        "project_id": spec.project_id,
-        "description": spec.description,
-        "config": spec.config,
-    }
+    long_term = session.episode_memory_conf.long_term_memory
+    return ProjectResponse(
+        org_id=spec.org_id,
+        project_id=spec.project_id,
+        description=spec.description,
+        config=ProjectConfig(
+            embedder=long_term.embedder if long_term else "",
+            reranker=long_term.reranker if long_term else "",
+        ),
+    )
 
 
 @router.post("/projects/get")
 async def get_project(
     spec: GetProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> dict:
+) -> ProjectResponse:
     """Get a project."""
     session_data = _SessionData(
         org_id=spec.org_id,
@@ -143,24 +132,26 @@ async def get_project(
         session_info = await memmachine.get_session(
             session_key=session_data.session_key
         )
-    except Exception:
-        return {}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Project does not exist") from e
     if session_info is None:
-        return {}
-    return {
-        "org_id": spec.org_id,
-        "project_id": spec.project_id,
-        "configuration": session_info.configuration,
-        "description": session_info.description,
-        "metadata": session_info.user_metadata,
-        "params": session_info.episode_memory_conf,
-    }
+        raise HTTPException(status_code=400, detail="Project does not exist")
+    long_term = session_info.episode_memory_conf.long_term_memory
+    return ProjectResponse(
+        org_id=spec.org_id,
+        project_id=spec.project_id,
+        description=session_info.description,
+        config=ProjectConfig(
+            embedder=long_term.embedder if long_term else "",
+            reranker=long_term.reranker if long_term else "",
+        ),
+    )
 
 
 @router.post("/projects/list")
 async def list_projects(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> list[dict]:
+) -> list[dict[str, str]]:
     """List all projects."""
     sessions = await memmachine.search_sessions()
     return [
@@ -184,14 +175,21 @@ async def delete_project(
         org_id=spec.org_id,
         project_id=spec.project_id,
     )
-    await memmachine.delete_session(session_key=session_data.session_key)
+    try:
+        await memmachine.delete_session(session_key=session_data.session_key)
+    except ValueError as e:
+        if f"Session {session_data.session_key} does not exists" == str(e):
+            raise HTTPException(status_code=400, detail="Project does not exist") from e
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Project does not exist") from e
 
 
 async def _add_messages_to(
     target_memories: list[MemoryTypeE],
     spec: AddMemoriesSpec,
     memmachine: MemMachine,
-) -> None:
+) -> list[AddMemoryResult]:
     episodes: list[EpisodeEntry] = [
         EpisodeEntry(
             content=message.content,
@@ -204,7 +202,7 @@ async def _add_messages_to(
         for message in spec.messages
     ]
 
-    await memmachine.add_episodes(
+    return await memmachine.add_episodes(
         session_data=_SessionData(
             org_id=spec.org_id,
             project_id=spec.project_id,
@@ -218,11 +216,12 @@ async def _add_messages_to(
 async def add_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> None:
+) -> AddMemoriesResponse:
     """Add memories to a project."""
-    await _add_messages_to(
+    results = await _add_messages_to(
         target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=memmachine
     )
+    return AddMemoriesResponse(results=results)
 
 
 @router.post("/memories/episodic/add")
@@ -284,9 +283,14 @@ async def search_memories(
     target_memories = (
         [_MEMORY_TYPE_MAP[m] for m in spec.types] if spec.types else ALL_MEMORY_TYPES
     )
-    return await _search_target_memories(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        return await _search_target_memories(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except RuntimeError as e:
+        if "No session info found for session" in str(e):
+            raise HTTPException(status_code=400, detail="Project does not exist") from e
+        raise
 
 
 async def _list_target_memories(

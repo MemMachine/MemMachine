@@ -2,7 +2,7 @@
 
 from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, PrivateAttr, SecretStr
 
 
 class BM25RerankerConf(BaseModel):
@@ -91,6 +91,12 @@ class RerankersConf(BaseModel):
     identity: dict[str, IdentityRerankerConf] = {}
     rrf_hybrid: dict[str, RRFHybridRerankerConf] = {}
 
+    _saved_reranker_ids: set[str] = PrivateAttr(default_factory=set)
+
+    def contains_reranker(self, reranker_id: str) -> bool:
+        """Check if a reranker ID is defined in the configuration."""
+        return reranker_id in self._saved_reranker_ids
+
     @classmethod
     def parse(cls, input_dict: dict) -> Self:
         """Parse reranker configuration from a raw mapping."""
@@ -102,6 +108,7 @@ class RerankersConf(BaseModel):
         embedder_dict = {}
         identity_dict = {}
         rrf_hybrid_dict = {}
+        saved_reranker_ids = set(reranker.keys())
 
         for reranker_id, value in reranker.items():
             provider = value.get("provider")
@@ -123,7 +130,7 @@ class RerankersConf(BaseModel):
                     f"Unknown reranker_type '{provider}' for reranker id '{reranker_id}'",
                 )
 
-        return cls(
+        ret = cls(
             bm25=bm25_dict,
             amazon_bedrock=amazon_bedrock_dict,
             cross_encoder=cross_encoder_dict,
@@ -131,3 +138,5 @@ class RerankersConf(BaseModel):
             identity=identity_dict,
             rrf_hybrid=rrf_hybrid_dict,
         )
+        ret._saved_reranker_ids = saved_reranker_ids
+        return ret

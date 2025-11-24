@@ -35,6 +35,7 @@ from starlette.types import Lifespan, Receive, Scope, Send
 
 from memmachine.common.configuration import load_config_yml_file
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
+from memmachine.main.memmachine import MemMachine
 from memmachine.server.api_v2.router import load_v2_api_router
 
 logger = logging.getLogger(__name__)
@@ -487,6 +488,7 @@ class DeleteDataRequest(RequestWithSession):
 # === Globals ===
 # Global instances for memory managers, initialized during app startup.
 resource_manager: ResourceManagerImpl | None = None
+memmachine_object: MemMachine | None = None
 
 
 # === Lifespan Management ===
@@ -512,6 +514,9 @@ async def initialize_resource(config_file: str) -> ResourceManagerImpl:
     config = load_config_yml_file(config_file)
     ret = ResourceManagerImpl(config)
     await ret.build()
+    global memmachine_object
+    memmachine_object = MemMachine(config, ret)
+    await memmachine_object.start()
     return ret
 
 
@@ -759,7 +764,7 @@ async def mcp_http_lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     """
     async with global_memory_lifespan(), mcp_app.lifespan(application):
-        application.state.resource_manager = resource_manager
+        application.state.memmachine = memmachine_object
         yield
 
 

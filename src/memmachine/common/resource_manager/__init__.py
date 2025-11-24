@@ -53,7 +53,6 @@ class CommonResourceManager(Protocol):
         """Return the metrics factory by name."""
         raise NotImplementedError
 
-    @property
-    def session_data_manager(self) -> SessionDataManager:
+    async def get_session_data_manager(self) -> SessionDataManager:
         """Return the session data manager."""
         raise NotImplementedError

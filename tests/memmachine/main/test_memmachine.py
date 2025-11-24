@@ -13,6 +13,7 @@ from memmachine.episode_store.episode_model import Episode, EpisodeEntry
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SemanticFeature
+from memmachine.semantic_memory.semantic_session_resource import IsolationType
 
 
 class DummySessionData:
@@ -20,6 +21,10 @@ class DummySessionData:
 
     def __init__(self, session_key: str) -> None:
         self._session_key = session_key
+
+    @property
+    def session_id(self) -> str:  # pragma: no cover - trivial accessor
+        return self._session_key
 
     @property
     def session_key(self) -> str:  # pragma: no cover - trivial accessor
@@ -45,14 +50,25 @@ def minimal_conf() -> SimpleNamespace:
         long_term_memory=long_term,
     )
 
-    return SimpleNamespace(episodic_memory=episodic_conf)
+    mock_rerankers = MagicMock()
+    mock_rerankers.contains_reranker.return_value = True
+
+    mock_embedders = MagicMock()
+    mock_embedders.contains_embedder.return_value = True
+
+    resources_conf = SimpleNamespace(
+        rerankers=mock_rerankers,
+        embedders=mock_embedders,
+    )
+
+    return SimpleNamespace(episodic_memory=episodic_conf, resources=resources_conf)
 
 
 @pytest.fixture
 def patched_resource_manager(monkeypatch):
     """Replace :class:`ResourceManagerImpl` with a controllable double."""
 
-    fake_manager = MagicMock()
+    fake_manager = AsyncMock()
     monkeypatch.setattr(
         "memmachine.main.memmachine.ResourceManagerImpl",
         MagicMock(return_value=fake_manager),
@@ -82,7 +98,7 @@ def _async_cm(value):
 def test_with_default_episodic_memory_conf_uses_fallbacks(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     conf = memmachine._with_default_episodic_memory_conf(session_key="session-1")
 
@@ -103,7 +119,7 @@ def test_with_default_episodic_memory_conf_requires_embedder(
     minimal_conf, patched_resource_manager
 ):
     minimal_conf.episodic_memory.long_term_memory.embedder = None
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     with pytest.raises(RuntimeError, match="embedder"):
         memmachine._with_default_episodic_memory_conf(session_key="session-1")
@@ -118,7 +134,7 @@ async def test_create_session_passes_generated_config(
         return_value=session_manager
     )
 
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     await memmachine.create_session(
         "alpha",
@@ -167,7 +183,7 @@ async def test_query_search_runs_targeted_memory_tasks(
         return_value=semantic_manager
     )
 
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     result = await memmachine.query_search(
         dummy_session,
@@ -212,7 +228,7 @@ async def test_query_search_skips_unrequested_memories(
         return_value=semantic_manager
     )
 
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     result = await memmachine.query_search(
         dummy_session,
@@ -231,7 +247,7 @@ async def test_query_search_skips_unrequested_memories(
 async def test_add_episodes_dispatches_to_all_memories(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-42")
 
     entries = [
@@ -255,6 +271,13 @@ async def test_add_episodes_dispatches_to_all_memories(
         return_value=episodic_manager
     )
 
+    semantic_manager_service = MagicMock()
+    semantic_manager_service.simple_semantic_session_id_manager.generate_session_data.return_value = session
+
+    patched_resource_manager.get_semantic_manager = AsyncMock(
+        return_value=semantic_manager_service
+    )
+
     semantic_manager = MagicMock()
     semantic_manager.add_message = AsyncMock()
     patched_resource_manager.get_semantic_session_manager = AsyncMock(
@@ -266,6 +289,7 @@ async def test_add_episodes_dispatches_to_all_memories(
     episode_storage.add_episodes.assert_awaited_once_with(session.session_key, entries)
     episodic_session.add_memory_episodes.assert_awaited_once_with(stored_episodes)
     semantic_manager.add_message.assert_awaited_once_with(
+        memory_type=[IsolationType.SESSION],
         episode_ids=["e1", "e2"],
         session_data=session,
     )
@@ -275,7 +299,7 @@ async def test_add_episodes_dispatches_to_all_memories(
 async def test_add_episodes_skips_memories_not_requested(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("only-semantic")
 
     entries = [
@@ -315,7 +339,7 @@ async def test_add_episodes_skips_memories_not_requested(
 async def test_list_search_fetches_episode_history(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-list")
 
     episode_storage = MagicMock()
@@ -340,7 +364,7 @@ async def test_list_search_fetches_episode_history(
 async def test_delete_episodes_forwards_to_storage_and_memories(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-del")
 
     episode_storage = MagicMock()
@@ -366,7 +390,7 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
 async def test_delete_episodes_without_session_only_hits_storage(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
     episode_storage.delete_episodes = AsyncMock()
@@ -390,7 +414,7 @@ async def test_delete_episodes_without_session_only_hits_storage(
 async def test_delete_features_forwards_to_semantic_manager(
     minimal_conf, patched_resource_manager
 ):
-    memmachine = MemMachine(minimal_conf)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     semantic_manager = MagicMock()
     semantic_manager.delete_features = AsyncMock()

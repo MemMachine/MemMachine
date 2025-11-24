@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -33,6 +33,12 @@ def test_create_project(client, mock_memmachine):
         "description": "A test project",
         "config": {"embedder": "openai", "reranker": "cohere"},
     }
+
+    mock_session = MagicMock()
+    mock_session.episode_memory_conf.long_term_memory.embedder = "openai"
+    mock_session.episode_memory_conf.long_term_memory.reranker = "cohere"
+
+    mock_memmachine.create_session.return_value = mock_session
 
     response = client.post("/api/v2/projects", json=payload)
 
