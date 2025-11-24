@@ -63,7 +63,7 @@ class EmbedderManager:
     def _build_amazon_bedrock_embedders(self, name: str) -> Embedder:
         conf = self.conf.amazon_bedrock[name]
 
-        import botocore
+        from botocore.config import Config
         from langchain_aws import BedrockEmbeddings
 
         from memmachine.common.embedder.amazon_bedrock_embedder import (
@@ -77,7 +77,7 @@ class EmbedderManager:
             aws_secret_access_key=conf.aws_secret_access_key,
             aws_session_token=conf.aws_session_token,
             model_id=conf.model_id,
-            config=botocore.config.Config(
+            config=Config(
                 retries={
                     "total_max_attempts": 1,
                     "mode": "standard",
@@ -102,13 +102,15 @@ class EmbedderManager:
             OpenAIEmbedderParams,
         )
 
+        dimensions = conf.dimensions if conf.dimensions is not None else 1536
+
         params = OpenAIEmbedderParams(
             client=openai.AsyncOpenAI(
                 api_key=conf.api_key.get_secret_value(),
                 base_url=conf.base_url,
             ),
             model=conf.model,
-            dimensions=conf.dimensions,
+            dimensions=dimensions,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             metrics_factory=conf.get_metrics_factory(),
             user_metrics_labels=conf.user_metrics_labels,

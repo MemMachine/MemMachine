@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+from openai.types.responses import Response
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -293,7 +294,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
     def _collect_metrics(
         self,
-        response: openai.types.responses.Response,
+        response: Response,
         start_time: float,
         end_time: float,
     ) -> None:

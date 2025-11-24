@@ -9,7 +9,6 @@ Create Date: 2025-11-11 10:54:06.010773
 
 from collections.abc import Sequence
 
-import pgvector
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy.vector import VECTOR
@@ -203,7 +202,7 @@ def downgrade() -> None:
     op.alter_column(
         "feature",
         "embedding",
-        existing_type=pgvector.sqlalchemy.vector.VECTOR(),
+        existing_type=VECTOR(),
         nullable=False,
     )
     op.alter_column(
