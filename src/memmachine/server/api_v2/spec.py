@@ -1,6 +1,6 @@
 """API v2 specification models for request and response structures."""
 
-from datetime import datetime
+from datetime import datetime, timezone, UTC
 from enum import Enum
 from typing import Annotated, Any
 
@@ -38,6 +38,13 @@ class CreateProjectSpec(BaseModel):
     description: Annotated[str, Field(default="")]
     config: Annotated[ProjectConfig, Field(default_factory=ProjectConfig)]
 
+class ProjectResponse(BaseModel):
+    """Response model for project operations."""
+
+    org_id: SafeId
+    project_id: SafeId
+    description: Annotated[str, Field(default="")]
+    config: Annotated[ProjectConfig, Field(default_factory=ProjectConfig)]
 
 class GetProjectSpec(BaseModel):
     """Specification model for getting a project."""
@@ -66,20 +73,29 @@ class MemoryMessage(BaseModel):
     """Model representing a memory message."""
 
     content: Annotated[str, Field(...)]
-    producer: Annotated[str, Field(...)]
+    producer: Annotated[str, Field(default="user")]
     produced_for: Annotated[str, Field(default="")]
-    timestamp: Annotated[datetime, Field(...)]
-    role: Annotated[str, Field(...)]
+    timestamp: Annotated[datetime, Field(default_factory=lambda: datetime.now(UTC))]
+    role: Annotated[str, Field(default="")]
     metadata: Annotated[dict[str, str], Field(default_factory=dict)]
 
 
 class AddMemoriesSpec(BaseModel):
     """Specification model for adding memories."""
 
-    org_id: SafeId
-    project_id: SafeId
+    org_id: SafeId = Field(default="universal")
+    project_id: SafeId = Field(default="universal")
     messages: Annotated[list[MemoryMessage], Field(...)]
 
+class AddMemoryResult(BaseModel):
+    """Response model for adding memories."""
+
+    uid: Annotated[str, Field(...)]
+
+class AddMemoriesResponse(BaseModel):
+    """Response model for adding memories."""
+
+    results: Annotated[list[AddMemoryResult], Field(...)]
 
 class SearchMemoriesSpec(BaseModel):
     """Specification model for searching memories."""

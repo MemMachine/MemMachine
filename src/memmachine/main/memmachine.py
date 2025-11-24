@@ -24,8 +24,15 @@ from memmachine.common.resource_manager.resource_manager import ResourceManagerI
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episode_store.episode_model import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.episodic_memory import EpisodicMemory
+from memmachine.main.memmachine_errors import (
+    DefaultEmbedderNotConfiguredError,
+    DefaultRerankerNotConfiguredError,
+    EmbedderNotFoundError,
+    RerankerNotFoundError,
+)
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine.semantic_memory.semantic_session_resource import IsolationType
+from memmachine.server.api_v2.spec import AddMemoryResult
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +128,7 @@ class MemMachine:
         elif embedder_name is not None:
             target_embedder = embedder_name
         else:
-            raise RuntimeError("No default embedder is configured.")
+            raise DefaultEmbedderNotConfiguredError
 
         if (
             (reranker_name is None or reranker_name == "default")
@@ -132,7 +139,13 @@ class MemMachine:
         elif reranker_name is not None:
             target_reranker = reranker_name
         else:
-            raise RuntimeError("No default reranker is configured.")
+            raise DefaultRerankerNotConfiguredError
+
+        if not self._conf.resources.rerankers.contains_reranker(target_reranker):
+            raise RerankerNotFoundError(target_reranker)
+
+        if not self._conf.resources.embedders.contains_embedder(target_embedder):
+            raise EmbedderNotFoundError(target_embedder)
 
         target_vector_store = (
             long_term.vector_graph_store
@@ -170,7 +183,7 @@ class MemMachine:
         description: str = "",
         embedder_name: str | None = None,
         reranker_name: str | None = None,
-    ) -> None:
+    ) -> SessionDataManager.SessionInfo:
         """Create a new session."""
         episodic_memory_conf = self._with_default_episodic_memory_conf(
             embedder_name=embedder_name,
@@ -186,6 +199,7 @@ class MemMachine:
             description=description,
             metadata={},
         )
+        return await self.get_session(session_key=session_key)
 
     async def get_session(
         self, session_key: str
@@ -212,7 +226,7 @@ class MemMachine:
         episode_entries: list[EpisodeEntry],
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
-    ) -> None:
+    ) -> list[AddMemoryResult]:
         if not await self.session_exists(session_data.session_key):
             await self.create_session(
                 session_data.session_key,
@@ -226,6 +240,7 @@ class MemMachine:
             session_data.session_key,
             episode_entries,
         )
+        ret = [AddMemoryResult(uid=episode.uid) for episode in episodes]
 
         semantic_manager = await self._resources.get_semantic_manager()
         semantic_session_data = (
@@ -259,6 +274,7 @@ class MemMachine:
             )
 
         await asyncio.gather(*tasks)
+        return ret
 
     class SearchResponse(BaseModel):
         """Aggregated search results across memory types."""
