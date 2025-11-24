@@ -163,7 +163,7 @@ class DeclarativeMemory:
             for derivative, embedding in zip(
                 derivatives,
                 derivative_embeddings,
-                strict=False,
+                strict=True,
             )
         ]
 
@@ -176,7 +176,7 @@ class DeclarativeMemory:
             for episode, episode_derivatives in zip(
                 episodes,
                 episodes_derivatives,
-                strict=False,
+                strict=True,
             )
             for derivative in episode_derivatives
         ]
@@ -360,7 +360,7 @@ class DeclarativeMemory:
                     episode_context_scores,
                     nuclear_episodes,
                     episode_contexts,
-                    strict=False,
+                    strict=True,
                 ),
                 key=lambda triple: triple[0],
                 reverse=True,
