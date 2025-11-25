@@ -33,12 +33,12 @@ from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine.common.errors import ResourceNotFoundError
-from memmachine.episode_store.episode_model import (
+from memmachine.common.episode_store.episode_model import (
     Episode as EpisodeE,
 )
-from memmachine.episode_store.episode_model import EpisodeEntry, EpisodeType
-from memmachine.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
+from memmachine.common.episode_store.episode_model import EpisodeEntry, EpisodeType
+from memmachine.common.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
+from memmachine.common.errors import ResourceNotFoundError
 
 
 class BaseEpisodeStore(DeclarativeBase):

@@ -5,8 +5,8 @@ import asyncio
 from pydantic import InstanceOf
 
 from memmachine.common.configuration import PromptConf, SemanticMemoryConf
+from memmachine.common.episode_store import EpisodeStorage
 from memmachine.common.resource_manager import CommonResourceManager
-from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
     ResourceRetriever,

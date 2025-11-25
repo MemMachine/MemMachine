@@ -24,8 +24,6 @@ jobs:
         test-paths: [
           # Common tests
           "tests/memmachine/common/",
-          # Episode Store tests
-          "tests/memmachine/episode_store/",
           # Episodic Memory tests
           "tests/memmachine/episodic_memory/",
           # Main MemMachine tests

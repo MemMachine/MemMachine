@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from memmachine.common.configuration import Configuration
 from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
 from memmachine.common.embedder import Embedder
+from memmachine.common.episode_store import EpisodeStorage
+from memmachine.common.episode_store.episode_sqlalchemy_store import (
+    SqlAlchemyEpisodeStore,
+)
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.reranker import Reranker
@@ -23,8 +27,6 @@ from memmachine.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
 )
 from memmachine.common.vector_graph_store import VectorGraphStore
-from memmachine.episode_store.episode_sqlalchemy_store import SqlAlchemyEpisodeStore
-from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,

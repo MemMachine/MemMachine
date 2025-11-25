@@ -6,8 +6,8 @@ from typing import Final, Protocol, runtime_checkable
 
 from pydantic import InstanceOf
 
+from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr
-from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
     FeatureIdT,

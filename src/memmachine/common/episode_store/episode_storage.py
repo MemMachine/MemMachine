@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 from pydantic import AwareDatetime, JsonValue
 
-from memmachine.episode_store.episode_model import (
+from memmachine.common.episode_store.episode_model import (
     Episode,
     EpisodeEntry,
     EpisodeIdT,

@@ -33,6 +33,7 @@ from sqlalchemy.orm import DeclarativeBase, aliased, mapped_column
 from sqlalchemy.sql import Delete, Select, func
 
 from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.episode_store.episode_model import EpisodeIdT
 from memmachine.common.errors import ResourceNotFoundError
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
@@ -46,7 +47,6 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,

@@ -7,8 +7,8 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, InstanceOf
 
 from memmachine.common.embedder import Embedder
+from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.language_model import LanguageModel
-from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.util import semantic_prompt_template
 
 SetIdT = str

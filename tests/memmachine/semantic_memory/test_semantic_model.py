@@ -4,7 +4,7 @@ from datetime import UTC
 
 import pytest
 
-from memmachine.episode_store.episode_model import Episode
+from memmachine.common.episode_store import Episode
 from memmachine.semantic_memory.semantic_model import (
     SemanticFeature,
     StructuredSemanticPrompt,

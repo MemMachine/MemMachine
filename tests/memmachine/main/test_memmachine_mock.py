@@ -16,7 +16,7 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
-from memmachine.episode_store.episode_model import Episode, EpisodeEntry
+from memmachine.common.episode_store import Episode, EpisodeEntry
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SemanticFeature

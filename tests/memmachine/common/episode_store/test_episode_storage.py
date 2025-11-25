@@ -6,12 +6,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import pytest_asyncio
 
-from memmachine.episode_store.episode_model import (
+from memmachine.common.episode_store import (
     EpisodeEntry,
     EpisodeIdT,
+    EpisodeStorage,
     EpisodeType,
 )
-from memmachine.episode_store.episode_storage import EpisodeStorage
 
 DEFAULT_HISTORY_ARGS = {
     "session_key": "session-default",

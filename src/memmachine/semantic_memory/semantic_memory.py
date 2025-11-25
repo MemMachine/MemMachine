@@ -15,9 +15,8 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, InstanceOf
 
+from memmachine.common.episode_store import EpisodeIdT, EpisodeStorage
 from memmachine.common.filter.filter_parser import FilterExpr
-from memmachine.episode_store.episode_model import EpisodeIdT
-from memmachine.episode_store.episode_storage import EpisodeStorage
 
 from .semantic_ingestion import IngestionService
 from .semantic_model import FeatureIdT, ResourceRetriever, SemanticFeature, SetIdT

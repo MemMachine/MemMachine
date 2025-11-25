@@ -9,9 +9,8 @@ import numpy as np
 from pydantic import BaseModel, InstanceOf, TypeAdapter
 
 from memmachine.common.embedder import Embedder
+from memmachine.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
 from memmachine.common.filter.filter_parser import And, Comparison
-from memmachine.episode_store.episode_model import Episode, EpisodeIdT
-from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_llm import (
     LLMReducedFeature,
     llm_consolidate_features,

@@ -21,9 +21,9 @@ from memmachine.common.data_types import (
     ExternalServiceAPIError,
     FilterablePropertyValue,
 )
+from memmachine.common.episode_store import Episode
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
-from memmachine.episode_store.episode_model import Episode
 
 logger = logging.getLogger(__name__)
 

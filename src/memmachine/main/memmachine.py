@@ -15,6 +15,7 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConf,
     ShortTermMemoryConf,
 )
+from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
     parse_filter,
@@ -22,7 +23,6 @@ from memmachine.common.filter.filter_parser import (
 )
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
-from memmachine.episode_store.episode_model import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine.semantic_memory.semantic_session_manager import IsolationType

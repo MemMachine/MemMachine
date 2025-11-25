@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 from pydantic import InstanceOf
 
+from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -22,7 +23,6 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import (
     FeatureIdT,
     SemanticFeature,

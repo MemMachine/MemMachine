@@ -6,9 +6,8 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
+from memmachine.common.episode_store import EpisodeEntry, EpisodeIdT, EpisodeStorage
 from memmachine.common.filter.filter_parser import parse_filter
-from memmachine.episode_store.episode_model import EpisodeEntry, EpisodeIdT
-from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_ingestion import IngestionService
 from memmachine.semantic_memory.semantic_llm import (
     LLMReducedFeature,
