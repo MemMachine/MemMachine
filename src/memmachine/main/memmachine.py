@@ -5,9 +5,9 @@ import logging
 from asyncio import Task
 from collections.abc import Coroutine
 from enum import Enum
-from typing import Any, Final, Protocol, cast
+from typing import Annotated, Any, Final, Protocol, cast
 
-from pydantic import BaseModel, InstanceOf, JsonValue
+from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine.common.configuration import Configuration
 from memmachine.common.configuration.episodic_config import (
@@ -24,15 +24,8 @@ from memmachine.common.resource_manager.resource_manager import ResourceManagerI
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episode_store.episode_model import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.episodic_memory import EpisodicMemory
-from memmachine.main.memmachine_errors import (
-    DefaultEmbedderNotConfiguredError,
-    DefaultRerankerNotConfiguredError,
-    EmbedderNotFoundError,
-    RerankerNotFoundError,
-)
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine.semantic_memory.semantic_session_resource import IsolationType
-from memmachine.server.api_v2.spec import AddMemoryResult
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +54,17 @@ class SessionData(Protocol):
 class MemoryType(Enum):
     """MemMachine type."""
 
-    Semantic = 0
-    Episodic = 1
+    Semantic = "episodic"
+    Episodic = "semantic"
 
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
+
+
+class AddMemoryResult(BaseModel):
+    """Response model for adding memories."""
+
+    uid: Annotated[str, Field(...)]
 
 
 class MemMachine:
@@ -119,33 +118,13 @@ class MemMachine:
         # Get default embedder and reranker from config
         long_term = self._conf.episodic_memory.long_term_memory
 
-        if (
-            (embedder_name is None or embedder_name == "default")
-            and long_term
-            and long_term.embedder
-        ):
-            target_embedder = long_term.embedder
-        elif embedder_name is not None:
-            target_embedder = embedder_name
-        else:
-            raise DefaultEmbedderNotConfiguredError
+        if not embedder_name:
+            embedder_name = self._conf.default_long_term_memory_embedder
+        if not reranker_name:
+            reranker_name = self._conf.default_long_term_memory_reranker
 
-        if (
-            (reranker_name is None or reranker_name == "default")
-            and long_term
-            and long_term.reranker
-        ):
-            target_reranker = long_term.reranker
-        elif reranker_name is not None:
-            target_reranker = reranker_name
-        else:
-            raise DefaultRerankerNotConfiguredError
-
-        if not self._conf.resources.rerankers.contains_reranker(target_reranker):
-            raise RerankerNotFoundError(target_reranker)
-
-        if not self._conf.resources.embedders.contains_embedder(target_embedder):
-            raise EmbedderNotFoundError(target_embedder)
+        self._conf.check_reranker(reranker_name)
+        self._conf.check_embedder(embedder_name)
 
         target_vector_store = (
             long_term.vector_graph_store
@@ -162,8 +141,8 @@ class MemMachine:
             long_term_memory=LongTermMemoryConf(
                 session_id=session_key,
                 vector_graph_store=target_vector_store,
-                embedder=target_embedder,
-                reranker=target_reranker,
+                embedder=embedder_name,
+                reranker=reranker_name,
             ),
             short_term_memory=ShortTermMemoryConf(
                 session_key=session_key,
@@ -234,8 +213,8 @@ class MemMachine:
             await self.create_session(
                 session_data.session_key,
                 description="",
-                embedder_name="default",
-                reranker_name="default",
+                embedder_name=self._conf.default_long_term_memory_embedder,
+                reranker_name=self._conf.default_long_term_memory_reranker,
             )
 
         episode_storage = await self._resources.get_episode_storage()

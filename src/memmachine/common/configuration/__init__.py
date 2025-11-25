@@ -10,10 +10,18 @@ from pydantic import BaseModel, Field, field_validator
 
 from memmachine.common.configuration.database_conf import DatabasesConf
 from memmachine.common.configuration.embedder_conf import EmbeddersConf
-from memmachine.common.configuration.episodic_config import EpisodicMemoryConfPartial
+from memmachine.common.configuration.episodic_config import (
+    EpisodicMemoryConfPartial,
+)
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
 from memmachine.common.configuration.reranker_conf import RerankersConf
+from memmachine.main.memmachine_errors import (
+    DefaultEmbedderNotConfiguredError,
+    DefaultRerankerNotConfiguredError,
+    EmbedderNotFoundError,
+    RerankerNotFoundError,
+)
 from memmachine.semantic_memory.semantic_model import SemanticCategory
 from memmachine.semantic_memory.semantic_session_resource import IsolationType
 from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGORIES
@@ -168,6 +176,34 @@ class Configuration(BaseModel):
     session_manager: SessionManagerConf
     resources: ResourcesConf
     episode_store: EpisodeStoreConf
+
+    def check_reranker(self, reranker_name: str) -> None:
+        long_term_memory = self.episodic_memory.long_term_memory
+        if not reranker_name or not long_term_memory:
+            raise DefaultRerankerNotConfiguredError
+        if not self.resources.rerankers.contains_reranker(reranker_name):
+            raise RerankerNotFoundError(reranker_name)
+
+    @property
+    def default_long_term_memory_embedder(self) -> str:
+        long_term_memory = self.episodic_memory.long_term_memory
+        if not long_term_memory or not long_term_memory.embedder:
+            raise DefaultEmbedderNotConfiguredError
+        return long_term_memory.embedder
+
+    def check_embedder(self, embedder_name: str) -> None:
+        long_term_memory = self.episodic_memory.long_term_memory
+        if not embedder_name or not long_term_memory:
+            raise DefaultEmbedderNotConfiguredError
+        if not self.resources.embedders.contains_embedder(embedder_name):
+            raise EmbedderNotFoundError(embedder_name)
+
+    @property
+    def default_long_term_memory_reranker(self) -> str:
+        long_term_memory = self.episodic_memory.long_term_memory
+        if not long_term_memory or not long_term_memory.reranker:
+            raise DefaultRerankerNotConfiguredError
+        return long_term_memory.reranker
 
 
 def load_config_yml_file(config_file: str) -> Configuration:

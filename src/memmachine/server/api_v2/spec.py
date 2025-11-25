@@ -1,10 +1,11 @@
 """API v2 specification models for request and response structures."""
 
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, Field
+
+from memmachine.main.memmachine import AddMemoryResult, MemoryType
 
 
 def _validate_no_slash(v: str) -> str:
@@ -16,18 +17,11 @@ def _validate_no_slash(v: str) -> str:
 SafeId = Annotated[str, AfterValidator(_validate_no_slash), Field(...)]
 
 
-class MemoryType(str, Enum):
-    """Enumeration of memory types."""
-
-    EPISODIC = "episodic"
-    SEMANTIC = "semantic"
-
-
 class ProjectConfig(BaseModel):
     """Project configuration model."""
 
-    reranker: Annotated[str, Field(default="default")]
-    embedder: Annotated[str, Field(default="default")]
+    reranker: Annotated[str, Field(default="")]
+    embedder: Annotated[str, Field(default="")]
 
 
 class CreateProjectSpec(BaseModel):
@@ -90,12 +84,6 @@ class AddMemoriesSpec(BaseModel):
     messages: Annotated[list[MemoryMessage], Field(...)]
 
 
-class AddMemoryResult(BaseModel):
-    """Response model for adding memories."""
-
-    uid: Annotated[str, Field(...)]
-
-
 class AddMemoriesResponse(BaseModel):
     """Response model for adding memories."""
 
@@ -121,7 +109,7 @@ class ListMemoriesSpec(BaseModel):
     limit: Annotated[int, Field(default=100)]
     offset: Annotated[int, Field(default=0)]
     filter: Annotated[str, Field(default="")]
-    type: Annotated[MemoryType, Field(default="")]
+    type: Annotated[MemoryType, Field(default=MemoryType.Episodic)]
 
 
 class DeleteMemoriesSpec(BaseModel):

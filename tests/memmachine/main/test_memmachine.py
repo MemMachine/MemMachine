@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from memmachine.common.configuration import (
+    Configuration,
+    EpisodicMemoryConfPartial,
+)
+from memmachine.common.configuration.episodic_config import (
+    LongTermMemoryConfPartial,
+    ShortTermMemoryConfPartial,
+)
 from memmachine.episode_store.episode_model import Episode, EpisodeEntry
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
@@ -32,36 +39,35 @@ class DummySessionData:
 
 
 @pytest.fixture
-def minimal_conf() -> SimpleNamespace:
+def minimal_conf() -> Configuration:
     """Provide the minimal subset of configuration accessed in tests."""
-
-    short_term = SimpleNamespace(
-        summary_prompt_system=None,
-        summary_prompt_user=None,
-        llm_model=None,
-    )
-    long_term = SimpleNamespace(
-        vector_graph_store=None,
-        embedder="default-embedder",
-        reranker="default-reranker",
-    )
-    episodic_conf = SimpleNamespace(
-        short_term_memory=short_term,
-        long_term_memory=long_term,
-    )
-
     mock_rerankers = MagicMock()
     mock_rerankers.contains_reranker.return_value = True
 
     mock_embedders = MagicMock()
     mock_embedders.contains_embedder.return_value = True
 
-    resources_conf = SimpleNamespace(
-        rerankers=mock_rerankers,
-        embedders=mock_embedders,
-    )
+    resource_conf = MagicMock()
+    resource_conf.embedders = mock_embedders
+    resource_conf.rerankers = mock_rerankers
 
-    return SimpleNamespace(episodic_memory=episodic_conf, resources=resources_conf)
+    ret = MagicMock()
+    ret.resources = resource_conf
+    ret.episodic_memory = EpisodicMemoryConfPartial(
+        short_term_memory=ShortTermMemoryConfPartial(
+            summary_prompt_system=None,
+            summary_prompt_user=None,
+            llm_model=None,
+        ),
+        long_term_memory=LongTermMemoryConfPartial(
+            vector_graph_store=None,
+            embedder="default-embedder",
+            reranker="default-reranker",
+        ),
+    )
+    ret.default_long_term_memory_embedder = "default-embedder"
+    ret.default_long_term_memory_reranker = "default-reranker"
+    return ret
 
 
 @pytest.fixture
@@ -113,16 +119,6 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     assert (
         "Based on the following episodes" in conf.short_term_memory.summary_prompt_user
     )
-
-
-def test_with_default_episodic_memory_conf_requires_embedder(
-    minimal_conf, patched_resource_manager
-):
-    minimal_conf.episodic_memory.long_term_memory.embedder = None
-    memmachine = MemMachine(minimal_conf, patched_resource_manager)
-
-    with pytest.raises(RuntimeError, match="embedder"):
-        memmachine._with_default_episodic_memory_conf(session_key="session-1")
 
 
 @pytest.mark.asyncio

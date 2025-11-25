@@ -7,7 +7,8 @@ import logging
 
 import uvicorn
 
-from memmachine.server.app import global_memory_lifespan, mcp
+from memmachine.server.api_v2.mcp import global_memory_lifespan
+from memmachine.server.app import mcp
 
 logger = logging.getLogger(__name__)
 
