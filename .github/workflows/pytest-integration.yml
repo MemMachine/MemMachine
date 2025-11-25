@@ -31,7 +31,7 @@ jobs:
           # Episodic Memory tests
           "tests/memmachine/episodic_memory/",
           # Main MemMachine tests
-          "tests/memmachine/main/"
+          "tests/memmachine/main/",
           # Semantic Memory tests
           "tests/memmachine/semantic_memory/",
         ]
