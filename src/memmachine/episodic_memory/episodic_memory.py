@@ -278,9 +278,19 @@ class EpisodicMemory:
     class QueryResponse(BaseModel):
         """Aggregated search results from both long- and short-term memory."""
 
-        long_term_memory: list[EpisodeResponse]
-        short_term_memory: list[EpisodeResponse]
-        episode_summary: list[str]
+        class ShortTermMemoryResponse(BaseModel):
+            """Aggregated search results from short-term memory."""
+
+            episodes: list[EpisodeResponse]
+            episode_summary: list[str]
+
+        class LongTermMemoryResponse(BaseModel):
+            """Aggregated search results from long-term memory."""
+
+            episodes: list[EpisodeResponse]
+
+        long_term_memory: LongTermMemoryResponse
+        short_term_memory: ShortTermMemoryResponse
 
     async def query_memory(
         self,
@@ -360,14 +370,18 @@ class EpisodicMemory:
         self._query_counter.increment()
 
         return EpisodicMemory.QueryResponse(
-            short_term_memory=[
-                EpisodeResponse(**episode.model_dump()) for episode in short_episode
-            ],
-            long_term_memory=[
-                EpisodeResponse(**episode.model_dump())
-                for episode in unique_long_episodes
-            ],
-            episode_summary=[short_summary],
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[
+                    EpisodeResponse(**episode.model_dump()) for episode in short_episode
+                ],
+                episode_summary=[short_summary],
+            ),
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[
+                    EpisodeResponse(**episode.model_dump())
+                    for episode in unique_long_episodes
+                ],
+            ),
         )
 
     async def formalize_query_with_context(
@@ -401,16 +415,20 @@ class EpisodicMemory:
             return query
 
         episodes = sorted(
-            query_result.short_term_memory + query_result.long_term_memory,
+            query_result.short_term_memory.episodes
+            + query_result.long_term_memory.episodes,
             key=lambda x: cast(datetime, x.created_at),
         )
 
         finalized_query = ""
         # Add summary if it exists
-        if query_result.episode_summary and len(query_result.episode_summary) > 0:
+        if (
+            query_result.short_term_memory.episode_summary
+            and len(query_result.short_term_memory.episode_summary) > 0
+        ):
             total_summary = ""
-            for summ in query_result.episode_summary:
-                if not query_result.episode_summary:
+            for summ in query_result.short_term_memory.episode_summary:
+                if not query_result.short_term_memory.episode_summary:
                     # TODO from @o-love: Can someone validate this if.
                     continue
                 total_summary = total_summary + summ + "\n"

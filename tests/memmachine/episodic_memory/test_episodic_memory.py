@@ -212,11 +212,11 @@ async def test_query_memory_all_enabled(
     response = await episodic_memory.query_memory("test query")
 
     assert response is not None
-    assert response.short_term_memory == [ep1_rsp]
-    assert response.long_term_memory == [
+    assert response.short_term_memory.episodes == [ep1_rsp]
+    assert response.long_term_memory.episodes == [
         ep2_rsp
     ]  # ep3 is a duplicate and should be filtered out
-    assert response.episode_summary == ["summary"]
+    assert response.short_term_memory.episode_summary == ["summary"]
     mock_short_term_memory.get_short_term_memory_context.assert_awaited_once()
     mock_long_term_memory.search.assert_awaited_once()
 
@@ -239,9 +239,9 @@ async def test_query_memory_short_term_only(
 
     response = await memory.query_memory("test query")
     assert response is not None
-    assert response.short_term_memory == [ep1_rsp]
-    assert response.long_term_memory == []
-    assert response.episode_summary == ["summary"]
+    assert response.short_term_memory.episodes == [ep1_rsp]
+    assert response.long_term_memory.episodes == []
+    assert response.short_term_memory.episode_summary == ["summary"]
 
 
 @pytest.mark.asyncio
@@ -259,9 +259,9 @@ async def test_query_memory_long_term_only(
 
     response = await memory.query_memory("test query")
     assert response is not None
-    assert response.short_term_memory == []
-    assert response.long_term_memory == [ep1_rsp]
-    assert response.episode_summary == [""]
+    assert response.short_term_memory.episodes == []
+    assert response.long_term_memory.episodes == [ep1_rsp]
+    assert response.short_term_memory.episode_summary == [""]
 
 
 @pytest.mark.asyncio
