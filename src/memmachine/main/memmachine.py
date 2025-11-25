@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 class MemoryType(Enum):
     """MemMachine type."""
 
-    Semantic = "episodic"
-    Episodic = "semantic"
+    Semantic = "semantic"
+    Episodic = "episodic"
 
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
