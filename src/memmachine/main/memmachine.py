@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryType(Enum):
-    """MemMachine type."""
+    """Memory type."""
 
     Semantic = "semantic"
     Episodic = "episodic"
@@ -213,9 +213,6 @@ class MemMachine:
         ]
 
         await asyncio.gather(*tasks)
-
-        session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.delete_session(session_data.session_key)
 
     async def search_sessions(
         self,
@@ -422,12 +419,3 @@ class MemMachine:
     ) -> None:
         semantic_session = await self._resources.get_semantic_session_manager()
         await semantic_session.delete_features(feature_ids)
-
-    async def delete_filtered(
-        self,
-        *,
-        session_data: InstanceOf[SessionData],
-        target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
-        delete_filter: str | None = None,
-    ) -> None:
-        raise NotImplementedError

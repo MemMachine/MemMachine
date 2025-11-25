@@ -14,7 +14,19 @@ def _validate_no_slash(v: str) -> str:
     return v
 
 
+def _validate_int_compatible(v: str) -> str:
+    try:
+        int(v)
+    except ValueError as e:
+        raise ValueError("ID must be int-compatible") from e
+    return v
+
+
+IntCompatibleId = Annotated[str, AfterValidator(_validate_int_compatible), Field(...)]
+
+
 SafeId = Annotated[str, AfterValidator(_validate_no_slash), Field(...)]
+SafeIdWithDefault = Annotated[SafeId, Field(default="universal")]
 
 
 class ProjectConfig(BaseModel):
@@ -79,8 +91,8 @@ class MemoryMessage(BaseModel):
 class AddMemoriesSpec(BaseModel):
     """Specification model for adding memories."""
 
-    org_id: SafeId = Field(default="universal")
-    project_id: SafeId = Field(default="universal")
+    org_id: SafeIdWithDefault
+    project_id: SafeIdWithDefault
     messages: Annotated[list[MemoryMessage], Field(...)]
 
 
@@ -99,8 +111,8 @@ class AddMemoriesResponse(BaseModel):
 class SearchMemoriesSpec(BaseModel):
     """Specification model for searching memories."""
 
-    org_id: SafeId
-    project_id: SafeId
+    org_id: SafeIdWithDefault
+    project_id: SafeIdWithDefault
     top_k: Annotated[int, Field(default=10)]
     query: Annotated[str, Field(...)]
     filter: Annotated[str, Field(default="")]
@@ -110,36 +122,28 @@ class SearchMemoriesSpec(BaseModel):
 class ListMemoriesSpec(BaseModel):
     """Specification model for listing memories."""
 
-    org_id: SafeId
-    project_id: SafeId
+    org_id: SafeIdWithDefault
+    project_id: SafeIdWithDefault
     limit: Annotated[int, Field(default=100)]
     offset: Annotated[int, Field(default=0)]
     filter: Annotated[str, Field(default="")]
     type: Annotated[MemoryType, Field(default=MemoryType.Episodic)]
 
 
-class DeleteMemoriesSpec(BaseModel):
-    """Specification model for deleting memories."""
-
-    org_id: SafeId
-    project_id: SafeId
-    filter: Annotated[str, Field(default="")]
-
-
 class DeleteEpisodicMemorySpec(BaseModel):
     """Specification model for deleting episodic memories."""
 
-    org_id: SafeId
-    project_id: SafeId
-    episodic_id: Annotated[str, Field(...)]
+    org_id: SafeIdWithDefault
+    project_id: SafeIdWithDefault
+    episodic_id: SafeId
 
 
 class DeleteSemanticMemorySpec(BaseModel):
     """Specification model for deleting episodic memories."""
 
-    org_id: SafeId
-    project_id: SafeId
-    semantic_id: Annotated[str, Field(...)]
+    org_id: SafeIdWithDefault
+    project_id: SafeIdWithDefault
+    semantic_id: SafeId
 
 
 class SearchResult(BaseModel):

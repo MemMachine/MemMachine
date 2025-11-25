@@ -42,7 +42,7 @@ def test_create_project(client, mock_memmachine):
 
     response = client.post("/api/v2/projects", json=payload)
 
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     mock_memmachine.create_session.assert_awaited_once()
     call_args = mock_memmachine.create_session.call_args[1]

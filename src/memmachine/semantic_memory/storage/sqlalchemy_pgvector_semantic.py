@@ -7,7 +7,7 @@ import numpy as np
 from alembic import command
 from alembic.config import Config
 from pgvector.sqlalchemy import Vector
-from pydantic import InstanceOf, TypeAdapter
+from pydantic import InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
     Boolean,
     Column,
@@ -33,6 +33,7 @@ from sqlalchemy.orm import DeclarativeBase, aliased, mapped_column
 from sqlalchemy.sql import Delete, Select, func
 
 from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.errors import ResourceNotFoundError
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -252,7 +253,12 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         embedding: InstanceOf[np.ndarray] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        stmt = update(Feature).where(Feature.id == int(feature_id))
+        try:
+            feature_id_int = int(feature_id)
+        except (TypeError, ValueError) as e:
+            raise ResourceNotFoundError(f"Invalid feature ID: {feature_id}") from e
+
+        stmt = update(Feature).where(Feature.id == feature_id_int)
 
         if set_id is not None:
             stmt = stmt.values(set_id=set_id)
@@ -278,7 +284,12 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         feature_id: FeatureIdT,
         load_citations: bool = False,
     ) -> SemanticFeature | None:
-        stmt = select(Feature).where(Feature.id == int(feature_id))
+        try:
+            feature_id_int = int(feature_id)
+        except (TypeError, ValueError) as e:
+            raise ResourceNotFoundError(f"Invalid feature ID: {feature_id}") from e
+
+        stmt = select(Feature).where(Feature.id == feature_id_int)
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
@@ -332,7 +343,10 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         return [f.to_typed_model(citations=citations_map.get(f.id)) for f in features]
 
     async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
-        feature_ids_ints = [int(f_id) for f_id in feature_ids]
+        try:
+            feature_ids_ints = TypeAdapter(list[int]).validate_python(feature_ids)
+        except ValidationError as e:
+            raise ResourceNotFoundError(f"Invalid feature IDs: {feature_ids}") from e
 
         stmt = delete(Feature).where(Feature.id.in_(feature_ids_ints))
         async with self._create_session() as session:
@@ -358,8 +372,13 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         feature_id: FeatureIdT,
         history_ids: list[EpisodeIdT],
     ) -> None:
+        try:
+            feature_id_int = int(feature_id)
+        except (TypeError, ValueError) as e:
+            raise ResourceNotFoundError(f"Invalid feature ID: {feature_id}") from e
+
         rows = [
-            {"feature_id": int(feature_id), "history_id": str(hid)}
+            {"feature_id": feature_id_int, "history_id": str(hid)}
             for hid in history_ids
         ]
 
