@@ -104,6 +104,10 @@ def test_load_sample_cpu_config():
     assert conf.logging.level == LogLevel.INFO
     assert conf.session_manager.database == "profile_storage"
     assert (
+        len(resources_conf.language_models.openai_chat_completions_language_model_confs)
+        > 0
+    )
+    assert (
         resources_conf.language_models.openai_chat_completions_language_model_confs[
             "ollama_model"
         ].model
