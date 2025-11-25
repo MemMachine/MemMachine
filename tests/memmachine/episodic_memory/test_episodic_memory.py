@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from memmachine.common.metrics_factory import MetricsFactory
-from memmachine.episode_store.episode_model import Episode
+from memmachine.episode_store.episode_model import Episode, EpisodeResponse
 from memmachine.episodic_memory.episodic_memory import (
     EpisodicMemory,
     EpisodicMemoryParams,
@@ -199,19 +199,22 @@ async def test_query_memory_all_enabled(
     ep1 = create_test_episode(uid=str(uuid4()), content="short")
     ep2 = create_test_episode(uid=str(uuid4()), content="long")
     ep3 = create_test_episode(uid=ep1.uid, content="duplicate")
+    ep1_rsp = EpisodeResponse(**ep1.model_dump())
+    ep2_rsp = EpisodeResponse(**ep2.model_dump())
+    ep3_rsp = EpisodeResponse(**ep3.model_dump())
 
     mock_short_term_memory.get_short_term_memory_context.return_value = (
-        [ep1],
+        [ep1_rsp],
         "summary",
     )
-    mock_long_term_memory.search.return_value = [ep2, ep3]
+    mock_long_term_memory.search.return_value = [ep2_rsp, ep3_rsp]
 
     response = await episodic_memory.query_memory("test query")
 
     assert response is not None
-    assert response.short_term_memory == [ep1]
+    assert response.short_term_memory == [ep1_rsp]
     assert response.long_term_memory == [
-        ep2
+        ep2_rsp
     ]  # ep3 is a duplicate and should be filtered out
     assert response.episode_summary == ["summary"]
     mock_short_term_memory.get_short_term_memory_context.assert_awaited_once()
@@ -228,14 +231,15 @@ async def test_query_memory_short_term_only(
     memory = EpisodicMemory(episodic_memory_params)
 
     ep1 = create_test_episode(content="short only")
+    ep1_rsp = EpisodeResponse(**ep1.model_dump())
     mock_short_term_memory.get_short_term_memory_context.return_value = (
-        [ep1],
+        [ep1_rsp],
         "summary",
     )
 
     response = await memory.query_memory("test query")
     assert response is not None
-    assert response.short_term_memory == [ep1]
+    assert response.short_term_memory == [ep1_rsp]
     assert response.long_term_memory == []
     assert response.episode_summary == ["summary"]
 
@@ -250,12 +254,13 @@ async def test_query_memory_long_term_only(
     memory = EpisodicMemory(episodic_memory_params)
 
     ep1 = create_test_episode(content="long only")
-    mock_long_term_memory.search.return_value = [ep1]
+    ep1_rsp = EpisodeResponse(**ep1.model_dump())
+    mock_long_term_memory.search.return_value = [ep1_rsp]
 
     response = await memory.query_memory("test query")
     assert response is not None
     assert response.short_term_memory == []
-    assert response.long_term_memory == [ep1]
+    assert response.long_term_memory == [ep1_rsp]
     assert response.episode_summary == [""]
 
 

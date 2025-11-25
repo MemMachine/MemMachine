@@ -37,6 +37,12 @@ class EpisodeEntry(BaseModel):
     created_at: AwareDatetime | None = None
 
 
+class EpisodeResponse(EpisodeEntry):
+    """Episode data returned in responses."""
+
+    uid: EpisodeIdT
+
+
 class Episode(BaseModel):
     """Conversation message stored in history together with persistence metadata."""
 

@@ -223,6 +223,7 @@ async def test_create_or_open_episodic_memory_success(
         assert instance is not None
         assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from add
 
+
 @pytest.mark.asyncio
 @patch(
     "memmachine.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
