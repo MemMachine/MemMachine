@@ -16,7 +16,7 @@ from memmachine.common.configuration.episodic_config import (
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
 from memmachine.common.configuration.reranker_conf import RerankersConf
-from memmachine.main.memmachine_errors import (
+from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
     DefaultRerankerNotConfiguredError,
     EmbedderNotFoundError,
