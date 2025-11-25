@@ -22,10 +22,8 @@ jobs:
       matrix:
         # Each integration test is a separate job to allow for parallel execution
         test-paths: [
-          # Session manager tests
-          "tests/memmachine/common/session_manager/",
-          # Vector Graph Store tests
-          "tests/memmachine/common/vector_graph_store/",
+          # Common tests
+          "tests/memmachine/common/",
           # Episode Store tests
           "tests/memmachine/episode_store/",
           # Episodic Memory tests
@@ -36,7 +34,8 @@ jobs:
           "tests/memmachine/semantic_memory/",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
-        python-version: [ "3.12", "3.13", "3.14" ]
+        # Test on the oldest and newest supported Python versions
+        python-version: [ "3.12", "3.14" ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
