@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 
 from memmachine.common.filter.filter_parser import parse_filter
+from memmachine.episode_store.episode_model import EpisodeEntry
 from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
@@ -58,12 +59,17 @@ def resources(embedder: MockEmbedder, mock_llm_model, semantic_type: SemanticCat
 
 
 async def add_history(history_storage: EpisodeStorage, content: str):
-    return await history_storage.add_episode(
-        content=content,
+    episodes = await history_storage.add_episodes(
         session_key="session_id",
-        producer_id="profile_id",
-        producer_role="dev",
+        episodes=[
+            EpisodeEntry(
+                content=content,
+                producer_id="profile_id",
+                producer_role="dev",
+            )
+        ],
     )
+    return episodes[0].uid
 
 
 @pytest.fixture

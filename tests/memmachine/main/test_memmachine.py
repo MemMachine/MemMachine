@@ -20,7 +20,6 @@ from memmachine.episode_store.episode_model import Episode, EpisodeEntry
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SemanticFeature
-from memmachine.semantic_memory.semantic_session_resource import IsolationType
 
 
 class DummySessionData:
@@ -263,12 +262,15 @@ async def test_add_episodes_dispatches_to_all_memories(
     episodic_session = AsyncMock()
     episodic_manager = MagicMock()
     episodic_manager.open_episodic_memory.return_value = _async_cm(episodic_session)
+    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
+        episodic_session
+    )
     patched_resource_manager.get_episodic_memory_manager = AsyncMock(
         return_value=episodic_manager
     )
 
     semantic_manager_service = MagicMock()
-    semantic_manager_service.simple_semantic_session_id_manager.generate_session_data.return_value = session
+    semantic_manager_service.simple_semantic_session_id_manager._generate_session_data.return_value = session
 
     patched_resource_manager.get_semantic_manager = AsyncMock(
         return_value=semantic_manager_service
@@ -285,7 +287,6 @@ async def test_add_episodes_dispatches_to_all_memories(
     episode_storage.add_episodes.assert_awaited_once_with(session.session_key, entries)
     episodic_session.add_memory_episodes.assert_awaited_once_with(stored_episodes)
     semantic_manager.add_message.assert_awaited_once_with(
-        memory_type=[IsolationType.SESSION],
         episode_ids=["e1", "e2"],
         session_data=session,
     )

@@ -1,4 +1,7 @@
-"""Additional tests for SessionResourceRetriever and SessionIdManager."""
+"""Additional tests for session id handling and resource retrieval."""
+
+from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -8,19 +11,14 @@ from memmachine.semantic_memory.semantic_model import (
     SemanticCategory,
     SemanticPrompt,
 )
-from memmachine.semantic_memory.semantic_session_resource import (
+from memmachine.semantic_memory.semantic_session_manager import (
     IsolationType,
-    SessionIdIsolationTypeChecker,
-    SessionIdManager,
-    SessionResourceRetriever,
+    SemanticSessionManager,
 )
 from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     MockEmbedder,
+    SimpleSessionResourceRetriever,
 )
-
-
-def test_semantic_session_id_manager_is_instance():
-    assert isinstance(SessionIdManager(), SessionIdIsolationTypeChecker)
 
 
 @pytest.fixture
@@ -73,28 +71,55 @@ def session_resources(
     )
 
 
-class TestSessionIdManager:
-    """Tests for SessionIdManager."""
+@pytest.fixture
+def session_manager() -> SemanticSessionManager:
+    return SemanticSessionManager(MagicMock())
 
-    def test_generate_session_data_creates_valid_session(self):
-        manager = SessionIdManager()
 
-        session_data = manager.generate_session_data(
-            user_id="user123",
-            session_id="session456",
-            role_id="role789",
+@pytest.fixture
+def raw_session_data():
+    @dataclass
+    class _SessionData:
+        user_profile_id: str | None
+        session_id: str | None
+        role_profile_id: str | None
+
+    return _SessionData(
+        user_profile_id="user123",
+        session_id="session456",
+        role_profile_id="role789",
+    )
+
+
+class TestSessionIdGeneration:
+    """Tests for generating and classifying semantic session ids."""
+
+    def test_generate_session_data_creates_valid_session(
+        self, session_manager: SemanticSessionManager, raw_session_data
+    ):
+        session_data = session_manager._generate_session_data(
+            session_data=raw_session_data,
         )
 
         assert session_data.user_profile_id == "mem_user_user123"
         assert session_data.session_id == "mem_session_session456"
         assert session_data.role_profile_id == "mem_role_role789"
 
-    def test_generate_session_data_with_empty_strings(self):
-        manager = SessionIdManager()
+    def test_generate_session_data_with_empty_strings(
+        self, session_manager: SemanticSessionManager
+    ):
+        @dataclass
+        class _SessionData:
+            user_profile_id: str | None
+            session_id: str | None
+            role_profile_id: str | None
 
-        session_data = manager.generate_session_data(
-            user_id="",
-            session_id="",
+        session_data = session_manager._generate_session_data(
+            session_data=_SessionData(
+                user_profile_id="",
+                session_id="",
+                role_profile_id=None,
+            ),
         )
 
         # Should return None
@@ -102,66 +127,53 @@ class TestSessionIdManager:
         assert session_data.session_id is None
 
     def test_is_session_id_recognizes_session_prefix(self):
-        manager = SessionIdManager()
-
-        assert manager.is_session_id("mem_session_abc123")
-        assert manager.is_session_id("mem_session_")
-        assert not manager.is_session_id("mem_user_abc123")
-        assert not manager.is_session_id("random_id")
-        assert not manager.is_session_id("")
+        assert SemanticSessionManager.is_session_id("mem_session_abc123")
+        assert SemanticSessionManager.is_session_id("mem_session_")
+        assert not SemanticSessionManager.is_session_id("mem_user_abc123")
+        assert not SemanticSessionManager.is_session_id("random_id")
+        assert not SemanticSessionManager.is_session_id("")
 
     def test_is_producer_id_recognizes_user_prefix(self):
-        manager = SessionIdManager()
-
-        assert manager.is_producer_id("mem_user_user456")
-        assert manager.is_producer_id("mem_user_")
-        assert not manager.is_producer_id("mem_session_session789")
-        assert not manager.is_producer_id("random_id")
-        assert not manager.is_producer_id("")
+        assert SemanticSessionManager.is_producer_id("mem_user_user456")
+        assert SemanticSessionManager.is_producer_id("mem_user_")
+        assert not SemanticSessionManager.is_producer_id("mem_session_session789")
+        assert not SemanticSessionManager.is_producer_id("random_id")
+        assert not SemanticSessionManager.is_producer_id("")
 
     def test_set_id_isolation_type_returns_session(self):
-        manager = SessionIdManager()
-
-        isolation_type = manager.set_id_isolation_type("mem_session_xyz")
+        isolation_type = SemanticSessionManager.set_id_isolation_type("mem_session_xyz")
 
         assert isolation_type == IsolationType.SESSION
 
     def test_set_id_isolation_type_returns_user(self):
-        manager = SessionIdManager()
-
-        isolation_type = manager.set_id_isolation_type("mem_user_xyz")
+        isolation_type = SemanticSessionManager.set_id_isolation_type("mem_user_xyz")
 
         assert isolation_type == IsolationType.USER
 
     def test_set_id_isolation_type_returns_role(self):
-        manager = SessionIdManager()
-
-        isolation_type = manager.set_id_isolation_type("mem_role_xyz")
+        isolation_type = SemanticSessionManager.set_id_isolation_type("mem_role_xyz")
 
         assert isolation_type == IsolationType.ROLE
 
     def test_set_id_isolation_type_raises_on_invalid_id(self):
-        manager = SessionIdManager()
-
         with pytest.raises(ValueError, match="Invalid id"):
-            manager.set_id_isolation_type("invalid_id")
+            SemanticSessionManager.set_id_isolation_type("invalid_id")
 
 
 class TestSessionResourceRetriever:
-    """Tests for SessionResourceRetriever."""
+    """Tests for resource retrieval keyed by session set ids."""
 
     def test_get_resources_for_session_id(
         self,
         profile_resources: Resources,
         session_resources: Resources,
     ):
-        manager = SessionIdManager()
-        retriever = SessionResourceRetriever(
-            session_id_manager=manager,
+        retriever = SimpleSessionResourceRetriever(
             default_resources={
                 IsolationType.USER: profile_resources,
                 IsolationType.SESSION: session_resources,
-            },
+                IsolationType.ROLE: session_resources,
+            }
         )
 
         resources = retriever.get_resources("mem_session_test123")
@@ -174,13 +186,12 @@ class TestSessionResourceRetriever:
         profile_resources: Resources,
         session_resources: Resources,
     ):
-        manager = SessionIdManager()
-        retriever = SessionResourceRetriever(
-            session_id_manager=manager,
+        retriever = SimpleSessionResourceRetriever(
             default_resources={
                 IsolationType.USER: profile_resources,
                 IsolationType.SESSION: session_resources,
-            },
+                IsolationType.ROLE: session_resources,
+            }
         )
 
         resources = retriever.get_resources("mem_user_test456")
@@ -193,13 +204,12 @@ class TestSessionResourceRetriever:
         profile_resources: Resources,
         session_resources: Resources,
     ):
-        manager = SessionIdManager()
-        retriever = SessionResourceRetriever(
-            session_id_manager=manager,
+        retriever = SimpleSessionResourceRetriever(
             default_resources={
                 IsolationType.USER: profile_resources,
                 IsolationType.SESSION: session_resources,
-            },
+                IsolationType.ROLE: session_resources,
+            }
         )
 
         with pytest.raises(ValueError, match="Invalid id"):
@@ -210,13 +220,12 @@ class TestSessionResourceRetriever:
         profile_resources: Resources,
         session_resources: Resources,
     ):
-        manager = SessionIdManager()
-        retriever = SessionResourceRetriever(
-            session_id_manager=manager,
+        retriever = SimpleSessionResourceRetriever(
             default_resources={
                 IsolationType.USER: profile_resources,
                 IsolationType.SESSION: session_resources,
-            },
+                IsolationType.ROLE: session_resources,
+            }
         )
 
         profile_res = retriever.get_resources("mem_user_user1")
@@ -226,24 +235,21 @@ class TestSessionResourceRetriever:
         assert profile_res.semantic_categories[0].name == "Profile"
         assert session_res.semantic_categories[0].name == "Session"
 
-    def test_custom_resources_returns_none(
+    def test_unknown_type_defaults_raise(
         self,
         profile_resources: Resources,
         session_resources: Resources,
     ):
-        # This tests the current TODO implementation
-        manager = SessionIdManager()
-        retriever = SessionResourceRetriever(
-            session_id_manager=manager,
+        retriever = SimpleSessionResourceRetriever(
             default_resources={
                 IsolationType.USER: profile_resources,
                 IsolationType.SESSION: session_resources,
-            },
+                IsolationType.ROLE: session_resources,
+            }
         )
 
-        # The _get_set_id_resources static method should return None
-        custom_res = retriever._get_set_id_resources("any_set_id")
-        assert custom_res is None
+        with pytest.raises(ValueError, match="Invalid id"):
+            retriever.get_resources("any_set_id")
 
 
 class TestIsolationType:

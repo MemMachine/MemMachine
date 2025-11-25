@@ -1,18 +1,34 @@
 """Manage semantic memory sessions and associated lifecycle hooks."""
 
 import asyncio
+from enum import Enum
+from typing import Final, Protocol, runtime_checkable
 
 from pydantic import InstanceOf
 
 from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr
 from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_memory import SemanticService
-from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
-from memmachine.semantic_memory.semantic_session_resource import (
-    ALL_MEMORY_TYPES,
-    IsolationType,
-    SessionData,
+from memmachine.semantic_memory.semantic_model import (
+    FeatureIdT,
+    SemanticFeature,
+    SetIdT,
 )
+
+_SESSION_ID_PREFIX: Final[str] = "mem_session_"
+_USER_ID_PREFIX: Final[str] = "mem_user_"
+_ROLE_ID_PREFIX: Final[str] = "mem_role_"
+
+
+class IsolationType(Enum):
+    """Isolation scopes supported when mapping activity to semantic-memory set_ids."""
+
+    USER = "user_profile"
+    ROLE = "role_profile"
+    SESSION = "session"
+
+
+ALL_MEMORY_TYPES: Final[list[IsolationType]] = list(IsolationType)
 
 
 class SemanticSessionManager:
@@ -22,6 +38,86 @@ class SemanticSessionManager:
     The manager persists conversation history, resolves the relevant set_ids from
     `SessionData`, and dispatches calls to `SemanticService`.
     """
+
+    @runtime_checkable
+    class SessionData(Protocol):
+        """Protocol exposing the identifiers used to derive set_ids."""
+
+        @property
+        def user_profile_id(self) -> SetIdT | None:
+            raise NotImplementedError
+
+        @property
+        def session_id(self) -> SetIdT | None:
+            raise NotImplementedError
+
+        @property
+        def role_profile_id(self) -> SetIdT | None:
+            raise NotImplementedError
+
+    def _generate_session_data(
+        self,
+        *,
+        session_data: SessionData,
+    ) -> SessionData:
+        class _SessionDataImpl:
+            """Lightweight `SessionData` implementation backed by generated set_ids."""
+
+            def __init__(
+                self,
+                *,
+                _user_profile_id: str | None,
+                _role_profile_id: str | None,
+                _session_id: str | None,
+            ) -> None:
+                """Capture the identifiers used to scope memory resources."""
+                self._user_id: str | None = _user_profile_id
+                self._role_id: str | None = _role_profile_id
+                self._session_id: str | None = _session_id
+
+            @property
+            def user_profile_id(self) -> str | None:
+                return self._user_id
+
+            @property
+            def role_profile_id(self) -> str | None:
+                return self._role_id
+
+            @property
+            def session_id(self) -> str | None:
+                return self._session_id
+
+        user_id = session_data.user_profile_id
+        role_id = session_data.role_profile_id
+        session_id = session_data.session_id
+
+        return _SessionDataImpl(
+            _user_profile_id=_USER_ID_PREFIX + user_id if user_id else None,
+            _session_id=_SESSION_ID_PREFIX + session_id if session_id else None,
+            _role_profile_id=_ROLE_ID_PREFIX + role_id if role_id else None,
+        )
+
+    @classmethod
+    def set_id_isolation_type(cls, set_id: SetIdT) -> IsolationType:
+        if cls.is_session_id(set_id):
+            return IsolationType.SESSION
+        if cls.is_producer_id(set_id):
+            return IsolationType.USER
+        if cls.is_role_id(set_id):
+            return IsolationType.ROLE
+        raise ValueError(f"Invalid id: {set_id}")
+
+    @staticmethod
+    def is_session_id(_id: str) -> bool:
+        return _id.startswith(_SESSION_ID_PREFIX)
+
+    @staticmethod
+    def is_producer_id(_id: str) -> bool:
+        return _id.startswith(_USER_ID_PREFIX)
+
+    @staticmethod
+    def is_role_id(_id: str) -> bool:
+        return _id.startswith(_ROLE_ID_PREFIX)
 
     def __init__(
         self,
@@ -177,11 +273,13 @@ class SemanticSessionManager:
             filter_expr=filter_expr,
         )
 
-    @staticmethod
     def _get_set_ids(
+        self,
         session_data: SessionData,
         isolation_level: list[IsolationType],
     ) -> list[str]:
+        session_data = self._generate_session_data(session_data=session_data)
+
         s: list[str] = []
         if IsolationType.SESSION in isolation_level:
             session_id = session_data.session_id

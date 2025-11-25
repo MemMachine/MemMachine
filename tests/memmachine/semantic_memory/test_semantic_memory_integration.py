@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest_asyncio
 from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
 )
+from memmachine.episode_store.episode_model import EpisodeEntry
 from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_memory import (
     SemanticService,
@@ -15,16 +17,16 @@ from memmachine.semantic_memory.semantic_memory import (
 from memmachine.semantic_memory.semantic_model import (
     ResourceRetriever,
     Resources,
+    SetIdT,
 )
-from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
-from memmachine.semantic_memory.semantic_session_resource import (
+from memmachine.semantic_memory.semantic_session_manager import (
     IsolationType,
-    SessionData,
-    SessionIdIsolationTypeChecker,
-    SessionIdManager,
-    SessionResourceRetriever,
+    SemanticSessionManager,
 )
 from memmachine.server.prompt.profile_prompt import UserProfileSemanticCategory
+from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
+    SimpleSessionResourceRetriever,
+)
 
 
 @pytest.fixture
@@ -41,11 +43,6 @@ def llm_model(real_llm_model):
 async def storage(pgvector_semantic_storage):
     yield pgvector_semantic_storage
     await pgvector_semantic_storage.delete_all()
-
-
-@pytest.fixture
-def session_id_manager():
-    return SessionIdManager()
 
 
 @pytest.fixture
@@ -90,11 +87,9 @@ def default_session_resources(
 
 @pytest.fixture
 def resource_retriever(
-    session_id_manager: SessionIdIsolationTypeChecker,
     default_session_resources: dict[IsolationType, Resources],
 ):
-    r = SessionResourceRetriever(
-        session_id_manager=session_id_manager,
+    r = SimpleSessionResourceRetriever(
         default_resources=default_session_resources,
     )
     assert isinstance(r, ResourceRetriever)
@@ -102,10 +97,17 @@ def resource_retriever(
 
 
 @pytest.fixture
-def basic_session_data(session_id_manager: SessionIdManager):
-    return session_id_manager.generate_session_data(
-        user_id="test_user",
+def basic_session_data():
+    @dataclass
+    class _SessionData:
+        user_profile_id: SetIdT | None
+        session_id: SetIdT | None
+        role_profile_id: SetIdT | None
+
+    return _SessionData(
+        user_profile_id="test_user",
         session_id="test_session",
+        role_profile_id=None,
     )
 
 
@@ -142,19 +144,27 @@ async def semantic_memory(
 class TestLongMemEvalIngestion:
     @staticmethod
     async def ingest_question_convos(
-        session_data: SessionData,
+        session_data: SemanticSessionManager.SessionData,
         semantic_memory: SemanticSessionManager,
         history_storage: EpisodeStorage,
         conversation_sessions: list[list[dict[str, str]]],
     ):
         for convo in conversation_sessions:
             for turn in convo:
-                h_id = await history_storage.add_episode(
-                    content=turn["content"],
+                episodes = await history_storage.add_episodes(
+                    episodes=[
+                        EpisodeEntry(
+                            content=turn["content"],
+                            producer_id="profile_id",
+                            producer_role="dev",
+                        ),
+                    ],
                     session_key="session_id",
-                    producer_id="profile_id",
-                    producer_role="dev",
                 )
+
+                assert len(episodes) == 1
+                h_id = episodes[0].uid
+
                 await semantic_memory.add_message(
                     session_data=session_data,
                     episode_ids=[h_id],
@@ -162,7 +172,7 @@ class TestLongMemEvalIngestion:
 
     @staticmethod
     async def eval_answer(
-        session_data: SessionData,
+        session_data: SemanticSessionManager.SessionData,
         semantic_memory: SemanticSessionManager,
         question_str: str,
         llm_model: OpenAIResponsesLanguageModel,

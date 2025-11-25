@@ -73,7 +73,7 @@ async def _add_messages_to(
         for message in spec.messages
     ]
 
-    return await memmachine.add_episodes(
+    episode_ids = await memmachine.add_episodes(
         session_data=_SessionData(
             org_id=spec.org_id,
             project_id=spec.project_id,
@@ -81,6 +81,7 @@ async def _add_messages_to(
         episode_entries=episodes,
         target_memories=target_memories,
     )
+    return [AddMemoryResult(uid=e_id) for e_id in episode_ids]
 
 
 async def _search_target_memories(

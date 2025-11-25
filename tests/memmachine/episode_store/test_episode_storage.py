@@ -33,19 +33,25 @@ async def create_history_entry(
     episode_type: EpisodeType | None = None,
 ) -> EpisodeIdT:
     params = {
-        "session_key": session_key or DEFAULT_HISTORY_ARGS["session_key"],
         "producer_id": producer_id or DEFAULT_HISTORY_ARGS["producer_id"],
         "producer_role": producer_role or DEFAULT_HISTORY_ARGS["producer_role"],
     }
 
-    return await episode_storage.add_episode(
-        content=content,
-        episode_type=episode_type,
-        produced_for_id=produced_for_id,
-        metadata=metadata,
-        created_at=created_at,
-        **params,
+    episode = await episode_storage.add_episodes(
+        episodes=[
+            EpisodeEntry(
+                content=content,
+                episode_type=episode_type,
+                produced_for_id=produced_for_id,
+                metadata=metadata,
+                created_at=created_at,
+                **params,
+            ),
+        ],
+        session_key=session_key or DEFAULT_HISTORY_ARGS["session_key"],
     )
+
+    return episode[0].uid
 
 
 @pytest_asyncio.fixture

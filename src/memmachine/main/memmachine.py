@@ -5,9 +5,9 @@ import logging
 from asyncio import Task
 from collections.abc import Coroutine
 from enum import Enum
-from typing import Annotated, Any, Final, Protocol, cast
+from typing import Any, Final, Protocol, cast
 
-from pydantic import BaseModel, Field, InstanceOf, JsonValue
+from pydantic import BaseModel, InstanceOf, JsonValue
 
 from memmachine.common.configuration import Configuration
 from memmachine.common.configuration.episodic_config import (
@@ -25,30 +25,9 @@ from memmachine.common.session_manager.session_data_manager import SessionDataMa
 from memmachine.episode_store.episode_model import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
-from memmachine.semantic_memory.semantic_session_resource import IsolationType
+from memmachine.semantic_memory.semantic_session_manager import IsolationType
 
 logger = logging.getLogger(__name__)
-
-
-class SessionData(Protocol):
-    """Protocol describing session-scoped metadata used by memories."""
-
-    @property
-    def session_key(self) -> str:
-        """Unique session identifier."""
-        raise NotImplementedError
-
-    @property
-    def user_profile_id(self) -> str | None:
-        raise NotImplementedError
-
-    @property
-    def role_profile_id(self) -> str | None:
-        raise NotImplementedError
-
-    @property
-    def session_id(self) -> str | None:
-        raise NotImplementedError
 
 
 class MemoryType(Enum):
@@ -61,19 +40,39 @@ class MemoryType(Enum):
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
 
 
-class AddMemoryResult(BaseModel):
-    """Response model for adding memories."""
-
-    uid: Annotated[str, Field(...)]
-
-
 class MemMachine:
     """MemMachine class."""
 
-    def __init__(self, conf: Configuration, resources: ResourceManagerImpl) -> None:
+    class SessionData(Protocol):
+        """Protocol describing session-scoped metadata used by memories."""
+
+        @property
+        def session_key(self) -> str:
+            """Unique session identifier."""
+            raise NotImplementedError
+
+        @property
+        def user_profile_id(self) -> str | None:
+            raise NotImplementedError
+
+        @property
+        def role_profile_id(self) -> str | None:
+            raise NotImplementedError
+
+        @property
+        def session_id(self) -> str | None:
+            raise NotImplementedError
+
+    def __init__(
+        self, conf: Configuration, resources: ResourceManagerImpl | None = None
+    ) -> None:
         """Create a MemMachine using the provided configuration."""
         self._conf = conf
-        self._resources = resources
+
+        if resources is not None:
+            self._resources = resources
+        else:
+            self._resources = ResourceManagerImpl(conf)
 
     async def start(self) -> None:
         await self._resources.build()
@@ -86,14 +85,6 @@ class MemMachine:
         await semantic_service.stop()
 
         await self._resources.close()
-
-    async def session_exists(self, session_key: str) -> bool:
-        # Check if session exists
-        try:
-            session_info = await self.get_session(session_key=session_key)
-        except RuntimeError:
-            return False
-        return session_info is not None
 
     def _with_default_episodic_memory_conf(
         self,
@@ -189,9 +180,42 @@ class MemMachine:
         session_data_manager = await self._resources.get_session_data_manager()
         return await session_data_manager.get_session_info(session_key)
 
-    async def delete_session(self, session_key: str) -> None:
+    async def delete_session(self, session_data: SessionData) -> None:
+        async def _delete_episode_store() -> None:
+            episode_store = await self._resources.get_episode_storage()
+            await episode_store.delete_episode_messages(
+                session_keys=[session_data.session_key],
+            )
+
+        async def _delete_episodic_memory() -> None:
+            episodic_memory_manager = (
+                await self._resources.get_episodic_memory_manager()
+            )
+
+            await episodic_memory_manager.delete_episodic_session(
+                session_key=session_data.session_key
+            )
+
+        async def _delete_semantic_memory() -> None:
+            semantic_memory_manager = (
+                await self._resources.get_semantic_session_manager()
+            )
+
+            await semantic_memory_manager.delete_feature_set(
+                session_data=session_data,
+                memory_type=[IsolationType.SESSION],
+            )
+
+        tasks = [
+            _delete_episode_store(),
+            _delete_episodic_memory(),
+            _delete_semantic_memory(),
+        ]
+
+        await asyncio.gather(*tasks)
+
         session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.delete_session(session_key)
+        await session_data_manager.delete_session(session_data.session_key)
 
     async def search_sessions(
         self,
@@ -208,28 +232,13 @@ class MemMachine:
         episode_entries: list[EpisodeEntry],
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
-    ) -> list[AddMemoryResult]:
-        if not await self.session_exists(session_data.session_key):
-            await self.create_session(
-                session_data.session_key,
-                description="",
-                embedder_name=self._conf.default_long_term_memory_embedder,
-                reranker_name=self._conf.default_long_term_memory_reranker,
-            )
-
+    ) -> list[EpisodeIdT]:
         episode_storage = await self._resources.get_episode_storage()
         episodes = await episode_storage.add_episodes(
             session_data.session_key,
             episode_entries,
         )
-        ret = [AddMemoryResult(uid=episode.uid) for episode in episodes]
-
-        semantic_manager = await self._resources.get_semantic_manager()
-        semantic_session_data = (
-            semantic_manager.simple_semantic_session_id_manager.generate_session_data(
-                session_id=session_data.session_id,
-            )
-        )
+        episode_ids = [e.uid for e in episodes]
 
         tasks = []
 
@@ -237,26 +246,29 @@ class MemMachine:
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
-            async with episodic_memory_manager.open_episodic_memory(
-                session_data.session_key
+            async with episodic_memory_manager.open_or_create_episodic_memory(
+                session_key=session_data.session_key,
+                description="",
+                episodic_memory_config=self._with_default_episodic_memory_conf(
+                    session_key=session_data.session_key
+                ),
+                metadata={},
             ) as episodic_session:
                 tasks.append(episodic_session.add_memory_episodes(episodes))
 
         if MemoryType.Semantic in target_memories:
-            episode_ids = [e.uid for e in episodes]
             semantic_session_manager = (
                 await self._resources.get_semantic_session_manager()
             )
             tasks.append(
                 semantic_session_manager.add_message(
-                    memory_type=[IsolationType.SESSION],
                     episode_ids=episode_ids,
-                    session_data=semantic_session_data,
+                    session_data=session_data,
                 )
             )
 
         await asyncio.gather(*tasks)
-        return ret
+        return episode_ids
 
     class SearchResponse(BaseModel):
         """Aggregated search results across memory types."""
@@ -274,8 +286,13 @@ class MemMachine:
     ) -> EpisodicMemory.QueryResponse | None:
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
 
-        async with episodic_memory_manager.open_episodic_memory(
-            session_data.session_key
+        async with episodic_memory_manager.open_or_create_episodic_memory(
+            session_key=session_data.session_key,
+            description="",
+            episodic_memory_config=self._with_default_episodic_memory_conf(
+                session_key=session_data.session_key
+            ),
+            metadata={},
         ) as episodic_session:
             response = await episodic_session.query_memory(
                 query=query,
@@ -298,18 +315,6 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
-        semantic_manager = await self._resources.get_semantic_manager()
-        semantic_session_data = (
-            semantic_manager.simple_semantic_session_id_manager.generate_session_data(
-                session_id=session_data.session_id,
-            )
-        )
-
-        if not await self.session_exists(session_data.session_key):
-            raise RuntimeError(
-                f"No session info found for session {session_data.session_key}"
-            )
-
         if MemoryType.Episodic in target_memories:
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(
@@ -326,7 +331,7 @@ class MemMachine:
                 semantic_session.search(
                     memory_type=[IsolationType.SESSION],
                     message=query,
-                    session_data=semantic_session_data,
+                    session_data=session_data,
                     limit=limit,
                     search_filter=parse_filter(search_filter),
                 )

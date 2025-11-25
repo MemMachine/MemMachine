@@ -123,49 +123,6 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             await conn.run_sync(BaseEpisodeStore.metadata.create_all)
 
     @validate_call
-    async def add_episode(
-        self,
-        *,
-        content: str,
-        session_key: str,
-        producer_id: str,
-        producer_role: str,
-        produced_for_id: str | None = None,
-        episode_type: EpisodeType | None = None,
-        metadata: dict[str, JsonValue] | None = None,
-        created_at: AwareDatetime | None = None,
-    ) -> EpisodeIdT:
-        stmt = (
-            insert(Episode)
-            .values(
-                content=content,
-                session_key=session_key,
-                producer_id=producer_id,
-                producer_role=producer_role,
-            )
-            .returning(Episode.id)
-        )
-
-        if produced_for_id is not None:
-            stmt = stmt.values(produced_for_id=produced_for_id)
-
-        if episode_type is not None:
-            stmt = stmt.values(episode_type=episode_type)
-
-        if metadata is not None:
-            stmt = stmt.values(json_metadata=metadata)
-
-        if created_at is not None:
-            stmt = stmt.values(created_at=created_at)
-
-        async with self._create_session() as session:
-            result = await session.execute(stmt)
-            await session.commit()
-            episode_id = result.scalar_one()
-
-        return EpisodeIdT(episode_id)
-
-    @validate_call
     async def add_episodes(
         self,
         session_key: str,
