@@ -156,9 +156,13 @@ async def test_query_search_runs_targeted_memory_tasks(
 
     async_episodic = AsyncMock(
         return_value=EpisodicMemory.QueryResponse(
-            long_term_memory=[],
-            short_term_memory=[],
-            episode_summary=[],
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
         )
     )
     monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
@@ -201,9 +205,13 @@ async def test_query_search_skips_unrequested_memories(
 
     async_episodic = AsyncMock(
         return_value=EpisodicMemory.QueryResponse(
-            long_term_memory=[],
-            short_term_memory=[],
-            episode_summary=[],
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
         )
     )
     monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
