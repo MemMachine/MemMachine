@@ -448,6 +448,106 @@ class Memory:
             "session_id": self.__session_id,
         }
 
+    def delete_episodic(
+        self,
+        episodic_id: str,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Delete a specific episodic memory by ID.
+
+        Args:
+            episodic_id: The unique identifier of the episodic memory to delete
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            True if deletion was successful
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        Example:
+            ```python
+            # Delete a specific episodic memory
+            memory.delete_episodic(episodic_id="episode_123")
+            ```
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot delete episodic memory: client has been closed")
+
+        v2_delete_data = {
+            "org_id": self.__org_id,
+            "project_id": self.__project_id,
+            "episodic_id": episodic_id,
+        }
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/episodic/delete",
+                json=v2_delete_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+        except Exception:
+            logger.exception("Failed to delete episodic memory %s", episodic_id)
+            raise
+        else:
+            logger.info("Episodic memory %s deleted successfully", episodic_id)
+            return True
+
+    def delete_semantic(
+        self,
+        semantic_id: str,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Delete a specific semantic memory by ID.
+
+        Args:
+            semantic_id: The unique identifier of the semantic memory to delete
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            True if deletion was successful
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        Example:
+            ```python
+            # Delete a specific semantic memory
+            memory.delete_semantic(semantic_id="feature_123")
+            ```
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot delete semantic memory: client has been closed")
+
+        v2_delete_data = {
+            "org_id": self.__org_id,
+            "project_id": self.__project_id,
+            "semantic_id": semantic_id,
+        }
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/delete",
+                json=v2_delete_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+        except Exception:
+            logger.exception("Failed to delete semantic memory %s", semantic_id)
+            raise
+        else:
+            logger.info("Semantic memory %s deleted successfully", semantic_id)
+            return True
+
     def mark_client_closed(self) -> None:
         """Mark this memory instance as closed by its owning client."""
         self._client_closed = True

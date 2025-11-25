@@ -467,3 +467,156 @@ class TestMemory:
         # When multiple IDs, should keep as list
         assert metadata["agent_id"] == ["agent1", "agent2"]
         assert metadata["user_id"] == ["user1", "user2"]
+
+    # Delete episodic method tests
+    def test_delete_episodic_success(self, mock_client):
+        """Test successful deletion of episodic memory."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        episodic_id = "episode_123"
+        result = memory.delete_episodic(episodic_id=episodic_id)
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/episodic/delete" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["org_id"] == "test_org"
+        assert json_data["project_id"] == "test_project"
+        assert json_data["episodic_id"] == episodic_id
+
+    def test_delete_episodic_with_timeout(self, mock_client):
+        """Test delete_episodic with custom timeout."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.delete_episodic(episodic_id="episode_123", timeout=60)
+
+        assert result is True
+        call_args = mock_client.request.call_args
+        assert call_args[1]["timeout"] == 60
+
+    def test_delete_episodic_http_error(self, mock_client):
+        """Test delete_episodic handles HTTP errors correctly."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.delete_episodic(episodic_id="episode_123")
+
+    def test_delete_episodic_client_closed(self, mock_client):
+        """Test delete_episodic raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot delete episodic memory: client has been closed"
+        ):
+            memory.delete_episodic(episodic_id="episode_123")
+
+    def test_delete_semantic_success(self, mock_client):
+        """Test successful deletion of semantic memory."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        semantic_id = "feature_456"
+        result = memory.delete_semantic(semantic_id=semantic_id)
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/delete" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["org_id"] == "test_org"
+        assert json_data["project_id"] == "test_project"
+        assert json_data["semantic_id"] == semantic_id
+
+    def test_delete_semantic_with_timeout(self, mock_client):
+        """Test delete_semantic with custom timeout."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.delete_semantic(semantic_id="feature_456", timeout=60)
+
+        assert result is True
+        call_args = mock_client.request.call_args
+        assert call_args[1]["timeout"] == 60
+
+    def test_delete_semantic_http_error(self, mock_client):
+        """Test delete_semantic handles HTTP errors correctly."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.delete_semantic(semantic_id="feature_456")
+
+    def test_delete_semantic_client_closed(self, mock_client):
+        """Test delete_semantic raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot delete semantic memory: client has been closed"
+        ):
+            memory.delete_semantic(semantic_id="feature_456")
