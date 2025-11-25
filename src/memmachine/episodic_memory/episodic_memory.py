@@ -19,13 +19,14 @@ import asyncio
 import logging
 import time
 from collections.abc import Coroutine, Iterable, Mapping
+from datetime import datetime
 from typing import Protocol, cast
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.metrics_factory import MetricsFactory
-from memmachine.episode_store.episode_model import Episode
+from memmachine.episode_store.episode_model import Episode, EpisodeResponse
 from memmachine.episodic_memory.long_term_memory.long_term_memory import LongTermMemory
 from memmachine.episodic_memory.short_term_memory.short_term_memory import (
     ShortTermMemory,
@@ -277,8 +278,8 @@ class EpisodicMemory:
     class QueryResponse(BaseModel):
         """Aggregated search results from both long- and short-term memory."""
 
-        long_term_memory: list[Episode]
-        short_term_memory: list[Episode]
+        long_term_memory: list[EpisodeResponse]
+        short_term_memory: list[EpisodeResponse]
         episode_summary: list[str]
 
     async def query_memory(
@@ -359,8 +360,13 @@ class EpisodicMemory:
         self._query_counter.increment()
 
         return EpisodicMemory.QueryResponse(
-            short_term_memory=short_episode,
-            long_term_memory=unique_long_episodes,
+            short_term_memory=[
+                EpisodeResponse(**episode.model_dump()) for episode in short_episode
+            ],
+            long_term_memory=[
+                EpisodeResponse(**episode.model_dump())
+                for episode in unique_long_episodes
+            ],
             episode_summary=[short_summary],
         )
 
@@ -396,7 +402,7 @@ class EpisodicMemory:
 
         episodes = sorted(
             query_result.short_term_memory + query_result.long_term_memory,
-            key=lambda x: x.created_at,
+            key=lambda x: cast(datetime, x.created_at),
         )
 
         finalized_query = ""
