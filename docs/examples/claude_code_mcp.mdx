@@ -1,0 +1,207 @@
+---
+title: "Claude Code"
+description: "Setting up MemMachine with Claude Code"
+icon: "terminal"
+---
+
+# Claude Code Integration
+
+## Getting Started with MemMachine in Claude Code
+
+This guide will help you integrate MemMachine into Claude Code, Anthropic's official CLI tool for software engineering tasks. With MemMachine, Claude Code can remember context across sessions, making it more helpful for ongoing projects.
+
+### What is Claude Code?
+
+Claude Code is a command-line interface that provides Claude with powerful tools for software development, including file operations, code execution, and now—with MemMachine—persistent memory across conversations.
+
+### Prerequisites
+
+Before you begin, ensure you have:
+
+1. Claude Code installed and configured
+2. MemMachine running (either via Docker or as a Python package)
+3. A MemMachine configuration file (`config.yml`)
+
+**Starting Your Docker Container:**
+
+Make sure your MemMachine Docker container is running:
+
+```bash
+docker compose up -d
+```
+
+Or if you're using the provided script:
+
+```bash
+./memmachine-compose.sh
+```
+
+<Steps>
+<Step title="Choose Your Setup Method">
+
+MemMachine can be integrated with Claude Code in two ways:
+
+**Option A: Using Docker (Recommended)**
+- Best for isolated, reproducible environments
+- MemMachine runs in a container
+- Requires Docker installed and running
+
+**Option B: Direct Command**
+- Simpler setup if you have MemMachine installed locally
+- Uses your system Python environment
+- Requires MemMachine installed via pip or uv
+
+Choose the method that best fits your workflow.
+
+</Step>
+
+<Step title="Option A: Configure with Docker">
+
+If you're running MemMachine in Docker, create or edit the `.mcp.json` file in your project root:
+
+```json
+{
+  "mcpServers": {
+    "memmachine": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "memmachine-app",
+        "/app/.venv/bin/memmachine-mcp-stdio"
+      ],
+      "env": {
+        "MEMORY_CONFIG": "/app/configuration.yml",
+        "MM_USER_ID": "your-username",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+**Configuration Details:**
+- `memmachine-app`: The name of your Docker container (adjust if different)
+- `MEMORY_CONFIG`: Path to your config file inside the container
+- `MM_USER_ID`: Your user identifier for memory sessions (customize this)
+- `PYTHONUNBUFFERED`: Ensures immediate output from Python
+
+
+</Step>
+
+<Step title="Option B: Configure with Direct Command">
+
+<Note>
+**Reference Implementation**: This method has not been fully tested with Claude Code. It follows the standard MCP stdio pattern and should work, but if you encounter issues, please use Option A (Docker) or report your findings.
+</Note>
+
+If you have MemMachine installed locally, create or edit the `.mcp.json` file in your project root:
+
+```json
+{
+  "mcpServers": {
+    "memmachine": {
+      "command": "memmachine-mcp-stdio",
+      "env": {
+        "MEMORY_CONFIG": "/absolute/path/to/config.yml",
+        "MM_USER_ID": "your-username",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+Or if you're using uv:
+
+```json
+{
+  "mcpServers": {
+    "memmachine": {
+      "command": "uv",
+      "args": ["run", "memmachine-mcp-stdio"],
+      "env": {
+        "MEMORY_CONFIG": "/absolute/path/to/config.yml",
+        "MM_USER_ID": "your-username",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+**Important:** Use absolute paths for `MEMORY_CONFIG` to avoid path resolution issues.
+
+</Step>
+
+<Step title="Test the Integration">
+
+Once configured, start Claude Code in your project directory:
+
+```bash
+claude
+```
+
+Claude Code will automatically detect the `.mcp.json` file and connect to MemMachine.
+
+**Verify the connection** by checking /mcp or asking Claude to store something in memory:
+
+```
+You: Remember that I prefer using TypeScript for new projects
+```
+
+Claude should use the `add_memory` tool to store this preference.
+
+**Test memory recall** by starting a new conversation and asking:
+
+```
+You: What programming language do I prefer?
+```
+
+Claude should search memory and recall your TypeScript preference.
+
+</Step>
+
+<Step title="Using Memory with Claude Code">
+
+MemMachine provides two main tools that Claude Code can use:
+
+**add_memory**: Stores new information
+- Called automatically when you share facts, preferences, or important context
+- Stores both episodic (conversation) and profile (long-term) memory
+
+**search_memory**: Retrieves relevant context
+- Called automatically when context from previous sessions might be helpful
+- Searches both conversation history and user profile
+
+You don't need to explicitly ask Claude to use these tools—they're integrated into the workflow automatically.
+
+</Step>
+
+<Step title="Troubleshooting">
+
+**Claude Code can't connect to MemMachine:**
+- Verify your Docker container is running: `docker ps | grep memmachine`
+- Check the container name matches your config
+- Review Claude Code logs for connection errors
+
+**Memory not persisting:**
+- Ensure `MEMORY_CONFIG` points to a valid configuration file
+- Check that your Neo4j and PostgreSQL databases are running
+- Verify `MM_USER_ID` is consistent across sessions
+
+**Permission errors:**
+- If using Docker, ensure the container has proper volume mounts
+- Check file permissions on your configuration file
+- Verify the path to `memmachine-mcp-stdio` is correct
+
+**Getting logs:**
+You can check the MCP server output by viewing:
+```bash
+docker logs memmachine-app
+```
+
+Or if running directly, check the stderr output in your terminal.
+
+</Step>
+</Steps>
