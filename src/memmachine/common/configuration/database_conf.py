@@ -151,6 +151,9 @@ class DatabasesConf(BaseModel):
     def parse(cls, input_dict: dict) -> Self:
         databases = input_dict.get("databases", {})
 
+        if isinstance(databases, cls):
+            return databases
+
         neo4j_dict = {}
         relational_db_dict = {}
 

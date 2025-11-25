@@ -109,6 +109,9 @@ class EmbeddersConf(BaseModel):
         """Parse embedder config by provider and return the structured model."""
         embedder = input_dict.get("embedders", {})
 
+        if isinstance(embedder, cls):
+            return embedder
+
         amazon_bedrock_dict = {}
         openai_dict = {}
         sentence_transformer_dict = {}
