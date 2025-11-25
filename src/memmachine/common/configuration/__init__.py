@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TypeGuard, cast
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from memmachine.common.configuration.database_conf import DatabasesConf
 from memmachine.common.configuration.embedder_conf import EmbeddersConf
@@ -156,14 +156,23 @@ class ResourcesConf(BaseModel):
     rerankers: RerankersConf
     databases: DatabasesConf
 
-    def __init__(self, **data: object) -> None:
-        """Parse nested configuration sections into typed models."""
-        data = data.copy()  # avoid mutating caller's dict
-        super().__init__(**data)
-        self.embedders = EmbeddersConf.parse(data)
-        self.language_models = LanguageModelsConf.parse(data)
-        self.rerankers = RerankersConf.parse(data)
-        self.databases = DatabasesConf.parse(data)
+    @model_validator(mode="before")
+    @classmethod
+    def parse(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+
+        embedders = EmbeddersConf.parse(data)
+        language_models = LanguageModelsConf.parse(data)
+        rerankers = RerankersConf.parse(data)
+        databases = DatabasesConf.parse(data)
+
+        return {
+            "embedders": embedders,
+            "language_models": language_models,
+            "rerankers": rerankers,
+            "databases": databases,
+        }
 
 
 class Configuration(BaseModel):
