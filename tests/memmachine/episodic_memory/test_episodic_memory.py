@@ -6,8 +6,8 @@ from uuid import uuid4
 
 import pytest
 
+from memmachine.common.episode_store import Episode, EpisodeResponse
 from memmachine.common.metrics_factory import MetricsFactory
-from memmachine.episode_store.episode_model import Episode, EpisodeResponse
 from memmachine.episodic_memory.episodic_memory import (
     EpisodicMemory,
     EpisodicMemoryParams,

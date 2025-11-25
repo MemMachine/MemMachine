@@ -8,12 +8,12 @@ import pytest_asyncio
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConf,
 )
-from memmachine.common.language_model import LanguageModel
-from memmachine.common.session_manager.session_data_manager import SessionDataManager
-from memmachine.episode_store.episode_model import (
+from memmachine.common.episode_store import (
     ContentType,
     Episode,
 )
+from memmachine.common.language_model import LanguageModel
+from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory.short_term_memory.short_term_memory import (
     ShortTermMemory,
     ShortTermMemoryParams,

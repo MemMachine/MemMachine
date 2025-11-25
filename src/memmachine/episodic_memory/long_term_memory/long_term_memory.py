@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.embedder import Embedder
+from memmachine.common.episode_store import ContentType, Episode, EpisodeType
 from memmachine.common.reranker import Reranker
 from memmachine.common.vector_graph_store import VectorGraphStore
-from memmachine.episode_store.episode_model import ContentType, Episode, EpisodeType
 from memmachine.episodic_memory.declarative_memory import (
     DeclarativeMemory,
     DeclarativeMemoryParams,

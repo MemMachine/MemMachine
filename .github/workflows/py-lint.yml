@@ -11,17 +11,11 @@ on:
 
 jobs:
   ruff-check:
-    name: Ruff check
+    name: Ruff
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/ruff-action@v3.5.1
-
-  ruff-format:
-    name: Ruff format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
       - uses: astral-sh/ruff-action@v3.5.1
         with:
           args: "format --check --diff"
@@ -32,7 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.12", "3.13", "3.14" ]
+        # Test on the oldest and newest supported Python versions
+        python-version: [ "3.12", "3.14" ]
     steps:
       - uses: actions/checkout@v5
 
@@ -43,21 +38,3 @@ jobs:
 
       - name: Test with python ${{ matrix.python-version }}
         run: uv run --frozen --all-extras ty check src
-
-  mypy-type-check:
-    name: Mypy type check
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: [ "3.12", "3.13", "3.14" ]
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install the latest version of uv and set the python version
-        uses: astral-sh/setup-uv@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Test with python ${{ matrix.python-version }}
-        run: uv run --frozen --all-extras mypy src

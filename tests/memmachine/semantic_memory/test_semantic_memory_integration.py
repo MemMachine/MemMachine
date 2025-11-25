@@ -6,11 +6,10 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
+from memmachine.common.episode_store import EpisodeEntry, EpisodeStorage
 from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
 )
-from memmachine.episode_store.episode_model import EpisodeEntry
-from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_memory import (
     SemanticService,
 )

@@ -13,7 +13,7 @@ from memmachine import setup_nltk
 from memmachine.common.configuration import (
     Configuration,
 )
-from memmachine.episode_store.episode_model import EpisodeEntry
+from memmachine.common.episode_store import EpisodeEntry
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SetIdT
 

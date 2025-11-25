@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from memmachine import MemMachine
-from memmachine.episode_store.episode_model import EpisodeEntry
+from memmachine.common.episode_store.episode_model import EpisodeEntry
 from memmachine.main.memmachine import MemoryType as MemoryTypeE
 from memmachine.server.api_v2.spec import (
     AddMemoriesSpec,

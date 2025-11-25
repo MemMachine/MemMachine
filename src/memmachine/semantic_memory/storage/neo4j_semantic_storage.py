@@ -15,6 +15,7 @@ from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
 from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -27,7 +28,6 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine.episode_store.episode_model import EpisodeIdT
 from memmachine.semantic_memory.semantic_model import SemanticFeature
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,

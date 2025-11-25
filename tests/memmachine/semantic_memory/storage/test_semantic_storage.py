@@ -4,9 +4,8 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
+from memmachine.common.episode_store import EpisodeEntry, EpisodeIdT, EpisodeStorage
 from memmachine.common.filter.filter_parser import FilterExpr, parse_filter
-from memmachine.episode_store.episode_model import EpisodeEntry, EpisodeIdT
-from memmachine.episode_store.episode_storage import EpisodeStorage
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 

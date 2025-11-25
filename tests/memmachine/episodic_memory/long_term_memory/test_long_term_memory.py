@@ -10,6 +10,7 @@ from memmachine.common.embedder.sentence_transformer_embedder import (
     SentenceTransformerEmbedder,
     SentenceTransformerEmbedderParams,
 )
+from memmachine.common.episode_store import Episode
 from memmachine.common.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,
     CrossEncoderRerankerParams,
@@ -18,7 +19,6 @@ from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
-from memmachine.episode_store.episode_model import Episode
 from memmachine.episodic_memory.long_term_memory import (
     LongTermMemory,
     LongTermMemoryParams,
