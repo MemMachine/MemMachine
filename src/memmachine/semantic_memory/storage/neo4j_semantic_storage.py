@@ -555,6 +555,19 @@ class Neo4jSemanticStorage(SemanticStorage):
             history_id=str(history_id),
         )
 
+    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+        if not history_ids:
+            return
+
+        await self._driver.execute_query(
+            """
+            MATCH (h:SetHistory)
+            WHERE h.history_id IN $history_ids
+            DELETE h
+            """,
+            history_ids=[str(history_id) for history_id in history_ids],
+        )
+
     async def mark_messages_ingested(
         self,
         *,

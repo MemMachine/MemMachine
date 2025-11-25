@@ -462,6 +462,18 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(stmt)
             await session.commit()
 
+    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+        if not history_ids:
+            return
+
+        stmt = delete(SetIngestedHistory).where(
+            SetIngestedHistory.history_id.in_(history_ids),
+        )
+
+        async with self._create_session() as session:
+            await session.execute(stmt)
+            await session.commit()
+
     def _apply_history_filter(
         self,
         stmt: Select,

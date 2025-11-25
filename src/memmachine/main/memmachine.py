@@ -396,9 +396,11 @@ class MemMachine:
         session_data: InstanceOf[SessionData] | None = None,
     ) -> None:
         episode_storage = await self._resources.get_episode_storage()
+        semantic_service = await self._resources.get_semantic_service()
 
         tasks: list[Coroutine[Any, Any, Any]] = [
             episode_storage.delete_episodes(episode_ids),
+            semantic_service.delete_history(episode_ids),
         ]
 
         if session_data is not None:

@@ -386,6 +386,26 @@ class InMemorySemanticStorage(SemanticStorage):
                 history_id
             ]
 
+    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+        if not history_ids:
+            return
+
+        async with self._lock:
+            for history_id in history_ids:
+                normalized_id = EpisodeIdT(history_id)
+                referencing_sets = self._history_to_sets.pop(normalized_id, None)
+                if referencing_sets is None:
+                    continue
+
+                for set_id in list(referencing_sets.keys()):
+                    history_map = self._set_history_map.get(set_id)
+                    if history_map is None:
+                        continue
+
+                    history_map.pop(normalized_id, None)
+                    if not history_map:
+                        self._set_history_map.pop(set_id, None)
+
     async def mark_messages_ingested(
         self,
         *,

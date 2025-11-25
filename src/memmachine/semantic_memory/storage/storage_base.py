@@ -150,6 +150,10 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def mark_messages_ingested(
         self,
         *,

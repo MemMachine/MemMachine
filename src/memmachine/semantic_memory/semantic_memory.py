@@ -233,6 +233,9 @@ class SemanticService:
             embedding=np.array(embedding),
         )
 
+    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+        await self._semantic_storage.delete_history(history_ids)
+
     async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
         await self._semantic_storage.delete_features(feature_ids)
 

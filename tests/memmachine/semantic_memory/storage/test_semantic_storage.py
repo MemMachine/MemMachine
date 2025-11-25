@@ -420,6 +420,32 @@ async def test_history_message_counts_by_set(
 
 
 @pytest.mark.asyncio
+async def test_delete_history_removes_set_associations(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    h1_id = await _add_episode(episode_storage, content="first")
+    h2_id = await _add_episode(episode_storage, content="second")
+    h3_id = await _add_episode(episode_storage, content="third")
+
+    await semantic_storage.add_history_to_set(set_id="alpha", history_id=h1_id)
+    await semantic_storage.add_history_to_set(set_id="alpha", history_id=h2_id)
+    await semantic_storage.add_history_to_set(set_id="beta", history_id=h2_id)
+    await semantic_storage.add_history_to_set(set_id="beta", history_id=h3_id)
+
+    assert await semantic_storage.get_history_messages_count(set_ids=None) == 4
+
+    await semantic_storage.delete_history([h2_id, h3_id])
+
+    assert await semantic_storage.get_history_messages_count(set_ids=None) == 1
+    alpha_history = await semantic_storage.get_history_messages(set_ids=["alpha"])
+    beta_history = await semantic_storage.get_history_messages(set_ids=["beta"])
+
+    assert alpha_history == [h1_id]
+    assert beta_history == []
+
+
+@pytest.mark.asyncio
 async def test_complex_feature_lifecycle(semantic_storage: SemanticStorage):
     embed = np.array([1.0] * 1536, dtype=float)
 
