@@ -31,6 +31,19 @@ def test_parse_supported_db_enums():
     assert sqlite_db.driver == "aiosqlite"
 
 
+def test_sqlite_without_path_raises():
+    message = "non-empty 'path'"
+    with pytest.raises(ValueError, match=message):
+        SupportedDB.SQLITE.build_config({"uri": "sqlite.db"})
+
+
+def test_sqlite_with_path_succeeds():
+    config = SupportedDB.SQLITE.build_config({"path": "sqlite.db"})
+    assert isinstance(config, SqlAlchemyConf)
+    assert config.path == "sqlite.db"
+    assert config.uri == "sqlite+aiosqlite:///sqlite.db"
+
+
 def test_invalid_provider_raises():
     message = "Supported providers are"
     with pytest.raises(ValueError, match=message):

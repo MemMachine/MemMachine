@@ -45,7 +45,7 @@ resources:
     sqlite_test:
       provider: sqlite
       config:
-        uri: sqlite_test.db
+        path: sqlite_test.db
   embedders:
     openai_embedder:
       provider: openai
