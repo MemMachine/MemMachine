@@ -102,6 +102,9 @@ class RerankersConf(BaseModel):
         """Parse reranker configuration from a raw mapping."""
         reranker = input_dict.get("rerankers", {})
 
+        if isinstance(reranker, cls):
+            return reranker
+
         bm25_dict = {}
         amazon_bedrock_dict = {}
         cross_encoder_dict = {}
