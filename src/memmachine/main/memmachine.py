@@ -279,7 +279,7 @@ class MemMachine:
         session_data: InstanceOf[SessionData],
         query: str,
         limit: int | None = None,
-        search_filter: str | None = None,
+        search_filter: FilterExpr | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
 
@@ -294,7 +294,7 @@ class MemMachine:
             response = await episodic_session.query_memory(
                 query=query,
                 limit=limit,
-                property_filter=parse_filter(search_filter),
+                property_filter=search_filter,
             )
 
         return response
@@ -312,13 +312,14 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
+        property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(
                     session_data=session_data,
                     query=query,
                     limit=limit,
-                    search_filter=search_filter,
+                    search_filter=property_filter,
                 )
             )
 
@@ -330,7 +331,7 @@ class MemMachine:
                     message=query,
                     session_data=session_data,
                     limit=limit,
-                    search_filter=parse_filter(search_filter),
+                    search_filter=property_filter,
                 )
             )
 

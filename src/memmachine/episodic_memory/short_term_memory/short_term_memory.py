@@ -13,7 +13,8 @@ import contextlib
 import logging
 import string
 from collections import deque
-from collections.abc import Mapping
+from datetime import datetime
+from typing import TypeVar, cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
 
@@ -22,6 +23,7 @@ from memmachine.common.data_types import (
     FilterablePropertyValue,
 )
 from memmachine.common.episode_store import Episode
+from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr, Or
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 
@@ -298,12 +300,123 @@ class ShortTermMemory:
         except RuntimeError:
             logger.info("Runtime error when creating summary")
 
-    async def get_short_term_memory_context(  # noqa: C901
+    def _safe_compare(
+        self,
+        a: FilterablePropertyValue,
+        b: FilterablePropertyValue | list[FilterablePropertyValue],
+        op: str,
+    ) -> bool:
+        """Safely compare two filterable property values."""
+        if a is None or b is None or isinstance(b, list):
+            return False
+        comparable_type = TypeVar("comparable_type", int, float, str, datetime)
+
+        def compare_values(
+            x: comparable_type, y: comparable_type, operator: str
+        ) -> bool:
+            match operator:
+                case ">=":
+                    return x >= y
+                case "<=":
+                    return x <= y
+                case ">":
+                    return x > y
+                case "<":
+                    return x < y
+            return False
+
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return compare_values(a, b, op)
+        if isinstance(a, str) and isinstance(b, str):
+            return compare_values(a, b, op)
+        if isinstance(a, datetime) and isinstance(b, datetime):
+            return compare_values(a, b, op)
+        logger.warning(
+            "Unsupported operator: %s, %s, %s", op, type(a).__name__, type(b).__name__
+        )
+        return False
+
+    def _do_comparision(
+        self, comp: Comparison, value: FilterablePropertyValue | None
+    ) -> bool:
+        """Do comparison for a single comparison expression."""
+        match comp.op:
+            case "==" | "=":
+                return value == comp.value
+            case "!=":
+                return value != comp.value
+            case "in":
+                if not isinstance(comp.value, list):
+                    raise TypeError("IN operator requires a list value")
+                return value in comp.value
+            case "not_in":
+                if not isinstance(comp.value, list):
+                    raise TypeError("NOT IN operator requires a list value")
+                return value not in comp.value
+            case "is_null":
+                return value is None
+        if value is None or comp.value is None:
+            return False
+        return self._safe_compare(value, comp.value, comp.op)
+
+    def _do_logical_check(self, episode: Episode, filters: FilterExpr) -> bool:
+        """Do logical check for AND/OR expressions."""
+        if isinstance(filters, And):
+            and_filter = cast(And, filters)
+            if self._check_filter(episode, and_filter.left) is False:
+                return False
+            return self._check_filter(episode, and_filter.right)
+
+        if isinstance(filters, Or):
+            or_filter = cast(Or, filters)
+            if self._check_filter(episode, or_filter.left) is True:
+                return True
+            return self._check_filter(episode, or_filter.right)
+        logger.warning("Unsupported logical filter: %s", type(filters).__name__)
+        return False
+
+    def _check_filter(self, episode: Episode, filters: FilterExpr | None) -> bool:
+        """Check if an episode matches the given filters."""
+        if filters is None:
+            return True
+
+        if isinstance(filters, Comparison):
+            comp = cast(Comparison, filters)
+            match comp.field:
+                case "producer_id":
+                    return self._do_comparision(comp, episode.producer_id)
+                case "produced_for_id":
+                    return self._do_comparision(comp, episode.produced_for_id)
+                case "producer_role":
+                    return self._do_comparision(comp, episode.producer_role)
+            if comp.field.startswith(("m.", "metadata.")):
+                key = (
+                    comp.field[9:]
+                    if comp.field.startswith("metadata.")
+                    else comp.field[2:]
+                )
+                if episode.metadata is None or not isinstance(episode.metadata, dict):
+                    return False
+                if key not in episode.metadata:
+                    return False
+                if not isinstance(
+                    episode.metadata[key], get_args(FilterablePropertyValue)
+                ):
+                    return False
+                return self._do_comparision(
+                    comp, cast(FilterablePropertyValue, episode.metadata[key])
+                )
+            logger.warning("Unsupported filter field: %s", comp.field)
+            return False
+
+        return self._do_logical_check(episode, filters)
+
+    async def get_short_term_memory_context(
         self,
         query: str,
         limit: int = 0,
         max_message_length: int = 0,
-        filters: Mapping[str, FilterablePropertyValue | None] | None = None,
+        filters: FilterExpr | None = None,
     ) -> tuple[list[Episode], str]:
         """
         Retrieve context from short-term memory for a given query.
@@ -338,43 +451,8 @@ class ShortTermMemory:
                 if len(episodes) >= limit > 0:
                     break
                 # check if should filter the message
-                matched = True
-                if filters is not None:
-                    for key, value in filters.items():
-                        if key == "producer_id":
-                            if e.producer_id != value:
-                                matched = False
-                                break
-                            continue
-                        if key == "producer_role":
-                            if e.producer_role != value:
-                                matched = False
-                                break
-                            continue
-                        if key == "produced_for_id":
-                            if e.produced_for_id != value:
-                                matched = False
-                                break
-                            continue
-                        if key.startswith(("m.", "metadata.")):
-                            if e.filterable_metadata is None:
-                                matched = False
-                                break
-                            if key.startswith("m."):
-                                key = key[len("m.") :]
-                            elif key.startswith("metadata."):
-                                key = key[len("metadata.") :]
-                            if key not in e.filterable_metadata:
-                                matched = False
-                                break
-                            if e.filterable_metadata[key] != value:
-                                matched = False
-                                break
-                        else:
-                            logger.warning("Unsupported filter key: %s", key)
-
-                    if not matched:
-                        continue
+                if self._check_filter(e, filters) is False:
+                    continue
 
                 msg_len = self._compute_episode_length(e)
                 if length + msg_len > max_message_length > 0:
