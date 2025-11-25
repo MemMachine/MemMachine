@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 
 class Neo4jConf(BaseModel):
@@ -83,6 +83,12 @@ class SqlAlchemyConf(BaseModel):
         return (
             f"{self.schema_part}{self.auth_part}{self.host_and_port}{self.path_or_db}"
         )
+
+    @model_validator(mode="after")
+    def validate_sqlite(self) -> Self:
+        if self.dialect == "sqlite" and not self.path:
+            raise ValueError("SQLite requires a non-empty 'path'")
+        return self
 
 
 class SupportedDB(str, Enum):
