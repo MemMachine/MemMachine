@@ -5,6 +5,7 @@ import pytest
 import pytest_asyncio
 
 from memmachine.common.episode_store import EpisodeEntry, EpisodeIdT, EpisodeStorage
+from memmachine.common.errors import InvalidArgumentError
 from memmachine.common.filter.filter_parser import FilterExpr, parse_filter
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine.semantic_memory.storage.storage_base import SemanticStorage
@@ -141,6 +142,54 @@ async def test_delete_feature_set_by_set_id(
     grouped_delete_b = SemanticFeature.group_features(res_delete_b)
     set_delete_b = [{"value": f.value} for f in grouped_delete_b[key]]
     assert set_delete_b == expected["user2"]
+
+
+@pytest.mark.asyncio
+async def test_get_feature_set_with_page_offset(
+    semantic_storage: SemanticStorage,
+):
+    feature_ids: list[FeatureIdT] = [
+        await semantic_storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="topic",
+            value=f"value-{idx}",
+            tag="facts",
+            embedding=np.array([float(idx), 1.0], dtype=float),
+        )
+        for idx in range(5)
+    ]
+
+    try:
+        first_page = await semantic_storage.get_feature_set(
+            filter_expr=_expr("set_id IN (user)"),
+            limit=2,
+            offset=0,
+        )
+        second_page = await semantic_storage.get_feature_set(
+            filter_expr=_expr("set_id IN (user)"),
+            limit=2,
+            offset=1,
+        )
+        final_page = await semantic_storage.get_feature_set(
+            filter_expr=_expr("set_id IN (user)"),
+            limit=2,
+            offset=2,
+        )
+
+        assert [feature.value for feature in first_page] == ["value-0", "value-1"]
+        assert [feature.value for feature in second_page] == ["value-2", "value-3"]
+        assert [feature.value for feature in final_page] == ["value-4"]
+    finally:
+        await semantic_storage.delete_features(feature_ids)
+
+
+@pytest.mark.asyncio
+async def test_get_feature_set_offset_without_limit_errors(
+    semantic_storage: SemanticStorage,
+):
+    with pytest.raises(InvalidArgumentError):
+        await semantic_storage.get_feature_set(offset=1)
 
 
 @pytest_asyncio.fixture

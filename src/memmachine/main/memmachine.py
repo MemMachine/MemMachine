@@ -351,6 +351,7 @@ class MemMachine:
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
         search_filter: str | None = None,
         limit: int | None = None,
+        offset: int | None = None,
     ) -> ListResults:
         search_filter_expr = parse_filter(search_filter) if search_filter else None
 
@@ -363,6 +364,7 @@ class MemMachine:
             episodic_task = asyncio.create_task(
                 episode_storage.get_episode_messages(
                     limit=limit,
+                    offset=offset,
                     session_keys=[session_data.session_key],
                     metadata=cast(
                         dict[str, JsonValue] | None,
@@ -378,6 +380,7 @@ class MemMachine:
                     session_data=session_data,
                     search_filter=search_filter_expr,
                     limit=limit,
+                    offset=offset,
                 )
             )
 

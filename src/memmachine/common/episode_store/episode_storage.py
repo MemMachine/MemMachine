@@ -39,6 +39,7 @@ class EpisodeStorage(ABC):
         self,
         *,
         limit: int | None = None,
+        offset: int | None = None,
         session_keys: list[str] | None = None,
         producer_ids: list[str] | None = None,
         producer_roles: list[str] | None = None,

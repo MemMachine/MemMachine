@@ -16,6 +16,7 @@ from pydantic import InstanceOf
 
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store import EpisodeIdT
+from memmachine.common.errors import InvalidArgumentError
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -388,14 +389,23 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         *,
         limit: int | None = None,
+        offset: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
     ) -> list[SemanticFeature]:
+        if offset is not None:
+            if limit is None:
+                raise InvalidArgumentError("Cannot specify offset without limit")
+            if offset < 0:
+                raise InvalidArgumentError("Offset must be non-negative")
+
+        page_offset = offset or 0
         if vector_search_opts is not None:
             entries = await self._vector_search_entries(
                 limit=limit,
+                offset=page_offset,
                 vector_search_opts=vector_search_opts,
                 filter_expr=filter_expr,
             )
@@ -405,7 +415,8 @@ class Neo4jSemanticStorage(SemanticStorage):
             )
             entries.sort(key=lambda e: (e.created_at_ts, str(e.feature_id)))
             if limit is not None:
-                entries = entries[:limit]
+                start = limit * page_offset
+                entries = entries[start : start + limit]
 
         if tag_threshold is not None and entries:
             from collections import Counter
@@ -703,12 +714,17 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         *,
         limit: int | None,
+        offset: int,
         vector_search_opts: SemanticStorage.VectorSearchOpts,
         filter_expr: FilterExpr | None,
     ) -> list[_FeatureEntry]:
         embedding_array = np.array(vector_search_opts.query_embedding, dtype=float)
         embedding = [float(x) for x in embedding_array.tolist()]
         embedding_dims = len(embedding)
+
+        effective_limit = limit
+        if limit is not None:
+            effective_limit = limit * (offset + 1)
 
         conditions, filter_params = self._build_filter_conditions(
             alias="f",
@@ -718,7 +734,10 @@ class Neo4jSemanticStorage(SemanticStorage):
         params_base = self._vector_query_params(
             embedding=embedding,
             filter_params=filter_params,
-            candidate_limit=max(limit or 0, self._DEFAULT_VECTOR_QUERY_CANDIDATES),
+            candidate_limit=max(
+                effective_limit or 0,
+                self._DEFAULT_VECTOR_QUERY_CANDIDATES,
+            ),
             min_distance=vector_search_opts.min_distance,
             conditions=conditions,
         )
@@ -734,7 +753,8 @@ class Neo4jSemanticStorage(SemanticStorage):
         combined.sort(key=lambda item: item[0], reverse=True)
         entries = [entry for _, entry in combined]
         if limit is not None:
-            entries = entries[:limit]
+            start = limit * offset
+            entries = entries[start : start + limit]
         return entries
 
     def _vector_query_params(

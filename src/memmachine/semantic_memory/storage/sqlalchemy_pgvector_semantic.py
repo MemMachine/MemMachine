@@ -34,7 +34,7 @@ from sqlalchemy.sql import Delete, Select, func
 
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store.episode_model import EpisodeIdT
-from memmachine.common.errors import ResourceNotFoundError
+from memmachine.common.errors import InvalidArgumentError, ResourceNotFoundError
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -311,6 +311,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         *,
         limit: int | None = None,
+        offset: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
@@ -320,10 +321,20 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         stmt = self._apply_feature_filter(
             stmt,
-            k=limit,
+            k=None,
             vector_search_opts=vector_search_opts,
             filter_expr=filter_expr,
         )
+
+        if vector_search_opts is None:
+            stmt = stmt.order_by(Feature.created_at.asc(), Feature.id.asc())
+
+        if limit is not None:
+            stmt = stmt.limit(limit)
+            stmt = stmt.offset(limit * (offset or 0))
+
+        elif offset is not None:
+            raise InvalidArgumentError("Cannot specify offset without limit")
 
         async with self._create_session() as session:
             result = await session.execute(stmt)

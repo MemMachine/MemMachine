@@ -11,6 +11,7 @@ import numpy as np
 from pydantic import InstanceOf
 
 from memmachine.common.episode_store import EpisodeIdT
+from memmachine.common.errors import InvalidArgumentError
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -178,10 +179,21 @@ class InMemorySemanticStorage(SemanticStorage):
         *,
         filter_expr: FilterExpr | None = None,
         limit: int | None = None,
+        offset: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
+        if offset is not None:
+            if limit is None:
+                raise InvalidArgumentError("Cannot specify offset without limit")
+            if offset < 0:
+                raise InvalidArgumentError("Offset must be non-negative")
+
+        fetch_limit = limit
+        if limit is not None and offset:
+            fetch_limit = limit * (offset + 1)
+
         async with self._lock:
             entries = self._filter_features(
                 set_ids=None,
@@ -189,10 +201,13 @@ class InMemorySemanticStorage(SemanticStorage):
                 feature_names=None,
                 tags=None,
                 filter_expr=filter_expr,
-                k=limit,
+                k=fetch_limit,
                 vector_search_opts=vector_search_opts,
                 tag_threshold=tag_threshold,
             )
+            if limit is not None:
+                start_index = limit * (offset or 0)
+                entries = entries[start_index : start_index + limit]
             return [
                 self._feature_to_model(entry, load_citations=load_citations)
                 for entry in entries

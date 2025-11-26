@@ -12,6 +12,7 @@ from memmachine.common.episode_store import (
     EpisodeStorage,
     EpisodeType,
 )
+from memmachine.common.errors import InvalidArgumentError
 
 DEFAULT_HISTORY_ARGS = {
     "session_key": "session-default",
@@ -251,6 +252,43 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
     assert [entry.uid for entry in results] == [second]
 
     await episode_storage.delete_episodes([first, second])
+
+
+@pytest.mark.asyncio
+async def test_history_pagination_with_page_offset(
+    episode_storage: EpisodeStorage,
+):
+    base_time = datetime.now(tz=UTC)
+    episode_ids = []
+
+    for idx in range(5):
+        created_at = base_time + timedelta(minutes=idx)
+        episode_ids.append(
+            await create_history_entry(
+                episode_storage,
+                content=f"message-{idx}",
+                created_at=created_at,
+            )
+        )
+
+    try:
+        first_page = await episode_storage.get_episode_messages(limit=2, offset=0)
+        second_page = await episode_storage.get_episode_messages(limit=2, offset=1)
+        third_page = await episode_storage.get_episode_messages(limit=2, offset=2)
+
+        assert [entry.uid for entry in first_page] == episode_ids[:2]
+        assert [entry.uid for entry in second_page] == episode_ids[2:4]
+        assert [entry.uid for entry in third_page] == episode_ids[4:5]
+    finally:
+        await episode_storage.delete_episodes(episode_ids)
+
+
+@pytest.mark.asyncio
+async def test_history_pagination_offset_without_limit_raises(
+    episode_storage: EpisodeStorage,
+):
+    with pytest.raises(InvalidArgumentError):
+        await episode_storage.get_episode_messages(offset=1)
 
 
 @pytest.mark.asyncio
