@@ -432,8 +432,7 @@ class EpisodicMemory:
         ):
             total_summary = ""
             for summ in query_result.short_term_memory.episode_summary:
-                if not query_result.short_term_memory.episode_summary:
-                    # TODO from @o-love: Can someone validate this if.
+                if not summ:
                     continue
                 total_summary = total_summary + summ + "\n"
             total_summary = total_summary.strip()
