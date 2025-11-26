@@ -147,6 +147,16 @@ class SemanticSessionManager:
 
         await asyncio.gather(*tasks)
 
+    async def delete_messages(
+        self,
+        session_data: SessionData,
+        *,
+        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
+    ) -> None:
+        set_ids = self._get_set_ids(session_data, memory_type)
+
+        await self._semantic_service.delete_messages(set_ids=set_ids)
+
     async def search(
         self,
         message: str,

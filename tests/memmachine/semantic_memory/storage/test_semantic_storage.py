@@ -495,6 +495,65 @@ async def test_delete_history_removes_set_associations(
 
 
 @pytest.mark.asyncio
+async def test_delete_history_set_removes_target_set(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    h1_id = await _add_episode(episode_storage, content="first")
+    h2_id = await _add_episode(episode_storage, content="second")
+
+    await semantic_storage.add_history_to_set(set_id="alpha", history_id=h1_id)
+    await semantic_storage.add_history_to_set(set_id="alpha", history_id=h2_id)
+    await semantic_storage.add_history_to_set(set_id="beta", history_id=h1_id)
+    await semantic_storage.add_history_to_set(set_id="beta", history_id=h2_id)
+
+    assert set(await semantic_storage.get_history_set_ids()) == {"alpha", "beta"}
+
+    await semantic_storage.delete_history_set(set_ids=["alpha"])
+
+    assert await semantic_storage.get_history_messages(set_ids=["alpha"]) == []
+    remaining = await semantic_storage.get_history_messages(set_ids=["beta"])
+    assert set(map(str, remaining)) == {str(h1_id), str(h2_id)}
+    assert set(await semantic_storage.get_history_set_ids()) == {"beta"}
+
+
+@pytest.mark.asyncio
+async def test_delete_history_set_handles_multiple_ids(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    h1_id = await _add_episode(episode_storage, content="first")
+    h2_id = await _add_episode(episode_storage, content="second")
+    h3_id = await _add_episode(episode_storage, content="third")
+
+    associations = {
+        "alpha": [h1_id],
+        "beta": [h1_id, h2_id],
+        "gamma": [h3_id],
+        "delta": [h2_id],
+    }
+
+    for set_id, history_ids in associations.items():
+        for history_id in history_ids:
+            await semantic_storage.add_history_to_set(
+                set_id=set_id,
+                history_id=history_id,
+            )
+
+    assert await semantic_storage.get_history_messages_count(set_ids=None) == 5
+
+    await semantic_storage.delete_history_set(set_ids=["alpha", "beta", "missing"])
+
+    assert await semantic_storage.get_history_messages_count(set_ids=None) == 2
+    assert set(map(str, await semantic_storage.get_history_set_ids())) == {
+        "gamma",
+        "delta",
+    }
+    assert await semantic_storage.get_history_messages(set_ids=["gamma"]) == [h3_id]
+    assert await semantic_storage.get_history_messages(set_ids=["delta"]) == [h2_id]
+
+
+@pytest.mark.asyncio
 async def test_complex_feature_lifecycle(semantic_storage: SemanticStorage):
     embed = np.array([1.0] * 1536, dtype=float)
 
@@ -607,6 +666,50 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
         filter_expr=_expr("metadata.details IS NOT NULL"),
     )
     assert [feature.value for feature in not_null_results] == ["first"]
+
+
+@pytest.mark.asyncio
+async def test_get_feature_set_unknown_filter_column_errors(
+    semantic_storage: SemanticStorage,
+):
+    if getattr(semantic_storage, "backend_name", None) == "neo4j":
+        pytest.skip("Neo4j currently allows arbitrary property references")
+
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="first",
+        tag="misc",
+        embedding=np.array([1.0], dtype=float),
+    )
+
+    with pytest.raises(ValueError, match="Unsupported feature filter field"):
+        await semantic_storage.get_feature_set(
+            filter_expr=_expr("missing_column IN (foo)"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_feature_set_unknown_filter_column_errors(
+    semantic_storage: SemanticStorage,
+):
+    if getattr(semantic_storage, "backend_name", None) == "neo4j":
+        pytest.skip("Neo4j currently allows arbitrary property references")
+
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="first",
+        tag="misc",
+        embedding=np.array([1.0], dtype=float),
+    )
+
+    with pytest.raises(ValueError, match="Unsupported feature filter field"):
+        await semantic_storage.delete_feature_set(
+            filter_expr=_expr("missing_column IN (foo)"),
+        )
 
 
 @pytest.mark.asyncio
