@@ -223,8 +223,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         self._populate_index_state_cache_latency_summary = None
         self._create_initial_indexes_if_not_exist_calls_counter = None
         self._create_initial_indexes_if_not_exist_latency_summary = None
-        self._create_unique_constraint_if_not_exists_calls_counter = None
-        self._create_unique_constraint_if_not_exists_latency_summary = None
         self._create_range_index_if_not_exists_calls_counter = None
         self._create_range_index_if_not_exists_latency_summary = None
         self._create_vector_index_if_not_exists_calls_counter = None
@@ -360,16 +358,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             self._create_initial_indexes_if_not_exist_latency_summary = metrics_factory.get_summary(
                 "vector_graph_store_neo4j_create_initial_indexes_if_not_exist_latency_seconds",
                 "Latency in seconds for _create_initial_indexes_if_not_exist in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_unique_constraint_if_not_exists_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_create_unique_constraint_if_not_exists_calls",
-                "Number of calls to _create_unique_constraint_if_not_exists in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_unique_constraint_if_not_exists_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_create_unique_constraint_if_not_exists_latency_seconds",
-                "Latency in seconds for _create_unique_constraint_if_not_exists in Neo4jVectorGraphStore",
                 label_names=label_names,
             )
             self._create_range_index_if_not_exists_calls_counter = metrics_factory.get_counter(
@@ -1169,10 +1157,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         start_time = time.monotonic()
 
         tasks = [
-            self._create_unique_constraint_if_not_exists(
+            self._create_range_index_if_not_exists(
                 entity_type=entity_type,
                 sanitized_collection_or_relation=sanitized_collection_or_relation,
-                sanitized_property_name="uid",
+                sanitized_property_names="uid",
             ),
         ]
         tasks += [
@@ -1202,100 +1190,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         )
 
         await asyncio.gather(*tasks)
-
-    async def _create_unique_constraint_if_not_exists(
-        self,
-        entity_type: EntityType,
-        sanitized_collection_or_relation: str,
-        sanitized_property_name: str,
-    ) -> None:
-        """
-        Create a unique constraint if it does not yet exist.
-
-        Wait for the constraint to be online before returning.
-
-        Args:
-            entity_type (EntityType):
-                The type of entity the constraint is for.
-            sanitized_collection_or_relation (str):
-                Collection of nodes or relation type of edges
-                to create unique constraint for.
-            sanitized_property_name (str):
-                Name of the property to create unique constraint on.
-
-        """
-        start_time = time.monotonic()
-
-        await self._populate_index_state_cache()
-
-        unique_constraint_name = Neo4jVectorGraphStore._index_name(
-            entity_type,
-            sanitized_collection_or_relation,
-            sanitized_property_name,
-        )
-
-        cached_constraint_state = self._index_state_cache.get(unique_constraint_name)
-        match cached_constraint_state:
-            case Neo4jVectorGraphStore.CacheIndexState.CREATING:
-                # Wait for the constraint to be online.
-                await self._await_create_index_if_not_exists(
-                    unique_constraint_name,
-                    asyncio.sleep(0),  # Use as a no-op.
-                )
-
-                end_time = time.monotonic()
-                self._collect_metrics(
-                    self._create_unique_constraint_if_not_exists_calls_counter,
-                    self._create_unique_constraint_if_not_exists_latency_summary,
-                    start_time,
-                    end_time,
-                )
-                return
-            case Neo4jVectorGraphStore.CacheIndexState.ONLINE:
-                end_time = time.monotonic()
-                self._collect_metrics(
-                    self._create_unique_constraint_if_not_exists_calls_counter,
-                    self._create_unique_constraint_if_not_exists_latency_summary,
-                    start_time,
-                    end_time,
-                )
-                return
-
-        # Code is synchronous between the cache read and this write,
-        # so it is effectively atomic in the asynchronous framework.
-        self._index_state_cache[unique_constraint_name] = (
-            Neo4jVectorGraphStore.CacheIndexState.CREATING
-        )
-
-        match entity_type:
-            case EntityType.NODE:
-                query_constraint_for_expression = (
-                    f"(e:{sanitized_collection_or_relation})"
-                )
-            case EntityType.EDGE:
-                query_constraint_for_expression = (
-                    f"()-[e:{sanitized_collection_or_relation}]-()"
-                )
-
-        create_constraint_task = self._driver.execute_query(
-            f"CREATE CONSTRAINT {unique_constraint_name}\n"
-            "IF NOT EXISTS\n"
-            f"FOR {query_constraint_for_expression}\n"
-            f"REQUIRE e.{sanitized_property_name} IS UNIQUE",
-        )
-
-        await self._await_create_index_if_not_exists(
-            unique_constraint_name,
-            create_constraint_task,
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._create_unique_constraint_if_not_exists_calls_counter,
-            self._create_unique_constraint_if_not_exists_latency_summary,
-            start_time,
-            end_time,
-        )
 
     async def _create_range_index_if_not_exists(
         self,
