@@ -388,23 +388,23 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def get_feature_set(
         self,
         *,
-        limit: int | None = None,
-        offset: int | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
     ) -> list[SemanticFeature]:
-        if offset is not None:
-            if limit is None:
+        if page_num is not None:
+            if page_size is None:
                 raise InvalidArgumentError("Cannot specify offset without limit")
-            if offset < 0:
+            if page_num < 0:
                 raise InvalidArgumentError("Offset must be non-negative")
 
-        page_offset = offset or 0
+        page_offset = page_num or 0
         if vector_search_opts is not None:
             entries = await self._vector_search_entries(
-                limit=limit,
+                limit=page_size,
                 offset=page_offset,
                 vector_search_opts=vector_search_opts,
                 filter_expr=filter_expr,
@@ -414,9 +414,9 @@ class Neo4jSemanticStorage(SemanticStorage):
                 filter_expr=filter_expr,
             )
             entries.sort(key=lambda e: (e.created_at_ts, str(e.feature_id)))
-            if limit is not None:
-                start = limit * page_offset
-                entries = entries[start : start + limit]
+            if page_size is not None:
+                start = page_size * page_offset
+                entries = entries[start : start + page_size]
 
         if tag_threshold is not None and entries:
             from collections import Counter
@@ -438,7 +438,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         filter_expr: FilterExpr | None = None,
     ) -> None:
         entries = await self.get_feature_set(
-            limit=limit,
+            page_size=limit,
             vector_search_opts=vector_search_opts,
             tag_threshold=thresh,
             filter_expr=filter_expr,

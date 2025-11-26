@@ -178,21 +178,21 @@ class InMemorySemanticStorage(SemanticStorage):
         self,
         *,
         filter_expr: FilterExpr | None = None,
-        limit: int | None = None,
-        offset: int | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
-        if offset is not None:
-            if limit is None:
+        if page_num is not None:
+            if page_size is None:
                 raise InvalidArgumentError("Cannot specify offset without limit")
-            if offset < 0:
+            if page_num < 0:
                 raise InvalidArgumentError("Offset must be non-negative")
 
-        fetch_limit = limit
-        if limit is not None and offset:
-            fetch_limit = limit * (offset + 1)
+        fetch_limit = page_size
+        if page_size is not None and page_num:
+            fetch_limit = page_size * (page_num + 1)
 
         async with self._lock:
             entries = self._filter_features(
@@ -205,9 +205,9 @@ class InMemorySemanticStorage(SemanticStorage):
                 vector_search_opts=vector_search_opts,
                 tag_threshold=tag_threshold,
             )
-            if limit is not None:
-                start_index = limit * (offset or 0)
-                entries = entries[start_index : start_index + limit]
+            if page_size is not None:
+                start_index = page_size * (page_num or 0)
+                entries = entries[start_index : start_index + page_size]
             return [
                 self._feature_to_model(entry, load_citations=load_citations)
                 for entry in entries

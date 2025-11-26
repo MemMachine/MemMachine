@@ -520,7 +520,7 @@ async def test_get_set_features_wraps_opts(
         session_data=session_data,
         memory_type=[IsolationType.USER],
         search_filter=parse_filter(filter_str),
-        limit=7,
+        page_size=7,
         load_citations=True,
     )
 
@@ -534,6 +534,6 @@ async def test_get_set_features_wraps_opts(
         parse_filter(filter_str),
     )
     assert kwargs["filter_expr"] == expected_filter
-    assert kwargs["limit"] == 7
+    assert kwargs["page_size"] == 7
     assert kwargs["with_citations"] is True
     assert result == ["features"]

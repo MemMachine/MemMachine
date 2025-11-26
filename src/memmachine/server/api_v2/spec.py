@@ -124,8 +124,8 @@ class ListMemoriesSpec(BaseModel):
 
     org_id: SafeIdWithDefault
     project_id: SafeIdWithDefault
-    limit: Annotated[int, Field(default=100)]
-    offset: Annotated[int, Field(default=0)]
+    page_size: Annotated[int, Field(default=100)]
+    page_num: Annotated[int, Field(default=0)]
     filter: Annotated[str, Field(default="")]
     type: Annotated[MemoryType, Field(default=MemoryType.Episodic)]
 

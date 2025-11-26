@@ -310,8 +310,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def get_feature_set(
         self,
         *,
-        limit: int | None = None,
-        offset: int | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
@@ -329,11 +329,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         if vector_search_opts is None:
             stmt = stmt.order_by(Feature.created_at.asc(), Feature.id.asc())
 
-        if limit is not None:
-            stmt = stmt.limit(limit)
-            stmt = stmt.offset(limit * (offset or 0))
+        if page_size is not None:
+            stmt = stmt.limit(page_size)
+            stmt = stmt.offset(page_size * (page_num or 0))
 
-        elif offset is not None:
+        elif page_num is not None:
             raise InvalidArgumentError("Cannot specify offset without limit")
 
         async with self._create_session() as session:
@@ -684,7 +684,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             return field_mapping[normalized], False
         if normalized.startswith(("m.", "metadata.")):
             key = normalized.split(".", 1)[1]
-            return table.json_metadata[key].astext, True
+            return table.json_metadata[key].as_string(), True
         return None, False
 
     async def _load_feature_citations(
