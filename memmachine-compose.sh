@@ -711,7 +711,7 @@ wait_for_health() {
     
     # Wait for MemMachine
     print_info "Waiting for MemMachine to be ready..."
-    if timeout 120 bash -c "until curl -f http://localhost:${MEMORY_SERVER_PORT:-8080}/health > /dev/null 2>&1; do sleep 5; done"; then
+    if timeout 120 bash -c "until curl -f http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health > /dev/null 2>&1; do sleep 5; done"; then
         print_success "MemMachine is ready"
     else
         print_error "MemMachine failed to become ready in 120 seconds. Check container logs and configuration."
