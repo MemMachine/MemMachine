@@ -22,6 +22,7 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
+    "psutil>=7.1.0",
 ]
 requires-python = ">= 3.12"
 authors = [
@@ -48,6 +49,7 @@ memmachine-sync-profile-schema = "memmachine.profile_memory.storage.syncschema:m
 memmachine-nltk-setup = "memmachine:setup_nltk"
 memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
 memmachine-mcp-http = "memmachine.server.mcp_http:main"
+memmachine-configure = "memmachine.installation.memmachine_configure:main"
 
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
@@ -60,6 +62,7 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "ruff>=0.13.2",
     "testcontainers[neo4j,postgres]>=4.13.1",
+    "pyfakefs",
 ]
 
 [tool.mypy]

@@ -1461,7 +1461,10 @@ def main():
         format=log_format,
     )
     # Load environment variables from .env file
-    load_dotenv()
+    if os.path.isfile(os.path.expanduser("~/.config/memmachine/.env")):
+        load_dotenv(os.path.expanduser("~/.config/memmachine/.env"))
+    else:
+        load_dotenv()
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="MemMachine server")
