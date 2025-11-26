@@ -8,14 +8,11 @@ import pytest_asyncio
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConf,
 )
-from memmachine.common.filter.filter_parser import parse_filter
-from memmachine.common.language_model import LanguageModel
-from memmachine.common.session_manager.session_data_manager import SessionDataManager
-from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.common.episode_store import (
     ContentType,
     Episode,
 )
+from memmachine.common.filter.filter_parser import parse_filter
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory.short_term_memory.short_term_memory import (
@@ -93,9 +90,11 @@ class MockShortTermMemoryDataManager(SessionDataManager):
     ) -> SessionDataManager.SessionInfo:
         return SessionDataManager.SessionInfo(
             description="",
-            configuration = {},
+            configuration={},
             user_metadata={},
-            episode_memory_conf=EpisodicMemoryConf(metrics_factory_id="prometheus", session_key=session_key)
+            episode_memory_conf=EpisodicMemoryConf(
+                metrics_factory_id="prometheus", session_key=session_key
+            ),
         )
 
     async def get_sessions(self, filters: dict[str, object] | None = None) -> list[str]:

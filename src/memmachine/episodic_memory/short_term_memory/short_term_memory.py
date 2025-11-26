@@ -14,7 +14,7 @@ import logging
 import string
 from collections import deque
 from datetime import datetime
-from typing import TypeVar, cast, get_args
+from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
 
@@ -309,32 +309,34 @@ class ShortTermMemory:
         """Safely compare two filterable property values."""
         if a is None or b is None or isinstance(b, list):
             return False
-        comparable_type = TypeVar("comparable_type", int, float, str, datetime)
 
-        def compare_values(
-            x: comparable_type, y: comparable_type, operator: str
-        ) -> bool:
-            match operator:
-                case ">=":
-                    return x >= y
-                case "<=":
-                    return x <= y
-                case ">":
-                    return x > y
-                case "<":
-                    return x < y
+        comparisons = (
+            ((int, float), lambda x, y: (float(x), float(y))),
+            (str, lambda x, y: (x, y)),
+            (datetime, lambda x, y: (x, y)),
+        )
+        for expected_type, formatter in comparisons:
+            if isinstance(a, expected_type) and isinstance(b, expected_type):
+                left, right = formatter(a, b)
+                break
+        else:
+            logger.warning(
+                "Unsupported operator: %s, %s, %s", op, type(a).__name__, type(b).__name__
+            )
             return False
 
-        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-            return compare_values(a, b, op)
-        if isinstance(a, str) and isinstance(b, str):
-            return compare_values(a, b, op)
-        if isinstance(a, datetime) and isinstance(b, datetime):
-            return compare_values(a, b, op)
-        logger.warning(
-            "Unsupported operator: %s, %s, %s", op, type(a).__name__, type(b).__name__
-        )
-        return False
+        match op:
+            case ">=":
+                return left >= right
+            case "<=":
+                return left <= right
+            case ">":
+                return left > right
+            case "<":
+                return left < right
+            case _:
+                logger.warning("Unsupported operator: %s", op)
+                return False
 
     def _do_comparision(
         self, comp: Comparison, value: FilterablePropertyValue | None
@@ -362,10 +364,9 @@ class ShortTermMemory:
     def _do_logical_check(self, episode: Episode, filters: FilterExpr) -> bool:
         """Do logical check for AND/OR expressions."""
         if isinstance(filters, And):
-            and_filter = cast(And, filters)
-            if self._check_filter(episode, and_filter.left) is False:
+            if self._check_filter(episode, filters.left) is False:
                 return False
-            return self._check_filter(episode, and_filter.right)
+            return self._check_filter(episode, filters.right)
 
         if isinstance(filters, Or):
             or_filter = cast(Or, filters)
@@ -381,19 +382,18 @@ class ShortTermMemory:
             return True
 
         if isinstance(filters, Comparison):
-            comp = cast(Comparison, filters)
-            match comp.field:
+            match filters.field:
                 case "producer_id":
-                    return self._do_comparision(comp, episode.producer_id)
+                    return self._do_comparision(filters, episode.producer_id)
                 case "produced_for_id":
-                    return self._do_comparision(comp, episode.produced_for_id)
+                    return self._do_comparision(filters, episode.produced_for_id)
                 case "producer_role":
-                    return self._do_comparision(comp, episode.producer_role)
-            if comp.field.startswith(("m.", "metadata.")):
+                    return self._do_comparision(filters, episode.producer_role)
+            if filters.field.startswith(("m.", "metadata.")):
                 key = (
-                    comp.field[9:]
-                    if comp.field.startswith("metadata.")
-                    else comp.field[2:]
+                    filters.field[9:]
+                    if filters.field.startswith("metadata.")
+                    else filters.field[2:]
                 )
                 if episode.metadata is None or not isinstance(episode.metadata, dict):
                     return False
@@ -404,9 +404,9 @@ class ShortTermMemory:
                 ):
                     return False
                 return self._do_comparision(
-                    comp, cast(FilterablePropertyValue, episode.metadata[key])
+                    filters, cast(FilterablePropertyValue, episode.metadata[key])
                 )
-            logger.warning("Unsupported filter field: %s", comp.field)
+            logger.warning("Unsupported filter field: %s", filters.field)
             return False
 
         return self._do_logical_check(episode, filters)

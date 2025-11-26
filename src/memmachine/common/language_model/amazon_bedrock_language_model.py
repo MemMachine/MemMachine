@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -241,7 +242,15 @@ class AmazonBedrockLanguageModel(LanguageModel):
         max_attempts: int = 1,
     ) -> T:
         """Generate a structured response parsed into the given Pydantic model."""
-        client = instructor.from_bedrock(self._client, async_client=True)
+        from_bedrock: Callable[..., Any] | None = getattr(
+            instructor, "from_bedrock", None
+        )
+        if from_bedrock is None:
+            msg = "instructor.from_bedrock is not available"
+            logger.error(msg)
+            raise AttributeError(msg)
+
+        client = from_bedrock(self._client, async_client=True)
 
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
