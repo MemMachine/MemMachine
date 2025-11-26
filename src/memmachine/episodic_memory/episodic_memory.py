@@ -342,7 +342,7 @@ class EpisodicMemory:
                 await self._short_term_memory.get_short_term_memory_context(
                     query,
                     limit=search_limit,
-                    filters=to_property_filter(property_filter),
+                    filters=property_filter,
                 )
             )
             long_episode = []
@@ -353,6 +353,7 @@ class EpisodicMemory:
                 self._short_term_memory.get_short_term_memory_context(
                     query,
                     limit=search_limit,
+                    filters=property_filter,
                 ),
                 self._long_term_memory.search(query, search_limit, property_filter),
             )
