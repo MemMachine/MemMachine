@@ -155,14 +155,10 @@ class TestMemMachineLongMemEval:
     @pytest.mark.integration
     async def test_memmachine_smoke_ingests_all_memories(
         self,
-        memmachine_config: Configuration,
+        memmachine: MemMachine,
         session_data,
         long_mem_conversations,
     ) -> None:
-        memmachine = MemMachine(memmachine_config)
-        await memmachine.start()
-        await memmachine.create_session(session_data.session_key)
-
         semantic_service = await memmachine._resources.get_semantic_service()
         semantic_service._feature_update_message_limit = 0
 
@@ -170,25 +166,22 @@ class TestMemMachineLongMemEval:
         if len(smoke_convo) > 2:
             smoke_convo = smoke_convo[:2]
 
-        try:
-            await self._ingest_conversations(
-                memmachine,
-                session_data,
-                [smoke_convo],
-            )
+        await self._ingest_conversations(
+            memmachine,
+            session_data,
+            [smoke_convo],
+        )
 
-            await self._wait_for_semantic_features(
-                memmachine, session_data, timeout_seconds=120
-            )
+        await self._wait_for_semantic_features(
+            memmachine, session_data, timeout_seconds=120
+        )
 
-            list_result = await memmachine.list_search(
-                session_data,
-                target_memories=[MemoryType.Semantic, MemoryType.Episodic],
-            )
+        list_result = await memmachine.list_search(
+            session_data,
+            target_memories=[MemoryType.Semantic, MemoryType.Episodic],
+        )
 
-            assert list_result.semantic_memory, "Semantic memory returned no features"
-            assert len(list_result.semantic_memory) > 0
-            assert list_result.episodic_memory is not None
-            assert len(list_result.episodic_memory) > 0
-        finally:
-            await memmachine.stop()
+        assert list_result.semantic_memory, "Semantic memory returned no features"
+        assert len(list_result.semantic_memory) > 0
+        assert list_result.episodic_memory is not None
+        assert len(list_result.episodic_memory) > 0
