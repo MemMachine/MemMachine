@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import numpy as np
 import pytest
 
 from memmachine import MemMachine
 from memmachine.common.episode_store import EpisodeEntry
+from memmachine.common.filter.filter_parser import parse_filter
 from memmachine.main.memmachine import MemoryType
 
 
@@ -142,3 +144,192 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
     finally:
         await semantic_storage.delete_features(feature_ids)
         await memmachine.delete_session(session_info)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
+    session_key = f"session-{uuid4()}"
+    delete_handle = _TempSession(
+        user_profile_id=session_key,
+        session_id=session_key,
+        role_profile_id=None,
+        session_key=session_key,
+    )
+    deleted = False
+
+    try:
+        session_info = await memmachine.create_session(
+            session_key,
+            description="integration-session",
+        )
+
+        assert session_info.description == "integration-session"
+        assert session_info.episode_memory_conf.session_key == session_key
+
+        fetched = await memmachine.get_session(session_key)
+        assert fetched is not None
+        assert fetched.description == "integration-session"
+
+        await memmachine.delete_session(delete_handle)
+        deleted = True
+        assert await memmachine.get_session(session_key) is None
+    finally:
+        if not deleted:
+            remaining = await memmachine.get_session(session_key)
+            if remaining is not None:
+                await memmachine.delete_session(delete_handle)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachine):
+    session_manager = await memmachine._resources.get_session_data_manager()
+    created_sessions: list[str] = []
+
+    try:
+        for topic in ("alpha", "beta"):
+            new_session_key = f"metadata-session-{uuid4()}"
+            created_sessions.append(new_session_key)
+            await session_manager.create_new_session(
+                session_key=new_session_key,
+                configuration={"scope": "integration"},
+                param=memmachine._with_default_episodic_memory_conf(
+                    session_key=new_session_key
+                ),
+                description=f"session-{topic}",
+                metadata={"topic": topic},
+            )
+
+        all_sessions = await memmachine.search_sessions()
+        assert created_sessions[0] in all_sessions
+        assert created_sessions[1] in all_sessions
+
+        filter_expr = parse_filter("topic = 'alpha'")
+        filtered = await memmachine.search_sessions(search_filter=filter_expr)
+        assert set(filtered) == {created_sessions[0]}
+    finally:
+        for key in created_sessions:
+            cleanup_session = _TempSession(
+                user_profile_id=key,
+                session_id=key,
+                role_profile_id=None,
+                session_key=key,
+            )
+            remaining = await memmachine.get_session(key)
+            if remaining is not None:
+                await memmachine.delete_session(cleanup_session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memmachine_list_search_filters_metadata(
+    memmachine: MemMachine,
+    session_data,
+):
+    episode_ids = await memmachine.add_episodes(
+        session_data,
+        [
+            EpisodeEntry(
+                content="hello there",
+                producer_id="user",
+                producer_role="assistant",
+                metadata={"topic": "greeting"},
+            ),
+            EpisodeEntry(
+                content="status update",
+                producer_id="user",
+                producer_role="assistant",
+                metadata={"topic": "status"},
+            ),
+        ],
+        target_memories=[],
+    )
+
+    try:
+        filtered = await memmachine.list_search(
+            session_data=session_data,
+            target_memories=[MemoryType.Episodic],
+            search_filter="metadata.topic = 'greeting'",
+        )
+
+        assert filtered.episodic_memory is not None
+        assert [episode.content for episode in filtered.episodic_memory] == [
+            "hello there"
+        ]
+    finally:
+        await memmachine.delete_episodes(episode_ids, session_data=session_data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memmachine_delete_episodes_removes_history(
+    memmachine: MemMachine,
+    session_data,
+):
+    episode_ids = await memmachine.add_episodes(
+        session_data,
+        [
+            EpisodeEntry(
+                content="first",
+                producer_id="user",
+                producer_role="assistant",
+            ),
+            EpisodeEntry(
+                content="second",
+                producer_id="user",
+                producer_role="assistant",
+            ),
+        ],
+        target_memories=[],
+    )
+    deleted = False
+
+    try:
+        before_delete = await memmachine.list_search(
+            session_data=session_data,
+            target_memories=[MemoryType.Episodic],
+        )
+        assert before_delete.episodic_memory is not None
+        assert len(before_delete.episodic_memory) == 2
+
+        await memmachine.delete_episodes(episode_ids, session_data=session_data)
+        deleted = True
+
+        after_delete = await memmachine.list_search(
+            session_data=session_data,
+            target_memories=[MemoryType.Episodic],
+        )
+        assert after_delete.episodic_memory == []
+    finally:
+        if not deleted:
+            await memmachine.delete_episodes(episode_ids, session_data=session_data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memmachine_delete_features_removes_semantic_entries(
+    memmachine: MemMachine,
+    session_data,
+):
+    semantic_service = await memmachine._resources.get_semantic_service()
+    semantic_storage = semantic_service._semantic_storage
+    user_set_id = f"mem_user_{session_data.user_profile_id}"
+
+    feature_id = await semantic_storage.add_feature(
+        set_id=user_set_id,
+        category_name="profile",
+        feature="alias",
+        value="integration alias",
+        tag="facts",
+        embedding=np.array([0.5, 0.5], dtype=float),
+    )
+
+    try:
+        assert await semantic_storage.get_feature(feature_id) is not None
+        await memmachine.delete_features([feature_id])
+        assert await semantic_storage.get_feature(feature_id) is None
+    finally:
+        leftover = await semantic_storage.get_feature(feature_id)
+        if leftover is not None:
+            await memmachine.delete_features([feature_id])

@@ -209,10 +209,12 @@ class MemMachine:
             semantic_memory_manager = (
                 await self._resources.get_semantic_session_manager()
             )
-
-            await semantic_memory_manager.delete_feature_set(
-                session_data=session_data,
-                memory_type=[IsolationType.SESSION],
+            await asyncio.gather(
+                semantic_memory_manager.delete_feature_set(
+                    session_data=session_data,
+                    memory_type=[IsolationType.SESSION],
+                ),
+                semantic_memory_manager.delete_messages(session_data=session_data),
             )
 
         tasks = [

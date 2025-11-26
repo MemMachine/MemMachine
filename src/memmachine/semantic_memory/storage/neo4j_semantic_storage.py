@@ -29,7 +29,7 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine.semantic_memory.semantic_model import SemanticFeature
+from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
@@ -577,6 +577,19 @@ class Neo4jSemanticStorage(SemanticStorage):
             DELETE h
             """,
             history_ids=[str(history_id) for history_id in history_ids],
+        )
+
+    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+        if not set_ids:
+            return
+
+        await self._driver.execute_query(
+            """
+            MATCH (h:SetHistory)
+            WHERE h.set_id IN $set_ids
+            DELETE h
+            """,
+            set_ids=[str(set_id) for set_id in set_ids],
         )
 
     async def mark_messages_ingested(

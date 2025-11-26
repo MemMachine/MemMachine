@@ -137,6 +137,9 @@ class SemanticService:
 
         _consolidate_errors_and_raise(res, "Failed to add message to sets")
 
+    async def delete_messages(self, *, set_ids: list[SetIdT]) -> None:
+        await self._semantic_storage.delete_history_set(set_ids=set_ids)
+
     async def number_of_uningested(self, set_ids: list[SetIdT]) -> int:
         return await self._semantic_storage.get_history_messages_count(
             set_ids=set_ids,
