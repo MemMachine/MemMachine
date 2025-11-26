@@ -75,8 +75,6 @@ class MemMachine:
             self._resources = ResourceManagerImpl(conf)
 
     async def start(self) -> None:
-        await self._resources.build()
-
         semantic_service = await self._resources.get_semantic_service()
         await semantic_service.start()
 

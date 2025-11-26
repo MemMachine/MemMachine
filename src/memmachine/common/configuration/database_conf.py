@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 class Neo4jConf(BaseModel):
     """Configuration options for a Neo4j instance."""
 
+    uri: str = Field(default="", description="Neo4j database URI")
     host: str = Field(default="localhost", description="neo4j connection host")
     port: int = Field(default=7687, description="neo4j connection port")
     user: str = Field(default="neo4j", description="neo4j username")
@@ -29,6 +30,13 @@ class Neo4jConf(BaseModel):
         if isinstance(v, str):
             return SecretStr(v)
         raise TypeError("password must be a string or SecretStr")
+
+    def get_uri(self) -> str:
+        if self.uri:
+            return self.uri
+        if "neo4j+s://" in self.host:
+            return self.host
+        return f"bolt://{self.host}:{self.port}"
 
 
 class SqlAlchemyConf(BaseModel):
