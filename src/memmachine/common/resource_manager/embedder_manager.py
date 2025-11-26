@@ -15,39 +15,41 @@ class EmbedderManager:
         self.conf = conf
         self._embedders: dict[str, Embedder] = {}
 
+        # Lock to protect creation of per-embedder locks
         self._lock = Lock()
         self._embedders_lock: dict[str, Lock] = {}
 
     async def build_all(self) -> dict[str, Embedder]:
-        """Build all configured embedders and return the cache."""
+        """Trigger lazy initialization of all embedders concurrently."""
         names = set()
-        for name in self.conf.amazon_bedrock:
-            names.add(name)
-        for name in self.conf.openai:
-            names.add(name)
-        for name in self.conf.sentence_transformer:
-            names.add(name)
+        names.update(self.conf.amazon_bedrock)
+        names.update(self.conf.openai)
+        names.update(self.conf.sentence_transformer)
 
+        # Lazy initialization happens inside get_embedder
         await asyncio.gather(*[self.get_embedder(name) for name in names])
 
         return self._embedders
 
     async def get_embedder(self, name: str) -> Embedder:
         """Return a named embedder, building it on first access."""
+        # Return cached if already built
         if name in self._embedders:
             return self._embedders[name]
 
+        # Ensure a lock exists for this embedder
         if name not in self._embedders_lock:
             async with self._lock:
                 self._embedders_lock.setdefault(name, Lock())
 
         async with self._embedders_lock[name]:
+            # Double-checked locking
             if name in self._embedders:
                 return self._embedders[name]
 
+            # Lazy build happens here
             embedder = self._build_embedder(name)
             self._embedders[name] = embedder
-
             return embedder
 
     def _build_embedder(self, name: str) -> Embedder:
@@ -102,7 +104,7 @@ class EmbedderManager:
             OpenAIEmbedderParams,
         )
 
-        dimensions = conf.dimensions if conf.dimensions is not None else 1536
+        dimensions = conf.dimensions or 1536
 
         params = OpenAIEmbedderParams(
             client=openai.AsyncOpenAI(
@@ -128,7 +130,6 @@ class EmbedderManager:
         )
 
         model_name = conf.model
-
         sentence_transformer = SentenceTransformer(model_name)
 
         params = SentenceTransformerEmbedderParams(

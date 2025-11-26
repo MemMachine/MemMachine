@@ -127,3 +127,18 @@ def test_parse_empty_storage_returns_empty_conf():
     storage_conf = DatabasesConf.parse(input_dict)
     assert storage_conf.neo4j_confs == {}
     assert storage_conf.relational_db_confs == {}
+
+
+def test_neo4j_uri():
+    conf = Neo4jConf(uri="bolt://localhost:1234")
+    assert conf.get_uri() == "bolt://localhost:1234"
+
+
+def test_neo4j_uri_with_host_and_port():
+    conf = Neo4jConf(host="neo4j", port=4321)
+    assert conf.get_uri() == "bolt://neo4j:4321"
+
+
+def test_neo4j_uri_with_special_host():
+    conf = Neo4jConf(host="neo4j+s://xyz", port=3456)
+    assert conf.get_uri() == "neo4j+s://xyz"
