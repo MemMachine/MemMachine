@@ -144,7 +144,7 @@ class SessionDataManagerSQL(SessionDataManager):
             # Query for an existing session with the same ID
             row = await dbsession.get(self.SessionConfig, session_key)
             if row is None:
-                raise ValueError(f"""Session {session_key} does not exists""")
+                raise ValueError(f"""Session {session_key} does not exist""")
             await dbsession.delete(row)
             await dbsession.commit()
             return
@@ -232,7 +232,7 @@ class SessionDataManagerSQL(SessionDataManager):
             )
             session = sessions.first()
             if session is None:
-                raise ValueError(f"""Session {session_key} does not exists""")
+                raise ValueError(f"""Session {session_key} does not exist""")
             short_term_datas = await dbsession.execute(
                 select(self.ShortTermMemoryData).where(
                     self.ShortTermMemoryData.session_key == session_key,
