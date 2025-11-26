@@ -321,7 +321,10 @@ class ShortTermMemory:
                 break
         else:
             logger.warning(
-                "Unsupported operator: %s, %s, %s", op, type(a).__name__, type(b).__name__
+                "Unsupported operator: %s, %s, %s",
+                op,
+                type(a).__name__,
+                type(b).__name__,
             )
             return False
 
