@@ -178,7 +178,7 @@ async def test_delete_nonexistent_session_raises_error(
 ):
     """Test that deleting a non-existent session raises a ValueError."""
     session_key = "nonexistent_session"
-    with pytest.raises(ValueError, match=f"Session {session_key} does not exists"):
+    with pytest.raises(ValueError, match=f"Session {session_key} does not exist"):
         await session_manager.delete_session(session_key)
 
 
@@ -330,7 +330,7 @@ async def test_save_short_term_memory_for_nonexistent_session(
 ):
     """Test that saving STM for a non-existent session raises a ValueError."""
     session_key = "nonexistent_session"
-    with pytest.raises(ValueError, match=f"Session {session_key} does not exists"):
+    with pytest.raises(ValueError, match=f"Session {session_key} does not exist"):
         await session_manager.save_short_term_memory(session_key, "summary", 1, 1)
 
 

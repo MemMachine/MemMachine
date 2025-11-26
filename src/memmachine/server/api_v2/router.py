@@ -137,7 +137,7 @@ async def delete_project(
     try:
         await memmachine.delete_session(session_data)
     except ValueError as e:
-        if f"Session {session_data.session_key} does not exists" == str(e):
+        if f"Session {session_data.session_key} does not exist" == str(e):
             raise HTTPException(status_code=404, detail="Project does not exist") from e
         raise
     except Exception as e:
@@ -284,7 +284,7 @@ async def delete_semantic_memory(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail="Unable to delete episodic memory, " + str(e)
+            status_code=500, detail="Unable to delete semantic memory, " + str(e)
         ) from e
 
 
