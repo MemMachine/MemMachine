@@ -6,13 +6,13 @@ from datetime import datetime
 from typing import cast
 from uuid import UUID
 
+from memmachine.episodic_memory.data_types import ContentType, Episode
 from neo4j import AsyncGraphDatabase
 from pydantic import BaseModel, JsonValue
 
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
 )
-from memmachine.episodic_memory.data_types import ContentType, Episode
 from memmachine.episodic_memory.declarative_memory import DeclarativeMemory
 
 
@@ -84,8 +84,8 @@ async def dump_episodes(
     records, _, _ = await neo4j_driver.execute_query(first_query, batch_size=batch_size)
     while True:
         neo4j_nodes = [record["n"] for record in records]
-        nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
-        declarative_memory_episodes = DeclarativeMemory._episodes_from_episode_nodes(
+        nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)  # noqa: SLF001
+        declarative_memory_episodes = DeclarativeMemory._episodes_from_episode_nodes(  # noqa: SLF001
             nodes
         )
         long_term_memory_episodes = [

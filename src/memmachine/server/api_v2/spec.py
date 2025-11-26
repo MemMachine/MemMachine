@@ -7,6 +7,8 @@ from pydantic import AfterValidator, BaseModel, Field
 
 from memmachine.main.memmachine import MemoryType
 
+DEFAULT_ORG_AND_PROJECT_ID = "universal"
+
 
 def _validate_no_slash(v: str) -> str:
     if "/" in v:
@@ -26,7 +28,7 @@ IntCompatibleId = Annotated[str, AfterValidator(_validate_int_compatible), Field
 
 
 SafeId = Annotated[str, AfterValidator(_validate_no_slash), Field(...)]
-SafeIdWithDefault = Annotated[SafeId, Field(default="universal")]
+SafeIdWithDefault = Annotated[SafeId, Field(default=DEFAULT_ORG_AND_PROJECT_ID)]
 
 
 class ProjectConfig(BaseModel):
@@ -61,15 +63,6 @@ class GetProjectSpec(BaseModel):
     project_id: SafeId
 
 
-class SessionInfo(BaseModel):
-    """Model representing session information."""
-
-    org_id: SafeId
-    project_id: SafeId
-
-    model_config = {"extra": "ignore"}
-
-
 class DeleteProjectSpec(BaseModel):
     """Specification model for deleting a project."""
 
@@ -93,7 +86,7 @@ class AddMemoriesSpec(BaseModel):
 
     org_id: SafeIdWithDefault
     project_id: SafeIdWithDefault
-    messages: Annotated[list[MemoryMessage], Field(...)]
+    messages: Annotated[list[MemoryMessage], Field(min_length=1)]
 
 
 class AddMemoryResult(BaseModel):
