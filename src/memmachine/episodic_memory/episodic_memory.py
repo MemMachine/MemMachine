@@ -20,10 +20,11 @@ import logging
 import time
 from collections.abc import Coroutine, Iterable
 from datetime import datetime
-from typing import cast
+from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
+from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store import Episode, EpisodeResponse
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
@@ -212,6 +213,14 @@ class EpisodicMemory:
 
         if self._closed:
             raise RuntimeError(f"Memory is closed {self._session_key}")
+        # Create filterable property
+        for episode in episodes:
+            if episode.metadata is not None and episode.filterable_metadata is None:
+                episode.filterable_metadata = {}
+                for key, value in episode.metadata.items():
+                    if isinstance(value, get_args(FilterablePropertyValue)):
+                        episode.filterable_metadata[key] = value
+
         # Add the episode to both memory stores concurrently
         tasks: list[Coroutine] = []
         if self._short_term_memory:
