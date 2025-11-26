@@ -83,14 +83,14 @@ class MockSemanticStorage(SemanticStorage):
         self,
         *,
         filter_expr: FilterExpr | None = None,
-        limit: int | None = None,
+        page_size: int | None = None,
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
         return await self.get_feature_set_mock(
             filter_expr=filter_expr,
-            k=limit,
+            k=page_size,
             vector_search_opts=vector_search_opts,
             tag_threshold=tag_threshold,
             load_citations=load_citations,

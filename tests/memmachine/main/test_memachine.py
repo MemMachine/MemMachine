@@ -41,20 +41,20 @@ async def test_memmachine_list_search_paginates_episodic(
         first_page = await memmachine.list_search(
             session_data=session_data,
             target_memories=[MemoryType.Episodic],
-            limit=2,
-            offset=0,
+            page_size=2,
+            page_num=0,
         )
         second_page = await memmachine.list_search(
             session_data=session_data,
             target_memories=[MemoryType.Episodic],
-            limit=2,
-            offset=1,
+            page_size=2,
+            page_num=1,
         )
         final_page = await memmachine.list_search(
             session_data=session_data,
             target_memories=[MemoryType.Episodic],
-            limit=2,
-            offset=2,
+            page_size=2,
+            page_num=2,
         )
 
         assert [episode.content for episode in first_page.episodic_memory] == [
@@ -112,20 +112,20 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
         first_page = await memmachine.list_search(
             session_data=session_info,
             target_memories=[MemoryType.Semantic],
-            limit=2,
-            offset=0,
+            page_size=2,
+            page_num=0,
         )
         second_page = await memmachine.list_search(
             session_data=session_info,
             target_memories=[MemoryType.Semantic],
-            limit=2,
-            offset=1,
+            page_size=2,
+            page_num=1,
         )
         final_page = await memmachine.list_search(
             session_data=session_info,
             target_memories=[MemoryType.Semantic],
-            limit=2,
-            offset=2,
+            page_size=2,
+            page_num=2,
         )
 
         assert [feature.value for feature in first_page.semantic_memory] == [

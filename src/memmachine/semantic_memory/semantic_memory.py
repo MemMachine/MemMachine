@@ -97,7 +97,7 @@ class SemanticService:
 
         return await self._semantic_storage.get_feature_set(
             filter_expr=filter_expr,
-            limit=limit,
+            page_size=limit,
             vector_search_opts=SemanticStorage.VectorSearchOpts(
                 query_embedding=np.array(query_embedding),
                 min_distance=min_distance,
@@ -186,14 +186,14 @@ class SemanticService:
         self,
         *,
         filter_expr: FilterExpr | None = None,
-        limit: int | None = None,
-        offset: int | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
         with_citations: bool = False,
     ) -> list[SemanticFeature]:
         return await self._semantic_storage.get_feature_set(
             filter_expr=filter_expr,
-            limit=limit,
-            offset=offset,
+            page_size=page_size,
+            page_num=page_num,
             load_citations=with_citations,
         )
 
