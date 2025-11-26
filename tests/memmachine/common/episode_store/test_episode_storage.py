@@ -13,6 +13,7 @@ from memmachine.common.episode_store import (
     EpisodeType,
 )
 from memmachine.common.errors import InvalidArgumentError
+from memmachine.common.filter.filter_parser import FilterExpr, parse_filter
 
 DEFAULT_HISTORY_ARGS = {
     "session_key": "session-default",
@@ -170,22 +171,22 @@ async def test_history_identity_filters(episode_storage: EpisodeStorage):
 
     try:
         by_session = await episode_storage.get_episode_messages(
-            session_keys=["session-assistant"],
+            filter_expr=_filter("session_key = 'session-assistant'"),
         )
         assert [m.uid for m in by_session] == [assistant_message]
 
         by_producer_id = await episode_storage.get_episode_messages(
-            producer_ids=["system-id"],
+            filter_expr=_filter("producer_id = 'system-id'"),
         )
         assert [m.uid for m in by_producer_id] == [system_message]
 
         by_producer_role = await episode_storage.get_episode_messages(
-            producer_roles=["user"],
+            filter_expr=_filter("producer_role = 'user'"),
         )
         assert [m.uid for m in by_producer_role] == [user_message]
 
         by_produced_for = await episode_storage.get_episode_messages(
-            produced_for_ids=["user-id"],
+            filter_expr=_filter("produced_for_id = 'user-id'"),
         )
         assert [m.uid for m in by_produced_for] == [assistant_message]
 
@@ -248,7 +249,9 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
         metadata={"scope": "b"},
     )
 
-    results = await episode_storage.get_episode_messages(metadata={"scope": "b"})
+    results = await episode_storage.get_episode_messages(
+        filter_expr=_filter("metadata.scope = 'b'"),
+    )
     assert [entry.uid for entry in results] == [second]
 
     await episode_storage.delete_episodes([first, second])
@@ -272,9 +275,11 @@ async def test_history_pagination_with_page_offset(
         )
 
     try:
-        first_page = await episode_storage.get_episode_messages(limit=2, offset=0)
-        second_page = await episode_storage.get_episode_messages(limit=2, offset=1)
-        third_page = await episode_storage.get_episode_messages(limit=2, offset=2)
+        first_page = await episode_storage.get_episode_messages(page_size=2, page_num=0)
+        second_page = await episode_storage.get_episode_messages(
+            page_size=2, page_num=1
+        )
+        third_page = await episode_storage.get_episode_messages(page_size=2, page_num=2)
 
         assert [entry.uid for entry in first_page] == episode_ids[:2]
         assert [entry.uid for entry in second_page] == episode_ids[2:4]
@@ -288,7 +293,7 @@ async def test_history_pagination_offset_without_limit_raises(
     episode_storage: EpisodeStorage,
 ):
     with pytest.raises(InvalidArgumentError):
-        await episode_storage.get_episode_messages(offset=1)
+        await episode_storage.get_episode_messages(page_num=1)
 
 
 @pytest.mark.asyncio
@@ -334,7 +339,9 @@ async def test_delete_history_messages_with_identity_filters(
         producer_role="assistant",
     )
 
-    await episode_storage.delete_episode_messages(producer_roles=["assistant"])
+    await episode_storage.delete_episode_messages(
+        filter_expr=_filter("producer_role = 'assistant'"),
+    )
 
     remaining = await episode_storage.get_episode_messages()
     assert [entry.uid for entry in remaining] == [keep_history]
@@ -386,14 +393,20 @@ async def test_number_no_filter_returns_all(episode_storage: EpisodeStorage):
     await create_history_entry(episode_storage, session_key="second", content="second")
 
     first_count = await episode_storage.get_episode_messages_count(
-        session_keys=["first"]
+        filter_expr=_filter("session_key = 'first'"),
     )
     assert first_count == 1
 
     second_count = await episode_storage.get_episode_messages_count(
-        session_keys=["second"]
+        filter_expr=_filter("session_key = 'second'"),
     )
     assert second_count == 1
 
     total_count = await episode_storage.get_episode_messages_count()
     assert total_count == 2
+
+
+def _filter(spec: str) -> FilterExpr:
+    expr = parse_filter(spec)
+    assert expr is not None
+    return expr

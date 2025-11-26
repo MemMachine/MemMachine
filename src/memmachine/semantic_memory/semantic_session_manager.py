@@ -247,8 +247,8 @@ class SemanticSessionManager:
         *,
         memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
         search_filter: FilterExpr | None = None,
-        limit: int | None = None,
-        offset: int | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
         set_ids = self._get_set_ids(session_data, memory_type)
@@ -256,8 +256,8 @@ class SemanticSessionManager:
 
         return await self._semantic_service.get_set_features(
             filter_expr=filter_expr,
-            limit=limit,
-            offset=offset,
+            page_size=page_size,
+            page_num=page_num,
             with_citations=load_citations,
         )
 

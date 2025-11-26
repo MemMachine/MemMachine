@@ -7,7 +7,7 @@ from collections.abc import Coroutine
 from enum import Enum
 from typing import Any, Final, Protocol, cast
 
-from pydantic import BaseModel, InstanceOf, JsonValue
+from pydantic import BaseModel, InstanceOf
 
 from memmachine.common.configuration import Configuration
 from memmachine.common.configuration.episodic_config import (
@@ -16,6 +16,12 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConf,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
+from memmachine.common.filter.filter_parser import (
+    And as FilterAnd,
+)
+from memmachine.common.filter.filter_parser import (
+    Comparison as FilterComparison,
+)
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
     parse_filter,
@@ -181,8 +187,13 @@ class MemMachine:
     async def delete_session(self, session_data: SessionData) -> None:
         async def _delete_episode_store() -> None:
             episode_store = await self._resources.get_episode_storage()
+            session_filter = FilterComparison(
+                field="session_key",
+                op="=",
+                value=session_data.session_key,
+            )
             await episode_store.delete_episode_messages(
-                session_keys=[session_data.session_key],
+                filter_expr=session_filter,
             )
 
         async def _delete_episodic_memory() -> None:
@@ -220,6 +231,17 @@ class MemMachine:
         return await session_data_manager.get_sessions(
             filters=cast(dict[str, object] | None, to_property_filter(search_filter))
         )
+
+    @staticmethod
+    def _merge_filter_exprs(
+        left: FilterExpr | None,
+        right: FilterExpr | None,
+    ) -> FilterExpr | None:
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return FilterAnd(left=left, right=right)
 
     async def add_episodes(
         self,
@@ -350,8 +372,8 @@ class MemMachine:
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
         search_filter: str | None = None,
-        limit: int | None = None,
-        offset: int | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
     ) -> ListResults:
         search_filter_expr = parse_filter(search_filter) if search_filter else None
 
@@ -360,16 +382,20 @@ class MemMachine:
 
         if MemoryType.Episodic in target_memories:
             episode_storage = await self._resources.get_episode_storage()
-            # TODO: modify episode store filter
+            session_filter = FilterComparison(
+                field="session_key",
+                op="=",
+                value=session_data.session_key,
+            )
+            combined_filter = self._merge_filter_exprs(
+                session_filter,
+                search_filter_expr,
+            )
             episodic_task = asyncio.create_task(
                 episode_storage.get_episode_messages(
-                    limit=limit,
-                    offset=offset,
-                    session_keys=[session_data.session_key],
-                    metadata=cast(
-                        dict[str, JsonValue] | None,
-                        to_property_filter(search_filter_expr),
-                    ),
+                    page_size=page_size,
+                    page_num=page_num,
+                    filter_expr=combined_filter,
                 )
             )
 
@@ -379,8 +405,8 @@ class MemMachine:
                 semantic_session.get_set_features(
                     session_data=session_data,
                     search_filter=search_filter_expr,
-                    limit=limit,
-                    offset=offset,
+                    page_size=page_size,
+                    page_num=page_num,
                 )
             )
 

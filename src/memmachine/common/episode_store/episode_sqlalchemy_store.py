@@ -1,12 +1,10 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
-from collections.abc import Callable
 from datetime import UTC
-from typing import Any, overload
+from typing import Any, TypeVar, overload
 
 from pydantic import (
     AwareDatetime,
-    JsonValue,
     TypeAdapter,
     ValidationError,
     validate_call,
@@ -18,27 +16,35 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    cast,
+    and_,
     delete,
     func,
     insert,
+    or_,
     select,
 )
-from sqlalchemy import (
-    Enum as SAEnum,
-)
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine.common.episode_store.episode_model import (
-    Episode as EpisodeE,
-)
+from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.episode_store.episode_model import Episode as EpisodeE
 from memmachine.common.episode_store.episode_model import EpisodeEntry, EpisodeType
 from memmachine.common.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
 from memmachine.common.errors import InvalidArgumentError, ResourceNotFoundError
+from memmachine.common.filter.filter_parser import (
+    And as FilterAnd,
+)
+from memmachine.common.filter.filter_parser import (
+    Comparison as FilterComparison,
+)
+from memmachine.common.filter.filter_parser import FilterExpr
+from memmachine.common.filter.filter_parser import (
+    Or as FilterOr,
+)
 
 
 class BaseEpisodeStore(DeclarativeBase):
@@ -46,6 +52,8 @@ class BaseEpisodeStore(DeclarativeBase):
 
 
 JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
+
+T = TypeVar("T")
 
 
 class Episode(BaseEpisodeStore):
@@ -207,59 +215,14 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return episode.to_typed_model() if episode else None
 
-    def _build_episode_filters(
-        self,
-        *,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
-        start_time: AwareDatetime | None = None,
-        end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
-    ) -> list[ColumnElement[bool]]:
-        filters: list[ColumnElement[bool]] = []
-
-        filter_definitions: list[
-            tuple[list[str] | None, Callable[[list[str]], ColumnElement[bool]]]
-        ] = [
-            (session_keys, Episode.session_key.in_),
-            (producer_ids, Episode.producer_id.in_),
-            (producer_roles, Episode.producer_role.in_),
-            (produced_for_ids, Episode.produced_for_id.in_),
-        ]
-
-        for values, builder in filter_definitions:
-            if values is not None:
-                filters.append(builder(values))
-
-        if episode_types is not None:
-            filters.append(Episode.episode_type.in_(episode_types))
-        if start_time is not None:
-            filters.append(Episode.created_at >= start_time)
-        if end_time is not None:
-            filters.append(Episode.created_at <= end_time)
-
-        metadata_filter = self._build_metadata_filter(metadata)
-        if metadata_filter is not None:
-            filters.append(metadata_filter)
-
-        return filters
-
     @overload
     def _apply_episode_filter(
         self,
         stmt: Select[Any],
         *,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
+        filter_expr: FilterExpr | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
     ) -> Select[Any]: ...
 
     @overload
@@ -267,97 +230,151 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         self,
         stmt: Delete,
         *,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
+        filter_expr: FilterExpr | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
     ) -> Delete: ...
 
     def _apply_episode_filter(
         self,
         stmt: Select[Any] | Delete,
         *,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
+        filter_expr: FilterExpr | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
     ) -> Select[Any] | Delete:
-        filters = self._build_episode_filters(
-            session_keys=session_keys,
-            producer_ids=producer_ids,
-            producer_roles=producer_roles,
-            produced_for_ids=produced_for_ids,
-            episode_types=episode_types,
-            start_time=start_time,
-            end_time=end_time,
-            metadata=metadata,
-        )
+        filters: list[ColumnElement[bool]] = []
 
-        if filters:
-            if isinstance(stmt, Select):
-                return stmt.where(*filters)
-            if isinstance(stmt, Delete):
-                return stmt.where(*filters)
-            raise TypeError(f"Unsupported statement type: {type(stmt)}")
+        if filter_expr is not None:
+            filters.append(self._compile_episode_filter_expr(filter_expr))
 
-        return stmt
+        if start_time is not None:
+            filters.append(Episode.created_at >= start_time)
 
-    def _build_metadata_filter(
-        self, metadata: dict[str, JsonValue] | None
-    ) -> ColumnElement[bool] | None:
-        if metadata is None:
-            return None
+        if end_time is not None:
+            filters.append(Episode.created_at <= end_time)
 
-        metadata_str = {key: str(metadata[key]) for key in metadata}
-        if self._engine.dialect.name == "postgresql":
-            return cast(Episode.json_metadata, JSONB).contains(metadata)
-        return Episode.json_metadata.contains(metadata_str)
+        if not filters:
+            return stmt
 
-    @validate_call
+        if isinstance(stmt, Select):
+            return stmt.where(*filters)
+        if isinstance(stmt, Delete):
+            return stmt.where(*filters)
+        raise TypeError(f"Unsupported statement type: {type(stmt)}")
+
+    def _compile_episode_comparison_expr(
+        self,
+        expr: FilterComparison,
+    ) -> ColumnElement[bool]:
+        column, is_metadata = self._resolve_episode_field(expr.field)
+
+        if column is None:
+            raise ValueError(f"Unsupported episode filter field: {expr.field}")
+
+        if expr.op == "=":
+            value = expr.value
+            if isinstance(value, list):
+                raise ValueError("'=' comparison cannot accept list values")
+            if is_metadata:
+                value = self._normalize_metadata_value(value)
+                return column == value
+            return column == value
+
+        if expr.op == "in":
+            if not isinstance(expr.value, list):
+                raise ValueError("IN comparison requires a list of values")
+
+            values = expr.value
+            if is_metadata:
+                values = [self._normalize_metadata_value(v) for v in values]
+
+            return column.in_(values)
+
+        if expr.op == "is_null":
+            return column.is_(None)
+
+        if expr.op == "is_not_null":
+            return column.is_not(None)
+
+        raise ValueError(f"Unsupported operator: {expr.op}")
+
+    def _compile_episode_filter_expr(self, expr: FilterExpr) -> ColumnElement[bool]:
+        if isinstance(expr, FilterComparison):
+            return self._compile_episode_comparison_expr(expr)
+
+        if isinstance(expr, FilterAnd):
+            left = self._compile_episode_filter_expr(expr.left)
+            right = self._compile_episode_filter_expr(expr.right)
+            return and_(left, right)
+
+        if isinstance(expr, FilterOr):
+            left = self._compile_episode_filter_expr(expr.left)
+            right = self._compile_episode_filter_expr(expr.right)
+            return or_(left, right)
+
+        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+    @staticmethod
+    def _normalize_metadata_value(
+        value: FilterablePropertyValue | list[FilterablePropertyValue],
+    ) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return "" if value is None else str(value)
+
+    @staticmethod
+    def _resolve_episode_field(
+        field: str,
+    ) -> tuple[Any, bool] | tuple[None, bool]:
+        normalized = field.lower()
+        field_mapping: dict[str, Any] = {
+            "uid": Episode.id,
+            "id": Episode.id,
+            "session_key": Episode.session_key,
+            "session": Episode.session_key,
+            "producer_id": Episode.producer_id,
+            "producer_role": Episode.producer_role,
+            "produced_for_id": Episode.produced_for_id,
+            "episode_type": Episode.episode_type,
+            "content": Episode.content,
+            "created_at": Episode.created_at,
+        }
+
+        if normalized in field_mapping:
+            return field_mapping[normalized], False
+
+        if normalized.startswith(("m.", "metadata.")):
+            key = normalized.split(".", 1)[1]
+            return Episode.json_metadata[key].as_string(), True
+        return None, False
+
     async def get_episode_messages(
         self,
         *,
-        limit: int | None = None,
-        offset: int | None = None,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
+        filter_expr: FilterExpr | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
     ) -> list[EpisodeE]:
         stmt = select(Episode)
 
         stmt = self._apply_episode_filter(
             stmt,
-            session_keys=session_keys,
-            producer_ids=producer_ids,
-            producer_roles=producer_roles,
-            produced_for_ids=produced_for_ids,
-            episode_types=episode_types,
+            filter_expr=filter_expr,
             start_time=start_time,
             end_time=end_time,
-            metadata=metadata,
         )
 
-        if limit is not None:
-            stmt = stmt.limit(limit)
+        if page_size is not None:
+            stmt = stmt.limit(page_size)
             stmt = stmt.order_by(Episode.created_at.asc())
 
-            if offset is not None:
-                stmt = stmt.offset(limit * offset)
+            if page_num is not None:
+                stmt = stmt.offset(page_size * page_num)
 
-        elif offset is not None:
+        elif page_num is not None:
             raise InvalidArgumentError("Cannot specify offset without limit")
 
         async with self._create_session() as session:
@@ -366,31 +383,20 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return [h.to_typed_model() for h in episode_messages]
 
-    @validate_call
     async def get_episode_messages_count(
         self,
         *,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
+        filter_expr: FilterExpr | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
     ) -> int:
         stmt = select(func.count(Episode.id))
 
         stmt = self._apply_episode_filter(
             stmt,
-            session_keys=session_keys,
-            producer_ids=producer_ids,
-            producer_roles=producer_roles,
-            produced_for_ids=produced_for_ids,
-            episode_types=episode_types,
+            filter_expr=filter_expr,
             start_time=start_time,
             end_time=end_time,
-            metadata=metadata,
         )
 
         async with self._create_session() as session:
@@ -412,31 +418,20 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             await session.execute(stmt)
             await session.commit()
 
-    @validate_call
     async def delete_episode_messages(
         self,
         *,
-        session_keys: list[str] | None = None,
-        producer_ids: list[str] | None = None,
-        producer_roles: list[str] | None = None,
-        produced_for_ids: list[str] | None = None,
-        episode_types: list[EpisodeType] | None = None,
+        filter_expr: FilterExpr | None = None,
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
-        metadata: dict[str, JsonValue] | None = None,
     ) -> None:
         stmt = delete(Episode)
 
         stmt = self._apply_episode_filter(
             stmt,
-            session_keys=session_keys,
-            producer_ids=producer_ids,
-            producer_roles=producer_roles,
-            produced_for_ids=produced_for_ids,
-            episode_types=episode_types,
+            filter_expr=filter_expr,
             start_time=start_time,
             end_time=end_time,
-            metadata=metadata,
         )
 
         async with self._create_session() as session:

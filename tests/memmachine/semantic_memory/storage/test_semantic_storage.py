@@ -163,18 +163,18 @@ async def test_get_feature_set_with_page_offset(
     try:
         first_page = await semantic_storage.get_feature_set(
             filter_expr=_expr("set_id IN (user)"),
-            limit=2,
-            offset=0,
+            page_size=2,
+            page_num=0,
         )
         second_page = await semantic_storage.get_feature_set(
             filter_expr=_expr("set_id IN (user)"),
-            limit=2,
-            offset=1,
+            page_size=2,
+            page_num=1,
         )
         final_page = await semantic_storage.get_feature_set(
             filter_expr=_expr("set_id IN (user)"),
-            limit=2,
-            offset=2,
+            page_size=2,
+            page_num=2,
         )
 
         assert [feature.value for feature in first_page] == ["value-0", "value-1"]
@@ -189,7 +189,7 @@ async def test_get_feature_set_offset_without_limit_errors(
     semantic_storage: SemanticStorage,
 ):
     with pytest.raises(InvalidArgumentError):
-        await semantic_storage.get_feature_set(offset=1)
+        await semantic_storage.get_feature_set(page_num=1)
 
 
 @pytest_asyncio.fixture
@@ -240,7 +240,7 @@ async def test_get_feature_set_basic_vector_search(
     # When doing a vector search
     results = await semantic_storage.get_feature_set(
         filter_expr=_expr("set_id IN (user)"),
-        limit=10,
+        page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=embed_a,
             min_distance=None,
@@ -264,7 +264,7 @@ async def test_get_feature_set_min_cos_vector_search(
     # When doing a vector search with a min_cos threshold
     results = await semantic_storage.get_feature_set(
         filter_expr=_expr("set_id IN (user)"),
-        limit=10,
+        page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=embed_a,
             min_distance=0.5,
@@ -645,7 +645,7 @@ async def test_complex_semantic_search_and_citations(
 
     results = await semantic_storage.get_feature_set(
         filter_expr=_expr("set_id IN (user)"),
-        limit=10,
+        page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=np.array([1.0, 0.0]),
             min_distance=0.0,
@@ -661,7 +661,7 @@ async def test_complex_semantic_search_and_citations(
 
     filtered = await semantic_storage.get_feature_set(
         filter_expr=_expr("set_id IN (user)"),
-        limit=1,
+        page_size=1,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=np.array([1.0, 0.0]),
             min_distance=0.5,

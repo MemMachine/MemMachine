@@ -73,7 +73,7 @@ class TestMemMachineLongMemEval:
             list_result = await memmachine.list_search(
                 session_data,
                 target_memories=[MemoryType.Semantic],
-                limit=1,
+                page_size=1,
             )
             if list_result.semantic_memory:
                 return
