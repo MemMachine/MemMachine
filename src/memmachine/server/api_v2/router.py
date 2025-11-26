@@ -10,6 +10,7 @@ from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
     ResourceNotFoundError,
+    SessionNotFoundError,
 )
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine.server.api_v2.service import (
@@ -197,10 +198,8 @@ async def search_memories(
         raise HTTPException(
             status_code=422, detail="invalid argument: " + str(e)
         ) from e
-    except RuntimeError as e:
-        if "No session info found for session" in str(e):
-            raise HTTPException(status_code=404, detail="Project does not exist") from e
-        raise
+    except SessionNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Project does not exist") from e
 
 
 async def _list_target_memories(

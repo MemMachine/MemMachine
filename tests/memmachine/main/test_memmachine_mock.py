@@ -17,6 +17,7 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry
+from memmachine.common.errors import SessionNotFoundError
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SemanticFeature
@@ -430,3 +431,25 @@ async def test_delete_features_forwards_to_semantic_manager(
     await memmachine.delete_features(["feat1", "feat2"])
 
     semantic_manager.delete_features.assert_awaited_once_with(["feat1", "feat2"])
+
+
+@pytest.mark.asyncio
+async def test_query_search_with_missing_session_raises_error(
+    minimal_conf, patched_resource_manager
+):
+    session_manager = AsyncMock()
+    session_manager.get_session_info.side_effect = RuntimeError("No session info found")
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    dummy_session = DummySessionData("nonexistent-session")
+
+    with pytest.raises(SessionNotFoundError) as exc_info:
+        await memmachine.query_search(
+            dummy_session,
+            target_memories=[MemoryType.Episodic, MemoryType.Semantic],
+            query="hello world",
+        )
+
+    assert str(exc_info.value) == "Session 'nonexistent-session' does not exist."

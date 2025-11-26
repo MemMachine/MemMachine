@@ -35,6 +35,15 @@ class EmbedderNotFoundError(ResourceNotFoundError):
         )
 
 
+class SessionNotFoundError(ResourceNotFoundError):
+    """Error when a specified session is not found."""
+
+    def __init__(self, session_key: str) -> None:
+        """Initialize with the missing session key."""
+        self.session_key = session_key
+        super().__init__(f"Session '{session_key}' does not exist.")
+
+
 class ConfigurationError(MemMachineError):
     """Error related to system configuration."""
 

@@ -16,6 +16,7 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConf,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
+from memmachine.common.errors import SessionNotFoundError
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
     parse_filter,
@@ -83,6 +84,14 @@ class MemMachine:
         await semantic_service.stop()
 
         await self._resources.close()
+
+    async def session_exists(self, session_key: str) -> bool:
+        # Check if session exists
+        try:
+            session_info = await self.get_session(session_key=session_key)
+        except RuntimeError:
+            return False
+        return session_info is not None
 
     def _with_default_episodic_memory_conf(
         self,
@@ -309,6 +318,9 @@ class MemMachine:
     ) -> SearchResponse:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
+
+        if not await self.session_exists(session_data.session_key):
+            raise SessionNotFoundError(session_data.session_key)
 
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
