@@ -1,6 +1,6 @@
 """Long-term declarative memory coordination."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
 
@@ -9,6 +9,18 @@ from pydantic import BaseModel, Field, InstanceOf
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import ContentType, Episode, EpisodeType
+from memmachine.common.filter.filter_parser import (
+    And as FilterAnd,
+)
+from memmachine.common.filter.filter_parser import (
+    Comparison as FilterComparison,
+)
+from memmachine.common.filter.filter_parser import (
+    FilterExpr,
+)
+from memmachine.common.filter.filter_parser import (
+    Or as FilterOr,
+)
 from memmachine.common.reranker import Reranker
 from memmachine.common.vector_graph_store import VectorGraphStore
 from memmachine.episodic_memory.declarative_memory import (
@@ -121,7 +133,7 @@ class LongTermMemory:
         self,
         query: str,
         num_episodes_limit: int,
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         declarative_memory_episodes = await self._declarative_memory.search(
             query,
@@ -146,7 +158,7 @@ class LongTermMemory:
 
     async def get_matching_episodes(
         self,
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         declarative_memory_episodes = (
             await self._declarative_memory.get_matching_episodes(
@@ -167,7 +179,7 @@ class LongTermMemory:
 
     async def delete_matching_episodes(
         self,
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> None:
         await self._declarative_memory.delete_episodes(
             episode.uid
@@ -280,18 +292,35 @@ class LongTermMemory:
 
     @staticmethod
     def _sanitize_property_filter(
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None,
-    ) -> dict[str, FilterablePropertyValue | None] | None:
+        property_filter: FilterExpr | None,
+    ) -> FilterExpr | None:
         if property_filter is None:
             return None
 
-        sanitized_filter: dict[str, FilterablePropertyValue | None] = {}
-        for key, value in property_filter.items():
-            if key.startswith("m."):
-                sanitized_key = LongTermMemory._mangle_filterable_metadata_key(
-                    key.removeprefix("m.")
+        return LongTermMemory._sanitize_filter_expr(property_filter)
+
+    @staticmethod
+    def _sanitize_filter_expr(expr: FilterExpr) -> FilterExpr:
+        if isinstance(expr, FilterComparison):
+            if expr.field.startswith("m."):
+                sanitized_field = LongTermMemory._mangle_filterable_metadata_key(
+                    expr.field.removeprefix("m.")
                 )
             else:
-                sanitized_key = key
-            sanitized_filter[sanitized_key] = value
-        return sanitized_filter
+                sanitized_field = expr.field
+            return FilterComparison(
+                field=sanitized_field,
+                op=expr.op,
+                value=expr.value,
+            )
+        if isinstance(expr, FilterAnd):
+            return FilterAnd(
+                left=LongTermMemory._sanitize_filter_expr(expr.left),
+                right=LongTermMemory._sanitize_filter_expr(expr.right),
+            )
+        if isinstance(expr, FilterOr):
+            return FilterOr(
+                left=LongTermMemory._sanitize_filter_expr(expr.left),
+                right=LongTermMemory._sanitize_filter_expr(expr.right),
+            )
+        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")

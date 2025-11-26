@@ -4,7 +4,7 @@ import asyncio
 import datetime
 import json
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
 
@@ -12,6 +12,18 @@ from nltk import sent_tokenize
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.embedder.embedder import Embedder
+from memmachine.common.filter.filter_parser import (
+    And as FilterAnd,
+)
+from memmachine.common.filter.filter_parser import (
+    Comparison as FilterComparison,
+)
+from memmachine.common.filter.filter_parser import (
+    FilterExpr,
+)
+from memmachine.common.filter.filter_parser import (
+    Or as FilterOr,
+)
 from memmachine.common.reranker.reranker import Reranker
 from memmachine.common.vector_graph_store import Edge, Node, VectorGraphStore
 
@@ -258,7 +270,7 @@ class DeclarativeMemory:
         self,
         query: str,
         max_num_episodes: int = 20,
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         """
         Search declarative memory for episodes relevant to the query.
@@ -269,7 +281,7 @@ class DeclarativeMemory:
             max_num_episodes (int):
                 The maximum number of episodes to return
                 (default: 20).
-            property_filter (Mapping[str, FilterablePropertyValue | None] | None):
+            property_filter (FilterExpr | None):
                 Filterable property keys and values
                 to use for filtering episodes
                 (default: None).
@@ -279,8 +291,9 @@ class DeclarativeMemory:
                 A list of episodes relevant to the query, ordered chronologically.
 
         """
-        if property_filter is None:
-            property_filter = {}
+        mangled_property_filter = DeclarativeMemory._mangle_property_filter(
+            property_filter,
+        )
 
         query_embedding = (
             await self._embedder.search_embed(
@@ -300,10 +313,7 @@ class DeclarativeMemory:
             query_embedding=query_embedding,
             similarity_metric=self._embedder.similarity_metric,
             limit=100,
-            required_properties={
-                mangle_filterable_property_key(key): value
-                for key, value in property_filter.items()
-            },
+            property_filter=mangled_property_filter,
         )
 
         # Get source episodes of matched derivatives.
@@ -315,10 +325,7 @@ class DeclarativeMemory:
                 this_node_uid=matched_derivative_node.uid,
                 find_sources=False,
                 find_targets=True,
-                required_node_properties={
-                    mangle_filterable_property_key(key): value
-                    for key, value in property_filter.items()
-                },
+                node_property_filter=mangled_property_filter,
             )
             for matched_derivative_node in matched_derivative_nodes
         ]
@@ -340,7 +347,7 @@ class DeclarativeMemory:
         contextualize_episode_tasks = [
             self._contextualize_episode(
                 nuclear_episode,
-                property_filter=property_filter,
+                mangled_property_filter=mangled_property_filter,
             )
             for nuclear_episode in nuclear_episodes
         ]
@@ -379,11 +386,8 @@ class DeclarativeMemory:
         nuclear_episode: Episode,
         max_backward_episodes: int = 1,
         max_forward_episodes: int = 2,
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
+        mangled_property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
-        if property_filter is None:
-            property_filter = {}
-
         previous_episode_nodes = (
             await self._vector_graph_store.search_directional_nodes(
                 collection=self._episode_collection,
@@ -395,10 +399,7 @@ class DeclarativeMemory:
                 order_ascending=(False, False),
                 include_equal_start=False,
                 limit=max_backward_episodes,
-                required_properties={
-                    mangle_filterable_property_key(key): value
-                    for key, value in property_filter.items()
-                },
+                property_filter=mangled_property_filter,
             )
         )
 
@@ -412,10 +413,7 @@ class DeclarativeMemory:
             order_ascending=(True, True),
             include_equal_start=False,
             limit=max_forward_episodes,
-            required_properties={
-                mangle_filterable_property_key(key): value
-                for key, value in property_filter.items()
-            },
+            property_filter=mangled_property_filter,
         )
 
         context = (
@@ -495,18 +493,16 @@ class DeclarativeMemory:
 
     async def get_matching_episodes(
         self,
-        property_filter: Mapping[str, FilterablePropertyValue | None] | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         """Filter episodes by their properties."""
-        if property_filter is None:
-            property_filter = {}
+        mangled_property_filter = DeclarativeMemory._mangle_property_filter(
+            property_filter,
+        )
 
         matching_episode_nodes = await self._vector_graph_store.search_matching_nodes(
             collection=self._episode_collection,
-            required_properties={
-                mangle_filterable_property_key(key): value
-                for key, value in property_filter.items()
-            },
+            property_filter=mangled_property_filter,
         )
 
         matching_episodes = [
@@ -651,3 +647,35 @@ class DeclarativeMemory:
 
         """
         return f"embedding_{model_id}_{dimensions}d"
+
+    @staticmethod
+    def _mangle_property_filter(
+        property_filter: FilterExpr | None,
+    ) -> FilterExpr | None:
+        if property_filter is None:
+            return None
+
+        return DeclarativeMemory._mangle_filter_expr(property_filter)
+
+    @staticmethod
+    def _mangle_filter_expr(expr: FilterExpr | None) -> FilterExpr | None:
+        if expr is None:
+            return None
+
+        if isinstance(expr, FilterComparison):
+            return FilterComparison(
+                field=mangle_filterable_property_key(expr.field),
+                op=expr.op,
+                value=expr.value,
+            )
+        if isinstance(expr, FilterAnd):
+            return FilterAnd(
+                left=DeclarativeMemory._mangle_filter_expr(expr.left),
+                right=DeclarativeMemory._mangle_filter_expr(expr.right),
+            )
+        if isinstance(expr, FilterOr):
+            return FilterOr(
+                left=DeclarativeMemory._mangle_filter_expr(expr.left),
+                right=DeclarativeMemory._mangle_filter_expr(expr.right),
+            )
+        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")

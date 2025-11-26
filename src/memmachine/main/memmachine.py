@@ -294,7 +294,7 @@ class MemMachine:
             response = await episodic_session.query_memory(
                 query=query,
                 limit=limit,
-                property_filter=to_property_filter(parse_filter(search_filter)),
+                property_filter=parse_filter(search_filter),
             )
 
         return response

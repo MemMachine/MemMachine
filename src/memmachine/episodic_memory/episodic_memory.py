@@ -18,14 +18,17 @@ Key responsibilities include:
 import asyncio
 import logging
 import time
-from collections.abc import Coroutine, Iterable, Mapping
+from collections.abc import Coroutine, Iterable
 from datetime import datetime
-from typing import Protocol, cast
+from typing import cast
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
-from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store import Episode, EpisodeResponse
+from memmachine.common.filter.filter_parser import (
+    FilterExpr,
+    to_property_filter,
+)
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.episodic_memory.long_term_memory.long_term_memory import LongTermMemory
 from memmachine.episodic_memory.short_term_memory.short_term_memory import (
@@ -33,12 +36,6 @@ from memmachine.episodic_memory.short_term_memory.short_term_memory import (
 )
 
 logger = logging.getLogger(__name__)
-
-PropertyFilterT = Mapping[str, FilterablePropertyValue | None] | None
-
-
-class EpisodicFilter(Protocol):
-    """Callable protocol representing an episode filter predicate."""
 
 
 class EpisodicMemoryParams(BaseModel):
@@ -296,7 +293,7 @@ class EpisodicMemory:
         self,
         query: str,
         limit: int | None = None,
-        property_filter: PropertyFilterT | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> QueryResponse | None:
         """
         Retrieve relevant context for a given query from all memory stores.
@@ -322,8 +319,6 @@ class EpisodicMemory:
             return None
         start_time = time.monotonic_ns()
         search_limit = limit if limit is not None else 20
-        if property_filter is None:
-            property_filter = {}
 
         if self._short_term_memory is None:
             short_episode: list[Episode] = []
@@ -338,7 +333,7 @@ class EpisodicMemory:
                 await self._short_term_memory.get_short_term_memory_context(
                     query,
                     limit=search_limit,
-                    filters=property_filter,
+                    filters=to_property_filter(property_filter),
                 )
             )
             long_episode = []
@@ -388,7 +383,7 @@ class EpisodicMemory:
         self,
         query: str,
         limit: int | None = None,
-        property_filter: PropertyFilterT | None = None,
+        property_filter: FilterExpr | None = None,
     ) -> str:
         """
         Construct a finalized query string that includes context from memory.

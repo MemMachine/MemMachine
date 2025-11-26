@@ -11,6 +11,12 @@ from memmachine.common.embedder.sentence_transformer_embedder import (
     SentenceTransformerEmbedder,
     SentenceTransformerEmbedderParams,
 )
+from memmachine.common.filter.filter_parser import (
+    And as FilterAnd,
+)
+from memmachine.common.filter.filter_parser import (
+    Comparison as FilterComparison,
+)
 from memmachine.common.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,
     CrossEncoderRerankerParams,
@@ -297,7 +303,11 @@ async def test_search(declarative_memory):
     results = await declarative_memory.search(
         query="Who wrote the test?",
         max_num_episodes=4,
-        property_filter={"project": "memmachine"},
+        property_filter=FilterComparison(
+            field="project",
+            op="=",
+            value="memmachine",
+        ),
     )
     assert len(results) == 4
     assert "episode1" in [result.uid for result in results]
@@ -306,7 +316,11 @@ async def test_search(declarative_memory):
     results = await declarative_memory.search(
         query="Who wrote the test?",
         max_num_episodes=4,
-        property_filter={"length": "short"},
+        property_filter=FilterComparison(
+            field="length",
+            op="=",
+            value="short",
+        ),
     )
 
     assert len(results) == 2
@@ -547,22 +561,52 @@ async def test_get_matching_episodes(declarative_memory):
     await declarative_memory.add_episodes(episodes)
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter={"project": "memmachine"},
+        property_filter=FilterComparison(
+            field="project",
+            op="=",
+            value="memmachine",
+        ),
     )
     assert len(results) == 22
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter={"project": "memmachine", "length": None},
+        property_filter=FilterAnd(
+            left=FilterComparison(
+                field="project",
+                op="=",
+                value="memmachine",
+            ),
+            right=FilterComparison(
+                field="length",
+                op="is_null",
+                value=None,
+            ),
+        ),
     )
     assert len(results) == 1
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter={"length": "short"},
+        property_filter=FilterComparison(
+            field="length",
+            op="=",
+            value="short",
+        )
     )
     assert len(results) == 2
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter={"project": "memmachine", "length": "short"},
+        property_filter=FilterAnd(
+            left=FilterComparison(
+                field="project",
+                op="=",
+                value="memmachine",
+            ),
+            right=FilterComparison(
+                field="length",
+                op="=",
+                value="short",
+            ),
+        ),
     )
     assert len(results) == 1
 

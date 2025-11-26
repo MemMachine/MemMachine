@@ -6,11 +6,14 @@ and deleting nodes and edges.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 
 from memmachine.common.data_types import SimilarityMetric
+from memmachine.common.filter.filter_parser import (
+    FilterExpr,
+)
 
-from .data_types import Edge, Node, OrderedPropertyValue, PropertyValue
+from .data_types import Edge, Node, OrderedPropertyValue
 
 
 class VectorGraphStore(ABC):
@@ -66,8 +69,7 @@ class VectorGraphStore(ABC):
         query_embedding: list[float],
         similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
-        required_properties: Mapping[str, PropertyValue] | None = None,
-        include_missing_properties: bool = False,
+        property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """
         Search for nodes with embeddings similar to the query embedding.
@@ -86,14 +88,10 @@ class VectorGraphStore(ABC):
                 Maximum number of similar nodes to return.
                 If None, return as many similar nodes as possible
                 (default: 100).
-            required_properties (Mapping[str, PropertyValue] | None):
-                Mapping of property names to their required values
-                that the nodes must have.
+            property_filter (FilterExpr | None):
+                Filter expression tree.
                 If None or empty, no property filtering is applied
                 (default: None).
-            include_missing_properties (bool):
-                Whether to return nodes missing any of the required properties
-                (default: False).
 
         Returns:
             list[Node]:
@@ -113,10 +111,8 @@ class VectorGraphStore(ABC):
         find_sources: bool = True,
         find_targets: bool = True,
         limit: int | None = None,
-        required_edge_properties: Mapping[str, PropertyValue] | None = None,
-        required_node_properties: Mapping[str, PropertyValue] | None = None,
-        include_missing_edge_properties: bool = False,
-        include_missing_node_properties: bool = False,
+        edge_property_filter: FilterExpr | None = None,
+        node_property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """
         Search for nodes related to the specified node via edges.
@@ -144,22 +140,14 @@ class VectorGraphStore(ABC):
                 Maximum number of related nodes to return.
                 If None, return as many related nodes as possible
                 (default: None).
-            required_edge_properties (Mapping[str, PropertyValue] | None):
-                Mapping of property names to their required values
-                that the edges must have.
+            edge_property_filter (FilterExpr | None):
+                Filter expression tree for edge properties.
                 If None or empty, no property filtering is applied
                 (default: None).
-            required_node_properties (Mapping[str, PropertyValue] | None):
-                Mapping of property names to their required values
-                that the nodes must have.
+            node_property_filter (FilterExpr | None):
+                Filter expression tree for node properties.
                 If None or empty, no property filtering is applied
                 (default: None).
-            include_missing_edge_properties (bool):
-                Whether to traverse edges missing any of the required properties
-                (default: False).
-            include_missing_node_properties (bool):
-                Whether to return nodes missing any of the required properties
-                (default: False).
 
         Returns:
             list[Node]:
@@ -178,8 +166,7 @@ class VectorGraphStore(ABC):
         order_ascending: Iterable[bool],
         include_equal_start: bool = False,
         limit: int | None = 1,
-        required_properties: Mapping[str, PropertyValue] | None = None,
-        include_missing_properties: bool = False,
+        property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """
         Search for nodes ordered by a specific property.
@@ -202,14 +189,10 @@ class VectorGraphStore(ABC):
                 Maximum number of nodes to return.
                 If None, return as many matching nodes as possible
                 (default: 1).
-            required_properties (Mapping[str, PropertyValue] | None):
-                Mapping of property names to their required values
-                that the nodes must have.
+            property_filter (FilterExpr | None):
+                Filter expression tree.
                 If None or empty, no property filtering is applied
                 (default: None).
-            include_missing_properties (bool):
-                Whether to return nodes missing any of the required properties
-                (default: False).
 
         Returns:
             list[Node]:
@@ -223,8 +206,7 @@ class VectorGraphStore(ABC):
         self,
         collection: str,
         limit: int | None = None,
-        required_properties: Mapping[str, PropertyValue] | None = None,
-        include_missing_properties: bool = False,
+        property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """
         Search for nodes matching the specified properties.
@@ -236,14 +218,10 @@ class VectorGraphStore(ABC):
                 Maximum number of nodes to return.
                 If None, return as many matching nodes as possible
                 (default: None).
-            required_properties (Mapping[str, PropertyValue] | None):
-                Mapping of property names to their required values
-                that the nodes must have.
+            property_filter (FilterExpr | None):
+                Filter expression tree.
                 If None or empty, no property filtering is applied
                 (default: None).
-            include_missing_properties (bool):
-                Whether to return nodes missing any of the required properties
-                (default: False).
 
         Returns:
             list[Node]:
