@@ -1,7 +1,7 @@
 name: 🚀 Feature Request
 description: Propose a new feature for the project.
 title: "[Feat]: "
-labels: ["enhancement", "new feature"]
+type: 'Feature'
 
 body:
   - type: textarea

@@ -1,6 +1,6 @@
-# Intelligent Memory Agents
+# MemMachine Agents
 
-This directory contains specialized AI agents that integrate with the MemMachine system. Each agent is designed to handle specific domains and use cases, providing tailored query construction and memory management capabilities. These agents leverage MemMachine's intelligent memory system to provide context-aware, personalized responses across various domains.
+This directory contains specialized AI agents that integrate with the MemMachine system. Each agent is designed to handle specific domains and use cases, providing tailored query construction and memory management capabilities. These agents leverage MemMachine's memory system to provide context-aware, personalized responses across various domains.
 
 ## Overview
 
@@ -49,6 +49,9 @@ Start MemMachine by either running the Python file or the Docker container. Thes
 These example agents all use the REST API from MemMachine's `app.py`, but you can also integrate using the MCP server for more advanced use cases.
 
 ## Available Agents
+
+### When running it via Docker or python directly, it will default to using the profile_prompt.py. To use agents other than the default agent, make sure to change the prompt in the configuration file under the prompt/profile section.
+If using Docker, make sure to use a local build image rather than the MemMachine Dockerhub image since that one uses the default profile_prompt.py. 
 
 ### 1. Default Agent (`example_server.py`)
 - **Purpose**: General-purpose AI assistant for any chatbot or conversational interface
@@ -371,25 +374,6 @@ The CRM agent includes Slack integration for real-time communication:
    - Port configuration
    - MemMachine backend integration
 
-### Testing
-
-Each agent can be tested independently:
-
-```bash
-# Test memory storage
-curl -X POST "http://localhost:8000/memory" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "test_user", "query": "Hello world"}'
-
-# Test query processing
-curl -X POST "http://localhost:8000/query" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "test_user", "query": "What did I say earlier?"}'
-
-# Test agent health
-curl -X GET "http://localhost:8000/health"
-```
-
 ## Troubleshooting
 
 ### Common Issues
@@ -433,6 +417,3 @@ When adding new agents or features:
 6. **Add unit tests**: Create tests for your query constructor and API endpoints
 7. **Update documentation**: Keep this README and any agent-specific documentation current
 
-## License
-
-This project is part of the Intelligent Memory system. Please refer to the main project license for usage terms.

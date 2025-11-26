@@ -7,13 +7,18 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  unit-test:
+    name: Run Python unit tests
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.12", "3.13"]
+        python-version: [ "3.12", "3.13", "3.14" ]
+        os: [ ubuntu-latest, ubuntu-24.04-arm ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 

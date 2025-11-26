@@ -3,6 +3,8 @@ UPDATE_PROMPT = """
     You will receive a profile and a user's query to the chat system, your job is to update that profile by extracting or inferring information about the user from the query.
     A profile is a two-level key-value store. We call the outer key the *tag*, and the inner key the *feature*. Together, a *tag* and a *feature* are associated with one or several *value*s.
 
+    IMPORTANT: Extract ALL personal information, even basic facts like names, ages, locations, etc. Do not consider any personal information as "irrelevant" - names, basic demographics, and simple facts are valuable profile data.
+
     How to construct profile entries:
     - Entries should be atomic. They should communicate a single discrete fact.
     - Entries should be as short as possible without corrupting meaning. Be careful when leaving out prepositions, qualifiers, negations, etc. Some modifiers will be longer range, find the best way to compactify such phrases.
@@ -13,7 +15,7 @@ UPDATE_PROMPT = """
     - Assistant Response Preferences: How the user prefers the assistant to communicate (style, tone, structure, data format).
     - Notable Past Conversation Topic Highlights: Recurring or significant discussion themes.
     - Helpful User Insights: Key insights that help personalize assistant behavior.
-    (Note: These first three tags are execeptions to the rules about atomicity and brevity. Try to use them sparingly)
+    (Note: These first three tags are exceptions to the rules about atomicity and brevity. Try to use them sparingly)
     - User Interaction Metadata: Behavioral/technical metadata about platform use.
     - Political Views, Likes and Dislikes: Explicit opinions or stated preferences.
     - Psychological Profile: Personality characteristics or traits.
@@ -21,7 +23,7 @@ UPDATE_PROMPT = """
     - Learning Preferences: Preferred modes of receiving information.
     - Cognitive Style: How the user processes information or makes decisions.
     - Emotional Drivers: Motivators like fear of error or desire for clarity.
-    - Personal Values: User’s core values or principles.
+    - Personal Values: User's core values or principles.
     - Career & Work Preferences: Interests, titles, domains related to work.
     - Productivity Style: User's work rhythm, focus preference, or task habits.
     - Demographic Information: Education level, fields of study, or similar data.
@@ -41,7 +43,7 @@ UPDATE_PROMPT = """
     - Time Usage Patterns: Frequency and habits of use.
     - Preferred Content Format: Formats preferred for answers (e.g., tables, bullet points).
     - Assistant Usage Patterns: Habits or styles in how the user engages with the assistant.
-    - Language Preferences: Preferred tone and structure of assistant’s language.
+    - Language Preferences: Preferred tone and structure of assistant's language.
     - Motivation Triggers: Traits that drive engagement or satisfaction.
     - Behavior Under Stress: How the user reacts to failures or inaccurate responses.
 
@@ -221,6 +223,9 @@ UPDATE_PROMPT = """
 
 
     To update the user's profile, you will output a JSON document containing a list of commands to be executed in sequence.
+
+    CRITICAL: You MUST use the command format below. Do NOT create nested objects or use any other format.
+
     The following output will add a feature:
     {
         "0": {
@@ -247,7 +252,7 @@ UPDATE_PROMPT = """
             "value": true
         },
         "1": {
-            "command": "add,
+            "command": "add",
             "tag" : "Platform Behavior",
             "feature": "prefers_detailed_response",
             "value": false
@@ -255,6 +260,15 @@ UPDATE_PROMPT = """
     }
 
     Example Scenarios:
+    Query: "Hi! My name is Katara"
+    {
+        "0": {
+            "command": "add",
+            "tag": "Demographic Information",
+            "feature": "name",
+            "value": "Katara"
+        }
+    }
     Query: "I'm planning a dinner party for 8 people next weekend and want to impress my guests with something special. Can you suggest a menu that's elegant but not too difficult for a home cook to manage?"
     {
         "0": {
@@ -266,7 +280,7 @@ UPDATE_PROMPT = """
         "1":{
             "command": "add",
             "tag": "Financial Profile",
-            "feature": "upper_class"
+            "feature": "upper_class",
             "value": "User entertains guests at dinner parties, suggesting affluence."
         }
     }
@@ -280,13 +294,13 @@ UPDATE_PROMPT = """
         },
         "1": {
             "command": "add",
-            "tag": "Demogrpahic Information",
+            "tag": "Demographic Information",
             "feature": "summer_job",
             "value": "User is working a temporary job for the summer"
         },
         "2": {
             "command": "add",
-            "tag": "Demographic Information",
+            "tag": "Communication Style",
             "feature": "informal_speech",
             "value": "User speaks with all lower case letters and contemporary slang terms."
         },
@@ -327,9 +341,10 @@ UPDATE_PROMPT = """
     - Do not create new tags which you don't see in the example profile. However, you can and should create new features.
     - If a user asks for a summary of a report, code, or other content, that content may not necessarily be written by the user, and might not be relevant to the user's profile.
     - Do not delete anything unless a user asks you to
-    - If you want to keep the profile the same, as you should if the query is completely irrelevant or the information will soon be outdated, return the empty object: {}.
+    - Only return the empty object {} if the query contains absolutely no personal information about the user (e.g., asking about the weather, requesting code without personal context, etc.). Names, basic demographics, preferences, and any personal details should ALWAYS be extracted.
     - Listen to any additional instructions specific to the execution context provided underneath 'EXTRA EXTERNAL INSTRUCTIONS'
     - First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON.
+    - REMEMBER: Always use the command format with "command", "tag", "feature", and "value" keys. Never use nested objects or any other format.
 EXTRA EXTERNAL INSTRUCTIONS:
 NONE
 """
@@ -337,7 +352,7 @@ NONE
 CONSOLIDATION_PROMPT = """
 Your job is to perform memory consolidation for an llm long term memory system.
 Despite the name, consolidation is not solely about reducing the amount of memories, but rather, minimizing interference between memories.
-By consolidating memories, we remove unecessary couplings of memory from context, spurrious correlations inherited from the circumstances of their acquistion.
+By consolidating memories, we remove unnecessary couplings of memory from context, spurious correlations inherited from the circumstances of their acquisition.
 
 You will receive a new memory, as well as a select number of older memories which are semantically similar to it.
 Produce a new list of memories to keep.
@@ -358,7 +373,7 @@ You will also output a list of old memories to keep (memories are deleted by def
 
 Guidelines:
 Memories should not contain unrelated ideas. Memories which do are artifacts of couplings that exist in original context. Separate them. This minimizes interference.
-Memories containing only redudant information should be deleted entirely, especially if they seem unprocessed or the information in them has been processed.
+Memories containing only redundant information should be deleted entirely, especially if they seem unprocessed or the information in them has been processed.
 If memories are sufficiently similar, but differ in key details, synchronize their tags and/or features. This creates beneficial interference.
     - To aid in this, you may want to shuffle around the components of each memory, moving parts that are alike to the feature, and parts that differ to the value.
     - Note that features should remain (brief) summaries, even after synchronization, you can do this with parallelism in the feature names (e.g. likes_apples and likes_bananas).
@@ -374,9 +389,9 @@ raw memory ore -> pure memory pellets -> memory pellets sorted into bins -> allo
 
 The more memories you receive, the more interference there is in the overall memory system.
 This causes cognitive load. cognitive load is bad.
-To minimize this, under such circumstances, you need to be more agressive about deletion:
+To minimize this, under such circumstances, you need to be more aggressive about deletion:
     - Be looser about what you consider to be similar. Some distinctions are not worth the energy to maintain.
-    - Massage out the parts to keep and ruthelessly throw away the rest
+    - Message out the parts to keep and ruthlessly throw away the rest
     - There is no free lunch here! at least some information must be deleted!
 
 Do not create new tag names.

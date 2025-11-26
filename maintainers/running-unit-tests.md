@@ -4,24 +4,7 @@ This document provides instructions on how to run the PyTest unit tests for the 
 
 ## Prerequisites
 
-Before running the tests, ensure you have the following installed:
-
-1. **Python:** Make sure you have Python 3.12 or higher installed.
-2. **Poetry:** This project uses Poetry for dependency management. If you don't have it, you can install it by following the official [Poetry installation guide](https://python-poetry.org/docs/#installation).
-3. **Project Dependencies:** Install all the required dependencies, including the ones for development, by running the following command in the project's root directory:
-
-    ```bash
-    poetry install --all-extras
-    ```
-
-4. **Additional Test Dependencies:** Install `pytest-asyncio` for running asynchronous tests and download the necessary NLTK data:
-
-    ```bash
-    pip install pytest-asyncio
-    python3 -c "import nltk; nltk.download('punkt');nltk.download('punkt_tab'); nltk.download('stopwords')"
-    ```
-
-**A Note on Poetry:** This project uses Poetry to manage dependencies and ensure a consistent development environment. While you can install dependencies manually using `pip`, we strongly recommend using Poetry to avoid potential conflicts and to make sure you have the exact versions of the packages that are used in the project.
+Before running the tests, ensure you have set up the project via the instructions in [CONTRIBUTING-CORE.md](https://github.com/MemMachine/MemMachine/blob/main/CONTRIBUTING-CORE.md)
 
 ## Running the Tests
 
@@ -35,7 +18,7 @@ To run the entire test suite, ensure you are in the root of the MemMachine proje
 pytest
 ```
 
-By default, this will discover and run all tests under the `tests/` directory.  
+By default, this will discover and run all tests under the `tests/` directory.
 You can also explicitly specify the directory, which may make it clearer where tests are coming from:
 
 ```bash

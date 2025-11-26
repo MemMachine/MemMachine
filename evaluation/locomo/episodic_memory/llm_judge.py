@@ -62,9 +62,7 @@ def evaluate_llm_judge(question, gold_answer, generated_answer):
 
 def main():
     """Main function to evaluate RAG results using LLM judge."""
-    parser = argparse.ArgumentParser(
-        description="Evaluate RAG results using LLM judge"
-    )
+    parser = argparse.ArgumentParser(description="Evaluate RAG results using LLM judge")
     parser.add_argument(
         "--input_file",
         type=str,
@@ -117,9 +115,7 @@ def main():
             # Print current accuracy for all categories
             print("All categories accuracy:")
             for cat, results in LLM_JUDGE.items():
-                if (
-                    results
-                ):  # Only print if there are results for this category
+                if results:  # Only print if there are results for this category
                     print(
                         f"  Category {cat}: {np.mean(results):.4f} "
                         f"({sum(results)}/{len(results)})"

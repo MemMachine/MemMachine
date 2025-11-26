@@ -1,4 +1,3 @@
-
 import uuid
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -70,9 +69,7 @@ class TestSessionMemoryPublicAPI:
 
     async def test_initial_state(self, memory):
         """Test that the SessionMemory instance is initialized correctly."""
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         assert episodes == []
         assert summary == ""
 
@@ -81,9 +78,7 @@ class TestSessionMemoryPublicAPI:
         episode1 = create_test_episode(content="Hello")
         await memory.add_episode(episode1)
 
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         # session memory is not full
         assert episodes == [episode1]
         assert summary == ""
@@ -91,39 +86,31 @@ class TestSessionMemoryPublicAPI:
         episode2 = create_test_episode(content="World")
         await memory.add_episode(episode2)
 
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         assert episodes == [episode1, episode2]
         assert summary == ""
 
         # session memory is full
         episode3 = create_test_episode(content="!")
         await memory.add_episode(episode3)
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         assert episodes == [episode1, episode2, episode3]
         assert summary == "summary"
 
         # New episode push out the oldest one: episode1
         episode4 = create_test_episode(content="?")
         await memory.add_episode(episode4)
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         assert episodes == [episode2, episode3, episode4]
         assert summary == "summary"
-        
+
     async def test_clear_memory(self, memory):
         """Test clearing the memory."""
         await memory.add_episode(create_test_episode(content="test"))
 
         await memory.clear_memory()
 
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         assert episodes == []
         assert summary == ""
 
@@ -131,9 +118,7 @@ class TestSessionMemoryPublicAPI:
         """Test closing the memory."""
         await memory.add_episode(create_test_episode(content="test"))
         await memory.close()
-        episodes, summary = await memory.get_session_memory_context(
-            query="test"
-        )
+        episodes, summary = await memory.get_session_memory_context(query="test")
         assert episodes == []
         assert summary == ""
 
@@ -168,8 +153,7 @@ class TestSessionMemoryPublicAPI:
 
         # Test with episode limit
         episodes, summary = await memory.get_session_memory_context(
-            query="test",
-            limit=1
+            query="test", limit=1
         )
         assert len(episodes) == 1
         assert episodes == [ep3]

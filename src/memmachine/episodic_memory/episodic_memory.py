@@ -21,6 +21,7 @@ import copy
 import logging
 import uuid
 from datetime import datetime
+from typing import Any, cast
 
 from memmachine.common.language_model.language_model_builder import (
     LanguageModelBuilder,
@@ -28,15 +29,17 @@ from memmachine.common.language_model.language_model_builder import (
 from memmachine.common.metrics_factory.metrics_factory_builder import (
     MetricsFactoryBuilder,
 )
+from memmachine.common.resource_initializer import ResourceInitializer
 
 from .data_types import ContentType, Episode, MemoryContext
-from .long_term_memory.long_term_memory import LongTermMemory
+from .long_term_memory.long_term_memory import LongTermMemory, LongTermMemoryParams
 from .short_term_memory.session_memory import SessionMemory
 
 logger = logging.getLogger(__name__)
 
 
 class EpisodicMemory:
+    _shared_resources: dict[str, Any] = {}
     # pylint: disable=too-many-instance-attributes
     """
     Represents a single, isolated memory instance for a specific context.
@@ -89,11 +92,12 @@ class EpisodicMemory:
             TODO: support different metrics and make it configurable
             """
             model_config["metrics_factory_id"] = "prometheus"
+            model_vendor = model_config.pop("model_vendor")
             metrics_injection = {}
             metrics_injection["prometheus"] = metrics_manager
 
             llm_model = LanguageModelBuilder.build(
-                model_config.get("model_vendor", "openai"),
+                model_vendor,
                 model_config,
                 metrics_injection,
             )
@@ -109,12 +113,55 @@ class EpisodicMemory:
                 self._memory_context,
             )
 
-        if (len(long_term_config) > 0
-                and long_term_config.get("enabled") != "false"):
+        if len(long_term_config) > 0 and long_term_config.get("enabled") != "false":
+            vector_graph_store_id = long_term_config["vector_graph_store"]
+            embedder_id = long_term_config["embedder"]
+            reranker_id = long_term_config["reranker"]
+
+            resource_definitions = {}
+
+            resource_types = [
+                "embedder",
+                "language_model",
+                "metrics_factory",
+                "reranker",
+                "vector_graph_store",
+            ]
+            for resource_type in resource_types:
+                resource_declarations = config.get(resource_type, {})
+                if not isinstance(resource_declarations, dict):
+                    raise TypeError(
+                        f"{resource_type} declarations must be a dictionary"
+                    )
+
+                resource_definitions.update(
+                    {
+                        resource_id: {
+                            "type": resource_type,
+                            "provider": resource_declaration["provider"],
+                            "config": resource_declaration.get("config", {}),
+                        }
+                        for resource_id, resource_declaration in resource_declarations.items()
+                    }
+                )
+
+            resources = ResourceInitializer.initialize(
+                resource_definitions,
+                EpisodicMemory._shared_resources,
+            )
+            EpisodicMemory._shared_resources |= resources
+
             # Initialize long-term declarative memory
             self._long_term_memory = LongTermMemory(
-                config,
-                self._memory_context
+                LongTermMemoryParams(
+                    group_id=self._memory_context.group_id,
+                    session_id=self._memory_context.session_id,
+                    vector_graph_store=EpisodicMemory._shared_resources[
+                        vector_graph_store_id
+                    ],
+                    embedder=EpisodicMemory._shared_resources[embedder_id],
+                    reranker=EpisodicMemory._shared_resources[reranker_id],
+                )
             )
         if self._session_memory is None and self._long_term_memory is None:
             raise ValueError("No memory is configured")
@@ -240,12 +287,8 @@ class EpisodicMemory:
             producer not in self._memory_context.user_id
             and producer not in self._memory_context.agent_id
         ):
-            logger.error(
-                "The producer %s does not belong to the session", producer
-            )
-            raise ValueError(
-                f"The producer {producer} does not belong to the session"
-                )
+            logger.error("The producer %s does not belong to the session", producer)
+            raise ValueError(f"The producer {producer} does not belong to the session")
 
         if (
             produced_for not in self._memory_context.user_id
@@ -308,14 +351,10 @@ class EpisodicMemory:
                 return
 
             # If no more references, proceed with closing
-            logger.info(
-                "Closing context memory: %s", str(self._memory_context)
-            )
+            logger.info("Closing context memory: %s", str(self._memory_context))
             tasks = []
             if self._session_memory:
                 tasks.append(self._session_memory.close())
-            if self._long_term_memory:
-                tasks.append(self._long_term_memory.close())
             await asyncio.gather(
                 *tasks,
             )
@@ -334,9 +373,7 @@ class EpisodicMemory:
                 tasks.append(self._session_memory.clear_memory())
             if self._long_term_memory:
                 tasks.append(self._long_term_memory.forget_session())
-            await asyncio.gather(
-                *tasks
-            )
+            await asyncio.gather(*tasks)
             return
 
     async def query_memory(
@@ -377,28 +414,26 @@ class EpisodicMemory:
             if self._session_memory is None:
                 short_episode: list[Episode] = []
                 short_summary = ""
-                long_episode = await self._long_term_memory.search(
+                long_episode = await cast(
+                    LongTermMemory, self._long_term_memory
+                ).search(
                     query,
                     search_limit,
                     property_filter,
                 )
             elif self._long_term_memory is None:
-                session_result = \
-                    await self._session_memory.get_session_memory_context(
-                        query, limit=search_limit
-                    )
+                session_result = await self._session_memory.get_session_memory_context(
+                    query, limit=search_limit
+                )
                 long_episode = []
                 short_episode, short_summary = session_result
             else:
                 # Concurrently search both memory stores
                 session_result, long_episode = await asyncio.gather(
                     self._session_memory.get_session_memory_context(
-                        query,
-                        limit=search_limit
+                        query, limit=search_limit
                     ),
-                    self._long_term_memory.search(
-                        query, search_limit, property_filter
-                    ),
+                    self._long_term_memory.search(query, search_limit, property_filter),
                 )
                 short_episode, short_summary = session_result
 
@@ -441,12 +476,9 @@ class EpisodicMemory:
             A new query string enriched with context.
         """
         short_memory, long_memory, summary = await self.query_memory(
-            query,
-            limit,
-            property_filter
+            query, limit, property_filter
         )
-        episodes = sorted(short_memory + long_memory,
-                          key=lambda x: x.timestamp)
+        episodes = sorted(short_memory + long_memory, key=lambda x: x.timestamp)
 
         finalized_query = ""
         # Add summary if it exists

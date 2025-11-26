@@ -2,6 +2,8 @@
 Common utility functions.
 """
 
+import asyncio
+import functools
 from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
@@ -26,3 +28,18 @@ async def async_with(
     """
     async with async_context_manager:
         return await awaitable
+
+
+def async_locked(func):
+    """
+    Decorator to ensure that a coroutine function is executed with a lock.
+    The lock is shared across all invocations of the decorated coroutine function.
+    """
+    lock = asyncio.Lock()
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        async with lock:
+            return await func(*args, **kwargs)
+
+    return wrapper

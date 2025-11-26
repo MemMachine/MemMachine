@@ -16,9 +16,7 @@ class DerivativeDeriver(ABC):
     """
 
     @abstractmethod
-    async def derive(
-        self, episode_cluster: EpisodeCluster
-    ) -> list[Derivative]:
+    async def derive(self, episode_cluster: EpisodeCluster) -> list[Derivative]:
         """
         Derive derivatives from a given episode cluster.
 

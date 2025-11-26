@@ -3,11 +3,10 @@ CRM Query Constructor for agent query prompt for Intelligent Memory System
 Optimized for text rendering in Slack with structured prompt templates
 """
 
-from typing import Optional
-import logging
-import sys
-import os
 import json
+import logging
+import os
+import sys
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -214,7 +213,7 @@ FIELD_ALIASES = {
 MULTIPLICITY_RULES = """
 Multiplicity rules
 • contacts: format as "Name, Role, email@domain.com" or "Name, _, email@domain.com" for missing data. List up to 3, then "+N more".
-• next_step: single value timeline field with date (delete-then-add pattern, timeline format). 
+• next_step: single value timeline field with date (delete-then-add pattern, timeline format).
 • multivalue timeline fields: (status / comments) limit to 4 bullets for status, 3 bullets for comments, then "+N more" unless user requests more.
 • products: list up to 8 products before "+N more" unless user requests more.
 • general lists: for most other multi-item responses, list up to 6 items before "+N more" unless user requests more.
@@ -434,9 +433,7 @@ class CRMQueryConstructor(BaseQueryConstructor):
     def __init__(self):
         self.prompt_template = _build_unified_query_template()
 
-    def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
-    ) -> str:
+    def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a CRM query using the prompt template"""
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")

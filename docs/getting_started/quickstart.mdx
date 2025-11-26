@@ -23,29 +23,81 @@ This method is recommended for most users.
       Make sure that you have [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed on your machine.
   </Step>
   <Step title="Download MemMachine and Run the Script">
-      Download MemMachine.git from GitHub, navigate to the project directory, and run the `memmachine-compose.sh` script:
-        ```bash
-        $ git clone https://github.com/MemMachine/MemMachine.git
-        $ cd MemMachine
-        $ ./memmachine-compose.sh
-        ```
+      <Tabs>
+        <Tab title="Windows" icon="windows">
+          If you're using Windows, you can use Powershell.  If you are using WSL, see the Linux tab.
+          ```powershell
+          # One-block install for Windows PowerShell
+          $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/MemMachine/MemMachine/releases/latest"; `
+          $tarballUrl = $latestRelease.tarball_url; `
+          $destination = "MemMachine"; `
+          if (Test-Path $destination) { Remove-Item $destination -Recurse -Force }; `
+          New-Item -ItemType Directory -Force -Path $destination; `
+          Invoke-WebRequest -Uri $tarballUrl -OutFile "MemMachine-latest.tar.gz"; `
+          tar -xzf "MemMachine-latest.tar.gz" -C $destination --strip-components=1; `
+          Set-Location $destination; `
+          ./memmachine-compose.sh
+          ```
+        </Tab>
+        <Tab title="MacOS" icon="apple">
+          If you're using MacOS, you can use the built-in Terminal application to run the following commands.
+          ```bash
+          # Download the latest release tarball
+          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep "tarball_url" \
+            | cut -d '"' -f 4 \
+            | xargs curl -L -o MemMachine-latest.tar.gz
+
+          # Extract the release
+          tar -xzf MemMachine-latest.tar.gz
+
+          # Enter the folder (GitHub adds a hash to the folder name)
+          cd MemMachine-MemMachine-*
+
+          # Run the setup
+          ./memmachine-compose.sh
+          ```
+        </Tab>
+        <Tab title="Linux" icon="linux">
+          If you're using Linux, you can use the built-in Terminal application to run the following commands.
+          ```bash
+          # Download the latest release tarball
+          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep "tarball_url" \
+            | cut -d '"' -f 4 \
+            | xargs curl -L -o MemMachine-latest.tar.gz
+
+          # Extract the release
+          tar -xzf MemMachine-latest.tar.gz
+
+          # Enter the folder (GitHub adds a hash to the folder name)
+          cd MemMachine-MemMachine-*
+
+          # Run the setup
+          ./memmachine-compose.sh
+          ```
+          
+        </Tab>
+      </Tabs>
+
       That's it!  The script will walk you through all of the remaining steps and check the health of your memmachine installation and configuration.        
   </Step>
   <Step title="The MemMachine-compose.sh Script">
     The `MemMachine-compose.sh` script does more than simply install memmachine, although that is it's default behavior.  As the commands associated with this script (shown below) describe, it can be used for stopping, restarting, viewing logs, and cleaning up your memmachine installation.
     ```sh
-      $ ./memmachine-compose.sh --help
-      MemMachine Docker Startup Script
-      
-      Usage: ./memmachine-compose.sh [command]
-      
-      Commands:
-        (no args)  Start MemMachine services
-        stop       Stop MemMachine services
-        restart    Restart MemMachine services
-        logs       Show service logs
-        clean      Remove all services and data
-        help       Show this help message
+      ./memmachine-compose.sh --help
+        MemMachine Docker Startup Script
+
+        Usage: ./memmachine-compose.sh [command]
+
+        Commands:
+          (no args) | start [<image>:<tag>]                      Start MemMachine services
+          stop                                                   Stop MemMachine services
+          restart                                                Restart MemMachine services
+          logs                                                   Show service logs
+          clean                                                  Remove all services and data
+          build [<image>:<tag>] [--gpu true/false] [-f|--force]  Build a custom MemMachine image
+          help                                                   Show this help message
     ```
   </Step>
 </Steps>
@@ -170,7 +222,7 @@ The simplest way to start is by checking for existing sessions. This is an MCP *
 **Command:**
 
 ```
-curl http://127.0.0.1:8080/mcp/sessions
+curl http://127.0.0.1:8080/v1/mcp/sessions
 ```
 
 **Expected Output:**
@@ -179,24 +231,29 @@ You will likely see an empty list since no sessions have been created yet.
 </Step>
 <Step title="Add a New Memory">
 
-This is where you'll use an MCP **tool** to create your first memory episode. The `mcp_add_session_memory` tool is invoked with a `POST` request to its dedicated endpoint.
+This is where you'll use an MCP **tool** to create your first memory episode. The `/v1/mcp/add_session_memory` tool is invoked with a `POST` request to its dedicated endpoint.
 
 **Command:**
 
 ```
-curl -X POST "http://127.0.0.1:8080/mcp/add_session_memory" \
--H "Content-Type: application/json" \
--d '{
+curl --request POST \
+  --url http://localhost:8080/v1/mcp/add_session_memory \
+  --header 'Content-Type: application/json' \
+  --data '{
   "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+    "group_id": "<string>",
+    "agent_id": [
+      "<string>"
+    ],
+    "user_id": [
+      "<string>"
+    ],
+    "session_id": "<string>"
   },
-  "producer": "test_user",
-  "produced_for": "test_agent",
-  "episode_content": "This is a simple test memory.",
-  "episode_type": "message",
+  "producer": "<string>",
+  "produced_for": "<string>",
+  "episode_content": "<string>",
+  "episode_type": "<string>",
   "metadata": {}
 }'
 ```
@@ -214,23 +271,28 @@ You will receive a JSON response confirming the status. A status of `0` indicate
 </Step>
 <Step title="Search for the Memory">
 
-Now that a memory has been added, let's use another MCP **tool** to find it. The `mcp_search_session_memory` tool is designed for this purpose.
+Now that a memory has been added, let's use another MCP **tool** to find it. The `/v1/mcp/search_session_memory` tool is designed for this purpose.
 
 **Command:**
 
 ```
-curl -X POST "http://127.0.0.1:8080/mcp/search_session_memory" \
--H "Content-Type: application/json" \
--d '{
+curl --request POST \
+  --url http://localhost:8080/v1/mcp/search_session_memory \
+  --header 'Content-Type: application/json' \
+  --data '{
   "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+    "group_id": "<string>",
+    "agent_id": [
+      "<string>"
+    ],
+    "user_id": [
+      "<string>"
+    ],
+    "session_id": "<string>"
   },
-  "query": "simple test memory",
+  "query": "<string>",
   "filter": {},
-  "limit": 5
+  "limit": 123
 }'
 ```
 
@@ -240,19 +302,24 @@ You should see a `200 OK` response containing the search results, including the 
 </Step>
 <Step title="Delete the Session Data">
 
-To clean up after your test, use the `mcp_delete_session_data` **tool**. This is a great way to ensure your database remains clean.
+To clean up after your test, use the `/v1/mcp/delete_session_data` **tool**. This is a great way to ensure your database remains clean.
 
 **Command:**
 
 ```
-curl -X POST "http://127.0.0.1:8080/mcp/delete_session_data" \
--H "Content-Type: application/json" \
--d '{
+curl --request POST \
+  --url http://localhost:8080/v1/mcp/delete_session_data \
+  --header 'Content-Type: application/json' \
+  --data '{
   "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+    "group_id": "<string>",
+    "agent_id": [
+      "<string>"
+    ],
+    "user_id": [
+      "<string>"
+    ],
+    "session_id": "<string>"
   }
 }'
 ```
@@ -273,7 +340,7 @@ You will receive a JSON response confirming the status of the deletion. A status
   <Tab title="PythonSDK" icon="python">
     Below is a short python script that demonstrates how to use both Episodic Memory and Profile Memory from the MemMachine Python SDK.
 
-    <Note>Make sure to have your `.env` file and `cfg.yml` configuration file set up as described in the installation steps.</Note>
+    <Note>If you used a method other than Docker Compose, be sure to have your `cfg.yml` configuration file set up as described in the [Install Guide](../install_guide/install_guide.mdx).</Note>
     
   ```python HelloWorld.py expandable
     from dotenv import load_dotenv
@@ -339,7 +406,7 @@ You will receive a JSON response confirming the status of the deletion. A status
             "host": os.getenv("POSTGRES_HOST"),
             "port": os.getenv("POSTGRES_PORT"),
             "user": os.getenv("POSTGRES_USER"),
-            "password": os.getenv("POSTGRES_PASS"),
+            "password": os.getenv("POSTGRES_PASSWORD"),
             "database": os.getenv("POSTGRES_DB"),
         },
         prompt_module=import_module(".prompt.profile_prompt", __package__),
@@ -375,13 +442,15 @@ You will receive a JSON response confirming the status of the deletion. A status
 
 #### Common Issues
 
-1. **Neo4j Connection Error**: Ensure the Neo4j host in `configuration.yml` is set to `memmachine-neo4j-custom` (not `localhost`)
+1. **Configuration File Names**: In some earlier versions of MemMachine, the configuration file within Docker Compose was named `configuration.yml`.  This name still works. However, the preferred name is now `cfg.yml`. 
 
-2. **OpenAI API Key Error**: Make sure you have a valid OpenAI API key and it's correctly set in both the `.env` file and `configuration.yml`
+2. **Neo4j Connection Error**: Ensure the Neo4j host in `cfg.yml` is set to `memmachine-neo4j-custom` (not `localhost`)
 
-3. **Port Access Issues**: If you can't access the API, ensure the MemMachine container is running on the `memmachine-network` and port 8080 is accessible
+3. **OpenAI API Key Error**: Make sure you have a valid OpenAI API key and it's correctly set in the `cfg.yml` file.
 
-4. **Container Network Issues**: Make sure both containers are on the same Docker network (`memmachine-network`)
+4. **Port Access Issues**: If you can't access the API, ensure the MemMachine container is running on the `memmachine-network` and port 8080 is accessible
+
+5. **Container Network Issues**: Make sure both containers are on the same Docker network (`memmachine-network`)
 
 #### Useful Commands
 
@@ -389,4 +458,3 @@ You will receive a JSON response confirming the status of the deletion. A status
 - View container logs: `docker logs <container_id>`
 - Stop containers: `docker stop <container_id>`
 - Remove containers: `docker rm <container_id>`
-- Check available API endpoints: `curl -s http://localhost:8080/openapi.json | jq '.paths | keys'

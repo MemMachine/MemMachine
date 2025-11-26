@@ -1,0 +1,180 @@
+---
+title: "Using Ollama Models"
+description: "Guide to configure MemMachine to use Ollama models."
+icon: "paw"
+---
+
+## Prerequisites
+
+Before you begin the installation and configuration of MemMachine, you must ensure that your local environment is ready by having Ollama installed and the necessary models downloaded.
+
+
+
+### 1. Ollama Service
+
+MemMachine connects directly to **Ollama** using its local API, which must be running in the background.
+
+- **Installation:** If you do not yet have Ollama installed, please follow the official setup guide.
+
+  - **Resource:** [Download Ollama](https://ollama.com/download)
+
+- **Start the Service:** Once installed, start the Ollama service to make the local API available. Open your terminal or command prompt and run:
+
+  ```bash
+  ollama serve
+  ```
+
+- **Verification:** You can confirm the service is running successfully by opening your web browser and navigating to the following address: `http://localhost:11434`
+    You should see the Ollama web interface if the service is active.
+
+### 2. Required Ollama Models
+
+MemMachine requires **two** types of models to function: a Large Language Model (LLM) for generative tasks and an embedding model for converting text into vectors (e.g., for retrieval-augmented generation).
+
+You must download these models to your local Ollama repository **before** starting MemMachine.
+
+- **Download Models:** Use the `ollama pull` command to download the models you want.
+
+| **Model Type**                 | **Example Model ID** | **Command to Run**             |
+| ------------------------------ | -------------------- | ------------------------------ |
+| **Large Language Model (LLM)** | Llama 3              | `ollama pull llama3`           |
+| **Embedding Model**            | Nomic Embed Text     | `ollama pull nomic-embed-text` |
+
+<Note> You can choose any compatible LLM (like `mixtral`, `gemma`, etc.) and embedding model available on Ollama, but the examples above are recommended starting points.</Note>
+
+- **View Downloaded Models:** To see a list of all models currently available in your local Ollama repository, run:
+
+  ```bash
+  ollama list
+  ```
+
+## Installation: QuickStart Configuration
+
+The installation script will automatically guide you through setting up your **Large Language Model (LLM) provider**. When prompted, you **must** select **Ollama** to integrate with **Ollama**.
+
+Your prompt input should match the following example:
+
+```bash
+[PROMPT] Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: Ollama
+[INFO] Selected provider: OLLAMA
+```
+
+Ollama Configuration and Model Choices
+You’ll then be prompted to select:
+
+	•	Ollama base URL (default: http://host.docker.internal:11434/v1)
+
+	•	Choice of LLM (Large Language Model)
+
+            example: llama3
+
+	•	Choice of Embedding Model
+
+            example: nomic-embed-text
+
+<Note> If you are unsure about model selection, simply press **Enter** at the respective prompts to use the recommended default options.</Note>
+
+Congratulations!  You have now successfully deployed MemMachine using Ollama!
+
+## Manually Configuring MemMachine to use Ollama
+
+If you already have MemMachine installed and wish to switch to Ollama or change models manually, you can do so by updating the configuration file, `cfg.yml`.
+
+<Note> Within the 'cfg.yml' file, make sure duplicate models are commented out or removed.  For example, if you are using the ollama_model, ensure that any other model configurations (like openai_model) are commented out or deleted to avoid conflicts. </Note>
+
+We will walk you through the necessary configuration changes for each component: LLM Provider, Embedder, and Reranker.  After that, we'll show you how to use parameters you've already set to fill out your Memory section.
+
+Below is an example configuration snippets for setting up Ollama as different components of MemMachine:
+
+### LLM Provider
+
+To set your LLM Model for Ollama, you will want to use the following fields:
+
+| Parameter                     | Required? | Default           | Description                                                                                    |
+| ----------------------------- | --------- | ----------------- | ---------------------------------------------------------------------------------------------- |
+| `Model:`                      | Yes       | N/A               | The Model block in the configuration                                                           |
+| `ollama_model:`               | Yes       | N/A               | Tag you can use if setting Ollama for your Embedder.                                      |
+| `model_vendor`                | Yes       | N/A               | The vendor of the model (e.g., `openai-compatible`).                                           |
+| `model`                       | Yes       | N/A               | The name of the model to use (e.g., `llama3`).                                                 |
+| `api_key`                     | Yes       | N/A               | The API key field must exist, but needs to be set to `EMPTY`                                   |
+| `base_url`                    | Yes       | N/A               | The base URL for accessing your ollama service (e.g., `http://host.docker.internal:11434/v1`). |
+
+Here's an example of what the Ollama LLM Model configuration would look like in `cfg.yml`:
+
+```yaml
+Model:
+  ollama_model:
+    model_vendor: openai-compatible
+    model: "llama3"
+    api_key: "EMPTY"
+    base_url: "http://host.docker.internal:11434/v1"
+    ```
+
+### Embedder Configuration
+
+To set your Embedding Model for Ollama, you will want to use the following fields:
+| Parameter          | Required?  | Default          | Description                                                                           |
+| ------------------ | ---------- | --------------- | ------------------------------------------------------------------------------------- |
+| `embedder:`        | Yes        | N/A             | The embedder block in the configuration.                                              |
+| `ollama_embedder:` | Yes        | N/A             | Tag you can use if setting Ollama for your Embedder.                             |
+| `name:`            | Yes        | N/A             | The name of the API client to use. For Ollama's local API compatibility, this must be set to `openai`. |
+| `config:`          | Yes        | N/A             | Designates the config sub-block in the embedder block for the confinguration file. |
+| `model:`           | Yes        | N/A             | The Ollama **embedding model ID** to use for generating vectors. This model must be downloaded and running locally on your Ollama service. |
+| `api_key`          | Yes        | N/A             | The API key placeholder. Since Ollama's local API typically **doesn't require a key**, it is common practice to set this to `"EMPTY"` or any placeholder string. |
+| `base_url`         | Yes        | N/A             | The **URL of the Ollama API endpoint**. The format is usually `http://<host>:<port>/v1`.  The host `host.docker.internal` is used when running a configuration *inside* a Docker container to reach a service (Ollama) running on the *host machine*. |
+| `dimensions`       | Yes        | N/A             | The expected output dimension of the vector embeddings. This value **must match** the dimension size of the specific embedding model (e.g., `nomic-embed-text` is 768). |
+
+Here's an example of what the Ollama embedder configuration would look like in `cfg.yml`:
+```yaml
+embedder:
+    ollama_embedder:
+        name: openai
+        config:
+            model: "nomic-embed-text"
+            api_key: "EMPTY"
+            base_url: "http://host.docker.internal:11434/v1"
+            dimensions: 768
+    ```
+
+### Memory Configuration
+To ensure optimal performance when using Ollama models, you will want to adjust the memory settings in your `cfg.yml` file.  The memory sections are `long_term_memory`,`profile_memory`, and `sessionMemory`.  Within the Configuration file, you do not need to put the blocks together.
+
+In the following table, we'll map the memory parameters to their corresponding field settings for Ollama.  Keep in mind, Memory Parameter is using a naming convention of `codeblock:parameter`.  Field Setting Equivalent shows 
+which code block and field you've already set up in the previous sections, with the format `codeblock:field`.
+
+Here is a translation of the existing fields we've already covered and where you would enter them in the memory section:
+
+| Memory Parameter                  | Field Setting Equivalent      | Example             | Description                                                |
+| --------------------------------- | ----------------------------- | ------------------- | ---------------------------------------------------------- |
+| `long_term_memory: embedder`      | `embedder: ollama_embedder'   |  `ollama_embedder`  | The Tag you defined for your Ollama Embedder Config Block. |
+| `profile_memory: llm_model`       | `Model: ollama_model`         |  `ollama_model`     | The Tag you defined for your Ollama LLM Model Config Block |
+| `profile_memory: embedding_model` | `embedder: ollama_embedder`   |  `ollama_embedder`  | The Tag you defined for your Ollama Embedder Config Block  |
+| `session_memory: model_name`      | `Model: ollama_model`         |  `ollama_model`     | The Tag you defined for your Ollama LLM Model Config Block |
+
+Here's an example of how the memory configuration would look in `cfg.yml`:
+```yaml
+long_term_memory:
+  derivative_deriver: sentence
+  metadata_prefix: "[$timestamp] $producer_id: "
+  embedder: ollama_embedder
+  reranker: my_reranker_id
+  vector_graph_store: my_storage_id
+
+profile_memory:
+  llm_model: ollama_model
+  embedding_model: ollama_embedder
+  database: profile_storage
+  prompt: profile_prompt
+
+sessionMemory:
+  model_name: ollama_model
+  message_capacity: 500
+  max_message_length: 16000
+  max_token_num: 8000
+```
+
+Congratulations!  You've now changed your MemMachine configuration to use Ollama for LLM Model and Embedding functionalities, along with the appropriate memory settings.
+
+Make sure to restart MemMachine after making these changes to apply the new settings. 
+
+*Need Help?*  Refer to the [Install Guide](./install_guide) for how to start and test your configuration with MemMachine.

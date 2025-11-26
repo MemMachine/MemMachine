@@ -107,7 +107,7 @@ def _build_unified_crm_prompt() -> str:
 
 **What constitutes actionable CRM data (ALWAYS EXTRACT):**
 - Sales stage + company name (e.g., "Interest AMILI", "Qualified HP", "POC Cisco")
-- Company name + contact info (e.g., "AMILI Mathew Yap", "HP Mark Fahrenkrug")  
+- Company name + contact info (e.g., "AMILI Mathew Yap", "HP Mark Fahrenkrug")
 - Company name + timeline entries (e.g., "7/8: Let Mathew know...", "5/13: Jing to reach out...")
 - Company name + deal/product information (e.g., "Cisco $50k deal", "AMILI SpotSurfing GPUs")
 - ANY input with company name + CRM field data → EXTRACT, don't treat as query
@@ -234,7 +234,7 @@ Timeline date handling (for status, comments):
 - Relative date examples:
   • "2/3: meeting arranged for next week" → use next week's date, not 2/3
   • "early August" → "2025-08-01" (first day of month for "early")
-  • "late August" → "2025-08-31" (last day of month for "late") 
+  • "late August" → "2025-08-31" (last day of month for "late")
   • "mid August" → "2025-08-15" (middle of month)
   • "August" → "2025-08" (month only)
 - Process using CRM_DATE_HANDLING rules: yesterday, today, tomorrow, this week, last week, next week, this Tuesday, etc.
@@ -544,7 +544,7 @@ The final output schema is:
         {{{{
             "feature": "sales_stage",
             "value": "Validated",
-            "tag": "Roche", 
+            "tag": "Roche",
             "metadata": {{{{"citations": [456, 789]}}}}
         }}}}
     ],

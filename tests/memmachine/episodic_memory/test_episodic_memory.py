@@ -6,9 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from memmachine.episodic_memory.data_types import (
-    ContentType, Episode, MemoryContext
-)
+from memmachine.episodic_memory.data_types import ContentType, Episode, MemoryContext
 from memmachine.episodic_memory.episodic_memory import (
     AsyncEpisodicMemory,
     EpisodicMemory,
@@ -52,6 +50,7 @@ def mock_config():
         "long_term_memory": {},
     }
 
+
 @pytest.fixture
 def mock_config_without_longterm_memory():
     """Provides a mock configuration dictionary."""
@@ -65,31 +64,24 @@ def mock_config_without_longterm_memory():
         "prompts": {},
     }
 
-@pytest.fixture
-def mock_config_without_session_memory():
-    """Provides a mock configuration dictionary."""
-    return {
-        "model": {
-            "test_model": {
-                "model_vendor": "mock_vendor",
-            }
-        },
-        "prompts": {},
-        "long_term_memory": {"type": "long"},
-    }
 
 @pytest.fixture
 def episodic_memory_instance(mock_manager, mock_config, memory_context):
     """Provides an EpisodicMemory instance with mocked dependencies."""
-    with patch(
-        "memmachine.episodic_memory.episodic_memory.LanguageModelBuilder"
-    ) as MockLMB, patch(
-        "memmachine.episodic_memory.episodic_memory.MetricsFactoryBuilder"
-    ) as MockMFB, patch(
-        "memmachine.episodic_memory.episodic_memory.SessionMemory"
-    ) as MockSessionMemory, patch(
-        "memmachine.episodic_memory.episodic_memory.LongTermMemory"
-    ) as MockLongTermMemory:
+    with (
+        patch(
+            "memmachine.episodic_memory.episodic_memory.LanguageModelBuilder"
+        ) as MockLMB,
+        patch(
+            "memmachine.episodic_memory.episodic_memory.MetricsFactoryBuilder"
+        ) as MockMFB,
+        patch(
+            "memmachine.episodic_memory.episodic_memory.SessionMemory"
+        ) as MockSessionMemory,
+        patch(
+            "memmachine.episodic_memory.episodic_memory.LongTermMemory"
+        ) as MockLongTermMemory,
+    ):
         # Mock the builders and their build methods
         mock_model = MagicMock()
         MockLMB.build.return_value = mock_model
@@ -122,56 +114,21 @@ def episodic_memory_instance(mock_manager, mock_config, memory_context):
 
 
 @pytest.fixture
-def episodic_memory_instance_without_sessionmemory(
-    mock_manager, mock_config_without_session_memory, memory_context
-):
-    """Provides an EpisodicMemory instance with mocked dependencies."""
-    with patch(
-        "memmachine.episodic_memory.episodic_memory.LanguageModelBuilder"
-    ) as MockLMB, patch(
-        "memmachine.episodic_memory.episodic_memory.MetricsFactoryBuilder"
-    ) as MockMFB, patch(
-        "memmachine.episodic_memory.episodic_memory.LongTermMemory"
-    ) as MockLongTermMemory:
-        # Mock the builders and their build methods
-        mock_model = MagicMock()
-        MockLMB.build.return_value = mock_model
-
-        mock_metrics_manager = MagicMock()
-        mock_metrics_manager.get_summary.return_value = MagicMock()
-        mock_metrics_manager.get_counter.return_value = MagicMock()
-        MockMFB.build.return_value = mock_metrics_manager
-
-        mock_ltm_instance = MagicMock()
-        mock_ltm_instance.add_episode = AsyncMock()
-        mock_ltm_instance.forget_session = AsyncMock()
-        mock_ltm_instance.close = AsyncMock()
-        mock_ltm_instance.search = AsyncMock()
-        MockLongTermMemory.return_value = mock_ltm_instance
-
-        instance = EpisodicMemory(
-            mock_manager,
-            mock_config_without_session_memory,
-            memory_context
-        )
-        # Attach mocks for easy access in tests
-        instance.long_term_memory = mock_ltm_instance
-        yield instance
-
-@pytest.fixture
 def episodic_memory_instance_without_longterm(
-    mock_manager,
-    mock_config_without_longterm_memory,
-    memory_context
+    mock_manager, mock_config_without_longterm_memory, memory_context
 ):
     """Provides an EpisodicMemory instance with mocked dependencies."""
-    with patch(
-        "memmachine.episodic_memory.episodic_memory.LanguageModelBuilder"
-    ) as MockLMB, patch(
-        "memmachine.episodic_memory.episodic_memory.MetricsFactoryBuilder"
-    ) as MockMFB, patch(
-        "memmachine.episodic_memory.episodic_memory.SessionMemory"
-    ) as MockSessionMemory:
+    with (
+        patch(
+            "memmachine.episodic_memory.episodic_memory.LanguageModelBuilder"
+        ) as MockLMB,
+        patch(
+            "memmachine.episodic_memory.episodic_memory.MetricsFactoryBuilder"
+        ) as MockMFB,
+        patch(
+            "memmachine.episodic_memory.episodic_memory.SessionMemory"
+        ) as MockSessionMemory,
+    ):
         # Mock the builders and their build methods
         mock_model = MagicMock()
         MockLMB.build.return_value = mock_model
@@ -190,24 +147,19 @@ def episodic_memory_instance_without_longterm(
         MockSessionMemory.return_value = mock_session_memory_instance
 
         instance = EpisodicMemory(
-            mock_manager,
-            mock_config_without_longterm_memory,
-            memory_context
+            mock_manager, mock_config_without_longterm_memory, memory_context
         )
         # Attach mocks for easy access in tests
         instance.short_term_memory = mock_session_memory_instance
         yield instance
 
 
-async def test_episodic_memory_initialization(episodic_memory_instance,
-                                              memory_context):
+async def test_episodic_memory_initialization(episodic_memory_instance, memory_context):
     """Tests if the EpisodicMemory instance is initialized correctly."""
     assert episodic_memory_instance.get_memory_context() == memory_context
 
 
-async def test_initialization_fails_with_invalid_config(
-    mock_manager, memory_context
-):
+async def test_initialization_fails_with_invalid_config(mock_manager, memory_context):
     """Tests that initialization raises ValueError for bad configuration."""
     with pytest.raises(ValueError, match="No memory is configured"):
         EpisodicMemory(mock_manager, {"sessionmemory": {}}, memory_context)
@@ -253,8 +205,7 @@ async def test_add_memory_episode_success(episodic_memory_instance):
     assert result is True
 
 
-async def test_add_memory_episode_invalid_producer(episodic_memory_instance,
-                                                   caplog):
+async def test_add_memory_episode_invalid_producer(episodic_memory_instance, caplog):
     """Tests that adding an episode with an invalid producer fails."""
     with pytest.raises(ValueError):
         await episodic_memory_instance.add_memory_episode(
@@ -265,8 +216,7 @@ async def test_add_memory_episode_invalid_producer(episodic_memory_instance,
             content_type=ContentType.STRING,
         )
 
-    assert "The producer invalid_user does not belong to the session" \
-        in caplog.text
+    assert "The producer invalid_user does not belong to the session" in caplog.text
 
 
 async def test_add_memory_episode_invalid_produced_for(
@@ -283,63 +233,12 @@ async def test_add_memory_episode_invalid_produced_for(
         )
 
     assert (
-        "The produced_for invalid_agent does not belong to the session"
-        in caplog.text
+        "The produced_for invalid_agent does not belong to the session" in caplog.text
     )
-
-
-async def test_memory_without_sessionmemory(
-    episodic_memory_instance_without_sessionmemory,
-    memory_context
-):
-    """
-    Test memory without session memory configured
-    """
-    long_ep_unique = Episode(
-        uuid=uuid.uuid4(),
-        content="from long term",
-        episode_type="message",
-        content_type=ContentType.STRING,
-        timestamp=datetime.now(),
-        group_id=memory_context.group_id,
-        session_id=memory_context.session_id,
-        producer_id="test_user",
-    )
-    episodic_memory_instance_without_sessionmemory \
-        .long_term_memory.search.return_value = [
-            long_ep_unique,
-        ]
-    assert (
-        episodic_memory_instance_without_sessionmemory
-        .short_term_memory is None
-    )
-    short_res, long_res, summary_res = \
-        await episodic_memory_instance_without_sessionmemory.query_memory(
-            "test query", limit=10, property_filter={"key": "value"}
-        )
-    assert len(short_res) == 0
-    assert len(summary_res) == 1
-    assert len(summary_res[0]) == 0
-    assert len(long_res) == 1
-    assert long_res[0] == long_ep_unique
-    result = await episodic_memory_instance_without_sessionmemory \
-        .add_memory_episode(
-            producer="test_user",
-            produced_for="test_agent",
-            episode_content="Hello world",
-            episode_type="message",
-            content_type=ContentType.STRING,
-        )
-
-    assert result is True
-    await episodic_memory_instance_without_sessionmemory.delete_data()
-    episodic_memory_instance_without_sessionmemory.long_term_memory \
-        .forget_session.assert_awaited_once()
 
 
 async def test_memory_without_ltm_memory(
-    episodic_memory_instance_without_longterm,
-    memory_context
+    episodic_memory_instance_without_longterm, memory_context
 ):
     """
     Test memory without long term memory configured
@@ -354,34 +253,34 @@ async def test_memory_without_ltm_memory(
         session_id=memory_context.session_id,
         producer_id="test_user",
     )
-    episodic_memory_instance_without_longterm \
-        .short_term_memory.get_session_memory_context.return_value = [
-            [session_ep_unique],
-            "summary"
-        ]
+    episodic_memory_instance_without_longterm.short_term_memory.get_session_memory_context.return_value = [
+        [session_ep_unique],
+        "summary",
+    ]
     assert episodic_memory_instance_without_longterm.long_term_memory is None
-    short_res, long_res, summary_res = \
-        await episodic_memory_instance_without_longterm.query_memory(
-            "test query", limit=10, property_filter={"key": "value"}
-        )
+    (
+        short_res,
+        long_res,
+        summary_res,
+    ) = await episodic_memory_instance_without_longterm.query_memory(
+        "test query", limit=10, property_filter={"key": "value"}
+    )
     assert len(short_res) == 1
     assert len(summary_res) == 1
     assert summary_res[0] == "summary"
     assert len(long_res) == 0
     assert short_res[0] == session_ep_unique
-    result = await episodic_memory_instance_without_longterm \
-        .add_memory_episode(
-            producer="test_user",
-            produced_for="test_agent",
-            episode_content="Hello world",
-            episode_type="message",
-            content_type=ContentType.STRING,
-        )
+    result = await episodic_memory_instance_without_longterm.add_memory_episode(
+        producer="test_user",
+        produced_for="test_agent",
+        episode_content="Hello world",
+        episode_type="message",
+        content_type=ContentType.STRING,
+    )
 
     assert result is True
     await episodic_memory_instance_without_longterm.delete_data()
-    episodic_memory_instance_without_longterm.short_term_memory \
-        .clear_memory.assert_awaited_once()
+    episodic_memory_instance_without_longterm.short_term_memory.clear_memory.assert_awaited_once()
 
 
 async def test_query_memory(episodic_memory_instance, memory_context):
@@ -418,27 +317,22 @@ async def test_query_memory(episodic_memory_instance, memory_context):
         producer_id="test_user",
     )
 
-    episodic_memory_instance.short_term_memory \
-        .get_session_memory_context \
-        .return_value = (
-            [short_ep],
-            "summary",
-        )
+    episodic_memory_instance.short_term_memory.get_session_memory_context.return_value = (
+        [short_ep],
+        "summary",
+    )
     episodic_memory_instance.long_term_memory.search.return_value = [
         long_ep_unique,
         long_ep_common,
     ]
 
-    short_res, long_res, summary_res = \
-        await episodic_memory_instance.query_memory(
-            "test query", limit=10, property_filter={"key": "value"}
-        )
+    short_res, long_res, summary_res = await episodic_memory_instance.query_memory(
+        "test query", limit=10, property_filter={"key": "value"}
+    )
 
-    episodic_memory_instance.short_term_memory \
-        .get_session_memory_context \
-        .assert_awaited_with(
-            "test query", limit=10
-        )
+    episodic_memory_instance.short_term_memory.get_session_memory_context.assert_awaited_with(
+        "test query", limit=10
+    )
     expected_filter = {"key": "value", "group_id": memory_context.group_id}
     episodic_memory_instance.long_term_memory.search.assert_awaited_with(
         "test query", 10, expected_filter
@@ -480,7 +374,7 @@ async def test_formalize_query_with_context(episodic_memory_instance):
         mock_query.return_value = (
             [mock_episode],
             [mock_long_term_episode],
-            ["my summary"]
+            ["my summary"],
         )
 
         result = await episodic_memory_instance.formalize_query_with_context(
@@ -529,7 +423,7 @@ async def test_formalize_query_with_ordering(episodic_memory_instance):
         mock_query.return_value = (
             [mock_episode],
             [mock_long_term_episode],
-            ["my summary"]
+            ["my summary"],
         )
 
         result = await episodic_memory_instance.formalize_query_with_context(
@@ -574,7 +468,5 @@ async def test_async_episodic_memory_context_manager(episodic_memory_instance):
 async def test_delete_data(episodic_memory_instance):
     """Tests the delete_data method."""
     await episodic_memory_instance.delete_data()
-    episodic_memory_instance.short_term_memory \
-        .clear_memory.assert_awaited_once()
-    episodic_memory_instance.long_term_memory \
-        .forget_session.assert_awaited_once()
+    episodic_memory_instance.short_term_memory.clear_memory.assert_awaited_once()
+    episodic_memory_instance.long_term_memory.forget_session.assert_awaited_once()

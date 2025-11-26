@@ -1,7 +1,9 @@
 """Unit tests for the SessionManager class."""
 
 import os
+
 import pytest
+
 from memmachine.episodic_memory.data_types import SessionInfo
 from memmachine.episodic_memory.session_manager.session_manager import (
     SessionManager,
@@ -11,7 +13,7 @@ from memmachine.episodic_memory.session_manager.session_manager import (
 @pytest.fixture
 def session_manager():
     """Pytest fixture to set up and tear down a SessionManager with a test
-      database."""
+    database."""
     db_path = "test_sessions.db"
     config = {"uri": f"sqlite:///{db_path}"}
     # Ensure the db file doesn't exist from a previous failed run
@@ -113,7 +115,7 @@ def test_create_group(session_manager: SessionManager):
             group_id="group1",
             agent_ids=["agent1"],
             user_ids=["user1"],
-            configuration={"key": "value"}
+            configuration={"key": "value"},
         )
 
     # create a group with different ID
@@ -121,7 +123,7 @@ def test_create_group(session_manager: SessionManager):
         group_id="group2",
         agent_ids=["agent1"],
         user_ids=["user1"],
-        configuration={"key": "value"}
+        configuration={"key": "value"},
     )
 
     groups = session_manager.retrieve_all_groups()
@@ -153,9 +155,7 @@ def test_create_group(session_manager: SessionManager):
         )
 
 
-def test_create_session_if_not_exist_new(
-    session_manager: SessionManager
-):
+def test_create_session_if_not_exist_new(session_manager: SessionManager):
     """Test creating a new session."""
     session_info = session_manager.create_session_if_not_exist(
         group_id="group1",
@@ -190,9 +190,7 @@ def test_create_session_if_not_exist_new(
     assert "user1" in session[0].user_ids
 
 
-def test_create_session_if_not_exist_existing(
-    session_manager: SessionManager
-):
+def test_create_session_if_not_exist_existing(session_manager: SessionManager):
     """Test retrieving an existing session."""
     # Create a session first
     session_manager.create_session_if_not_exist(
@@ -233,8 +231,7 @@ def test_get_all_sessions(session_manager: SessionManager):
 
 def test_get_session_by_user(session_manager: SessionManager):
     """Test retrieving sessions by user ID."""
-    session_manager.create_session_if_not_exist("g1", ["a1"],
-                                                ["u1", "u2"], "s1")
+    session_manager.create_session_if_not_exist("g1", ["a1"], ["u1", "u2"], "s1")
     session_manager.create_session_if_not_exist("g2", ["a2"], ["u1"], "s2")
     session_manager.create_session_if_not_exist("g3", ["a3"], ["u3"], "s3")
 
@@ -250,8 +247,7 @@ def test_get_session_by_user(session_manager: SessionManager):
 
 def test_get_session_by_agent(session_manager: SessionManager):
     """Test retrieving sessions by agent ID."""
-    session_manager.create_session_if_not_exist("g1", ["a1", "a2"],
-                                                ["u1"], "s1")
+    session_manager.create_session_if_not_exist("g1", ["a1", "a2"], ["u1"], "s1")
     session_manager.create_session_if_not_exist("g2", ["a1"], ["u2"], "s2")
     session_manager.create_session_if_not_exist("g3", ["a3"], ["u3"], "s3")
 
@@ -286,9 +282,7 @@ def test_delete_session(session_manager: SessionManager):
 
     assert len(session_manager.get_all_sessions()) == 2
 
-    session_manager.delete_session(
-        group_id="g1", session_id="s1"
-    )
+    session_manager.delete_session(group_id="g1", session_id="s1")
 
     sessions = session_manager.get_all_sessions()
     assert len(sessions) == 1

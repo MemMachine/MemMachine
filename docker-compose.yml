@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
-      POSTGRES_PASSWORD: ${POSTGRES_PASS:-memmachine_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -68,22 +68,21 @@ services:
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
-      POSTGRES_PASS: ${POSTGRES_PASS:-memmachine_password}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
-      
+
       # Neo4j configuration
       NEO4J_HOST: ${NEO4J_HOST:-neo4j}
       NEO4J_PORT: ${NEO4J_PORT:-7687}
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_password}
-      
+
       # Application configuration
       MEMORY_CONFIG: ${MEMORY_CONFIG:-/app/configuration.yml}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
       GATEWAY_URL: ${GATEWAY_URL:-http://localhost:8080}
       FAST_MCP_LOG_LEVEL: ${FAST_MCP_LOG_LEVEL:-INFO}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./configuration.yml:/app/configuration.yml:ro,Z

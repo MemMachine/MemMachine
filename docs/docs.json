@@ -8,8 +8,8 @@
     "dark": "#a8bacb"
   },
   "integrations": {
-    "ga4": {
-        "measurementId": "G-ED9JCR55CL"
+    "gtm": {
+      "tagId": "GTM-WDX7ZBC7"
     }
   },
   "favicon": "favicon.ico",
@@ -24,9 +24,18 @@
             "pages": [
               "getting_started/introduction",
               "getting_started/quickstart",
-              "getting_started/install_guide",
               "getting_started/benchmarks",
               "getting_started/faqs"
+            ]
+          },
+          {
+            "group": "Install Guides",
+            "icon": "map",
+            "pages": [
+              "install_guide/introduction",
+              "install_guide/install_guide",
+              "install_guide/aws_bedrock",
+              "install_guide/ollama"
             ]
           },
           {
@@ -53,32 +62,38 @@
       {
         "tab": "API Reference",
         "groups": [
-         {
-           "group": "Introduction",
-           "pages": [
-             "api_reference/intro"
-            ]
-          }, 
-        {
-           "group": "PythonSDK",
-           "pages": [
-             "api_reference/python/episodic_memory",
-             "api_reference/python/episodic_memory_manager",
-             "api_reference/python/memory_types",
-             "api_reference/python/profile_memory"
+          {
+            "group": "Introduction",
+            "pages": [
+              "api_reference/intro"
             ]
           },
-        {
-          "group": "API Reference",
-          "openapi": "openapi.json",
-          "playground": {
-            "display": "interactive"
+          {
+            "group": "PythonSDK Server",
+            "pages": [
+              "api_reference/python/episodic_memory",
+              "api_reference/python/episodic_memory_manager",
+              "api_reference/python/memory_types",
+              "api_reference/python/profile_memory"
+            ]
           },
-          "examples": {
-          "languages": ["python"],
-          "defaults": "required"
+          {
+            "group": "PythonSDK Client",
+            "pages": [
+              "api_reference/python/client"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "openapi": "openapi.json",
+            "playground": {
+              "display": "interactive"
+            },
+            "examples": {
+              "languages": ["python"],
+              "defaults": "required"
+            }
           }
-        }
         ]
       },
       {
@@ -123,6 +138,10 @@
   },
   "navbar": {
     "links": [
+      {
+        "label": "Playground",
+        "href": "https://huggingface.co/spaces/Memverge/MemMachine-Playground"
+      },
       {
         "label": "Support",
         "href": "mailto:support@memmachine.ai"

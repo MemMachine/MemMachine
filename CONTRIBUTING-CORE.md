@@ -26,40 +26,73 @@ Follow these steps to set up your local development environment:
 
     ```bash
     git clone https://github.com/MemMachine/MemMachine.git
-    cd MemMachine 
+    cd MemMachine
     ```
 
-2. **Create a Virtual Environment:** We recommend using a virtual environment to
-   manage dependencies.
+2. **Install the Package:**
 
+    We recommend using [uv](https://docs.astral.sh/uv/) to manage Python environments, versions, and dependencies.
+
+    Alternatively, you may wish to create your own Python virtual environment:
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
     ```
 
-3. **Install Dependencies:**
-
-    In the project root directory, where the `pyproject.toml` file resides, run
-    one of the following commands to install the project in editable mode with
-    all dependencies for testing:
-
-    Using `uv`:
-
+    If using uv, install the package in editable mode
+    in an automatically created virtual environment
+    from the project root directory, where the `pyproject.toml` file resides:
     ```bash
-    uv pip install -e ".[test]" # Installs the PyTest dependencies
-    uv pip install -e ".[gpu,test]" # Installs the GPU and PyTest dependencies
+    uv sync
+
+    # To include all extra dependencies:
+    uv sync --all-extras
     ```
 
-    Using `Poetry`:
-
-    ```bash
-    poetry install --all-extras
+    Alternatively, in your own Python environment:
+    ```
+    pip install -e "."
+    # OR
+    pip install -e ".[gpu]"
     ```
 
 ## 3. Code Style and Quality
 
-The project enforces a strict code style using **Black** for formatting and
-**Ruff** for linting.
+The project enforces a strict code style using [Ruff](https://docs.astral.sh/ruff/) for formatting and linting.
+The project also uses [Mypy](https://mypy-lang.org/) for type checking.
+
+These tools are installed automatically as part of the `dev` group if using uv.
+
+Alternatively, they may be installed by:
+```
+pip install ruff
+pip install mypy
+# OR, if pip is new enough:
+pip install --group dev
+```
+
+From the project root (where `pyproject.toml` is):
+
+To run the Ruff linter:
+```
+uv run ruff check
+# OR
+ruff check
+```
+
+To run the Ruff formatter:
+```
+uv run ruff format
+# OR
+ruff format
+```
+
+To run the Mypy type checker:
+```
+uv run mypy src
+# OR
+mypy src
+```
 
 ## 4. Testing
 

@@ -5,15 +5,21 @@ import os
 from typing import Annotated
 
 from sqlalchemy import (
-    Integer, String, create_engine,
     ForeignKeyConstraint,
-    PrimaryKeyConstraint
+    Integer,
+    PrimaryKeyConstraint,
+    String,
+    create_engine,
 )
 from sqlalchemy.orm import (
-    DeclarativeBase, Mapped, mapped_column, sessionmaker, relationship
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    sessionmaker,
 )
 
-from ..data_types import SessionInfo, GroupConfiguration
+from ..data_types import GroupConfiguration, SessionInfo
 
 
 # Base class for declarative class definitions
@@ -47,18 +53,12 @@ class SessionManager:
         configuration: Mapped[StringColumn]
         timestamp: Mapped[IntColumn]
         users = relationship(
-            "User",
-            back_populates="parent",
-            cascade="all, delete-orphan"
+            "User", back_populates="parent", cascade="all, delete-orphan"
         )
         agents = relationship(
-            "Agent",
-            back_populates="parent",
-            cascade="all, delete-orphan"
+            "Agent", back_populates="parent", cascade="all, delete-orphan"
         )
-        __table_args__ = (
-            PrimaryKeyConstraint("group_id", "session_id"),
-        )
+        __table_args__ = (PrimaryKeyConstraint("group_id", "session_id"),)
 
     class User(Base):  # pylint: disable=too-few-public-methods
         """ORM model for a user's association with a session."""
@@ -69,7 +69,9 @@ class SessionManager:
         session_id: Mapped[StringColumn]
         __table_args__ = (
             PrimaryKeyConstraint(
-                "user_id", "group_id", "session_id",
+                "user_id",
+                "group_id",
+                "session_id",
             ),
             ForeignKeyConstraint(
                 ["group_id", "session_id"],
@@ -87,7 +89,9 @@ class SessionManager:
         session_id: Mapped[StringColumn]
         __table_args__ = (
             PrimaryKeyConstraint(
-                "agent_id", "group_id", "session_id",
+                "agent_id",
+                "group_id",
+                "session_id",
             ),
             ForeignKeyConstraint(
                 ["group_id", "session_id"],
@@ -123,7 +127,7 @@ class SessionManager:
         sql_path = config.get("uri")
         if sql_path is None or len(sql_path) < 1:
             raise ValueError(f"""Invalid sql path: {str(config)}""")
-        if sql_path.find(":///") < 0:
+        if "postgresql" not in sql_path and sql_path.find(":///") < 0:
             sql_path = "sqlite:///" + sql_path
 
         # create empty sqlite file if it does not exist
@@ -135,6 +139,12 @@ class SessionManager:
 
         self._engine = create_engine(sql_path)
         self._session = sessionmaker(bind=self._engine)
+
+        schema = config.get("schema", "")
+        if schema:
+            for table in Base.metadata.tables.values():
+                table.schema = schema
+
         # Create all tables defined in the Base metadata if they don't exist
         Base.metadata.create_all(self._engine)
 
@@ -145,11 +155,11 @@ class SessionManager:
             self._engine.dispose()
 
     def create_new_group(
-            self,
-            group_id: str,
-            agent_ids: list[str],
-            user_ids: list[str],
-            configuration: dict | None = None,
+        self,
+        group_id: str,
+        agent_ids: list[str],
+        user_ids: list[str],
+        configuration: dict | None = None,
     ):
         """
         Creates a new group.
@@ -221,13 +231,13 @@ class SessionManager:
             group_id (str): The ID of the group.
         """
         with self._session() as dbsession:
-            sessions = dbsession.query(self.MemSession).filter(
-                self.MemSession.group_id == group_id
-            ).all()
+            sessions = (
+                dbsession.query(self.MemSession)
+                .filter(self.MemSession.group_id == group_id)
+                .all()
+            )
             if len(sessions) > 0:
-                raise ValueError(
-                    f"Group {group_id} has sessions {len(sessions)}"
-                )
+                raise ValueError(f"Group {group_id} has sessions {len(sessions)}")
             # Delete the group
             dbsession.query(self.GroupInfo).filter(
                 self.GroupInfo.group_id == group_id
@@ -268,10 +278,14 @@ class SessionManager:
                          session.
         """
         with self._session() as dbsession:
-            sessions = dbsession.query(self.MemSession).filter(
-                self.MemSession.session_id == session_id,
-                self.MemSession.group_id == group_id,
-            ).all()
+            sessions = (
+                dbsession.query(self.MemSession)
+                .filter(
+                    self.MemSession.session_id == session_id,
+                    self.MemSession.group_id == group_id,
+                )
+                .all()
+            )
             if len(sessions) < 1:
                 raise ValueError(
                     f"""Session {group_id}: {session_id} does not exists"""
@@ -284,11 +298,12 @@ class SessionManager:
                 configuration=json.loads(sessions[0].configuration),
             )
 
-    def create_session(self,
-                       group_id: str,
-                       session_id: str,
-                       configuration: dict | None = None,
-                       ) -> SessionInfo:
+    def create_session(
+        self,
+        group_id: str,
+        session_id: str,
+        configuration: dict | None = None,
+    ) -> SessionInfo:
         """
         Creates a new session.
             If the session already exists, this function fails.
@@ -306,21 +321,24 @@ class SessionManager:
                          session.
         """
         with self._session() as dbsession:
-            groups = dbsession.query(self.GroupInfo).filter(
-                self.GroupInfo.group_id == group_id
-            ).all()
+            groups = (
+                dbsession.query(self.GroupInfo)
+                .filter(self.GroupInfo.group_id == group_id)
+                .all()
+            )
             if len(groups) == 0:
                 raise ValueError(f"""Group {group_id} does not exist""")
-            sessions = dbsession.query(self.MemSession).filter(
-                self.MemSession.session_id == session_id,
-                self.MemSession.group_id == group_id,
-            ).all()
-            if len(sessions) > 0:
-                raise ValueError(
-                    f"""Session {group_id}: {session_id} already exists"""
+            sessions = (
+                dbsession.query(self.MemSession)
+                .filter(
+                    self.MemSession.session_id == session_id,
+                    self.MemSession.group_id == group_id,
                 )
-            config = \
-                json.dumps(configuration if configuration is not None else {})
+                .all()
+            )
+            if len(sessions) > 0:
+                raise ValueError(f"""Session {group_id}: {session_id} already exists""")
+            config = json.dumps(configuration if configuration is not None else {})
             agent_ids = json.loads(groups[0].agent_list)
             user_ids = json.loads(groups[0].user_list)
             # Create the new session
@@ -331,16 +349,16 @@ class SessionManager:
                 user_ids=groups[0].user_list,
                 session_id=session_id,
                 configuration=config,
-                agents=[self.Agent(
-                    agent_id=agent_id,
-                    group_id=group_id,
-                    session_id=session_id
-                ) for agent_id in agent_ids],
-                users=[self.User(
-                    user_id=user_id,
-                    group_id=group_id,
-                    session_id=session_id
-                ) for user_id in user_ids]
+                agents=[
+                    self.Agent(
+                        agent_id=agent_id, group_id=group_id, session_id=session_id
+                    )
+                    for agent_id in agent_ids
+                ],
+                users=[
+                    self.User(user_id=user_id, group_id=group_id, session_id=session_id)
+                    for user_id in user_ids
+                ],
             )
             dbsession.add(new_sess)
             dbsession.commit()
@@ -350,7 +368,7 @@ class SessionManager:
                 agent_ids=agent_ids,
                 user_ids=user_ids,
                 session_id=session_id,
-                configuration=configuration,
+                configuration=configuration or {},
             )
 
     def create_session_if_not_exist(
@@ -410,8 +428,7 @@ class SessionManager:
                     .first()
                 )
                 if group is None:
-                    self.create_new_group(group_id, agent_ids,
-                                          user_ids, configuration)
+                    self.create_new_group(group_id, agent_ids, user_ids, configuration)
                 else:
                     agents = group.agent_list
                     users = group.user_list
@@ -424,16 +441,18 @@ class SessionManager:
                     user_ids=users,
                     session_id=session_id,
                     configuration=config,
-                    agents=[self.Agent(
-                        agent_id=agent_id,
-                        group_id=group_id,
-                        session_id=session_id
-                    ) for agent_id in agent_ids],
-                    users=[self.User(
-                        user_id=user_id,
-                        group_id=group_id,
-                        session_id=session_id
-                    ) for user_id in user_ids]
+                    agents=[
+                        self.Agent(
+                            agent_id=agent_id, group_id=group_id, session_id=session_id
+                        )
+                        for agent_id in agent_ids
+                    ],
+                    users=[
+                        self.User(
+                            user_id=user_id, group_id=group_id, session_id=session_id
+                        )
+                        for user_id in user_ids
+                    ],
                 )
                 dbsession.add(new_sess)
                 dbsession.commit()
@@ -490,9 +509,7 @@ class SessionManager:
             # Note: This performs N+1 queries. For better performance, a JOIN
             # would be preferable.
             user_session_links = (
-                dbsession.query(self.User)
-                .filter(self.User.user_id == usr_id)
-                .all()
+                dbsession.query(self.User).filter(self.User.user_id == usr_id).all()
             )
             result = []
             for link in user_session_links:

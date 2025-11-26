@@ -72,7 +72,7 @@ User Input: {query}
 # SYSTEM PROMPT CONFIG
 # -----------------------
 SYSTEM_PROMPT = """
-You are an AI assistant that analyzes writing samples to extract detailed writing style characteristics. 
+You are an AI assistant that analyzes writing samples to extract detailed writing style characteristics.
 You will analyze user writing samples and extract specific writing style features to create comprehensive writing profiles.
 """
 
@@ -284,7 +284,7 @@ Your task is to analyze the user's writing sample and extract specific writing s
 1. Only analyze the writing sample provided by the user
 2. Do not infer information that is not present in the sample
 3. If a feature cannot be determined from the sample, set the value to "none"
-4. Use the exact feature names from this list: {', '.join(WRITING_STYLE_FEATURES)}
+4. Use the exact feature names from this list: {", ".join(WRITING_STYLE_FEATURES)}
 5. Be specific and descriptive in your analysis
 6. Focus on observable patterns, not assumptions
 

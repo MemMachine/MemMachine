@@ -13,9 +13,7 @@ class Reranker(ABC):
     Abstract base class for a reranker.
     """
 
-    async def rerank(
-        self, query: str, candidates: list[str]
-    ) -> list[tuple[float, str]]:
+    async def rerank(self, query: str, candidates: list[str]) -> list[str]:
         """
         Rerank the candidates based on their relevance to the query.
 
@@ -26,15 +24,16 @@ class Reranker(ABC):
                 A list of candidate strings to be reranked.
 
         Returns:
-            list[tuple[float, str]]:
-            A list of tuples where each tuple contains
-            a score and the corresponding candidate string,
-            sorted by score in descending order.
+            list[str]:
+                The reranked list of candidates,
+                sorted by score in descending order.
         """
         scores = await self.score(query, candidates)
+        score_map = dict(zip(candidates, scores))
+
         return sorted(
-            zip(scores, candidates),
-            key=lambda pair: pair[0],
+            candidates,
+            key=lambda candidate: score_map[candidate],
             reverse=True,
         )
 
