@@ -187,11 +187,13 @@ class SemanticService:
         *,
         filter_expr: FilterExpr | None = None,
         limit: int | None = None,
+        offset: int | None = None,
         with_citations: bool = False,
     ) -> list[SemanticFeature]:
         return await self._semantic_storage.get_feature_set(
             filter_expr=filter_expr,
             limit=limit,
+            offset=offset,
             load_citations=with_citations,
         )
 

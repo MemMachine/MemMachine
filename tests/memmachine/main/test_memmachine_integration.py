@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -15,24 +14,6 @@ from memmachine.common.configuration import (
 )
 from memmachine.common.episode_store import EpisodeEntry
 from memmachine.main.memmachine import MemMachine, MemoryType
-from memmachine.semantic_memory.semantic_model import SetIdT
-
-
-@pytest.fixture
-def session_data():
-    @dataclass
-    class _SessionData:
-        user_profile_id: SetIdT | None
-        session_id: SetIdT | None
-        role_profile_id: SetIdT | None
-        session_key: str | None
-
-    return _SessionData(
-        user_profile_id="test_user",
-        session_id="test_session",
-        session_key="test_session",
-        role_profile_id=None,
-    )
 
 
 @pytest.fixture

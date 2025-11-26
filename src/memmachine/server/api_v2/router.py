@@ -215,6 +215,7 @@ async def _list_target_memories(
         target_memories=[spec.type],
         search_filter=spec.filter,
         limit=spec.limit,
+        offset=spec.offset,
     )
 
     return SearchResult(

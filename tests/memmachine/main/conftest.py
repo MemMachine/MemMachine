@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import pytest
@@ -23,6 +24,7 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.configuration.reranker_conf import RerankersConf
+from memmachine.semantic_memory.semantic_model import SetIdT
 
 
 @pytest.fixture(scope="session")
@@ -268,3 +270,23 @@ async def memmachine(memmachine_top: MemMachine):
     await memmachine_top.start()
     yield memmachine_top
     await memmachine_top.stop()
+
+
+@pytest_asyncio.fixture
+async def session_data(memmachine: MemMachine):
+    @dataclass
+    class _SessionData:
+        user_profile_id: SetIdT | None
+        session_id: SetIdT | None
+        role_profile_id: SetIdT | None
+        session_key: str | None
+
+    s_data = _SessionData(
+        user_profile_id="test_user",
+        session_id="test_session",
+        session_key="test_session",
+        role_profile_id=None,
+    )
+    await memmachine.create_session(s_data.session_key)
+    yield s_data
+    await memmachine.delete_session(session_data=s_data)

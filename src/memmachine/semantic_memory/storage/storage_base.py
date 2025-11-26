@@ -92,6 +92,7 @@ class SemanticStorage(ABC):
         *,
         filter_expr: FilterExpr | None = None,
         limit: int | None = None,
+        offset: int | None = None,
         vector_search_opts: VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,

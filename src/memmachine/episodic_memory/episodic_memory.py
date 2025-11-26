@@ -28,7 +28,6 @@ from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store import Episode, EpisodeResponse
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
-    to_property_filter,
 )
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.episodic_memory.long_term_memory.long_term_memory import LongTermMemory

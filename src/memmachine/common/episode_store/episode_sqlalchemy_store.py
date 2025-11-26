@@ -38,7 +38,7 @@ from memmachine.common.episode_store.episode_model import (
 )
 from memmachine.common.episode_store.episode_model import EpisodeEntry, EpisodeType
 from memmachine.common.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
-from memmachine.common.errors import ResourceNotFoundError
+from memmachine.common.errors import InvalidArgumentError, ResourceNotFoundError
 
 
 class BaseEpisodeStore(DeclarativeBase):
@@ -326,6 +326,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         self,
         *,
         limit: int | None = None,
+        offset: int | None = None,
         session_keys: list[str] | None = None,
         producer_ids: list[str] | None = None,
         producer_roles: list[str] | None = None,
@@ -351,6 +352,13 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         if limit is not None:
             stmt = stmt.limit(limit)
+            stmt = stmt.order_by(Episode.created_at.asc())
+
+            if offset is not None:
+                stmt = stmt.offset(limit * offset)
+
+        elif offset is not None:
+            raise InvalidArgumentError("Cannot specify offset without limit")
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
