@@ -388,6 +388,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def add_nodes(
         self,
+        *,
         collection: str,
         nodes: Iterable[Node],
     ) -> None:
@@ -495,6 +496,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def add_edges(
         self,
+        *,
         relation: str,
         source_collection: str,
         target_collection: str,
@@ -612,6 +614,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def search_similar_nodes(
         self,
+        *,
         collection: str,
         embedding_name: str,
         query_embedding: list[float],
@@ -734,6 +737,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def search_related_nodes(
         self,
+        *,
         relation: str,
         other_collection: str,
         this_collection: str,
@@ -814,6 +818,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def search_directional_nodes(
         self,
+        *,
         collection: str,
         by_properties: Iterable[str],
         starting_at: Iterable[OrderedPropertyValue | None],
@@ -963,6 +968,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def search_matching_nodes(
         self,
+        *,
         collection: str,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
@@ -1006,6 +1012,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def get_nodes(
         self,
+        *,
         collection: str,
         node_uids: Iterable[str],
     ) -> list[Node]:
@@ -1036,6 +1043,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def delete_nodes(
         self,
+        *,
         collection: str,
         node_uids: Iterable[str],
     ) -> None:

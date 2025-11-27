@@ -132,6 +132,7 @@ class LongTermMemory:
     async def search(
         self,
         query: str,
+        *,
         num_episodes_limit: int,
         property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
