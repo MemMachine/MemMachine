@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import pytest
 import pytest_asyncio
 
-from memmachine import MemMachine
+from memmachine import MemMachine, setup_nltk
 from memmachine.common.configuration import (
     Configuration,
     EmbeddersConf,
@@ -263,6 +263,11 @@ def memmachine_config(
 @pytest.fixture
 def memmachine_top(memmachine_config: Configuration):
     return MemMachine(memmachine_config)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def session_setup():
+    setup_nltk()
 
 
 @pytest_asyncio.fixture

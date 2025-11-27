@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from memmachine import setup_nltk
 from memmachine.common.configuration import (
     Configuration,
 )
@@ -36,11 +35,6 @@ def long_mem_question(long_mem_data):
 @pytest.fixture(scope="session")
 def long_mem_conversations(long_mem_data):
     return long_mem_data["haystack_sessions"]
-
-
-@pytest.fixture(scope="session", autouse=True)
-def session_setup():
-    setup_nltk()
 
 
 class TestMemMachineLongMemEval:
