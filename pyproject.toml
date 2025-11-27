@@ -77,6 +77,8 @@ enable_error_code = ["deprecated"]
 exclude = ["venv/", ".venv/"]
 plugins = ['pydantic.mypy']
 
+[tool.ruff]
+exclude = ["tools"]
 
 [tool.ruff.lint]
 select = [
