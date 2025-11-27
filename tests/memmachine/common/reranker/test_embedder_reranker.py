@@ -2,7 +2,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from memmachine.common.embedder import Embedder, SimilarityMetric
+from memmachine.common.data_types import SimilarityMetric
+from memmachine.common.embedder import Embedder
 from memmachine.common.reranker.embedder_reranker import (
     EmbedderReranker,
     EmbedderRerankerParams,
