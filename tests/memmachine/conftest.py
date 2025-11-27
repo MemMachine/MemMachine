@@ -153,12 +153,14 @@ def openai_chat_completions_llm_model(
 def bedrock_integration_config():
     aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
     aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-    if not aws_access_key_id or not aws_secret_access_key:
+    aws_region = os.environ.get("AWS_REGION")
+    if not aws_access_key_id or not aws_secret_access_key or not aws_region:
         pytest.skip("AWS credentials not set")
 
     return {
         "aws_access_key_id": aws_access_key_id,
         "aws_secret_access_key": aws_secret_access_key,
+        "aws_region": aws_region,
         "model": "openai.gpt-oss-20b-1:0",
     }
 
@@ -171,6 +173,7 @@ def boto3_bedrock_client(bedrock_integration_config):
         "bedrock-runtime",
         aws_access_key_id=bedrock_integration_config["aws_access_key_id"],
         aws_secret_access_key=bedrock_integration_config["aws_secret_access_key"],
+        region_name=bedrock_integration_config["aws_region"],
     )
 
 
