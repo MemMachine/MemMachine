@@ -1,7 +1,12 @@
 """Public package exports and utilities for MemMachine."""
 
-from memmachine.main.memmachine import MemMachine
-from memmachine.rest_client import MemMachineClient, Memory
+from memmachine.rest_client import MemMachineClient, Memory, Project
+
+try:
+    from memmachine.main.memmachine import MemMachine
+except ImportError:
+    # MemMachine is not available in client-only installations
+    MemMachine = None  # type: ignore
 
 
 def setup_nltk() -> None:
@@ -28,4 +33,8 @@ def setup_nltk() -> None:
     logger.info("NLTK data setup is complete.")
 
 
-__all__ = ["MemMachine", "MemMachineClient", "Memory", "setup_nltk"]
+# Only export MemMachine if it's available
+if MemMachine is not None:
+    __all__ = ["MemMachine", "MemMachineClient", "Memory", "Project", "setup_nltk"]
+else:
+    __all__ = ["MemMachineClient", "Memory", "Project", "setup_nltk"]

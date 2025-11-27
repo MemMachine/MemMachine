@@ -147,8 +147,8 @@ class MemMachineClient:
         org_id: str,
         project_id: str,
         description: str = "",
-        embedder: str = "default",
-        reranker: str = "default",
+        embedder: str = "",
+        reranker: str = "",
         timeout: int | None = None,
     ) -> Project:
         """
@@ -158,8 +158,10 @@ class MemMachineClient:
             org_id: Organization identifier (required)
             project_id: Project identifier (required)
             description: Optional description for the project (default: "")
-            embedder: Embedder model name to use (default: "default")
-            reranker: Reranker model name to use (default: "default")
+            embedder: Embedder model name to use (default: "").
+                     Use "" to let server use its configured defaults, or specify a model name like "default".
+            reranker: Reranker model name to use (default: "").
+                     Use "" to let server use its configured defaults, or specify a model name like "default".
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -185,6 +187,7 @@ class MemMachineClient:
             raise RuntimeError("Cannot create project: client has been closed")
 
         url = f"{self.base_url}/api/v2/projects"
+        # Use user input directly - empty string for server defaults, or specific model name
         data = {
             "org_id": org_id,
             "project_id": project_id,
@@ -199,16 +202,22 @@ class MemMachineClient:
         try:
             response = self._session.post(url, json=data, timeout=request_timeout)
             response.raise_for_status()
+            project_data = response.json()
         except requests.RequestException:
             logger.exception("Failed to create project %s/%s", org_id, project_id)
             raise
         else:
             logger.debug("Project created: %s/%s", org_id, project_id)
+            # Use server response data which contains actual config values
             return Project(
                 client=self,
                 org_id=org_id,
                 project_id=project_id,
-                description=description,
+                description=project_data.get("description", description),
+                # Server API uses "config" but Project class uses "configuration" for consistency
+                configuration=project_data.get("config"),
+                # Server does not return "metadata" in ProjectResponse, so we pass None
+                metadata=None,
             )
 
     def get_project(
@@ -246,6 +255,16 @@ class MemMachineClient:
         if self._closed:
             raise RuntimeError("Cannot get project: client has been closed")
 
+        # Validate inputs
+        if not org_id or not isinstance(org_id, str):
+            raise ValueError("org_id must be a non-empty string")
+        if not project_id or not isinstance(project_id, str):
+            raise ValueError("project_id must be a non-empty string")
+        if "/" in org_id:
+            raise ValueError("org_id cannot contain '/'")
+        if "/" in project_id:
+            raise ValueError("project_id cannot contain '/'")
+
         url = f"{self.base_url}/api/v2/projects/get"
         data = {
             "org_id": org_id,
@@ -262,11 +281,141 @@ class MemMachineClient:
                 org_id=org_id,
                 project_id=project_id,
                 description=project_data.get("description", ""),
-                configuration=project_data.get("configuration"),
-                metadata=project_data.get("metadata"),
+                # Server API uses "config" but Project class uses "configuration" for consistency
+                configuration=project_data.get("config"),
+                # Server does not return "metadata" in ProjectResponse, so we pass None
+                metadata=None,
             )
+        except requests.HTTPError as e:
+            if e.response.status_code == 422:
+                # Try to get detailed error message from response
+                try:
+                    error_detail = e.response.json()
+                    error_msg = f"Validation error (422): {error_detail}"
+                except Exception:
+                    error_msg = "Validation error (422): Invalid org_id or project_id format. Ensure they don't contain '/' and are non-empty strings."
+                logger.exception(
+                    "Failed to get project %s/%s: %s", org_id, project_id, error_msg
+                )
+                raise ValueError(error_msg) from e
+            logger.exception("Failed to get project %s/%s", org_id, project_id)
+            raise
         except requests.RequestException:
             logger.exception("Failed to get project %s/%s", org_id, project_id)
+            raise
+
+    def _validate_project_ids(self, org_id: str, project_id: str) -> None:
+        """Validate org_id and project_id."""
+        if not org_id or not isinstance(org_id, str):
+            raise ValueError("org_id must be a non-empty string")
+        if not project_id or not isinstance(project_id, str):
+            raise ValueError("project_id must be a non-empty string")
+        if "/" in org_id:
+            raise ValueError("org_id cannot contain '/'")
+        if "/" in project_id:
+            raise ValueError("project_id cannot contain '/'")
+
+    def _create_project_with_retry(
+        self,
+        org_id: str,
+        project_id: str,
+        description: str,
+        embedder: str,
+        reranker: str,
+        timeout: int | None,
+    ) -> Project:
+        """Create project, handling concurrent creation (409) by fetching existing."""
+        try:
+            return self.create_project(
+                org_id=org_id,
+                project_id=project_id,
+                description=description,
+                embedder=embedder,
+                reranker=reranker,
+                timeout=timeout,
+            )
+        except requests.HTTPError as create_error:
+            # If project was created between our get and create calls (409),
+            # fetch the existing project
+            if create_error.response.status_code == 409:
+                logger.debug(
+                    "Project %s/%s was created concurrently, fetching existing project",
+                    org_id,
+                    project_id,
+                )
+                return self.get_project(
+                    org_id=org_id, project_id=project_id, timeout=timeout
+                )
+            # Re-raise other HTTP errors from create
+            raise
+
+    def get_or_create_project(
+        self,
+        org_id: str,
+        project_id: str,
+        description: str = "",
+        embedder: str = "",
+        reranker: str = "",
+        timeout: int | None = None,
+    ) -> Project:
+        """
+        Get an existing project or create it if it doesn't exist.
+
+        This method first attempts to get the project. If it doesn't exist (404),
+        it will create the project with the provided parameters. If the project
+        already exists during creation (409), it will fetch the existing project.
+
+        Args:
+            org_id: Organization identifier (required)
+            project_id: Project identifier (required)
+            description: Optional description for the project (default: "").
+                        Only used if project needs to be created.
+            embedder: Embedder model name to use (default: "").
+                     Only used if project needs to be created.
+                     Use "" to let server use its configured defaults, or specify a model name like "default".
+            reranker: Reranker model name to use (default: "").
+                     Only used if project needs to be created.
+                     Use "" to let server use its configured defaults, or specify a model name like "default".
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            Project instance representing the project (existing or newly created)
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+            ValueError: If validation fails
+
+        Example:
+            ```python
+            client = MemMachineClient(base_url="http://localhost:8080")
+            # This will get the project if it exists, or create it if it doesn't
+            project = client.get_or_create_project(
+                org_id="my_org",
+                project_id="my_project",
+                description="My project description"
+            )
+            memory = project.memory(user_id="user123")
+            ```
+
+        """
+        if self._closed:
+            raise RuntimeError("Cannot get or create project: client has been closed")
+
+        self._validate_project_ids(org_id, project_id)
+
+        # First, try to get the project
+        try:
+            return self.get_project(
+                org_id=org_id, project_id=project_id, timeout=timeout
+            )
+        except requests.HTTPError as e:
+            # If project doesn't exist (404), create it
+            if e.response.status_code == 404:
+                return self._create_project_with_retry(
+                    org_id, project_id, description, embedder, reranker, timeout
+                )
+            # Re-raise other HTTP errors from get
             raise
 
     def health_check(self, timeout: int | None = None) -> dict[str, Any]:
@@ -286,7 +435,7 @@ class MemMachineClient:
         request_timeout = timeout if timeout is not None else self.timeout
         try:
             response = self._session.get(
-                f"{self.base_url}/health",
+                f"{self.base_url}/api/v2/health",
                 timeout=request_timeout,
             )
             response.raise_for_status()

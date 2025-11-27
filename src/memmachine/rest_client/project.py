@@ -88,8 +88,8 @@ class Project:
     def memory(
         self,
         group_id: str | None = None,
-        agent_id: str | list[str] | None = None,
-        user_id: str | list[str] | None = None,
+        agent_id: str | None = None,
+        user_id: str | None = None,
         session_id: str | None = None,
         **kwargs: dict[str, Any],
     ) -> Memory:
@@ -98,8 +98,8 @@ class Project:
 
         Args:
             group_id: Group identifier (optional, will be stored in metadata)
-            agent_id: Agent identifier(s) (optional, will be stored in metadata)
-            user_id: User identifier(s) (optional, will be stored in metadata)
+            agent_id: Agent identifier (optional, will be stored in metadata)
+            user_id: User identifier (optional, will be stored in metadata)
             session_id: Session identifier (optional, will be stored in metadata)
             **kwargs: Additional configuration options
 
@@ -184,9 +184,11 @@ class Project:
             project_data = response.json()
 
             # Update project attributes
+            # Server API uses "config" but Project class uses "configuration" for consistency
             self.description = project_data.get("description", self.description)
-            self.configuration = project_data.get("configuration", self.configuration)
-            self.metadata = project_data.get("metadata", self.metadata)
+            self.configuration = project_data.get("config", self.configuration)
+            # Server does not return "metadata" in ProjectResponse, so we keep existing value
+            # self.metadata remains unchanged
         except requests.RequestException:
             logger.exception(
                 "Failed to refresh project %s/%s", self.org_id, self.project_id
