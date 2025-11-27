@@ -2,8 +2,7 @@
 
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request
-from pydantic import ValidationError
+from fastapi import Request
 
 from memmachine import MemMachine
 from memmachine.common.episode_store.episode_model import EpisodeEntry
@@ -13,7 +12,6 @@ from memmachine.server.api_v2.spec import (
     AddMemoryResult,
     SearchMemoriesSpec,
     SearchResult,
-    SessionInfo,
 )
 
 
@@ -43,17 +41,6 @@ class _SessionData:
     @property
     def session_id(self) -> str | None:  # pragma: no cover - simple proxy
         return self.session_key
-
-
-async def get_session_info(request: Request) -> SessionInfo:
-    """Get session info instance."""
-    try:
-        body = await request.json()
-        return SessionInfo.model_validate(body)
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors()) from e
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Invalid JSON body") from e
 
 
 async def _add_messages_to(
