@@ -333,8 +333,8 @@ class EpisodicMemory:
             short_summary = ""
             long_episode = await cast("LongTermMemory", self._long_term_memory).search(
                 query,
-                search_limit,
-                property_filter,
+                num_episodes_limit=search_limit,
+                property_filter=property_filter,
             )
         elif self._long_term_memory is None:
             session_result = (
@@ -354,7 +354,11 @@ class EpisodicMemory:
                     limit=search_limit,
                     filters=property_filter,
                 ),
-                self._long_term_memory.search(query, search_limit, property_filter),
+                self._long_term_memory.search(
+                    query,
+                    num_episodes_limit=search_limit,
+                    property_filter=property_filter,
+                ),
             )
             short_episode, short_summary = session_result
 
