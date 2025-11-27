@@ -1,3 +1,4 @@
+import asyncio
 import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -25,6 +26,7 @@ from memmachine.common.configuration.episodic_config import (
 )
 from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.semantic_memory.semantic_model import SetIdT
+from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
 
 
 @pytest.fixture(scope="session")
@@ -292,6 +294,21 @@ async def session_data(memmachine: MemMachine):
         session_key="test_session",
         role_profile_id=None,
     )
+    semantic_session: SemanticSessionManager = (
+        await memmachine._resources.get_semantic_session_manager()
+    )
+
+    await asyncio.gather(
+        semantic_session.delete_feature_set(session_data=s_data),
+        semantic_session.delete_messages(session_data=s_data),
+    )
+
     await memmachine.create_session(s_data.session_key)
+
     yield s_data
-    await memmachine.delete_session(session_data=s_data)
+
+    await asyncio.gather(
+        memmachine.delete_session(session_data=s_data),
+        semantic_session.delete_feature_set(session_data=s_data),
+        semantic_session.delete_messages(session_data=s_data),
+    )
