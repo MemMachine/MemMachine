@@ -235,34 +235,52 @@ generate_config_for_provider() {
         skip_model = 0
         skip_embedder = 0
         current_section = ""
+        in_episodic = 0
+        in_semantic = 0
         in_long_term = 0
-        in_profile = 0
-        in_session = 0
+        in_short_term = 0
     }
     
-    # Track current top-level section (but skip sections with specific handlers)
-    /^[a-zA-Z]/ && !/^[[:space:]]/ && !/^long_term_memory:/ && !/^profile_memory:/ && !/^sessionMemory:/ {
-        # If we're leaving Model or embedder section, add blank line first
+    # Track current top-level section
+    /^[a-zA-Z]/ && !/^[[:space:]]/ {
+        # If we're leaving language_models or embedders section, add blank line first
         if (in_model_section || in_embedder_section) {
             print ""
         }
         current_section = $1
         current_section = substr(current_section, 1, length(current_section) - 1)  # Remove trailing :
-        in_model_section = (current_section == "Model")
-        in_embedder_section = (current_section == "embedder")
+        in_model_section = (current_section == "language_models")
+        in_embedder_section = (current_section == "embedders")
         skip_model = 0
         skip_embedder = 0
         in_current_model = 0
         in_current_embedder = 0
-        # Don't reset in_long_term, in_profile, in_session here - let their handlers manage them
+        
+        # Track episodic_memory and semantic_memory sections
+        if (current_section == "episodic_memory") {
+            in_episodic = 1
+            in_long_term = 0
+            in_short_term = 0
+        } else {
+            in_episodic = 0
+            in_long_term = 0
+            in_short_term = 0
+        }
+        
+        if (current_section == "semantic_memory") {
+            in_semantic = 1
+        } else {
+            in_semantic = 0
+        }
+        
         print
         next
     }
     
-    # Handle Model section
+    # Handle language_models section
     in_model_section {
         # Check if this is a model definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z_]*:$/) {
+        if (/^  [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             model_key = substr($1, 1, length($1) - 1)  # Remove trailing :
             if (model_key == model_name) {
                 in_current_model = 1
@@ -281,11 +299,11 @@ generate_config_for_provider() {
         }
         if (in_current_model) {
             # Replace model field value if this is the model line
-            if (model_field == "model" && /^    model:/) {
-                print "    model: \"" llm_model "\""
+            if (model_field == "model" && /^      model:/) {
+                print "      model: \"" llm_model "\""
                 next
-            } else if (model_field == "model_id" && /^    model_id:/) {
-                print "    model_id: \"" llm_model "\""
+            } else if (model_field == "model_id" && /^      model_id:/) {
+                print "      model_id: \"" llm_model "\""
                 next
             }
         }
@@ -293,10 +311,10 @@ generate_config_for_provider() {
         next
     }
     
-    # Handle embedder section
+    # Handle embedders section
     in_embedder_section {
         # Check if this is an embedder definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z_]*:$/) {
+        if (/^  [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             embedder_key = substr($1, 1, length($1) - 1)  # Remove trailing :
             if (embedder_key == embedder_name) {
                 in_current_embedder = 1
@@ -327,64 +345,47 @@ generate_config_for_provider() {
         next
     }
     
-    # Handle long_term_memory section - update embedder reference
-    /^long_term_memory:/ {
-        in_long_term = 1
-        print
-        next
-    }
-    in_long_term {
-        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
-            in_long_term = 0
-            # Fall through to let top-level tracker or default rule handle this line
-        } else if (/^  embedder:/) {
-            print "  embedder: " embedder_name
-            next
-        } else {
+    # Handle episodic_memory section
+    in_episodic {
+        # Track long_term_memory subsection
+        if (/^  long_term_memory:/) {
+            in_long_term = 1
+            in_short_term = 0
             print
             next
         }
-    }
-    
-    # Handle profile_memory section - update model references
-    /^profile_memory:/ {
-        in_profile = 1
+        # Track short_term_memory subsection
+        if (/^  short_term_memory:/) {
+            in_short_term = 1
+            in_long_term = 0
+            print
+            next
+        }
+        # Update embedder reference in long_term_memory
+        if (in_long_term && /^    embedder:/) {
+            print "    embedder: " embedder_name
+            next
+        }
+        # Update llm_model reference in short_term_memory
+        if (in_short_term && /^    llm_model:/) {
+            print "    llm_model: " model_name
+            next
+        }
         print
         next
     }
-    in_profile {
-        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
-            in_profile = 0
-            # Fall through to let top-level tracker or default rule handle this line
-        } else if (/^  llm_model:/) {
+    
+    # Handle semantic_memory section - update model references
+    in_semantic {
+        if (/^  llm_model:/) {
             print "  llm_model: " model_name
             next
         } else if (/^  embedding_model:/) {
             print "  embedding_model: " embedder_name
             next
-        } else {
-            print
-            next
         }
-    }
-    
-    # Handle sessionMemory section - update model_name
-    /^sessionMemory:/ {
-        in_session = 1
         print
         next
-    }
-    in_session {
-        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
-            in_session = 0
-            # Fall through to let top-level tracker or default rule handle this line
-        } else if (/^  model_name:/) {
-            print "  model_name: " model_name
-            next
-        } else {
-            print
-            next
-        }
     }
     
     # Default: print all other lines
@@ -940,3 +941,4 @@ case "${1:-}" in
         exit 1
         ;;
 esac
+
