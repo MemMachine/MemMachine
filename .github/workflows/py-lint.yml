@@ -10,7 +10,7 @@ on:
   pull_request:
 
 jobs:
-  ruff-check:
+  ruff:
     name: Ruff
     runs-on: ubuntu-latest
     steps:
