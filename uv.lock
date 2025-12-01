@@ -6,6 +6,13 @@ resolution-markers = [
     "python_full_version != '3.14.*' or sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "memmachine",
+    "memmachine-client",
+    "memmachine-server",
+]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
@@ -1549,6 +1556,73 @@ dev = [
     { name = "testcontainers", extras = ["neo4j", "postgres"], specifier = ">=4.13.1" },
     { name = "ty", specifier = ">=0.0.1a26" },
 ]
+
+[[package]]
+name = "memmachine-client"
+version = "0.1.0"
+source = { editable = "packages/client" }
+dependencies = [
+    { name = "requests" },
+    { name = "urllib3" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "requests", specifier = ">=2.31.0" },
+    { name = "urllib3", specifier = ">=2.0.0" },
+]
+
+[[package]]
+name = "memmachine-server"
+version = "0.1.0"
+source = { editable = "packages/server" }
+dependencies = [
+    { name = "asyncpg", version = "0.30.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version != '3.14.*' or sys_platform != 'win32'" },
+    { name = "asyncpg", version = "0.31.0.dev0+9e42642", source = { git = "https://github.com/MagicStack/asyncpg.git?rev=9e42642b9110d206706697921b6e697a0972649d#9e42642b9110d206706697921b6e697a0972649d" }, marker = "python_full_version == '3.14.*' and sys_platform == 'win32'" },
+    { name = "boto3" },
+    { name = "dotenv" },
+    { name = "fastapi" },
+    { name = "fastmcp" },
+    { name = "langchain-aws" },
+    { name = "neo4j" },
+    { name = "nltk" },
+    { name = "openai" },
+    { name = "pgvector" },
+    { name = "prometheus-client" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "rank-bm25" },
+    { name = "sqlalchemy" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+gpu = [
+    { name = "sentence-transformers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", marker = "python_full_version != '3.14.*' or sys_platform != 'win32'", specifier = ">=0.30.0" },
+    { name = "asyncpg", marker = "python_full_version == '3.14.*' and sys_platform == 'win32'", git = "https://github.com/MagicStack/asyncpg.git?rev=9e42642b9110d206706697921b6e697a0972649d" },
+    { name = "boto3", specifier = ">=1.40.40" },
+    { name = "dotenv", specifier = ">=0.9.9" },
+    { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "fastmcp", specifier = ">=2.12.0" },
+    { name = "langchain-aws", specifier = ">=0.2.33" },
+    { name = "neo4j", specifier = ">=5.28.2" },
+    { name = "nltk", specifier = ">=3.9.1" },
+    { name = "openai", specifier = ">=1.104.2" },
+    { name = "pgvector", specifier = ">=0.4.1" },
+    { name = "prometheus-client", specifier = ">=0.22.1" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rank-bm25", specifier = ">=0.2.2" },
+    { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=5.1.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.43" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
+]
+provides-extras = ["gpu"]
 
 [[package]]
 name = "more-itertools"
