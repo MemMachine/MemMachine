@@ -30,7 +30,7 @@ class EpisodeStorage(ABC):
     @abstractmethod
     async def get_episode(
         self,
-        history_id: EpisodeIdT,
+        episode_id: EpisodeIdT,
     ) -> Episode | None:
         raise NotImplementedError
 
