@@ -1,6 +1,8 @@
 import os
+
 import streamlit as st
 from agents.advisor_buddy import make_advisor_buddy
+
 
 # ---------- helpers ----------
 def extract_final_text(result) -> str:
@@ -53,15 +55,14 @@ if "chat" not in st.session_state:
 # ---------- sidebar ----------
 with st.sidebar:
     st.subheader("🧠 Memory System")
-    
+
     # User ID management
     if st.session_state.get("user_id_source") == "temp":
         st.warning("⚠️ Using temporary ID - memories won't persist!")
         st.caption("Enter your name below to enable persistent memory:")
-        
+
         user_name_input = st.text_input("Your Name", key="name_input", placeholder="e.g., anirudh")
-        if st.button("Set Persistent ID", use_container_width=True):
-            if user_name_input:
+        if st.button("Set Persistent ID", use_container_width=True) and user_name_input:
                 new_user_id = user_name_input.lower().replace(" ", "_")
                 st.session_state.user_id = new_user_id
                 st.session_state.user_id_source = "manual"
@@ -75,9 +76,9 @@ with st.sidebar:
         if st.button("Change User", use_container_width=True):
             st.session_state.user_id_source = "temp"
             st.rerun()
-    
+
     st.markdown("---")
-    
+
     # MemMachine status
     if st.session_state.buddy.memmachine_enabled:
         st.success("✅ MemMachine Connected")
@@ -86,20 +87,20 @@ with st.sidebar:
     else:
         st.warning("⚠️ MemMachine Offline")
         st.caption("Using session-only memory")
-    
+
     st.markdown("---")
     st.subheader("Settings")
     tav = os.getenv("TAVILY_API_KEY")
     st.write("🔑 Tavily:", "✅" if tav else "❌")
     st.caption("Uses Tavily + MemMachine")
-    
+
     st.markdown("---")
     st.markdown("**Quick actions**")
     if st.button("☀️ Daily Brief", use_container_width=True):
         st.session_state.chat.append({"role": "user", "content": "Give me my personalized morning news brief"})
         reply = ask_buddy("Give me my personalized morning news brief")
         st.session_state.chat.append({"role": "assistant", "content": reply})
-    
+
     st.markdown("---")
     st.markdown("### 📋 Features")
     st.markdown("""

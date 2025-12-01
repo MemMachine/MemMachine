@@ -3,19 +3,17 @@
 NewsScout Agent - Specialized in finding and curating news with personalized memory
 Handles all news research, gathering, summarization, and personalized curation
 """
-from typing import List, Dict, Optional
-from strands import Agent, tool
-from tools.http_tool import http_request
-from tools.tavily import tavily_search
-from tools.memmachine import (
-    store_memory,
-    search_memories,
-    get_user_context,
-    store_user_preference
-)
-from datetime import datetime, timedelta
 import hashlib
-import json
+from datetime import UTC, datetime, timedelta
+
+from strands import Agent, tool
+from tools.memmachine import (
+    get_user_context,
+    search_memories,
+    store_memory,
+    store_user_preference,
+)
+from tools.tavily import tavily_search
 
 # Category mappings are now dynamic - loaded from user preferences in memory
 # No hardcoded categories - the system discovers user interests organically
@@ -29,7 +27,7 @@ def _get_category_query(category: str) -> str:
     """
     # Common category patterns (user can specify any category they want)
     category_lower = category.lower().strip()
-    
+
     # Map common category names to search queries (fallback only)
     category_patterns = {
     "tech": "latest technology news",
@@ -42,16 +40,16 @@ def _get_category_query(category: str) -> str:
     "movies": "entertainment and hollywood movie news",
         "entertainment": "entertainment and hollywood movie news",
     }
-    
+
     # Check for exact match or partial match
     if category_lower in category_patterns:
         return category_patterns[category_lower]
-    
+
     # For any other category, create a dynamic query
     return f"latest {category} news"
 
 
-def _dedupe(items: List[Dict]) -> List[Dict]:
+def _dedupe(items: list[dict]) -> list[dict]:
     """Remove duplicate articles by title"""
     seen = set()
     clean = []
@@ -63,7 +61,7 @@ def _dedupe(items: List[Dict]) -> List[Dict]:
     return clean
 
 
-def _filter_recent_articles(articles: List[Dict], hours: int = 48) -> List[Dict]:
+def _filter_recent_articles(articles: list[dict], hours: int = 48) -> list[dict]:
     """
     Filter articles by recency (prioritize recent content).
     Note: Tavily returns relevance scores; higher scores typically indicate more recent/relevant content.
@@ -72,7 +70,7 @@ def _filter_recent_articles(articles: List[Dict], hours: int = 48) -> List[Dict]
     return sorted(articles, key=lambda x: x.get("score", 0), reverse=True)
 
 
-def _format_articles_with_links(articles: List[Dict]) -> str:
+def _format_articles_with_links(articles: list[dict]) -> str:
     """
     Format articles as a string with clickable Markdown links.
     This ensures URLs are always displayed as clickable links in the UI.
@@ -80,17 +78,17 @@ def _format_articles_with_links(articles: List[Dict]) -> str:
     """
     if not articles:
         return ""
-    
+
     formatted_lines = []
     for article in articles:
         title = article.get("title", "Untitled")
         url = article.get("url", "")
         snippet = article.get("snippet", "")
-        
+
         # Clean title and URL - remove special characters that might break Markdown
         title = title.strip()
         url = url.strip()
-        
+
         # Format as clickable link if URL exists - clean Markdown format
         if url and url.startswith(("http://", "https://")):
             # Use bullet point and clean Markdown link format
@@ -98,16 +96,16 @@ def _format_articles_with_links(articles: List[Dict]) -> str:
         else:
             # No valid URL - just show title with bullet
             link_text = f"- {title}"
-        
+
         # Add snippet if available (after the link)
         if snippet:
             snippet = snippet.strip()
             if len(snippet) > 200:
                 snippet = snippet[:197] + "..."
             link_text += f" - {snippet}"
-        
+
         formatted_lines.append(link_text)
-    
+
     # Return as single string with newlines - ready for Markdown rendering
     return "\n".join(formatted_lines)
 
@@ -116,13 +114,13 @@ def _check_recent_search(user_id: str, query: str) -> bool:
     """Check if we've searched for this exact query very recently (within 1 hour)"""
     try:
         query_hash = hashlib.md5(f"{query}_{user_id}".encode()).hexdigest()
-        
+
         result = search_memories(
             query=f"news search: {query}",
             user_id=user_id,
             limit=3
         )
-        
+
         if result.get("status") == "success":
             memories = result.get("episodic_memories", [])
             for mem in memories:
@@ -131,17 +129,17 @@ def _check_recent_search(user_id: str, query: str) -> bool:
                     stored_at = metadata.get("stored_at")
                     if stored_at:
                         try:
-                            stored_time = datetime.fromisoformat(stored_at.replace('Z', '+00:00'))
+                            stored_time = datetime.fromisoformat(stored_at.replace("Z", ""))
                             if datetime.now(stored_time.tzinfo) - stored_time < timedelta(hours=1):
                                 return True
-                        except:
+                        except Exception:
                             pass
         return False
-    except:
+    except Exception:
         return False
 
 
-def _get_user_news_preferences(user_id: str) -> Dict:
+def _get_user_news_preferences(user_id: str) -> dict:
     """Retrieve user's news preferences from memory (profile + episodic)"""
     try:
         context = get_user_context(
@@ -154,11 +152,11 @@ def _get_user_news_preferences(user_id: str) -> Dict:
                 "favorite news topics"
             ]
         )
-        
+
         if context.get("status") == "success":
             ctx = context.get("context", {})
             memories = ctx.get("all_memories", [])
-            
+
             prefs = {
                 "categories": [],
                 "format": "list",  # list, brief, detailed, newsletter
@@ -167,34 +165,27 @@ def _get_user_news_preferences(user_id: str) -> Dict:
                 "exclude_topics": [],
                 "sources_preferred": []
             }
-            
+
             for memory in memories:
                 content = (memory.get("content", "") or "").lower()
-                metadata = memory.get("user_metadata", {})
-                
                 # Extract category preferences dynamically (not from hardcoded list)
                 # Look for phrases like "prefers tech news", "interested in finance", etc.
                 # This allows any category - not limited to hardcoded ones
-                if "tech" in content or "technology" in content:
-                    if "tech" not in prefs["categories"]:
-                        prefs["categories"].append("tech")
-                if "finance" in content or "financial" in content or "business" in content:
-                    if "finance" not in prefs["categories"]:
-                        prefs["categories"].append("finance")
-                if "sports" in content:
-                    if "sports" not in prefs["categories"]:
-                        prefs["categories"].append("sports")
-                if "politics" in content or "political" in content:
-                    if "politics" not in prefs["categories"]:
-                        prefs["categories"].append("politics")
-                if "movies" in content or "entertainment" in content:
-                    if "movies" not in prefs["categories"]:
-                        prefs["categories"].append("movies")
-                
+                if ("tech" in content or "technology" in content) and "tech" not in prefs["categories"]:
+                    prefs["categories"].append("tech")
+                if ("finance" in content or "financial" in content or "business" in content) and "finance" not in prefs["categories"]:
+                    prefs["categories"].append("finance")
+                if "sports" in content and "sports" not in prefs["categories"]:
+                    prefs["categories"].append("sports")
+                if ("politics" in content or "political" in content) and "politics" not in prefs["categories"]:
+                    prefs["categories"].append("politics")
+                if ("movies" in content or "entertainment" in content) and "movies" not in prefs["categories"]:
+                    prefs["categories"].append("movies")
+
                 # Extract any other category mentions from user preferences
                 # This allows dynamic category discovery from user input
                 # Future enhancement: use NLP to extract arbitrary category names
-                
+
                 # Extract format preferences
                 if "brief" in content or "summary" in content:
                     prefs["format"] = "brief"
@@ -202,7 +193,7 @@ def _get_user_news_preferences(user_id: str) -> Dict:
                     prefs["format"] = "detailed"
                 elif "newsletter" in content or "news brief" in content:
                     prefs["format"] = "newsletter"
-                
+
                 # Extract recency preferences
                 if "24 hours" in content or "today" in content or "last 24 hours" in content:
                     prefs["recency_hours"] = 24
@@ -210,21 +201,21 @@ def _get_user_news_preferences(user_id: str) -> Dict:
                     prefs["recency_hours"] = 168
                 elif "48 hours" in content:
                     prefs["recency_hours"] = 48
-            
+
             return prefs
-        
+
         return {}
-    except Exception as e:
+    except Exception:
         return {"categories": [], "format": "list", "recency_hours": 48, "topics": [], "exclude_topics": []}
 
 
 # Keep utility function for backward compatibility
-def fetch_news(category: str = None, query: str = None, limit: int = 5, user_id: str = "default_user") -> List[Dict]:
+def fetch_news(category: str | None = None, query: str | None = None, limit: int = 5, user_id: str = "default_user") -> list[dict]:
     """
     Enhanced utility function with memory-aware fetching.
     Returns a list of {title, url, snippet, score}. Uses Tavily. Deduped. Max 'limit'.
     """
-    results: List[Dict] = []
+    results: list[dict] = []
 
     # Check for recent duplicate searches
     search_query = category or query or ""
@@ -251,13 +242,13 @@ def fetch_news(category: str = None, query: str = None, limit: int = 5, user_id:
 
     # Get user preferences for filtering
     prefs = _get_user_news_preferences(user_id)
-    
+
     # Filter by recency (prioritize higher scores)
     results = _filter_recent_articles(results, prefs.get("recency_hours", 48))
-    
+
     # Dedupe and limit
     results = _dedupe(results)[:limit]
-    
+
     # Store search in memory for future reference
     if search_query and user_id != "default_user":
         store_memory(
@@ -269,12 +260,12 @@ def fetch_news(category: str = None, query: str = None, limit: int = 5, user_id:
                 "query": search_query,
                 "category": category,
                 "query_hash": hashlib.md5(f"{search_query}_{user_id}".encode()).hexdigest(),
-                "stored_at": datetime.now().isoformat(),
+                "stored_at": datetime.now(UTC).isoformat(),
                 "results_count": len(results)
             },
             user_id=user_id
         )
-    
+
     return results
 
 
@@ -285,11 +276,11 @@ def get_personalized_news_brief(user_id: str, limit: int = 5) -> dict:
     """
     Get personalized news brief based on user's preferences and past searches.
     This is the main personalized entry point that leverages memory.
-    
+
     Args:
         user_id: User identifier
         limit: Maximum number of articles per category
-    
+
     Returns:
         Dictionary with personalized news brief.
         CRITICAL: The dictionary includes a "formatted_with_links" field containing pre-formatted Markdown links.
@@ -298,14 +289,14 @@ def get_personalized_news_brief(user_id: str, limit: int = 5) -> dict:
         Do NOT summarize the articles - use the formatted_with_links string exactly as provided.
     """
     prefs = _get_user_news_preferences(user_id)
-    
+
     # Get user's preferred categories from memory (dynamic, not hardcoded)
     # If no preferences exist, use general trending news instead of defaulting to specific categories
     categories = prefs.get("categories", [])
-    
+
     all_articles = []
     category_articles = {}
-    
+
     if not categories:
         # No preferences yet - use general trending/news query (no hardcoded categories)
         articles = fetch_news(query="breaking news today", limit=limit, user_id=user_id)
@@ -318,10 +309,10 @@ def get_personalized_news_brief(user_id: str, limit: int = 5) -> dict:
             articles = fetch_news(category=cat, limit=limit, user_id=user_id)
             category_articles[cat] = articles
             all_articles.extend(articles)
-    
+
     # Format according to user preference
     format_style = prefs.get("format", "list")
-    
+
     # Format articles by category with clickable links
     formatted_by_category = {}
     for cat, articles in category_articles.items():
@@ -333,15 +324,15 @@ def get_personalized_news_brief(user_id: str, limit: int = 5) -> dict:
         formatted_by_category[cat] = formatted_list
         # Also add formatted string with links
         formatted_by_category[f"{cat}_formatted"] = _format_articles_with_links(formatted_list)
-    
+
     return {
         "status": "success",
         "format": format_style,
         "categories": categories,
         "articles_by_category": formatted_by_category,
         "formatted_with_links": "\n\n".join([
-            f"**{cat}:**\n{formatted_by_category.get(f'{cat}_formatted', '')}" 
-            for cat in category_articles.keys()
+            f"**{cat}:**\n{formatted_by_category.get(f'{cat}_formatted', '')}"
+            for cat in category_articles
         ]),  # Pre-formatted string with clickable Markdown links organized by category
         "total_count": len(all_articles),
         "personalized": True
@@ -352,27 +343,27 @@ def get_personalized_news_brief(user_id: str, limit: int = 5) -> dict:
 def get_news_by_category(category: str, limit: int = 5, user_id: str = "default_user", filter_recent: bool = True) -> dict:
     """
     Fetch news for a specific category with memory-aware filtering.
-    
+
     Args:
         category: News category (any category name - not hardcoded, supports any topic)
         limit: Maximum number of articles
         user_id: User identifier for personalization
         filter_recent: Whether to filter for recent articles (default: True, last 48h)
-    
+
     Returns:
-        Dictionary with formatted news articles. 
+        Dictionary with formatted news articles.
         CRITICAL: The dictionary includes a "formatted_with_links" field containing pre-formatted Markdown links.
         You MUST extract the "formatted_with_links" field value and include it directly in your response text.
         Do NOT summarize the articles - use the formatted_with_links string exactly as provided.
     """
     prefs = _get_user_news_preferences(user_id)
     recency_hours = prefs.get("recency_hours", 48) if filter_recent else None
-    
+
     articles = fetch_news(category=category, limit=limit, user_id=user_id)
-    
+
     if recency_hours:
         articles = _filter_recent_articles(articles, recency_hours)
-    
+
     formatted = []
     for article in articles:
         title = article.get("title", "Untitled")
@@ -380,14 +371,14 @@ def get_news_by_category(category: str, limit: int = 5, user_id: str = "default_
         snippet = (article.get("snippet") or "").strip()
         if snippet and len(snippet) > 200:
             snippet = snippet[:197] + "..."
-        
+
         formatted.append({
             "title": title,
             "url": url,
             "snippet": snippet,
             "relevance_score": article.get("score", 0)
         })
-    
+
     # Store user preference if they search this category frequently
     if user_id != "default_user":
         store_memory(
@@ -397,14 +388,14 @@ def get_news_by_category(category: str, limit: int = 5, user_id: str = "default_
             episode_type="news_preference",
             metadata={
                 "category": category,
-                "stored_at": datetime.now().isoformat()
+                "stored_at": datetime.now(UTC).isoformat()
             },
             user_id=user_id
         )
-    
+
     # Add formatted string with clickable links for easy display
     formatted_string = _format_articles_with_links(formatted)
-    
+
     return {
         "status": "success",
         "category": category,
@@ -419,27 +410,27 @@ def get_news_by_category(category: str, limit: int = 5, user_id: str = "default_
 def search_news_by_topic(topic: str, limit: int = 5, user_id: str = "default_user", filter_recent: bool = True) -> dict:
     """
     Search for news on a specific topic, company, or event with memory integration.
-    
+
     Args:
         topic: What to search for (e.g., "NVIDIA stock", "AI developments")
         limit: Maximum number of articles
         user_id: User identifier for personalization
         filter_recent: Whether to filter for recent articles (default: True, last 48h)
-    
+
     Returns:
-        Dictionary with formatted news articles. 
+        Dictionary with formatted news articles.
         CRITICAL: The dictionary includes a "formatted_with_links" field containing pre-formatted Markdown links.
         You MUST extract the "formatted_with_links" field value and include it directly in your response text.
         Do NOT summarize the articles - use the formatted_with_links string exactly as provided.
     """
     prefs = _get_user_news_preferences(user_id)
     recency_hours = prefs.get("recency_hours", 48) if filter_recent else None
-    
+
     articles = fetch_news(query=topic, limit=limit, user_id=user_id)
-    
+
     if recency_hours:
         articles = _filter_recent_articles(articles, recency_hours)
-    
+
     formatted = []
     for article in articles:
         title = article.get("title", "Untitled")
@@ -447,14 +438,14 @@ def search_news_by_topic(topic: str, limit: int = 5, user_id: str = "default_use
         snippet = (article.get("snippet") or "").strip()
         if snippet and len(snippet) > 200:
             snippet = snippet[:197] + "..."
-        
+
         formatted.append({
             "title": title,
             "url": url,
             "snippet": snippet,
             "relevance_score": article.get("score", 0)
         })
-    
+
     # Store search topic for future personalization
     if user_id != "default_user":
         store_memory(
@@ -464,14 +455,14 @@ def search_news_by_topic(topic: str, limit: int = 5, user_id: str = "default_use
             episode_type="news_search",
             metadata={
                 "topic": topic,
-                "stored_at": datetime.now().isoformat()
+                "stored_at": datetime.now(UTC).isoformat()
             },
             user_id=user_id
         )
-    
+
     # Add formatted string with clickable links for easy display
     formatted_string = _format_articles_with_links(formatted)
-    
+
     return {
         "status": "success",
         "topic": topic,
@@ -486,25 +477,25 @@ def search_news_by_topic(topic: str, limit: int = 5, user_id: str = "default_use
 def get_trending_headlines(limit: int = 5, user_id: str = "default_user", filter_recent: bool = True) -> dict:
     """
     Get the latest trending news headlines with memory awareness.
-    
+
     Args:
         limit: Maximum number of articles
         user_id: User identifier
         filter_recent: Whether to filter for recent articles (default: True)
-    
+
     Returns:
-        Dictionary with formatted news articles. 
+        Dictionary with formatted news articles.
         CRITICAL: The dictionary includes a "formatted_with_links" field containing pre-formatted Markdown links.
         You MUST extract the "formatted_with_links" field value and include it directly in your response text.
         Do NOT summarize the articles - use the formatted_with_links string exactly as provided.
     """
     articles = fetch_news(query="breaking news today", limit=limit, user_id=user_id)
-    
+
     if filter_recent:
         prefs = _get_user_news_preferences(user_id)
         recency_hours = prefs.get("recency_hours", 48)
         articles = _filter_recent_articles(articles, recency_hours)
-    
+
     formatted = []
     for article in articles:
         title = article.get("title", "Untitled")
@@ -512,17 +503,17 @@ def get_trending_headlines(limit: int = 5, user_id: str = "default_user", filter
         snippet = (article.get("snippet") or "").strip()
         if snippet and len(snippet) > 200:
             snippet = snippet[:197] + "..."
-        
+
         formatted.append({
             "title": title,
             "url": url,
             "snippet": snippet,
             "relevance_score": article.get("score", 0)
         })
-    
+
     # Add formatted string with clickable links for easy display
     formatted_string = _format_articles_with_links(formatted)
-    
+
     return {
         "status": "success",
         "articles": formatted,
@@ -533,15 +524,15 @@ def get_trending_headlines(limit: int = 5, user_id: str = "default_user", filter
 
 
 @tool
-def summarize_and_analyze_news(articles: List[Dict], analysis_type: str = "themes") -> dict:
+def summarize_and_analyze_news(articles: list[dict], analysis_type: str = "themes") -> dict:
     """
     Summarize and analyze news articles to identify key themes, trends, and insights.
     This demonstrates the summarization capability like ChatGPT news scouts.
-    
+
     Args:
         articles: List of article dictionaries with title, url, snippet
         analysis_type: Type of analysis - "themes", "summary", "trends", "full"
-    
+
     Returns:
         Dictionary with summary, themes, and insights.
         Note: This tool does not return formatted_with_links - use it with other news tools to get articles with links.
@@ -551,20 +542,20 @@ def summarize_and_analyze_news(articles: List[Dict], analysis_type: str = "theme
             "status": "error",
             "message": "No articles provided for analysis"
         }
-    
+
     # Extract content
     article_texts = []
     for article in articles:
         title = article.get("title", "")
         snippet = article.get("snippet", "")
         article_texts.append(f"{title}: {snippet}")
-    
+
     combined_text = "\n\n".join(article_texts)
-    
+
     # Identify key themes (simple keyword-based, in production would use LLM)
     themes = []
     keywords = {}
-    
+
     # Common news themes
     theme_keywords = {
         "Technology": ["tech", "AI", "artificial intelligence", "software", "digital", "tech", "innovation"],
@@ -574,21 +565,21 @@ def summarize_and_analyze_news(articles: List[Dict], analysis_type: str = "theme
         "Sports": ["game", "team", "player", "championship", "sports", "match"],
         "Entertainment": ["movie", "film", "celebrity", "entertainment", "hollywood", "TV"]
     }
-    
+
     text_lower = combined_text.lower()
     for theme, keys in theme_keywords.items():
         count = sum(1 for key in keys if key in text_lower)
         if count > 0:
             keywords[theme] = count
             themes.append(theme)
-    
+
     # Generate summary (simplified - in production, use LLM for better summaries)
     top_themes = sorted(keywords.items(), key=lambda x: x[1], reverse=True)[:3]
     theme_summary = ", ".join([theme for theme, _ in top_themes])
-    
+
     summary = f"Analysis of {len(articles)} articles reveals key themes: {theme_summary}. "
     summary += f"Top stories include: {articles[0].get('title', 'N/A')} and {articles[1].get('title', 'N/A') if len(articles) > 1 else 'N/A'}."
-    
+
     # Include URLs for top stories (needed for clickable links in responses)
     top_stories_with_urls = []
     for a in articles[:3]:
@@ -598,7 +589,7 @@ def summarize_and_analyze_news(articles: List[Dict], analysis_type: str = "theme
             "title": title,
             "url": url
         })
-    
+
     return {
         "status": "success",
         "analysis_type": analysis_type,
@@ -614,24 +605,24 @@ def summarize_and_analyze_news(articles: List[Dict], analysis_type: str = "theme
 @tool
 def set_user_news_preferences(
     user_id: str,
-    preferred_categories: Optional[List[str]] = None,
-    format_style: Optional[str] = None,
-    recency_hours: Optional[int] = None
+    preferred_categories: list[str] | None = None,
+    format_style: str | None = None,
+    recency_hours: int | None = None
 ) -> dict:
     """
     Store user's news preferences in memory for future personalization.
-    
+
     Args:
         user_id: User identifier
         preferred_categories: List of preferred categories (any category name - not hardcoded)
         format_style: Preferred format (list, brief, detailed, newsletter)
         recency_hours: Preferred recency window (24, 48, 168 for week)
-    
+
     Returns:
         Status of preference storage
     """
     preferences_to_store = []
-    
+
     if preferred_categories:
         categories_str = ", ".join(preferred_categories)
         store_user_preference(
@@ -640,7 +631,7 @@ def set_user_news_preferences(
             preference_value=categories_str
         )
         preferences_to_store.append(f"Categories: {categories_str}")
-    
+
     if format_style:
         store_user_preference(
             user_id=user_id,
@@ -648,7 +639,7 @@ def set_user_news_preferences(
             preference_value=format_style
         )
         preferences_to_store.append(f"Format: {format_style}")
-    
+
     if recency_hours:
         store_user_preference(
             user_id=user_id,
@@ -656,7 +647,7 @@ def set_user_news_preferences(
             preference_value=str(recency_hours)
         )
         preferences_to_store.append(f"Recency: {recency_hours} hours")
-    
+
     # Also store as memory for context
     if preferences_to_store:
         store_memory(
@@ -669,11 +660,11 @@ def set_user_news_preferences(
                 "categories": preferred_categories,
                 "format": format_style,
                 "recency_hours": recency_hours,
-                "stored_at": datetime.now().isoformat()
+                "stored_at": datetime.now(UTC).isoformat()
             },
             user_id=user_id
         )
-    
+
     return {
         "status": "success",
         "message": f"Stored preferences: {', '.join(preferences_to_store) if preferences_to_store else 'None'}",
@@ -689,15 +680,15 @@ def set_user_news_preferences(
 def get_user_news_preferences(user_id: str) -> dict:
     """
     Retrieve user's stored news preferences from memory.
-    
+
     Args:
         user_id: User identifier
-    
+
     Returns:
         Dictionary with user preferences
     """
     prefs = _get_user_news_preferences(user_id)
-    
+
     return {
         "status": "success",
         "preferences": prefs
@@ -708,10 +699,10 @@ def make_news_scout(user_id: str = "default_user") -> Agent:
     """
     Creates an enhanced NewsScout agent with memory integration and personalization.
     Demonstrates ChatGPT-like news scout capabilities with MemMachine memory layer.
-    
+
     Args:
         user_id: User identifier for personalization
-    
+
     Returns:
         Configured Agent instance
     """
@@ -756,7 +747,7 @@ BEHAVIOR:
 
 **CRITICAL RESPONSE RULE - THIS IS MANDATORY - READ CAREFULLY:**
 
-When you call ANY news tool (search_news_by_topic, get_news_by_category, get_personalized_news_brief, etc.), 
+When you call ANY news tool (search_news_by_topic, get_news_by_category, get_personalized_news_brief, etc.),
 the tool returns a JSON dictionary. Inside that dictionary, there is a field called "formatted_with_links".
 
 **YOU MUST DO THIS:**
@@ -821,7 +812,7 @@ CORRECT format (DO this):
 - If you forget to include formatted_with_links, your response is INCOMPLETE - every article MUST have its clickable link!
 
 Request: "I prefer tech and finance news, give me a brief summary"
-Response: 
+Response:
 1. [Call: set_user_news_preferences(user_id, ["tech", "finance"], "brief")]
 2. [Call: get_personalized_news_brief(user_id, 5)]
 3. The tool returns: {{"status": "success", "formatted_with_links": "- [Article 1](url1) - summary\\n- [Article 2](url2) - summary"}}
@@ -855,7 +846,7 @@ Response:
 You are intelligent, personalized, and always showcase the power of memory! 🚀
 **Remember**: This is a demo - highlight how memory makes each interaction better!
 """
-    
+
     agent = Agent(
         system_prompt=system_prompt,
         tools=[
@@ -868,8 +859,8 @@ You are intelligent, personalized, and always showcase the power of memory! 🚀
             get_user_news_preferences
         ]
     )
-    
+
     agent.agent_name = "NewsScout"
     agent.user_id = user_id
-    
+
     return agent

@@ -5,34 +5,32 @@ Delegates to specialized agents: NewsScout and MemoryKeeper
 TRUE Multi-Agent Architecture
 """
 from strands import Agent, tool
-from typing import Optional, Dict, Any
-import hashlib
 
 
 def make_advisor_buddy(user_id: str = "default_user"):
     """
     Creates the main AdvisorBuddy orchestrator agent.
     Coordinates between NewsScout and MemoryKeeper agents.
-    
+
     Args:
         user_id: The user this agent will interact with
-    
+
     Returns:
         Configured Agent instance with sub-agent delegation tools
     """
     # Import sub-agents
-    from agents.news_scout import make_news_scout
     from agents.memory_keeper import make_memory_keeper
+    from agents.news_scout import make_news_scout
     from tools.memmachine import check_memmachine_health
-    
+
     # Initialize sub-agents with user_id for memory integration
     news_scout = make_news_scout(user_id=user_id)
     memory_keeper = make_memory_keeper(user_id=user_id)
-    
+
     # Check MemMachine status
     memmachine_health = check_memmachine_health()
     memmachine_status = "✅ Connected" if memmachine_health.get("status") == "healthy" else "⚠️  Offline"
-    
+
     # Load user context and name
     user_name = None
     if memmachine_status == "✅ Connected":
@@ -48,68 +46,66 @@ def make_advisor_buddy(user_id: str = "default_user"):
             print(f"⚠️  Could not load user context: {e}")
     else:
         print(f"{memmachine_status} - Using session-only memory")
-    
+
     # === DELEGATION TOOLS ===
     # These tools allow AdvisorBuddy to delegate to specialized agents
-    
+
     @tool
     def ask_memory_keeper(request: str) -> str:
         """
         Delegate to MemoryKeeper agent for all memory-related operations.
         Use this when you need to store or recall user information.
-        
+
         Args:
             request: What to ask the MemoryKeeper (e.g., "Store that the user invested in NVIDIA",
                     "What do we know about this user's preferences?")
-        
+
         Returns:
             MemoryKeeper's response
-        
+
         Examples:
             ask_memory_keeper("Store that the user's name is Anirudh")
             ask_memory_keeper("What investments have been stored?")
             ask_memory_keeper("Recall what the user told us about basketball")
         """
         result = memory_keeper(request)
-        
+
         # Extract text from result
-        if hasattr(result, 'text'):
+        if hasattr(result, "text"):
             return result.text
-        elif hasattr(result, 'messages') and result.messages:
+        if hasattr(result, "messages") and result.messages:
             return result.messages[-1].content
-        else:
-            return str(result)
-    
+        return str(result)
+
     @tool
     def ask_news_scout(request: str) -> str:
         """
         Delegate to NewsScout agent for all news-related research.
         Use this when the user wants news on any topic.
-        
+
         Args:
             request: What to ask the NewsScout (e.g., "Find tech news",
                     "Search for NVIDIA stock news", "Get trending headlines")
-        
+
         Returns:
             NewsScout's response with articles
-        
+
         Examples:
             ask_news_scout("Find the latest tech news")
             ask_news_scout("Search for news about NVIDIA stock")
             ask_news_scout("Get trending headlines")
         """
         result = news_scout(request)
-        
+
         # Extract text from result
-        if hasattr(result, 'text'):
+        if hasattr(result, "text"):
             return result.text
-        elif hasattr(result, 'messages') and result.messages:
+        if hasattr(result, "messages") and result.messages:
             return result.messages[-1].content
-        else:
-            return str(result)
-    
+        return str(result)
+
     # === MAIN ORCHESTRATOR PROMPT ===
-    
+
     system_prompt = f"""You are AdvisorBuddy ☕, the main host and orchestrator of a morning news briefing system.
 
 USER INFO:
@@ -142,11 +138,11 @@ CONVERSATION FLOW:
 2. **User wants news on ONE topic** → Delegate to NewsScout ONCE
    Example: "What's happening in tech?"
    Your action: ask_news_scout("Find the latest tech news")
-   
+
 3. **User wants multiple news categories** → Ask which ONE they want first
    Example: "Give me tech, finance, and sports news"
    Your response: "I'd be happy to! Which would you like first - tech, finance, or sports?"
-   
+
 4. **User asks about past conversation** → Delegate to MemoryKeeper
    Example: "What did I tell you about my investments?"
    Your action: ask_memory_keeper("What investments has the user mentioned?")
@@ -165,7 +161,7 @@ CONVERSATION FLOW:
 
 PERSONALITY:
 - Warm, energetic, and engaging
-- Use emojis appropriately 
+- Use emojis appropriately
 - Make users feel heard and remembered
 - Be proactive (offer related news when user mentions interests)
 
@@ -222,13 +218,13 @@ REMEMBER:
 
 Let's give the user an amazing, personalized experience! 🌟
 """
-    
+
     # Create the main orchestrator agent
     advisor = Agent(
         system_prompt=system_prompt,
         tools=[ask_memory_keeper, ask_news_scout]
     )
-    
+
     # Attach metadata
     advisor.user_id = user_id
     advisor.user_name = user_name  # May be None if not stored yet
@@ -238,6 +234,5 @@ Let's give the user an amazing, personalized experience! 🌟
         "memory_keeper": memory_keeper,
         "news_scout": news_scout
     }
-    
-    return advisor
 
+    return advisor

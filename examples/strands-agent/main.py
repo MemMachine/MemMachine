@@ -1,18 +1,20 @@
-from agents.advisor_buddy import make_advisor_buddy
 import sys
+
+from agents.advisor_buddy import make_advisor_buddy
+
 
 def run():
     # Get user ID from command line or use default
     user_id = sys.argv[1] if len(sys.argv) > 1 else "default_user"
-    
-    print(f"\n☀️ Morning Brief — TRUE Multi-Agent System")
+
+    print("\n☀️ Morning Brief — TRUE Multi-Agent System")
     print(f"👤 User: {user_id}")
-    print(f"🤖 3 Specialized Agents Working Together")
+    print("🤖 3 Specialized Agents Working Together")
     print("━" * 50)
-    
+
     # Create the multi-agent system
     buddy = make_advisor_buddy(user_id=user_id)
-    
+
     print("\n💬 Multi-Agent System Ready!")
     print("   🎙️  AdvisorBuddy - Your main host & orchestrator")
     print("   🧠 MemoryKeeper - Remembers everything about you")
@@ -31,7 +33,7 @@ def run():
         try:
             # Call the agent - it will understand and respond
             print()  # Blank line before response
-            result = buddy(q)
+            buddy(q)
             print()  # Blank line after response
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
