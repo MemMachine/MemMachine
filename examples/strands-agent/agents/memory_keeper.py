@@ -3,6 +3,7 @@
 MemoryKeeper Agent - Specialized in managing user context and memories
 Handles all interactions with MemMachine
 """
+
 import hashlib
 
 from strands import Agent, tool
@@ -30,7 +31,7 @@ def store_user_info(user_id: str, info_type: str, info_value: str) -> dict:
         user_id=user_id,
         preference_type=info_type,
         preference_value=info_value,
-        session_id=hashlib.md5(user_id.encode()).hexdigest()[:16]
+        session_id=hashlib.md5(user_id.encode()).hexdigest()[:16],
     )
 
 
@@ -54,11 +55,7 @@ def recall_user_info(user_id: str, query: str | None = None) -> dict:
 
         # If specific query, do semantic search
         if query:
-            search_result = search_memories(
-                query=query,
-                user_id=user_id,
-                limit=10
-            )
+            search_result = search_memories(query=query, user_id=user_id, limit=10)
             relevant_memories = []
             if search_result.get("status") == "success":
                 for mem in search_result.get("episodic_memories", []):
@@ -72,7 +69,7 @@ def recall_user_info(user_id: str, query: str | None = None) -> dict:
                 "interests": ctx.get("interests", []),
                 "preferences": ctx.get("preferences", []),
                 "relevant_memories": relevant_memories[:5],
-                "has_context": True
+                "has_context": True,
             }
 
         return {
@@ -81,13 +78,13 @@ def recall_user_info(user_id: str, query: str | None = None) -> dict:
             "interests": ctx.get("interests", []),
             "preferences": ctx.get("preferences", []),
             "recent_topics": ctx.get("recent_topics", []),
-            "has_context": True
+            "has_context": True,
         }
 
     return {
         "status": "error",
         "has_context": False,
-        "message": "No stored context found for this user"
+        "message": "No stored context found for this user",
     }
 
 
@@ -104,27 +101,19 @@ def search_user_memories(user_id: str, query: str, limit: int = 5) -> dict:
     Returns:
         Relevant memories matching the query
     """
-    result = search_memories(
-        query=query,
-        user_id=user_id,
-        limit=limit
-    )
+    result = search_memories(query=query, user_id=user_id, limit=limit)
 
     if result.get("status") == "success":
         memories = [
             {
                 "content": mem.get("content", ""),
                 "timestamp": mem.get("timestamp", ""),
-                "type": mem.get("episode_type", "")
+                "type": mem.get("episode_type", ""),
             }
             for mem in result.get("episodic_memories", [])
         ]
 
-        return {
-            "status": "success",
-            "memories": memories,
-            "count": len(memories)
-        }
+        return {"status": "success", "memories": memories, "count": len(memories)}
 
     return result
 
@@ -181,7 +170,7 @@ You are precise, organized, and never forget a detail! 🎯
 
     agent = Agent(
         system_prompt=system_prompt,
-        tools=[store_user_info, recall_user_info, search_user_memories]
+        tools=[store_user_info, recall_user_info, search_user_memories],
     )
 
     agent.user_id = user_id

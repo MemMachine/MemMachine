@@ -42,5 +42,6 @@ def run():
             print(f"⚠️ Error: {e}")
             print()
 
+
 if __name__ == "__main__":
     run()

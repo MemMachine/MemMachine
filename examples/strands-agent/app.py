@@ -22,12 +22,14 @@ def extract_final_text(result) -> str:
     # Last resort
     return str(result)
 
+
 def ask_buddy(prompt: str) -> str:
     try:
         res = st.session_state.buddy(prompt)
         return extract_final_text(res).strip()
     except Exception as e:
         return f"⚠️ Error: {e}"
+
 
 # ---------- boot ----------
 st.set_page_config(page_title="☕ Morning Brief + MemMachine", layout="wide")
@@ -44,6 +46,7 @@ if "user_id" not in st.session_state:
     else:
         # Generate a random ID for now (will be replaced when user enters name)
         import uuid
+
         st.session_state.user_id = str(uuid.uuid4())[:8]
         st.session_state.user_id_source = "temp"
 
@@ -61,15 +64,17 @@ with st.sidebar:
         st.warning("⚠️ Using temporary ID - memories won't persist!")
         st.caption("Enter your name below to enable persistent memory:")
 
-        user_name_input = st.text_input("Your Name", key="name_input", placeholder="e.g., anirudh")
+        user_name_input = st.text_input(
+            "Your Name", key="name_input", placeholder="e.g., anirudh"
+        )
         if st.button("Set Persistent ID", use_container_width=True) and user_name_input:
-                new_user_id = user_name_input.lower().replace(" ", "_")
-                st.session_state.user_id = new_user_id
-                st.session_state.user_id_source = "manual"
-                # Recreate agent with new user ID
-                st.session_state.buddy = make_advisor_buddy(user_id=new_user_id)
-                st.success(f"✅ Set persistent ID: {new_user_id}")
-                st.rerun()
+            new_user_id = user_name_input.lower().replace(" ", "_")
+            st.session_state.user_id = new_user_id
+            st.session_state.user_id_source = "manual"
+            # Recreate agent with new user ID
+            st.session_state.buddy = make_advisor_buddy(user_id=new_user_id)
+            st.success(f"✅ Set persistent ID: {new_user_id}")
+            st.rerun()
     else:
         st.success(f"✅ Persistent User: **{st.session_state.user_id}**")
         st.caption("Your memories will persist across sessions!")
@@ -97,7 +102,9 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Quick actions**")
     if st.button("☀️ Daily Brief", use_container_width=True):
-        st.session_state.chat.append({"role": "user", "content": "Give me my personalized morning news brief"})
+        st.session_state.chat.append(
+            {"role": "user", "content": "Give me my personalized morning news brief"}
+        )
         reply = ask_buddy("Give me my personalized morning news brief")
         st.session_state.chat.append({"role": "assistant", "content": reply})
 
@@ -127,7 +134,9 @@ for msg in st.session_state.chat:
         st.markdown(msg["content"])
 
 # ---------- input ----------
-prompt = st.chat_input("Ask for news or any topic (e.g., 'AI breakthroughs', 'cricket', 'markets')")
+prompt = st.chat_input(
+    "Ask for news or any topic (e.g., 'AI breakthroughs', 'cricket', 'markets')"
+)
 if prompt:
     st.session_state.chat.append({"role": "user", "content": prompt})
     with st.chat_message("assistant"):

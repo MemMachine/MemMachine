@@ -4,6 +4,7 @@ AdvisorBuddy - Main Orchestrator Agent
 Delegates to specialized agents: NewsScout and MemoryKeeper
 TRUE Multi-Agent Architecture
 """
+
 from strands import Agent, tool
 
 
@@ -29,7 +30,9 @@ def make_advisor_buddy(user_id: str = "default_user"):
 
     # Check MemMachine status
     memmachine_health = check_memmachine_health()
-    memmachine_status = "✅ Connected" if memmachine_health.get("status") == "healthy" else "⚠️  Offline"
+    memmachine_status = (
+        "✅ Connected" if memmachine_health.get("status") == "healthy" else "⚠️  Offline"
+    )
 
     # Load user context and name
     user_name = None
@@ -37,6 +40,7 @@ def make_advisor_buddy(user_id: str = "default_user"):
         print(f"{memmachine_status} - MemMachine enabled!")
         try:
             from tools.memmachine import get_user_context
+
             context_result = get_user_context(user_id=user_id)
             if context_result.get("status") == "success":
                 user_name = context_result.get("context", {}).get("name")
@@ -221,8 +225,7 @@ Let's give the user an amazing, personalized experience! 🌟
 
     # Create the main orchestrator agent
     advisor = Agent(
-        system_prompt=system_prompt,
-        tools=[ask_memory_keeper, ask_news_scout]
+        system_prompt=system_prompt, tools=[ask_memory_keeper, ask_news_scout]
     )
 
     # Attach metadata
@@ -230,9 +233,6 @@ Let's give the user an amazing, personalized experience! 🌟
     advisor.user_name = user_name  # May be None if not stored yet
     advisor.memmachine_enabled = memmachine_status == "✅ Connected"
     advisor.agent_name = "AdvisorBuddy"
-    advisor.sub_agents = {
-        "memory_keeper": memory_keeper,
-        "news_scout": news_scout
-    }
+    advisor.sub_agents = {"memory_keeper": memory_keeper, "news_scout": news_scout}
 
     return advisor
