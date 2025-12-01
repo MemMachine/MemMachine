@@ -7,7 +7,7 @@ name = "memmachine"
 version = "0.1.0"
 dependencies = [
     "alembic>=1.17.1",
-    "asyncpg>=0.30.0",
+    "asyncpg>=0.31.0",
     "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
     "boto3-stubs==1.40.64",
@@ -181,11 +181,6 @@ details = "low"
 color = "auto"
 sort = "desc"
 exclude = []
-
-[[tool.uv.sources.asyncpg]]
-git = "https://github.com/MagicStack/asyncpg.git"
-rev = "9e42642b9110d206706697921b6e697a0972649d"
-marker = "sys_platform == 'win32' and python_version == '3.14'"
 
 [tool.coverage.run]
 source = [
