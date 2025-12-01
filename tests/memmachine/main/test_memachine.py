@@ -223,6 +223,35 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_memmachine_count_episodes_totals_all(
+    memmachine: MemMachine,
+    session_data,
+):
+    entries = [
+        EpisodeEntry(
+            content="count-1",
+            producer_id="user",
+            producer_role="assistant",
+        ),
+        EpisodeEntry(
+            content="count-2",
+            producer_id="user",
+            producer_role="assistant",
+        ),
+    ]
+    episode_ids = await memmachine.add_episodes(
+        session_data, entries, target_memories=[]
+    )
+
+    try:
+        total = await memmachine.episodes_count(session_data=session_data)
+        assert total == len(entries)
+    finally:
+        await memmachine.delete_episodes(episode_ids, session_data=session_data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_memmachine_list_search_filters_metadata(
     memmachine: MemMachine,
     session_data,
@@ -257,6 +286,49 @@ async def test_memmachine_list_search_filters_metadata(
         assert [episode.content for episode in filtered.episodic_memory] == [
             "hello there"
         ]
+    finally:
+        await memmachine.delete_episodes(episode_ids, session_data=session_data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_memmachine_count_episodes_respects_filters(
+    memmachine: MemMachine,
+    session_data,
+):
+    entries = [
+        EpisodeEntry(
+            content="alpha-1",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={"topic": "alpha"},
+        ),
+        EpisodeEntry(
+            content="beta-1",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={"topic": "beta"},
+        ),
+        EpisodeEntry(
+            content="alpha-2",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={"topic": "alpha"},
+        ),
+    ]
+    episode_ids = await memmachine.add_episodes(
+        session_data, entries, target_memories=[]
+    )
+
+    try:
+        filtered = await memmachine.episodes_count(
+            session_data=session_data,
+            search_filter="metadata.topic = 'alpha'",
+        )
+        total = await memmachine.episodes_count(session_data=session_data)
+
+        assert filtered == 2
+        assert total == len(entries)
     finally:
         await memmachine.delete_episodes(episode_ids, session_data=session_data)
 
