@@ -52,6 +52,7 @@ resources:
       config:
         model: "text-embedding-3-small"
         api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
         dimensions: 1536
     aws_embedder_id:
       provider: 'amazon-bedrock'
@@ -74,6 +75,7 @@ resources:
       config:
         model: "gpt-4o-mini"
         api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
     aws_model:
       provider: "amazon-bedrock"
       config:

@@ -503,6 +503,23 @@ check_config_file() {
     fi
 }
 
+select_openai_base_url() {
+    local base_url=""
+    local reply=""
+    
+    print_prompt
+    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
+    if [[ $reply =~ ^[Yy]$ ]]; then
+        print_prompt
+        read -p "Enter your OpenAI Base URL: " base_url
+        if [ -n "$base_url" ]; then
+            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+            print_success "Set OpenAI Base URL to $base_url"
+        fi
+    fi
+}
+
 # Prompt user if they would like to set their API keys based on provider; then set it in the .env file and configuration.yml file
 set_provider_api_keys() {
     local api_key=""
@@ -537,6 +554,8 @@ set_provider_api_keys() {
             else
                 print_success "OpenAI API key appears to be configured"
             fi
+            
+            select_openai_base_url
         fi
         
         # Configure Bedrock if selected
