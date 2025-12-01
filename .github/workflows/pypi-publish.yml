@@ -27,6 +27,8 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           echo "Updating pyproject.toml version to $VERSION"
           sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/client/pyproject.toml
+          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/server/pyproject.toml
 
       - name: Install dependencies and uv
         run: |
@@ -34,9 +36,9 @@ jobs:
           pip install --upgrade build
           pip install uv
 
-      - name: Build the package with uv
+      - name: Build the packages with uv
         run: |
-          uv build
+          uv build --project packages/client && uv build --project packages/server
           ls -lh dist/
 
       - name: Upload built distributions as artifact

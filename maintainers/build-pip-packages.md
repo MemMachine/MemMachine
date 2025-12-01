@@ -8,36 +8,34 @@ This project supports creating two independent pip packages:
 
 ## Building
 
+The project uses `uv` workspaces to manage multi-package builds. This allows for building specific packages without swapping configuration files.
+
+### Prerequisites
+
+- `uv` installed (see [uv documentation](https://github.com/astral-sh/uv))
+
 ### Building Client Package
 
 ```bash
-# Backup original configuration
-cp pyproject.toml pyproject.toml.backup
-
-# Use client configuration
-cp pyproject-client.toml pyproject.toml
-
-# Build
-python -m build
-
-# Restore original configuration
-mv pyproject.toml.backup pyproject.toml
+uv build --project packages/client
 ```
+
+This will create the distribution files in `/dist` within the root of the project.
 
 ### Building Server Package
 
 ```bash
-# Backup original configuration
-cp pyproject.toml pyproject.toml.backup
+uv build --project packages/server
+```
 
-# Use server configuration
-cp pyproject-server.toml pyproject.toml
+This will create the distribution files in `/dist` within the root of the project.
 
-# Build
-python -m build
+### Building Both Packages
 
-# Restore original configuration
-mv pyproject.toml.backup pyproject.toml
+You can run both commands sequentially:
+
+```bash
+uv build --project packages/client && uv build --project packages/server
 ```
 
 ## Installation
@@ -48,17 +46,17 @@ mv pyproject.toml.backup pyproject.toml
 ```bash
 pip install dist/memmachine_client-*.whl
 # or
-pip install dist/memmachine-client-*.tar.gz
+pip install dist/memmachine_client-*.tar.gz
 ```
 
 #### Installing Server
 ```bash
 pip install dist/memmachine_server-*.whl
 # or
-pip install dist/memmachine-server-*.tar.gz
+pip install dist/memmachine_server-*.tar.gz
 ```
 
-### Installing from PyPI (if published)
+### Installing from PyPI.org
 
 #### Installing Client
 ```bash
@@ -68,6 +66,12 @@ pip install memmachine-client
 #### Installing Server
 ```bash
 pip install memmachine-server
+```
+
+#### Installing Server with GPU Support
+To install the server with GPU support (includes `sentence-transformers`):
+```bash
+pip install "memmachine-server[gpu]"
 ```
 
 ## Usage
@@ -112,13 +116,12 @@ memmachine-mcp-http
 ### memmachine-client
 - Contains only the `memmachine.rest_client` module
 - Dependencies: `requests`, `urllib3`
-- Lightweight, suitable for scenarios that only need to call the API
+- Lightweight, suitable for scenarios that only need to call the MemMachine ServerAPI
 
 ### memmachine-server
 - Contains all server-related modules:
   - `memmachine.common` - Common components
   - `memmachine.episodic_memory` - Episodic memory
-  - `memmachine.profile_memory` - User profile memory
   - `memmachine.server` - Server application
 - Contains all server dependencies (database, FastAPI, etc.)
 - Includes command-line tools
@@ -127,20 +130,18 @@ memmachine-mcp-http
 
 1. **Namespace**: Both packages share the same namespace `memmachine`, but contain different subpackages
 2. **Compatibility**: If both packages are installed, they can coexist because the modules they contain do not conflict
-3. **Development Mode**: During development, it is recommended to use the main `pyproject.toml` for `pip install -e .`
+3. **Development Mode**: During development, it is recommended to use the main `pyproject.toml` for `pip install -e .` or `uv sync`
 
 ## Publishing to PyPI
 
 To publish to PyPI:
 
-1. Update version numbers (in both configuration files)
-2. Build both packages
-3. Upload to PyPI separately:
+1. Update version numbers in:
+   - `packages/client/pyproject.toml`
+   - `packages/server/pyproject.toml`
+2. Build both packages as described above.
+3. Upload to PyPI:
    ```bash
-   # Upload client
-   twine upload dist/memmachine_client-*
-   
-   # Upload server
-   twine upload dist/memmachine_server-*
+   # Upload both client and server packages
+   twine upload packages/client/dist/* packages/server/dist/*
    ```
-

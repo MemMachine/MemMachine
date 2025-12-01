@@ -2,6 +2,10 @@
 requires = ["uv_build"]
 build-backend = "uv_build"
 
+[tool.uv.workspace]
+members = ["packages/client", "packages/server"]
+
+
 [project]
 name = "memmachine"
 version = "0.1.0"

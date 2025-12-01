@@ -20,7 +20,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
@@ -34,4 +34,3 @@ packages = ["memmachine", "memmachine.rest_client"]
 
 [tool.setuptools.package-dir]
 "" = "src"
-

@@ -34,7 +34,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 
 [project.optional-dependencies]
 gpu = [
@@ -56,25 +56,29 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 packages = [
     "memmachine",
     "memmachine.common",
+    "memmachine.common.configuration",
     "memmachine.common.embedder",
+    "memmachine.common.episode_store",
+    "memmachine.common.filter",
     "memmachine.common.language_model",
     "memmachine.common.metrics_factory",
     "memmachine.common.reranker",
+    "memmachine.common.resource_manager",
+    "memmachine.common.session_manager",
     "memmachine.common.vector_graph_store",
     "memmachine.episodic_memory",
     "memmachine.episodic_memory.declarative_memory",
-    "memmachine.episodic_memory.declarative_memory.derivative_deriver",
-    "memmachine.episodic_memory.declarative_memory.derivative_mutator",
-    "memmachine.episodic_memory.declarative_memory.related_episode_postulator",
     "memmachine.episodic_memory.long_term_memory",
-    "memmachine.episodic_memory.prompt",
-    "memmachine.episodic_memory.session_manager",
     "memmachine.episodic_memory.short_term_memory",
-    "memmachine.profile_memory",
-    "memmachine.profile_memory.storage",
-    "memmachine.profile_memory.util",
     "memmachine.server",
+    "memmachine.main",
     "memmachine.server.prompt",
+    "memmachine.server.api_v2",
+    "memmachine.semantic_memory",
+    "memmachine.semantic_memory.util",
+    "memmachine.semantic_memory.storage",
+    "memmachine.semantic_memory.storage.alembic_pg",
+    "memmachine.semantic_memory.storage.alembic_pg.versions",
 ]
 
 [tool.setuptools.package-data]
@@ -82,4 +86,3 @@ packages = [
 
 [tool.setuptools.package-dir]
 "" = "src"
-
