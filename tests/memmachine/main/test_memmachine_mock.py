@@ -393,6 +393,47 @@ async def test_add_episodes_dispatches_to_all_memories(
 
 
 @pytest.mark.asyncio
+async def test_add_semantic_memory_will_create_nonexistent_session(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("new-session")
+
+    entries = [
+        EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
+    ]
+
+    mock_session_manager = AsyncMock()
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=mock_session_manager
+    )
+    mock_session_manager.get_session_info.return_value = None
+
+    semantic_manager = MagicMock()
+    semantic_manager.add_message = AsyncMock()
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+
+    async def _create_session_side_effect(*args, **kwargs):
+        mock_session_manager.get_session_info.return_value = session
+
+    mock_session_manager.create_new_session = AsyncMock(
+        side_effect=_create_session_side_effect
+    )
+
+    await memmachine.add_episodes(
+        session, entries, target_memories=[MemoryType.Semantic]
+    )
+
+    mock_session_manager.create_new_session.assert_awaited_once()
+    call_args = mock_session_manager.create_new_session.await_args[1]
+    assert call_args["session_key"] == session.session_key
+
+    semantic_manager.add_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_add_episodes_skips_memories_not_requested(
     minimal_conf, patched_resource_manager
 ):
