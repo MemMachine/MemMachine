@@ -426,6 +426,7 @@ class MemMachine:
         *,
         search_filter: str | None = None,
     ) -> int:
+        """Count the number of episodes in the session that matches the search filter."""
         episode_storage = await self._resources.get_episode_storage()
 
         session_filter = FilterComparison(
