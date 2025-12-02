@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from memmachine.common.configuration import Configuration
 from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
 from memmachine.common.embedder import Embedder
-from memmachine.common.episode_store import EpisodeStorage
+from memmachine.common.episode_store import CountCachingEpisodeStorage, EpisodeStorage
 from memmachine.common.episode_store.episode_sqlalchemy_store import (
     SqlAlchemyEpisodeStore,
 )
@@ -152,6 +152,9 @@ class ResourceManagerImpl:
 
         episode_storage = SqlAlchemyEpisodeStore(engine)
         await episode_storage.startup()
+
+        if episode_storage_conf.with_count_cache:
+            episode_storage = CountCachingEpisodeStorage(episode_storage)
 
         self._episode_storage = episode_storage
         return self._episode_storage

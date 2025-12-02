@@ -45,6 +45,10 @@ class EpisodeStoreConf(BaseModel):
         default="",
         description="The database ID to use for episode storage",
     )
+    with_count_cache: bool = Field(
+        default=True,
+        description="Whether to use a in memory cache for counting messages per session.",
+    )
 
 
 class SemanticMemoryConf(BaseModel):

@@ -15,6 +15,7 @@ from memmachine.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
 )
+from memmachine.common.episode_store import CountCachingEpisodeStorage, EpisodeStorage
 from memmachine.common.episode_store.episode_sqlalchemy_store import (
     BaseEpisodeStore,
     SqlAlchemyEpisodeStore,
@@ -340,7 +341,7 @@ def semantic_storage(request):
 
 
 @pytest_asyncio.fixture
-async def episode_storage(sqlalchemy_engine: AsyncEngine):
+async def sql_db_episode_storage(sqlalchemy_engine: AsyncEngine):
     engine = sqlalchemy_engine
     async with engine.begin() as conn:
         await conn.run_sync(BaseEpisodeStore.metadata.create_all)
@@ -352,3 +353,25 @@ async def episode_storage(sqlalchemy_engine: AsyncEngine):
     finally:
         await storage.delete_episode_messages()
         await engine.dispose()
+
+
+@pytest.fixture
+def count_cache_episode_storage(sql_db_episode_storage: EpisodeStorage):
+    return CountCachingEpisodeStorage(sql_db_episode_storage)
+
+
+@pytest.fixture(
+    params=["sql_db_episode_storage", "count_cache_episode_storage"],
+)
+def episode_storage(
+    request,
+    sql_db_episode_storage: EpisodeStorage,
+    count_cache_episode_storage: EpisodeStorage,
+):
+    match request.param:
+        case "sql_db_episode_storage":
+            return sql_db_episode_storage
+        case "count_cache_episode_storage":
+            return count_cache_episode_storage
+
+    pytest.fail("Unknown episode storage type")
