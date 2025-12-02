@@ -10,9 +10,11 @@ from memmachine.common.episode_store import EpisodeEntry
 from memmachine.common.filter.filter_parser import parse_filter
 from memmachine.main.memmachine import MemoryType
 
+# TODO (@o-love): Blanket mark all tests in this file as integration tests for now
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_memmachine_get_empty(memmachine: MemMachine, session_data):
     res = await memmachine.list_search(session_data=session_data)
 
@@ -21,7 +23,6 @@ async def test_memmachine_get_empty(memmachine: MemMachine, session_data):
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_memmachine_list_search_paginates_episodic(
     memmachine: MemMachine,
     session_data,
@@ -84,7 +85,6 @@ class _TempSession:
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine):
     session_info = _TempSession(
         user_profile_id="pagination-user",
@@ -147,7 +147,6 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
     session_key = f"session-{uuid4()}"
     delete_handle = _TempSession(
@@ -182,7 +181,6 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachine):
     session_manager = await memmachine._resources.get_session_data_manager()
     created_sessions: list[str] = []
@@ -222,7 +220,34 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
+async def test_memmachine_count_episodes_totals_all(
+    memmachine: MemMachine,
+    session_data,
+):
+    entries = [
+        EpisodeEntry(
+            content="count-1",
+            producer_id="user",
+            producer_role="assistant",
+        ),
+        EpisodeEntry(
+            content="count-2",
+            producer_id="user",
+            producer_role="assistant",
+        ),
+    ]
+    episode_ids = await memmachine.add_episodes(
+        session_data, entries, target_memories=[]
+    )
+
+    try:
+        total = await memmachine.episodes_count(session_data=session_data)
+        assert total == len(entries)
+    finally:
+        await memmachine.delete_episodes(episode_ids, session_data=session_data)
+
+
+@pytest.mark.asyncio
 async def test_memmachine_list_search_filters_metadata(
     memmachine: MemMachine,
     session_data,
@@ -262,7 +287,48 @@ async def test_memmachine_list_search_filters_metadata(
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
+async def test_memmachine_count_episodes_respects_filters(
+    memmachine: MemMachine,
+    session_data,
+):
+    entries = [
+        EpisodeEntry(
+            content="alpha-1",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={"topic": "alpha"},
+        ),
+        EpisodeEntry(
+            content="beta-1",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={"topic": "beta"},
+        ),
+        EpisodeEntry(
+            content="alpha-2",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={"topic": "alpha"},
+        ),
+    ]
+    episode_ids = await memmachine.add_episodes(
+        session_data, entries, target_memories=[]
+    )
+
+    try:
+        filtered = await memmachine.episodes_count(
+            session_data=session_data,
+            search_filter="metadata.topic = 'alpha'",
+        )
+        total = await memmachine.episodes_count(session_data=session_data)
+
+        assert filtered == 2
+        assert total == len(entries)
+    finally:
+        await memmachine.delete_episodes(episode_ids, session_data=session_data)
+
+
+@pytest.mark.asyncio
 async def test_memmachine_delete_episodes_removes_history(
     memmachine: MemMachine,
     session_data,
@@ -307,7 +373,6 @@ async def test_memmachine_delete_episodes_removes_history(
 
 
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_memmachine_delete_features_removes_semantic_entries(
     memmachine: MemMachine,
     session_data,

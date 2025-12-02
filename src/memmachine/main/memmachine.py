@@ -420,6 +420,28 @@ class MemMachine:
             semantic_memory=semantic_result,
         )
 
+    async def episodes_count(
+        self,
+        session_data: InstanceOf[SessionData],
+        *,
+        search_filter: str | None = None,
+    ) -> int:
+        """Count the number of episodes in the session that matches the search filter."""
+        episode_storage = await self._resources.get_episode_storage()
+
+        session_filter = FilterComparison(
+            field="session_key",
+            op="=",
+            value=session_data.session_key,
+        )
+
+        search_filter_expr = parse_filter(search_filter) if search_filter else None
+        combined_filter = self._merge_filter_exprs(session_filter, search_filter_expr)
+
+        return await episode_storage.get_episode_messages_count(
+            filter_expr=combined_filter,
+        )
+
     async def delete_episodes(
         self,
         episode_ids: list[EpisodeIdT],

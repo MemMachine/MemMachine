@@ -36,8 +36,8 @@ class TestMemory:
         assert memory.org_id == "test_org"
         assert memory.project_id == "test_project"
         assert memory.group_id == "test_group"
-        assert memory.agent_id == ["test_agent"]
-        assert memory.user_id == ["test_user"]
+        assert memory.agent_id == "test_agent"
+        assert memory.user_id == "test_user"
         assert memory.session_id is None  # Not auto-generated in v2
 
     def test_init_with_only_required_params(self, mock_client):
@@ -75,21 +75,8 @@ class TestMemory:
             user_id="user1",
         )
 
-        assert memory.agent_id == ["agent1"]
-        assert memory.user_id == ["user1"]
-
-    def test_init_with_list_ids(self, mock_client):
-        """Test Memory initialization with list IDs."""
-        memory = Memory(
-            client=mock_client,
-            org_id="test_org",
-            project_id="test_project",
-            agent_id=["agent1", "agent2"],
-            user_id=["user1", "user2"],
-        )
-
-        assert memory.agent_id == ["agent1", "agent2"]
-        assert memory.user_id == ["user1", "user2"]
+        assert memory.agent_id == "agent1"
+        assert memory.user_id == "user1"
 
     def test_init_with_custom_session_id(self, mock_client):
         """Test Memory initialization with custom session_id."""
@@ -204,17 +191,17 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id=["agent1", "agent2"],
-            user_id=["user1", "user2"],
+            agent_id="agent1",
+            user_id="user1",
         )
 
-        memory.add("Content", producer="user2", produced_for="agent2")
+        memory.add("Content", producer="user1", produced_for="agent1")
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
-        assert json_data["messages"][0]["producer"] == "user2"
+        assert json_data["messages"][0]["producer"] == "user1"
         # produced_for should be a direct field in the message
-        assert json_data["messages"][0]["produced_for"] == "agent2"
+        assert json_data["messages"][0]["produced_for"] == "agent1"
 
     def test_add_with_episode_type(self, mock_client):
         """Test adding memory with episode_type."""
@@ -362,12 +349,286 @@ class TestMemory:
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
-        # Filter should be JSON string in v2 API
-        import json
+        # Filter should be SQL-like string: key='value' AND key='value'
+        filter_str = json_data["filter"]
+        assert "category='work'" in filter_str
+        assert "type='preference'" in filter_str
+        assert " AND " in filter_str
 
-        filter_dict = json.loads(json_data["filter"])
-        assert filter_dict["category"] == "work"
-        assert filter_dict["type"] == "preference"
+    def test_dict_to_filter_string_single_string(self, mock_client):
+        """Test _dict_to_filter_string with single string value."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        filter_dict = {"category": "work"}
+        filter_str = memory._dict_to_filter_string(filter_dict)
+        assert filter_str == "category='work'"
+
+    def test_dict_to_filter_string_multiple_conditions(self, mock_client):
+        """Test _dict_to_filter_string with multiple conditions."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        filter_dict = {"category": "work", "type": "preference"}
+        filter_str = memory._dict_to_filter_string(filter_dict)
+        assert "category='work'" in filter_str
+        assert "type='preference'" in filter_str
+        assert " AND " in filter_str
+
+    def test_dict_to_filter_string_with_escaped_quotes(self, mock_client):
+        """Test _dict_to_filter_string with string containing single quotes."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        filter_dict = {"name": "O'Brien"}
+        filter_str = memory._dict_to_filter_string(filter_dict)
+        assert filter_str == "name='O''Brien'"  # SQL escape: ' -> ''
+
+    def test_dict_to_filter_string_with_non_string_value(self, mock_client):
+        """Test _dict_to_filter_string raises TypeError for non-string values."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        # Test with integer value
+        with pytest.raises(TypeError, match="All filter_dict values must be strings"):
+            memory._dict_to_filter_string({"rating": 5})
+
+        # Test with None value
+        with pytest.raises(TypeError, match="All filter_dict values must be strings"):
+            memory._dict_to_filter_string({"deleted_at": None})
+
+        # Test with list value
+        with pytest.raises(TypeError, match="All filter_dict values must be strings"):
+            memory._dict_to_filter_string({"tags": ["tag1", "tag2"]})
+
+        # Test with boolean value
+        with pytest.raises(TypeError, match="All filter_dict values must be strings"):
+            memory._dict_to_filter_string({"active": True})
+
+    def test_dict_to_filter_string_with_non_string_key(self, mock_client):
+        """Test _dict_to_filter_string raises TypeError for non-string keys."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        # Test with integer key
+        with pytest.raises(TypeError, match="All filter_dict keys must be strings"):
+            memory._dict_to_filter_string({123: "value"})
+
+    def test_get_default_filter_dict_with_all_fields(self, mock_client):
+        """Test get_default_filter_dict with all context fields set."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            agent_id="agent1",
+            session_id="session1",
+        )
+
+        default_filters = memory.get_default_filter_dict()
+        assert default_filters == {
+            "metadata.user_id": "user1",
+            "metadata.agent_id": "agent1",
+            "metadata.session_id": "session1",
+        }
+
+    def test_get_default_filter_dict_with_partial_fields(self, mock_client):
+        """Test get_default_filter_dict with only some fields set."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            agent_id=None,
+            session_id="session1",
+        )
+
+        default_filters = memory.get_default_filter_dict()
+        assert default_filters == {
+            "metadata.user_id": "user1",
+            "metadata.session_id": "session1",
+        }
+        assert "metadata.agent_id" not in default_filters
+
+    def test_get_default_filter_dict_with_no_fields(self, mock_client):
+        """Test get_default_filter_dict with no context fields set."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        default_filters = memory.get_default_filter_dict()
+        assert default_filters == {}
+
+    def test_search_with_default_filter_dict(self, mock_client):
+        """Test search automatically applies built-in filters and merges with user filters."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            agent_id="agent1",
+        )
+
+        # Search with user filters only - built-in filters should be automatically merged
+        user_filters = {"category": "work"}
+        memory.search("query", filter_dict=user_filters)
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+
+        # Should contain both built-in filters (automatically applied) and user filters
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert "category='work'" in filter_str
+
+    def test_search_automatically_applies_built_in_filters(self, mock_client):
+        """Test that search automatically applies built-in filters even without user filters."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            agent_id="agent1",
+            session_id="session1",
+        )
+
+        # Search without user filters - built-in filters should still be applied
+        memory.search("query")
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+
+        # Should contain built-in filters automatically
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert "metadata.session_id='session1'" in filter_str
+
+    def test_search_user_filters_override_built_in_filters(self, mock_client):
+        """Test that user-provided filters override built-in filters for the same key."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            agent_id="agent1",
+        )
+
+        # User provides a filter that conflicts with built-in filter
+        user_filters = {"metadata.user_id": "user2"}
+        memory.search("query", filter_dict=user_filters)
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+
+        # User-provided filter should override built-in filter
+        assert "metadata.user_id='user2'" in filter_str
+        assert "metadata.user_id='user1'" not in filter_str
+        # But other built-in filters should still be present
+        assert "metadata.agent_id='agent1'" in filter_str
+
+    def test_get_current_metadata(self, mock_client):
+        """Test get_current_metadata method returns context, filters, and filter string."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            agent_id="agent1",
+            session_id="session1",
+            group_id="group1",
+        )
+
+        metadata = memory.get_current_metadata()
+
+        # Check structure
+        assert "context" in metadata
+        assert "built_in_filters" in metadata
+        assert "built_in_filter_string" in metadata
+
+        # Check context
+        context = metadata["context"]
+        assert context["org_id"] == "test_org"
+        assert context["project_id"] == "test_project"
+        assert context["user_id"] == "user1"
+        assert context["agent_id"] == "agent1"
+        assert context["session_id"] == "session1"
+        assert context["group_id"] == "group1"
+
+        # Check built-in filters
+        filters = metadata["built_in_filters"]
+        assert filters["metadata.user_id"] == "user1"
+        assert filters["metadata.agent_id"] == "agent1"
+        assert filters["metadata.session_id"] == "session1"
+
+        # Check filter string
+        filter_str = metadata["built_in_filter_string"]
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert "metadata.session_id='session1'" in filter_str
+
+    def test_get_current_metadata_with_partial_context(self, mock_client):
+        """Test get_current_metadata with only some context fields set."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            user_id="user1",
+            # agent_id and session_id are None
+        )
+
+        metadata = memory.get_current_metadata()
+
+        # Only user_id should be in built-in filters
+        filters = metadata["built_in_filters"]
+        assert "metadata.user_id" in filters
+        assert filters["metadata.user_id"] == "user1"
+        assert "metadata.agent_id" not in filters
+        assert "metadata.session_id" not in filters
+
+        # Filter string should only contain user_id
+        filter_str = metadata["built_in_filter_string"]
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id" not in filter_str
+        assert "metadata.session_id" not in filter_str
+        assert "category='work'" not in filter_str
 
     def test_search_client_closed(self, mock_client):
         """Test search raises RuntimeError when client is closed."""
@@ -398,8 +659,8 @@ class TestMemory:
         assert context["org_id"] == "test_org"
         assert context["project_id"] == "test_project"
         assert context["group_id"] == "test_group"
-        assert context["agent_id"] == ["agent1"]
-        assert context["user_id"] == ["user1"]
+        assert context["agent_id"] == "agent1"
+        assert context["user_id"] == "user1"
         assert context["session_id"] == "test_session"
 
     def test_repr(self, mock_client):
@@ -452,21 +713,21 @@ class TestMemory:
         assert metadata["agent_id"] == "agent1"
         assert metadata["session_id"] == "test_session"
 
-    def test_build_metadata_with_list_ids(self, mock_client):
-        """Test that _build_metadata handles list IDs correctly."""
+    def test_build_metadata_with_string_ids(self, mock_client):
+        """Test that _build_metadata handles string IDs correctly."""
         memory = Memory(
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id=["agent1", "agent2"],
-            user_id=["user1", "user2"],
+            agent_id="agent1",
+            user_id="user1",
         )
 
         metadata = memory._build_metadata({})
 
-        # When multiple IDs, should keep as list
-        assert metadata["agent_id"] == ["agent1", "agent2"]
-        assert metadata["user_id"] == ["user1", "user2"]
+        # Should store as strings
+        assert metadata["agent_id"] == "agent1"
+        assert metadata["user_id"] == "user1"
 
     # Delete episodic method tests
     def test_delete_episodic_success(self, mock_client):

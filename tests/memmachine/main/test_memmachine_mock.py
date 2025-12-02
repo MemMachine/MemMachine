@@ -17,6 +17,8 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry
+from memmachine.common.filter.filter_parser import And as FilterAnd
+from memmachine.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SemanticFeature
@@ -363,6 +365,70 @@ async def test_list_search_fetches_episode_history(
     episode_storage.get_episode_messages.assert_awaited_once()
     assert result.episodic_memory == episodes
     assert result.semantic_memory is None
+
+
+@pytest.mark.asyncio
+async def test_count_episodes_filters_by_session_only(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("session-count")
+
+    episode_storage = MagicMock()
+    episode_storage.get_episode_messages_count = AsyncMock(return_value=7)
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    result = await memmachine.episodes_count(session, search_filter=None)
+
+    assert result == 7
+    episode_storage.get_episode_messages_count.assert_awaited_once_with(
+        filter_expr=FilterComparison(
+            field="session_key",
+            op="=",
+            value=session.session_key,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_count_episodes_combines_search_filter(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("session-with-filter")
+    custom_filter = FilterComparison(field="topic", op="=", value="alpha")
+    parsed_specs: list[str] = []
+
+    def _fake_parse(spec: str | None):
+        parsed_specs.append(spec or "")
+        return custom_filter
+
+    monkeypatch.setattr("memmachine.main.memmachine.parse_filter", _fake_parse)
+
+    episode_storage = MagicMock()
+    episode_storage.get_episode_messages_count = AsyncMock(return_value=3)
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    result = await memmachine.episodes_count(session, search_filter="topic = 'alpha'")
+
+    assert result == 3
+    assert parsed_specs == ["topic = 'alpha'"]
+
+    combined_filter = episode_storage.get_episode_messages_count.await_args.kwargs[
+        "filter_expr"
+    ]
+    assert combined_filter == FilterAnd(
+        left=FilterComparison(
+            field="session_key",
+            op="=",
+            value=session.session_key,
+        ),
+        right=custom_filter,
+    )
 
 
 @pytest.mark.asyncio

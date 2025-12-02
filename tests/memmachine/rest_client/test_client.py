@@ -76,8 +76,8 @@ class TestMemMachineClient:
             assert memory.org_id == "test_org"
             assert memory.project_id == "test_project"
             assert memory.group_id == "test_group"
-            assert memory.agent_id == ["test_agent"]
-            assert memory.user_id == ["test_user"]
+            assert memory.agent_id == "test_agent"
+            assert memory.user_id == "test_user"
             assert memory.session_id == "test_session"
 
     def test_project_memory_creation_with_lists(self):
@@ -97,14 +97,14 @@ class TestMemMachineClient:
 
             memory = project.memory(
                 group_id="test_group",
-                agent_id=["agent1", "agent2"],
-                user_id=["user1", "user2"],
+                agent_id="agent1",
+                user_id="user1",
             )
 
             assert memory.org_id == "test_org"
             assert memory.project_id == "test_project"
-            assert memory.agent_id == ["agent1", "agent2"]
-            assert memory.user_id == ["user1", "user2"]
+            assert memory.agent_id == "agent1"
+            assert memory.user_id == "user1"
 
     def test_project_memory_creation_without_optional_params(self):
         """Test creating Memory with only required params from Project."""
@@ -135,6 +135,16 @@ class TestMemMachineClient:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        # Mock the JSON response to return a dictionary with the expected fields
+        mock_response.json.return_value = {
+            "org_id": "test_org",
+            "project_id": "test_project",
+            "description": "Test project",
+            "config": {
+                "embedder": "default",
+                "reranker": "default",
+            },
+        }
         client._session.post = Mock(return_value=mock_response)
 
         result = client.create_project(
@@ -185,7 +195,7 @@ class TestMemMachineClient:
 
         assert result == {"status": "healthy"}
         mock_get.assert_called_once()
-        assert "/health" in mock_get.call_args[0][0]
+        assert "/api/v2/health" in mock_get.call_args[0][0]
 
     @patch("requests.Session.get")
     def test_health_check_failure(self, mock_get):
