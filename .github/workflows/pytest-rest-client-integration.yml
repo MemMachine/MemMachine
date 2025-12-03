@@ -4,10 +4,16 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    # Regular PR event - runs without secrets (for fork PRs)
+  pull_request_target:
+    # This event has access to secrets but requires manual approval via label
+    # Only triggers when a label is added (for security)
+    types: [labeled]
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: write  # Required for pull_request_target to checkout PR code
 
 # Cancel any preceding run on the pull request after a new commit is pushed.
 concurrency:
@@ -18,9 +24,69 @@ jobs:
   rest-client-integration-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30  # Set job timeout to 30 minutes
+    
+    # For pull_request_target events, only run if the label is 'safe-to-test'
+    # This ensures maintainers review code before secrets are exposed
+    # Allow fork PRs to enter job, but they will exit early in the check step to save CI resources
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request_target' && (github.event.label.name == 'safe-to-test' ))
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        # For pull_request_target: must explicitly checkout PR code (default is target branch)
+        # For regular pull_request: checkout from fork if needed
+        # For push/workflow_dispatch: checkout current branch
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name || github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Check if fork PR without API key (fail early)
+        id: check_fork_no_key
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_REPO="${{ github.event.pull_request.head.repo.full_name }}"
+            MAIN_REPO="${{ github.repository }}"
+            if [ "$PR_REPO" != "$MAIN_REPO" ]; then
+              echo "::error::Fork PR detected without API key access"
+              echo "⚠️ Fork PR detected without API key access"
+              echo "Tests cannot run without secrets (OPENAI_API_KEY)"
+              echo ""
+              echo "📋 To run tests with secrets:"
+              echo "   1. Review the PR code for security"
+              echo "   2. Add 'safe-to-test' label"
+              echo "   3. This will trigger pull_request_target event with secrets access"
+              echo ""
+              echo "This job will fail to indicate that tests were skipped due to missing secrets."
+              exit 1
+            fi
+          fi
+          echo "✅ Not a fork PR or has secrets access - continuing with tests"
+
+      - name: Display event information
+        run: |
+          EVENT_NAME="${{ github.event_name }}"
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            echo "✅ pull_request_target event: Secrets are available (maintainer approved via label)"
+            echo "   Label added: ${{ github.event.label.name }}"
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_REPO="${{ github.event.pull_request.head.repo.full_name }}"
+            MAIN_REPO="${{ github.repository }}"
+            if [ "$PR_REPO" != "$MAIN_REPO" ] && [ "$PR_REPO" != "N/A" ]; then
+              echo "ℹ️ Fork PR: Secrets are NOT available"
+              echo "   Tests requiring OPENAI_API_KEY will fail"
+              echo "   Add 'safe-to-test' label to trigger pull_request_target event"
+            else
+              echo "✅ Main repo PR: Secrets are available"
+            fi
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "✅ Manual trigger: Secrets are available"
+          else
+            echo "✅ Push event: Secrets are available"
+          fi
 
       - name: Install the latest version of uv and set the python version
         uses: astral-sh/setup-uv@v6
@@ -31,7 +97,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Create .env file for Docker Compose
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          # Use secret if available, otherwise empty (tests requiring API key will fail)
+          OPENAI_KEY="${OPENAI_API_KEY:-}"
           cat > .env << EOF
           POSTGRES_HOST=postgres
           POSTGRES_PORT=5432
@@ -48,7 +118,7 @@ jobs:
           MCP_BASE_URL=http://memmachine:8080
           GATEWAY_URL=http://localhost:8080
           FAST_MCP_LOG_LEVEL=INFO
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY=${OPENAI_KEY}
           LOG_LEVEL=INFO
           MEMORY_SERVER_PORT=8080
           MEMMACHINE_IMAGE=memmachine/memmachine:latest-cpu
@@ -60,6 +130,7 @@ jobs:
 
       - name: Prepare configuration.yml for CI
         env:
+          # Only use secret if available (not a fork PR)
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # Verify sample config exists
@@ -210,8 +281,29 @@ jobs:
       - name: Run REST client integration tests
         env:
           MEMORY_BACKEND_URL: http://localhost:8080
+          # Secrets are available for: push, workflow_dispatch, main repo PRs, and pull_request_target (after label approval)
+          # For fork PRs via pull_request event, secrets are NOT available and tests will fail if they need API key
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          EVENT_NAME="${{ github.event_name }}"
+          echo "Running integration tests..."
+          echo "Event: $EVENT_NAME"
+          
+          if [ "$EVENT_NAME" = "pull_request_target" ]; then
+            echo "✅ pull_request_target event: Running with secrets (maintainer approved via label)"
+            echo "   ⚠️  SECURITY NOTE: This test runs with secrets after maintainer approval via label"
+          elif [ -z "$OPENAI_API_KEY" ]; then
+            echo "⚠️ OPENAI_API_KEY is not available"
+            echo "   This may be a fork PR (secrets not available in pull_request event)"
+            echo "   Tests requiring API key will fail"
+            echo ""
+            echo "   📋 For maintainers: To run full tests with secrets for fork PRs,"
+            echo "   add label 'safe-to-test' to trigger pull_request_target event"
+          else
+            echo "✅ Running with OpenAI API key available"
+          fi
+          
+          # Run all tests - if API key is missing and tests need it, they will fail
           uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v --integration -m integration
 
       - name: Show service logs on failure
