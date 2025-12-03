@@ -348,15 +348,35 @@ jobs:
               ref: headSha,
             });
             
-            // Find the failed pull_request check run (has "(pull_request)" suffix in name)
+            console.log(`Found ${checks.data.check_runs.length} check runs:`);
+            checks.data.check_runs.forEach(check => {
+              console.log(`  - ${check.name} (conclusion: ${check.conclusion}, status: ${check.status})`);
+            });
+            
+            // Find the failed pull_request check run
+            // Check name format: "Run REST Client Integration Tests / REST Client Integration Tests (pull_request)"
+            // Match any check that:
+            // 1. Contains "Integration Tests" or "integration" (case insensitive)
+            // 2. Contains "(pull_request)" suffix
+            // 3. Has conclusion "failure"
             const pullRequestCheck = checks.data.check_runs.find(
-              check => check.name.includes('rest-client-integration-test') && 
-                       check.name.includes('(pull_request)') &&
-                       check.conclusion === 'failure'
+              check => {
+                const nameLower = check.name.toLowerCase();
+                const hasIntegrationTest = nameLower.includes('integration') || nameLower.includes('rest client');
+                const hasPullRequest = check.name.includes('(pull_request)');
+                const isFailed = check.conclusion === 'failure';
+                
+                console.log(`  Checking: ${check.name}`);
+                console.log(`    - Has integration/rest client: ${hasIntegrationTest}`);
+                console.log(`    - Has (pull_request): ${hasPullRequest}`);
+                console.log(`    - Conclusion: ${check.conclusion}, Is failed: ${isFailed}`);
+                
+                return hasIntegrationTest && hasPullRequest && isFailed;
+              }
             );
             
             if (pullRequestCheck) {
-              console.log(`Found failed pull_request check: ${pullRequestCheck.name} (ID: ${pullRequestCheck.id})`);
+              console.log(`\n✅ Found failed pull_request check: ${pullRequestCheck.name} (ID: ${pullRequestCheck.id})`);
               console.log(`Updating check status to success...`);
               
               // Update the check status to success
@@ -375,7 +395,13 @@ jobs:
               
               console.log(`✅ Successfully updated check ${pullRequestCheck.id} to success`);
             } else {
-              console.log('ℹ️ No failed pull_request check found to update (may have been cancelled or already updated)');
+              console.log('\n⚠️ No failed pull_request check found to update');
+              console.log('Available checks with (pull_request):');
+              checks.data.check_runs
+                .filter(check => check.name.includes('(pull_request)'))
+                .forEach(check => {
+                  console.log(`  - ${check.name} (conclusion: ${check.conclusion || 'none'}, status: ${check.status})`);
+                });
             }
 
       - name: Cleanup
