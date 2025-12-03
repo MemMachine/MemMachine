@@ -5,6 +5,9 @@ build-backend = "uv_build"
 [tool.uv.workspace]
 members = ["packages/client", "packages/server"]
 
+[tool.uv.sources]
+memmachine-server = { workspace = true }
+memmachine-client = { workspace = true }
 
 [project]
 name = "memmachine"
@@ -33,6 +36,8 @@ dependencies = [
     "uvicorn>=0.35.0",
     "greenlet>=3.2.4",
     "tzdata>=2024.1 ; sys_platform == 'win32'",
+    "memmachine-server",
+    "memmachine-client",
 ]
 requires-python = ">= 3.12"
 authors = [
