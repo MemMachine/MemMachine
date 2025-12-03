@@ -1,0 +1,165 @@
+---
+title: "Client API"
+description: "Low-level API reference for MemMachineClient"
+icon: "code"
+---
+
+Client utilities for interacting with the MemMachine HTTP API.
+
+## Class `MemMachineClient`
+
+Main client class for interacting with MemMachine memory system.
+
+This client provides a high-level interface for managing episodic and profile
+memory. It handles authentication and provides convenient methods for memory operations.
+
+```python
+def MemMachineClient(api_key: str | None, base_url: str | None, timeout: int, max_retries: int)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `api_key` | `str | None` | - |
+| `base_url` | `str | None` | - |
+| `timeout` | `int` | - |
+| `max_retries` | `int` | - |
+
+### `request`
+
+Make an HTTP request using the client's session.
+
+```python
+def request(method: str, url: str, timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `method` | `str` | HTTP method (GET, POST, etc.) |
+| `url` | `str` | Request URL |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided) **kwargs: Additional arguments passed to requests.Session.request()  |
+
+**Returns**
+
+Response object from the request
+
+**Raises**
+
+requests.RequestException: If the request fails
+
+### `create_project`
+
+Create a new project in MemMachine.
+
+```python
+def create_project(org_id: str, project_id: str, description: str, embedder: str, reranker: str, timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `org_id` | `str` | Organization identifier (required) |
+| `project_id` | `str` | Project identifier (required) |
+| `description` | `str` | Optional description for the project (default: "") |
+| `embedder` | `str` | Embedder model name to use (default: "default") |
+| `reranker` | `str` | Reranker model name to use (default: "default") |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Returns**
+
+Project instance representing the created project
+
+**Raises**
+
+requests.RequestException: If the request fails
+    RuntimeError: If the client has been closed
+
+### `get_project`
+
+Get an existing project from MemMachine.
+
+```python
+def get_project(org_id: str, project_id: str, timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `org_id` | `str` | Organization identifier (required) |
+| `project_id` | `str` | Project identifier (required) |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Returns**
+
+Project instance representing the project
+
+**Raises**
+
+requests.RequestException: If the request fails
+    RuntimeError: If the client has been closed
+
+### `health_check`
+
+Check the health status of the MemMachine server.
+
+```python
+def health_check(timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Returns**
+
+Dictionary containing health status information
+
+**Raises**
+
+requests.RequestException: If the health check fails
+
+### `close`
+
+Close the client and clean up resources.
+
+```python
+def close()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+### `session`
+
+Expose the underlying requests session for advanced usage.
+
+```python
+def session()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+### `closed`
+
+Check if the client has been closed.
+
+```python
+def closed()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |

@@ -37,7 +37,8 @@ class MemMachineRestClient:
         self.verbose = verbose
         self.statistic_file = statistic_file
         if self.statistic_file is None:
-            timestamp = datetime.now().isoformat()
+            # Use a filename-safe timestamp (Windows paths cannot contain colons)
+            timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
             self.statistic_file = f"output/statistic_{timestamp}.csv"
         if not os.path.exists(self.statistic_file):
             os.makedirs(os.path.dirname(self.statistic_file), exist_ok=True)
@@ -120,11 +121,15 @@ class MemMachineRestClient:
         # Trace the request
         if self.verbose:
             self._trace_request(
-                "POST", episodic_memory_endpoint, payload, response, latency_ms
+                "POST",
+                episodic_memory_endpoint,
+                payload,
+                response,
+                latency_ms,
             )
         else:
             self.statistic_fp.write(
-                f"{datetime.now().isoformat()},POST,{episodic_memory_endpoint},{latency_ms}\n"
+                f"{datetime.now().isoformat()},POST,{episodic_memory_endpoint},{latency_ms}\n",
             )
 
         if response.status_code != 200:
@@ -149,7 +154,7 @@ class MemMachineRestClient:
 
     def search_episodic_memory(self, query_str, limit=5):
         search_episodic_memory_endpoint = self._get_url(
-            f"{episodic_memory_path}/search"
+            f"{episodic_memory_path}/search",
         )
         query = {
             "session": self.session,
@@ -160,18 +165,24 @@ class MemMachineRestClient:
 
         start_time = time.time()
         response = requests.post(
-            search_episodic_memory_endpoint, json=query, timeout=300
+            search_episodic_memory_endpoint,
+            json=query,
+            timeout=300,
         )
         end_time = time.time()
         latency_ms = round((end_time - start_time) * 1000, 2)
 
         if self.verbose:
             self._trace_request(
-                "POST", search_episodic_memory_endpoint, query, response, latency_ms
+                "POST",
+                search_episodic_memory_endpoint,
+                query,
+                response,
+                latency_ms,
             )
         else:
             self.statistic_fp.write(
-                f"{datetime.now().isoformat()},POST,{search_episodic_memory_endpoint},{latency_ms}\n"
+                f"{datetime.now().isoformat()},POST,{search_episodic_memory_endpoint},{latency_ms}\n",
             )
 
         if response.status_code != 200:
@@ -182,7 +193,7 @@ class MemMachineRestClient:
 if __name__ == "__main__":
     client = MemMachineRestClient(base_url="http://localhost:8080")
     client.post_episodic_memory(
-        "I will start to write a new story today. There are 1 main characters in my story, lilith. she transmigrates into a game, After experiencing a series of bad endings, she breaks free in her final reincarnation, joining forces with her female companions to rebel and overthrow the corrupt dynasty."
+        "I will start to write a new story today. There are 1 main characters in my story, lilith. she transmigrates into a game, After experiencing a series of bad endings, she breaks free in her final reincarnation, joining forces with her female companions to rebel and overthrow the corrupt dynasty.",
     )
     results = client.search_episodic_memory("main character of my story")
     if results["status"] != 0:

@@ -8,13 +8,17 @@ from dotenv import load_dotenv
 from llm_judge import evaluate_llm_judge
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data-path", required=True, help="Path to the source data file"
+        "--data-path",
+        required=True,
+        help="Path to the source data file",
     )
     parser.add_argument(
-        "--target-path", required=True, help="Path to the target data file"
+        "--target-path",
+        required=True,
+        help="Path to the target data file",
     )
     args = parser.parse_args()
     data_path = args.data_path
@@ -42,7 +46,7 @@ def main():
                     "response": response,
                     "category": key,
                     "llm_score": llm_score,
-                }
+                },
             )
         results[key] = local_result
     with open(target_path, "w") as f:

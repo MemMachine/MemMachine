@@ -1,3 +1,5 @@
+"""HTTP entrypoint for exposing the MCP server over FastAPI/uvicorn."""
+
 import argparse
 import asyncio
 import ipaddress
@@ -5,29 +7,34 @@ import logging
 
 import uvicorn
 
-from memmachine.server.app import global_memory_lifespan, mcp
+from memmachine.server.api_v2.mcp import global_memory_lifespan
+from memmachine.server.app import mcp
 
 logger = logging.getLogger(__name__)
 
 
-async def run_mcp_http(host: str, port: int):
+async def run_mcp_http(host: str, port: int) -> None:
     """Run MCP server in HTTP mode."""
     try:
-        logger.info(f"Starting MemMachine MCP HTTP server at http://{host}:{port}")
+        logger.info(
+            "Starting MemMachine MCP HTTP server at http://%s:%s",
+            host,
+            port,
+        )
         async with global_memory_lifespan():
             await uvicorn.Server(
-                uvicorn.Config(mcp.get_app(), host=host, port=int(port))
+                uvicorn.Config(mcp.get_app(), host=host, port=int(port)),
             ).serve()
-    except Exception as e:
-        logger.exception(f"MemMachine MCP HTTP server crashed: {e}")
+    except Exception:
+        logger.exception("MemMachine MCP HTTP server crashed")
     finally:
         logger.info("MemMachine MCP HTTP server stopped")
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Parse and validate command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Start MemMachine MCP server in HTTP mode."
+        description="Start MemMachine MCP server in HTTP mode.",
     )
     parser.add_argument(
         "--host",
@@ -59,7 +66,8 @@ def parse_args():
     return args
 
 
-def main():
+def main() -> None:
+    """Entry point for launching the MCP HTTP server."""
     args = parse_args()
     try:
         asyncio.run(run_mcp_http(args.host, args.port))

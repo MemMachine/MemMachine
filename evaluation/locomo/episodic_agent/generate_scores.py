@@ -3,44 +3,50 @@
 
 import argparse
 import json
+import logging
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--input_path", type=str, default="evaluation.json")
-args = parser.parse_args()
+logger = logging.getLogger(__name__)
 
-categories = ["multi_hop", "temporal", "open_domain", "single_hop"]
 
-# Load the evaluation metrics data
-with open(args.input_path, "r") as f:
-    data = json.load(f)
+def flatten_items(data: dict[str, list[dict[str, Any]]]) -> pd.DataFrame:
+    """Flatten a nested dict of questions into a dataframe."""
+    all_items: list[dict[str, Any]] = []
+    for values in data.values():
+        all_items.extend(values)
+    df = pd.DataFrame(all_items)
+    df["category"] = pd.to_numeric(df["category"])
+    return df
 
-# Flatten the data into a list of question items
-all_items = []
-for key in data:
-    all_items.extend(data[key])
 
-# Convert to DataFrame
-df = pd.DataFrame(all_items)
+def log_results(df: pd.DataFrame) -> None:
+    """Log aggregated metrics by category and overall means."""
+    categories = ["multi_hop", "temporal", "open_domain", "single_hop"]
+    result = df.groupby("category").agg({"llm_score": "mean"}).round(4)
+    result["count"] = df.groupby("category").size()
+    result["type"] = result.index.map(lambda x: categories[int(x) - 1])
 
-# Convert category to numeric type
-df["category"] = pd.to_numeric(df["category"])
+    logger.info("Mean Scores Per Category:\n%s", result)
+    overall_means = df.agg({"llm_score": "mean"}).round(4)
+    logger.info("Overall Mean Scores:\n%s", overall_means)
 
-# Calculate mean scores by category
-result = df.groupby("category").agg({"llm_score": "mean"}).round(4)
 
-# Add count of questions per category
-result["count"] = df.groupby("category").size()
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
 
-result["type"] = result.index.map(lambda x: categories[x - 1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_path", type=Path, default=Path("evaluation.json"))
+    args = parser.parse_args()
 
-# Print the results
-print("Mean Scores Per Category:")
-print(result)
+    with args.input_path.open("r") as input_file:
+        data: dict[str, list[dict[str, Any]]] = json.load(input_file)
 
-# Calculate overall means
-overall_means = df.agg({"llm_score": "mean"}).round(4)
+    df = flatten_items(data)
+    log_results(df)
 
-print("\nOverall Mean Scores:")
-print(overall_means)
+
+if __name__ == "__main__":
+    main()

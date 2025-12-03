@@ -84,187 +84,168 @@ uv pip install .
 </Step>
 <Step title="Create Your Configuration File - `cfg.yml`">
 
-MemMachine uses a single configuration file, `cfg.yml` to provide login and options to it.
+MemMachine uses a single configuration file, `cfg.yml`, to define its resources and behavior. This file should be placed in the directory where you run the MemMachine server.
 
-Create a file named `cfg.yml` in the same directory that you plan on running memmachine from. This file configures the various models and storage options for MemMachine.
-
-There are two examples of `cfg.yml` files in the `sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.
+Below are examples for CPU-only and GPU-enabled setups.
 
 <AccordionGroup>
-<Accordion title="CPU-Only Installations">
-You can download this file from our GitHub repository as a template using the following curl command:
-```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
-```
-Below is an example of what the CPU-only `config.yml` file should look like:
+<Accordion title="CPU-Only Configuration">
+You can download a sample file or copy the content below.
 
-```sh expandable lines
+```yaml expandable lines
 logging:
+  level: info
   path: /tmp/memory_log
-  level: info #| debug | error
 
-long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$timestamp] $producer_id: "
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
+# 1. Define Resources (Databases, Models, etc.)
+resources:
+  databases:
+    my-postgres-db:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: mypassword
+        db_name: memmachine_db
+    my-neo4j-db:
+      provider: neo4j
+      config:
+        host: localhost
+        port: 7687
+        user: neo4j
+        password: mypassword
 
-SessionDB:
-  uri: sqlitetest.db
+  embedders:
+    my-openai-embedder:
+      provider: openai
+      config:
+        model: text-embedding-3-small
+        api_key: <YOUR_OPENAI_API_KEY>
 
-Model:
-  testmodel:
-    model_vendor: openai
-    model_name: "gpt-4o-mini"
-    api_key: <YOUR_API_KEY>
-    
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
+  language_models:
+    my-openai-llm:
+      provider: openai-chat-completions
+      config:
+        model: gpt-4o-mini
+        api_key: <YOUR_OPENAI_API_KEY>
 
-  profile_storage:
-    vendor_name: postgres
-    host: localhost
-    port: 5432
-    user: postgres
-    db_name: postgres
-    password: <YOUR_PASSWORD_HERE>
+  rerankers:
+    my-rrf-reranker:
+      provider: rrf-hybrid
+      config:
+        reranker_ids:
+          - my-bm25-reranker
+          - my-identity-reranker
+    my-bm25-reranker:
+      provider: bm25
+    my-identity-reranker:
+      provider: identity
 
-profile_memory:
-  llm_model: testmodel
-  embedding_model: my_embedder_id
-  database: profile_storage
-  prompt: profile_prompt
+# 2. Configure Memory Services
+episodic_memory:
+  enabled: true
+  session_key: "default_session"
+  long_term_memory:
+    vector_graph_store: my-neo4j-db
+    embedder: my-openai-embedder
+    reranker: my-rrf-reranker
+  short_term_memory:
+    llm_model: my-openai-llm
+    message_capacity: 64000
 
-sessionMemory:
-  model_name: testmodel
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
+semantic_memory:
+  database: my-postgres-db
+  llm_model: my-openai-llm
+  embedding_model: my-openai-embedder
 
-embedder:
-  my_embedder_id:
-    model_vendor: openai
-    model_name: "text-embedding-3-small"
-    api_key: <YOUR_API_KEY>
+# 3. Configure Storage Backends
+episode_store:
+  database: my-postgres-db
 
-reranker:
-  my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-  id_ranker_id:
-    type: "identity"
-  bm_ranker_id:
-    type: "bm25"
-
-prompt:
-  profile: profile_prompt
+session_manager:
+  database: my-postgres-db
 ```
-<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
+<Tip> Replace `<YOUR_OPENAI_API_KEY>` and database passwords with your actual credentials.</Tip>
 </Accordion>
-<Accordion title="GPU-Enabled Installations">
-You can download this file from our GitHub repository as a template using the following curl command:
-```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
-```
-Below is an example of what the GPU-enabled `config.yml` file should look like:
 
-```sh expandable lines
+<Accordion title="GPU-Enabled Configuration">
+For GPU setups, you might use local models for embeddings or reranking.
+
+```yaml expandable lines
 logging:
-  path: /tmp/memory_log
-  level: info #| debug | error
+  level: info
 
-long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$timestamp] $producer_id: "
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
+resources:
+  databases:
+    # ... (Same database config as above) ...
+    my-postgres-db:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: mypassword
+        db_name: memmachine_db
+    my-neo4j-db:
+      provider: neo4j
+      config:
+        host: localhost
+        port: 7687
+        user: neo4j
+        password: mypassword
 
-profile_memory:
-  llm_model: testmodel
-  embedding_model: my_embedder_id
-  database: profile_storage
-  prompt: profile_prompt
+  embedders:
+    # Using a local model via sentence-transformers
+    my-local-embedder:
+      provider: sentence-transformer
+      config:
+        model: all-MiniLM-L6-v2
 
+  language_models:
+    my-openai-llm:
+      provider: openai-chat-completions
+      config:
+        model: gpt-4o-mini
+        api_key: <YOUR_OPENAI_API_KEY>
 
-SessionDB:
-  uri: sqlitetest.db
+  rerankers:
+    my-rrf-reranker:
+      provider: rrf-hybrid
+      config:
+        reranker_ids:
+          - my-cross-encoder
+          - my-bm25
+    my-cross-encoder:
+      provider: cross-encoder
+      config:
+        model_name: cross-encoder/qnli-electra-base
+    my-bm25:
+      provider: bm25
 
-Model:
-  testmodel:
-    model_vendor: openai
-    model_name: "gpt-4o-mini"
-    api_key: <YOUR_API_KEY>
-    
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
+episodic_memory:
+  enabled: true
+  session_key: "default_session"
+  long_term_memory:
+    vector_graph_store: my-neo4j-db
+    embedder: my-local-embedder
+    reranker: my-rrf-reranker
+  short_term_memory:
+    llm_model: my-openai-llm
 
-  profile_storage:
-    vendor_name: postgres
-    host: localhost
-    port: 5432
-    user: postgres
-    db_name: postgres
-    password: <YOUR_PASSWORD_HERE>
+semantic_memory:
+  database: my-postgres-db
+  llm_model: my-openai-llm
+  embedding_model: my-local-embedder
 
-sessionMemory:
-  model_name: testmodel
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
+episode_store:
+  database: my-postgres-db
 
-embedder:
-  my_embedder_id:
-    model_vendor: openai
-    model_name: "text-embedding-3-small"
-    api_key: <YOUR_API_KEY>
-
-reranker:
-  my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-      - ce_ranker_id
-  id_ranker_id:
-    type: "identity"
-  bm_ranker_id:
-    type: "bm25"
-  ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
-
-prompt:
-  profile: profile_prompt
+session_manager:
+  database: my-postgres-db
 ```
-<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
 </Accordion>
 </AccordionGroup>
-<Tip> 
-You can name this configuration file whatever you like, then pass it to MemMachine using the `MEMORY_CONFIG` environment variable, like in the following examples:
-
- ```sh
- export MEMORY_CONFIG="/home/steve/wibble.cfg" # Sets the config file name
- memmachine # start memmachine
- ```
-
-```sh
-MEMORY_CONFIG="/home/steve/wibble.cfg" memmachine #defines the variable and starts memmachine
-```
-</Tip>
 </Step>
 <Step title="Run MemMachine">
 

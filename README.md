@@ -8,6 +8,12 @@
 
 </div>
 
+## Growing Community
+
+MemMachine is a growing community of builders and developers. Please help us grow by clicking the *Star* button above.
+
+<img src="https://starchart.cc/MemMachine/MemMachine.svg?variant=light" alt="Alt text" height="300"/>
+
 ## Universal memory layer for AI Agents
 
 Meet MemMachine, an open-source memory layer for advanced AI agents. It enables

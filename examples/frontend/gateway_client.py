@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import requests
 
@@ -36,7 +36,7 @@ def create_persona_query(user_id: str, query: str) -> str:
         params={
             "query": query,
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         },
         timeout=1000,
     )
@@ -46,8 +46,7 @@ def create_persona_query(user_id: str, query: str) -> str:
 
     if search_results.get("profile"):
         return f"Based on your profile: {search_results['profile']}\n\nQuery: {query}"
-    else:
-        return f"Query: {query}"
+    return f"Query: {query}"
 
 
 def add_new_session_message(user_id: str, msg: str) -> None:

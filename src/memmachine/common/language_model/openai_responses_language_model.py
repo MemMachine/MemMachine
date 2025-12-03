@@ -1,21 +1,22 @@
-"""
-OpenAI-based language model implementation.
-"""
+"""OpenAI-based language model implementation."""
 
 import asyncio
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+from openai.types.responses import Response
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
-from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine.common.metrics_factory import MetricsFactory
 
 from .language_model import LanguageModel
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
         user_metrics_labels (dict[str, str]):
             Labels to attach to the collected metrics
             (default: {}).
+
     """
 
     client: InstanceOf[openai.AsyncOpenAI] = Field(
@@ -66,19 +68,16 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
 
 
 class OpenAIResponsesLanguageModel(LanguageModel):
-    """
-    Language model that uses OpenAI's models
-    to generate responses based on prompts and tools.
-    """
+    """Language model that uses OpenAI's responses API."""
 
-    def __init__(self, params: OpenAIResponsesLanguageModelParams):
+    def __init__(self, params: OpenAIResponsesLanguageModelParams) -> None:
         """
-        Initialize an OpenAIResponsesLanguageModel
-        with the provided parameters.
+        Initialize the responses language model with configuration.
 
         Args:
             params (OpenAIResponsesLanguageModelParams):
                 Parameters for the OpenAIResponsesLanguageModel.
+
         """
         super().__init__()
 
@@ -90,9 +89,9 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         metrics_factory = params.metrics_factory
 
-        self._collect_metrics = False
+        self._should_collect_metrics = False
         if metrics_factory is not None:
-            self._collect_metrics = True
+            self._should_collect_metrics = True
             self._user_metrics_labels = params.user_metrics_labels
             label_names = self._user_metrics_labels.keys()
 
@@ -130,6 +129,53 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 label_names=label_names,
             )
 
+    async def generate_parsed_response(
+        self,
+        output_format: type[T],
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        max_attempts: int = 1,
+    ) -> T | None:
+        """Generate a structured response parsed into the given model."""
+        if max_attempts <= 0:
+            raise ValueError("max_attempts must be a positive integer")
+
+        input_prompts = [
+            {"role": "system", "content": system_prompt or ""},
+            {"role": "user", "content": user_prompt or ""},
+        ]
+
+        generate_response_call_uuid = uuid4()
+
+        start_time = time.monotonic()
+
+        try:
+            response = await self._client.with_options(
+                max_retries=max_attempts,
+            ).responses.parse(
+                model=self._model,  # type: ignore[arg-type]
+                input=input_prompts,  # type: ignore[arg-type]
+                text_format=output_format,
+            )
+        except openai.OpenAIError as e:
+            error_message = (
+                f"[call uuid: {generate_response_call_uuid}] "
+                "Giving up generating response "
+                f"due to non-retryable {type(e).__name__}"
+            )
+            logger.exception(error_message)
+            raise ExternalServiceAPIError(error_message) from e
+
+        end_time = time.monotonic()
+
+        self._collect_metrics(
+            response,
+            start_time,
+            end_time,
+        )
+
+        return response.output_parsed
+
     async def generate_response(
         self,
         system_prompt: str | None = None,
@@ -138,6 +184,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
+        """Generate a raw text response (and optional tool call)."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
@@ -183,8 +230,8 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                         f"due to retryable {type(e).__name__}: "
                         f"max attempts {max_attempts} reached"
                     )
-                    logger.error(error_message)
-                    raise ExternalServiceAPIError(error_message)
+                    logger.exception(error_message)
+                    raise ExternalServiceAPIError(error_message) from e
 
                 logger.info(
                     "[call uuid: %s] "
@@ -206,8 +253,8 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     f"after failed attempt {attempt} "
                     f"due to non-retryable {type(e).__name__}"
                 )
-                logger.error(error_message)
-                raise ExternalServiceAPIError(error_message)
+                logger.exception(error_message)
+                raise ExternalServiceAPIError(error_message) from e
 
         end_time = time.monotonic()
         logger.debug(
@@ -216,7 +263,42 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             end_time - start_time,
         )
 
-        if self._collect_metrics:
+        self._collect_metrics(
+            response,
+            start_time,
+            end_time,
+        )
+
+        if response.output is None:
+            return (response.output_text or "", [])
+
+        try:
+            function_calls_arguments = [
+                {
+                    "call_id": output.call_id,
+                    "function": {
+                        "name": output.name,
+                        "arguments": json.loads(output.arguments),
+                    },
+                }
+                for output in response.output
+                if output.type == "function_call"
+            ]
+        except json.JSONDecodeError as e:
+            raise ValueError("JSON decode error") from e
+
+        return (
+            response.output_text,
+            function_calls_arguments,
+        )
+
+    def _collect_metrics(
+        self,
+        response: Response,
+        start_time: float,
+        end_time: float,
+    ) -> None:
+        if self._should_collect_metrics:
             if response.usage is not None:
                 self._input_tokens_usage_counter.increment(
                     value=response.usage.input_tokens,
@@ -243,26 +325,3 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 value=end_time - start_time,
                 labels=self._user_metrics_labels,
             )
-
-        if response.output is None:
-            return (response.output_text or "", [])
-
-        try:
-            function_calls_arguments = [
-                {
-                    "call_id": output.call_id,
-                    "function": {
-                        "name": output.name,
-                        "arguments": json.loads(output.arguments),
-                    },
-                }
-                for output in response.output
-                if output.type == "function_call"
-            ]
-        except json.JSONDecodeError as e:
-            raise ValueError("JSON decode error") from e
-
-        return (
-            response.output_text,
-            function_calls_arguments,
-        )

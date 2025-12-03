@@ -33,11 +33,25 @@
             "icon": "map",
             "pages": [
               "install_guide/introduction",
-              "install_guide/install_guide",
-              "install_guide/aws_bedrock",
-              "install_guide/ollama"
+              "install_guide/install_guide", 
+              {
+                "group": "Configurations",
+                "pages": [
+                  "install_guide/config/ollama",
+                  "install_guide/config/aws_bedrock"
+                ]
+              }  
             ]
           },
+          {
+            "group": "Integrations",
+            "icon": "puzzle-piece",
+            "pages": [
+              "install_guide/integrate/claude_code_mcp",
+              "install_guide/integrate/GPTStore",
+              "install_guide/integrate/LangGraph"
+            ]
+           },
           {
             "group": "Core Concepts",
             "icon": "brain",
@@ -69,22 +83,13 @@
             ]
           },
           {
-            "group": "PythonSDK Server",
+            "group": "MCP Tools",
             "pages": [
-              "api_reference/python/episodic_memory",
-              "api_reference/python/episodic_memory_manager",
-              "api_reference/python/memory_types",
-              "api_reference/python/profile_memory"
+              "api_reference/mcp"
             ]
           },
           {
-            "group": "PythonSDK Client",
-            "pages": [
-              "api_reference/python/client"
-            ]
-          },
-          {
-            "group": "API Reference",
+            "group": "REST API",
             "openapi": "openapi.json",
             "playground": {
               "display": "interactive"
@@ -93,6 +98,24 @@
               "languages": ["python"],
               "defaults": "required"
             }
+          },
+          {
+            "group": "PythonSDK Client",
+            "pages": [
+              "api_reference/python/client",
+              "api_reference/python/client_api",
+              "api_reference/python/project_api",
+              "api_reference/python/memory_api"
+            ]
+          },
+          {
+            "group": "PythonSDK Server",
+            "pages": [
+              "api_reference/python/episodic_memory",
+              "api_reference/python/episodic_memory_manager",
+              "api_reference/python/memory_types",
+              "api_reference/python/profile_memory"
+            ]
           }
         ]
       },

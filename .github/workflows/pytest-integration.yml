@@ -2,24 +2,18 @@ name: Run Python integration tests
 on:
   push:
     branches: [ main ]
-  pull_request_target:
-    branches: [ main ]
-
-  # Run integration tests on pull requests if the workflow file has changed.
-  # This will force the user to set up the secrets for the integration tests when adding integration tests.
   pull_request:
-    paths:
-      - '.github/workflows/pytest-integration.yml'
 
 permissions:
   contents: read
 
 # Cancel any preceding run on the pull request after a new commit is pushed.
 concurrency:
-  group: integration-test-${{ github.event.pull_request.number || github.ref }}
+  group: integration-test-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
 
   # Don't cancel if running on a push to the main branch.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
+
 
 jobs:
   integration-test:
@@ -28,14 +22,24 @@ jobs:
       matrix:
         # Each integration test is a separate job to allow for parallel execution
         test-paths: [
-          "tests/memmachine/profile_memory/test_profile_memory_integration.py",
-          "tests/memmachine/common/vector_graph_store/test_neo4j_vector_graph_store.py",
+          # Common tests
+          "tests/memmachine/common/",
+          # Episodic Memory tests
+          "tests/memmachine/episodic_memory/",
+          # Main MemMachine tests
+          "tests/memmachine/main/",
+          # Semantic Memory tests
+          "tests/memmachine/semantic_memory/",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
-        python-version: [ "3.12", "3.13", "3.14" ]
+        # Test on the oldest and newest supported Python versions
+        python-version: [ "3.12", "3.14" ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Install the latest version of uv and set the python version
         uses: astral-sh/setup-uv@v6
@@ -45,4 +49,11 @@ jobs:
       - name: Test ${{ matrix.test-paths }} with python ${{ matrix.python-version }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration
+          else
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --integration
+          fi

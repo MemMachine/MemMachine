@@ -1,61 +1,99 @@
+"""Data structures for declarative episodic memory entries."""
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from uuid import UUID
 
-FilterablePropertyValue = bool | int | str
-JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
+from pydantic import JsonValue
+
+from memmachine.common.data_types import FilterablePropertyValue
 
 
 class ContentType(Enum):
-    STRING = "string"
+    """Types of content stored in declarative memory."""
+
+    MESSAGE = "message"
+    TEXT = "text"
 
 
 @dataclass(kw_only=True)
 class Episode:
-    uuid: UUID
-    episode_type: str
+    """A single episodic memory entry."""
+
+    uid: str
+    timestamp: datetime
+    source: str
     content_type: ContentType
     content: Any
-    timestamp: datetime
     filterable_properties: dict[str, FilterablePropertyValue] = field(
-        default_factory=dict
+        default_factory=dict,
     )
-    user_metadata: JSONValue = None
+    user_metadata: JsonValue = None
 
+    def __eq__(self, other: object) -> bool:
+        """Compare episodes by UID."""
+        if not isinstance(other, Episode):
+            return False
+        return (
+            self.uid == other.uid
+            and self.timestamp == other.timestamp
+            and self.source == other.source
+            and self.content_type == other.content_type
+            and self.content == other.content
+            and self.filterable_properties == other.filterable_properties
+            and self.user_metadata == other.user_metadata
+        )
 
-@dataclass(kw_only=True)
-class EpisodeCluster:
-    uuid: UUID
-    episodes: list[Episode] = field(default_factory=list)
-    timestamp: datetime | None = None
-    filterable_properties: dict[str, FilterablePropertyValue] = field(
-        default_factory=dict
-    )
-    user_metadata: JSONValue = None
+    def __hash__(self) -> int:
+        """Hash an episode by its UID."""
+        return hash(self.uid)
 
 
 @dataclass(kw_only=True)
 class Derivative:
-    uuid: UUID
-    derivative_type: str
+    """A derived episodic memory linked to a source episode."""
+
+    uid: str
+    timestamp: datetime
+    source: str
     content_type: ContentType
     content: Any
-    timestamp: datetime | None = None
     filterable_properties: dict[str, FilterablePropertyValue] = field(
-        default_factory=dict
+        default_factory=dict,
     )
-    user_metadata: JSONValue = None
+
+    def __eq__(self, other: object) -> bool:
+        """Compare derivatives by UID."""
+        if not isinstance(other, Derivative):
+            return False
+        return (
+            self.uid == other.uid
+            and self.timestamp == other.timestamp
+            and self.source == other.source
+            and self.content_type == other.content_type
+            and self.content == other.content
+            and self.filterable_properties == other.filterable_properties
+        )
+
+    def __hash__(self) -> int:
+        """Hash a derivative by its UID."""
+        return hash(self.uid)
+
+
+_MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX = "filterable_"
 
 
 def mangle_filterable_property_key(key: str) -> str:
-    return f"filterable_{key}"
+    """Prefix filterable property keys with the mangling token."""
+    return _MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX + key
 
 
 def demangle_filterable_property_key(mangled_key: str) -> str:
-    return mangled_key.removeprefix("filterable_")
+    """Remove the mangling prefix from a filterable property key."""
+    return mangled_key.removeprefix(_MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX)
 
 
 def is_mangled_filterable_property_key(candidate_key: str) -> bool:
-    return candidate_key.startswith("filterable_")
+    """Check whether the provided key contains the mangling prefix."""
+    return candidate_key.startswith(_MANGLE_FILTERABLE_PROPERTY_KEY_PREFIX)

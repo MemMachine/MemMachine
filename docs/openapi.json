@@ -1,52 +1,42 @@
 {
-  "openapi": "3.0.0",
+  "openapi": "3.1.0",
   "info": {
-    "title": "MemMachine Unified API",
-    "version": "1.0.0",
-    "description": "Unified API specification for the MemMachine memory system, detailing both standard RESTful endpoints for direct interaction and dedicated MCP Server endpoints optimized for LLM tool use."
+    "title": "FastAPI",
+    "version": "0.1.0"
   },
-  "servers": [
-    {
-      "url": "http://localhost:8080/",
-      "description": "The base path for all standard RESTful API endpoints."
-    }
-  ],
-  "tags": [
-    {
-      "name": "RESTful APIs",
-      "description": "Standard RESTful API endpoints, typically consumed directly by applications and front-end clients for general memory management."
-    },
-    {
-      "name": "MCP Tools",
-      "description": "MCP endpoints exposed as tools and resources, primarily for use with an LLM via the MCP server/FastMCP implementation."
-    }
-  ],
   "paths": {
-    "/v1/memories": {
+    "/api/v2/projects": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Add Memories (Unified)",
-        "description": "Retrieves the appropriate memory instance and adds the episode to **both** episodic and profile memory.",
-        "operationId": "add_memory",
+        "summary": "Create Project",
+        "description": "Create a new project.",
+        "operationId": "create_project_api_v2_projects_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewEpisode"
+                "$ref": "#/components/schemas/CreateProjectSpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
-            "description": "Memory added successfully.",
+          "201": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationStatus"
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -54,31 +44,38 @@
         }
       }
     },
-    "/v1/memories/episodic": {
+    "/api/v2/projects/get": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Add Episodic Memory",
-        "description": "Adds an episode to the short-term (session) and long-term (declarative) memory for a conversation context.",
-        "operationId": "add_episodic_memory",
+        "summary": "Get Project",
+        "description": "Get a project.",
+        "operationId": "get_project_api_v2_projects_get_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewEpisode"
+                "$ref": "#/components/schemas/GetProjectSpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Episode added successfully.",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationStatus"
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -86,31 +83,25 @@
         }
       }
     },
-    "/v1/memories/profile": {
+    "/api/v2/projects/list": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Add Profile Memory Message",
-        "description": "Adds a message to the user's conversation history, asynchronously triggering a profile update and consolidation.",
-        "operationId": "add_profile_memory_message",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddProfileMemoryRequest"
-              }
-            }
-          }
-        },
+        "summary": "List Projects",
+        "description": "List all projects.",
+        "operationId": "list_projects_api_v2_projects_list_post",
         "responses": {
           "200": {
-            "description": "Message accepted for profile ingestion.",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationStatus"
+                  "items": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api V2 Projects List Post"
                 }
               }
             }
@@ -118,27 +109,173 @@
         }
       }
     },
-    "/v1/memories/search": {
+    "/api/v2/projects/delete": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Search Memories (Unified)",
-        "description": "Searches across both episodic and profile memories for the most relevant context.",
-        "operationId": "search_memory",
+        "summary": "Delete Project",
+        "description": "Delete a project.",
+        "operationId": "delete_project_api_v2_projects_delete_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchQuery"
+                "$ref": "#/components/schemas/DeleteProjectSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
+        }
+      }
+    },
+    "/api/v2/memories": {
+      "post": {
+        "summary": "Add Memories",
+        "description": "Add memories to a project.",
+        "operationId": "add_memories_api_v2_memories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Search results.",
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories/episodic/add": {
+      "post": {
+        "summary": "Add Episodic Memories",
+        "description": "Add episodic memories to a project.",
+        "operationId": "add_episodic_memories_api_v2_memories_episodic_add_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories/semantic/add": {
+      "post": {
+        "summary": "Add Semantic Memories",
+        "description": "Add semantic memories to a project.",
+        "operationId": "add_semantic_memories_api_v2_memories_semantic_add_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories/search": {
+      "post": {
+        "summary": "Search Memories",
+        "description": "Search memories in a project.",
+        "operationId": "search_memories_api_v2_memories_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -146,31 +283,38 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/v1/memories/episodic/search": {
+    "/api/v2/memories/list": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Search Episodic Memory",
-        "description": "Retrieves the most relevant contextual information from short-term and long-term memory for a given query.",
-        "operationId": "search_episodic_memory",
+        "summary": "List Memories",
+        "description": "List memories in a project.",
+        "operationId": "list_memories_api_v2_memories_list_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchQuery"
+                "$ref": "#/components/schemas/ListMemoriesSpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Episodic search results.",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -178,35 +322,45 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/v1/memories/profile/search": {
+    "/api/v2/memories/episodic/delete": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Semantic Search Profile Memory",
-        "description": "Performs a semantic search against the user's profile and returns relevant entries based on similarity and filters.",
-        "operationId": "semantic_search_profile_memory",
+        "summary": "Delete Episodic Memory",
+        "description": "Delete episodic memories in a project.",
+        "operationId": "delete_episodic_memory_api_v2_memories_episodic_delete_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProfileSearchRequest"
+                "$ref": "#/components/schemas/DeleteEpisodicMemorySpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
-            "description": "List of profile entries matching the query.",
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProfileEntriesResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -214,53 +368,31 @@
         }
       }
     },
-    "/v1/sessions": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Get All Sessions",
-        "description": "Retrieves metadata for all active memory sessions in the system.",
-        "operationId": "get_all_sessions",
-        "responses": {
-          "200": {
-            "description": "List of memory sessions.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sessions/delete": {
+    "/api/v2/memories/semantic/delete": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Delete Session Data",
-        "description": "Deletes all associated data for a specific memory context (session, group, user) from both episodic and profile memory.",
-        "operationId": "delete_session_data",
+        "summary": "Delete Semantic Memory",
+        "description": "Delete semantic memories in a project.",
+        "operationId": "delete_semantic_memory_api_v2_memories_semantic_delete_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DeleteDataRequest"
+                "$ref": "#/components/schemas/DeleteSemanticMemorySpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
-            "description": "Data deleted successfully.",
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperationStatus"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -268,308 +400,39 @@
         }
       }
     },
-    "/v1/users/{user_id}/sessions": {
+    "/api/v2/metrics": {
       "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Get Sessions by User ID",
-        "description": "Retrieves metadata for all active memory sessions associated with a given user ID.",
-        "operationId": "get_sessions_by_user",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "The user ID to filter by."
-          }
-        ],
+        "summary": "Metrics",
+        "description": "Expose Prometheus metrics endpoint.",
+        "operationId": "metrics_api_v2_metrics_get",
         "responses": {
           "200": {
-            "description": "List of memory sessions.",
+            "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
+                "schema": {}
               }
             }
           }
         }
       }
     },
-    "/v1/groups/{group_id}/sessions": {
+    "/api/v2/health": {
       "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Get Sessions by Group ID",
-        "description": "Retrieves metadata for all active memory sessions within a given group ID.",
-        "operationId": "get_sessions_by_group",
-        "parameters": [
-          {
-            "name": "group_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "The group ID to filter by."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of memory sessions.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/agents/{agent_id}/sessions": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Get Sessions by Agent ID",
-        "description": "Retrieves metadata for all active memory sessions involving a given agent ID.",
-        "operationId": "get_sessions_by_agent",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "The agent ID to filter by."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of memory sessions.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/metrics": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "Prometheus Metrics Endpoint",
-        "description": "Serves Prometheus format metrics for monitoring the memory system.",
-        "operationId": "get_metrics",
-        "responses": {
-          "200": {
-            "description": "Prometheus metrics data.",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/health": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
         "summary": "Health Check",
-        "description": "Simple health check endpoint to verify the server is running.",
-        "operationId": "health_check",
+        "description": "Health check endpoint for container orchestration.",
+        "operationId": "health_check_api_v2_health_get",
         "responses": {
           "200": {
-            "description": "Server is healthy.",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
                   "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "ok"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/tool/episodic_memory_search": {
-      "post": {
-        "tags": [
-          "MCP Tools"
-        ],
-        "summary": "Episodic Memory Search",
-        "description": "TOOL: Exposed to the LLM to search a conversation's episodic memory for context, returning a structured summary and relevant episodes.",
-        "operationId": "episodic_memory_search",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchQuery"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Contextual information retrieved from episodic memory.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResult"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/tool/profile_memory_search": {
-      "post": {
-        "tags": [
-          "MCP Tools"
-        ],
-        "summary": "Profile Memory Search",
-        "description": "TOOL: Exposed to the LLM to semantically search the user's Profile Memory for known facts and biographical information.",
-        "operationId": "profile_memory_search",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileSearchRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Profile entries matching the semantic query.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileEntriesResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/tool/unified_memory_search": {
-      "post": {
-        "tags": [
-          "MCP Tools"
-        ],
-        "summary": "Unified Memory Search",
-        "description": "TOOL: Exposed to the LLM to search across both Episodic (conversation) and Profile (facts) memories for the most relevant context.",
-        "operationId": "unified_memory_search",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchQuery"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Contextual information retrieved from unified memory.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResult"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/tool/add_memory_episode": {
-      "post": {
-        "tags": [
-          "MCP Tools"
-        ],
-        "summary": "Add Memory Episode",
-        "description": "TOOL: Exposed to the LLM to add a new event (e.g., thought, action, or summary) to both episodic and profile memory.",
-        "operationId": "add_memory_episode_tool",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NewEpisode"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Episode added successfully.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/tool/delete_session_data": {
-      "post": {
-        "tags": [
-          "MCP Tools"
-        ],
-        "summary": "Delete Session Data",
-        "description": "TOOL: Exposed to the LLM to completely delete all data (episodic and profile) associated with a given conversation context (session or group).",
-        "operationId": "delete_session_data_tool",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteDataRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Data deletion request accepted.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationStatus"
+                  "title": "Response Health Check Api V2 Health Get"
                 }
               }
             }
@@ -580,320 +443,413 @@
   },
   "components": {
     "schemas": {
-      "SearchResult": {
-        "title": "SearchResult",
-        "type": "object",
-        "description": "The result of a memory search operation.",
+      "AddMemoriesResponse": {
         "properties": {
-          "context_string": {
-            "type": "string",
-            "description": "The final formatted string containing summarized context and episodes for the LLM."
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/AddMemoryResult"
+            },
+            "type": "array",
+            "title": "Results"
           }
         },
-        "required": [
-          "context_string"
-        ]
-      },
-      "SessionData": {
-        "title": "SessionData",
         "type": "object",
-        "description": "Input for identifying a memory session.",
+        "required": [
+          "results"
+        ],
+        "title": "AddMemoriesResponse",
+        "description": "Response model for adding memories."
+      },
+      "AddMemoriesSpec": {
         "properties": {
-          "user_id": {
+          "org_id": {
             "type": "string",
-            "description": "The ID of the user.",
-            "default": ""
+            "title": "Org Id",
+            "default": "universal"
           },
-          "session_id": {
+          "project_id": {
             "type": "string",
-            "description": "The unique session identifier.",
-            "default": ""
+            "title": "Project Id",
+            "default": "universal"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryMessage"
+            },
+            "type": "array",
+            "title": "Messages"
           }
         },
-        "required": [
-          "user_id",
-          "session_id"
-        ]
-      },
-      "DeleteDataRequest": {
-        "title": "DeleteDataRequest",
         "type": "object",
-        "description": "Request body for deleting memory data associated with a context.",
+        "required": [
+          "messages"
+        ],
+        "title": "AddMemoriesSpec",
+        "description": "Specification model for adding memories."
+      },
+      "AddMemoryResult": {
         "properties": {
-          "session_id": {
+          "uid": {
             "type": "string",
-            "description": "The unique session identifier.",
-            "default": ""
-          },
-          "group_id": {
-            "type": "string",
-            "description": "The group identifier.",
-            "default": ""
+            "title": "Uid"
           }
         },
-        "required": [
-          "session_id"
-        ]
-      },
-      "SearchQuery": {
-        "title": "SearchQuery",
         "type": "object",
-        "description": "Request body for a memory search.",
+        "required": [
+          "uid"
+        ],
+        "title": "AddMemoryResult",
+        "description": "Response model for adding memories."
+      },
+      "CreateProjectSpec": {
         "properties": {
-          "query": {
+          "org_id": {
             "type": "string",
-            "description": "The search query string.",
+            "title": "Org Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
             "default": ""
           },
-          "user_id": {
+          "config": {
+            "$ref": "#/components/schemas/ProjectConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "CreateProjectSpec",
+        "description": "Specification model for creating a new project."
+      },
+      "DeleteEpisodicMemorySpec": {
+        "properties": {
+          "org_id": {
             "type": "string",
-            "description": "The ID of the user associated with the search.",
-            "default": ""
+            "title": "Org Id",
+            "default": "universal"
           },
-          "session_id": {
+          "project_id": {
             "type": "string",
-            "description": "The unique session identifier.",
-            "default": ""
+            "title": "Project Id",
+            "default": "universal"
           },
-          "limit": {
+          "episodic_id": {
+            "type": "string",
+            "title": "Episodic Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "episodic_id"
+        ],
+        "title": "DeleteEpisodicMemorySpec",
+        "description": "Specification model for deleting episodic memories."
+      },
+      "DeleteProjectSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "DeleteProjectSpec",
+        "description": "Specification model for deleting a project."
+      },
+      "DeleteSemanticMemorySpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "default": "universal"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "default": "universal"
+          },
+          "semantic_id": {
+            "type": "string",
+            "title": "Semantic Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "semantic_id"
+        ],
+        "title": "DeleteSemanticMemorySpec",
+        "description": "Specification model for deleting episodic memories."
+      },
+      "GetProjectSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "GetProjectSpec",
+        "description": "Specification model for getting a project."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ListMemoriesSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "default": "universal"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "default": "universal"
+          },
+          "page_size": {
             "type": "integer",
-            "format": "int32",
-            "description": "The maximum number of episodes to return.",
-            "default": 20,
-            "nullable": true
+            "title": "Page Size",
+            "default": 100
           },
-          "property_filter": {
-            "type": "object",
-            "description": "A dictionary of key-value pairs to filter declarative memory search results.",
-            "nullable": true
+          "page_num": {
+            "type": "integer",
+            "title": "Page Num",
+            "default": 0
+          },
+          "filter": {
+            "type": "string",
+            "title": "Filter",
+            "default": ""
+          },
+          "type": {
+            "$ref": "#/components/schemas/MemoryType",
+            "default": "episodic"
           }
         },
-        "required": [
-          "query",
-          "user_id",
-          "session_id"
-        ]
-      },
-      "NewEpisode": {
-        "title": "NewEpisode",
         "type": "object",
-        "description": "Request body for adding a new episode to memory.",
-        "properties": {
-          "producer_id": {
-            "type": "string",
-            "description": "The ID of the user or agent that created the episode.",
-            "default": ""
-          },
-          "produced_for_id": {
-            "type": "string",
-            "description": "The ID of the intended recipient.",
-            "default": ""
-          },
-          "episode_content": {
-            "type": "string",
-            "description": "The content of the episode (text string).",
-            "default": ""
-          },
-          "episode_type": {
-            "type": "string",
-            "description": "The category of the episode (e.g., 'message', 'thought').",
-            "default": "message"
-          },
-          "user_id": {
-            "type": "string",
-            "description": "The ID of the user associated with the episode.",
-            "default": ""
-          },
-          "session_id": {
-            "type": "string",
-            "description": "The unique session identifier.",
-            "default": ""
-          },
-          "group_id": {
-            "type": "string",
-            "description": "The group identifier.",
-            "default": ""
-          },
-          "metadata": {
-            "type": "object",
-            "description": "Optional dictionary for custom, user-defined metadata.",
-            "nullable": true
-          }
-        },
-        "required": [
-          "producer_id",
-          "produced_for_id",
-          "episode_content",
-          "episode_type",
-          "user_id",
-          "session_id"
-        ]
+        "title": "ListMemoriesSpec",
+        "description": "Specification model for listing memories."
       },
-      "OperationStatus": {
-        "title": "OperationStatus",
-        "type": "object",
-        "description": "Generic response indicating the status of an asynchronous operation.",
+      "MemoryMessage": {
         "properties": {
-          "status": {
-            "type": "string",
-            "description": "The status of the operation (e.g., 'success', 'accepted', 'failure').",
-            "example": "success"
-          }
-        },
-        "required": [
-          "status"
-        ]
-      },
-      "MemorySession": {
-        "title": "MemorySession",
-        "type": "object",
-        "description": "Metadata representing a single active memory session.",
-        "properties": {
-          "user_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "List of user IDs associated with the session."
-          },
-          "session_id": {
-            "type": "string",
-            "description": "Unique session identifier."
-          },
-          "group_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "Optional group ID."
-          },
-          "agent_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "nullable": true,
-            "description": "List of agent IDs associated with the session."
-          }
-        },
-        "required": [
-          "user_ids",
-          "session_id"
-        ]
-      },
-      "AllSessionsResponse": {
-        "title": "AllSessionsResponse",
-        "type": "object",
-        "description": "Response model containing a list of all retrieved memory sessions.",
-        "properties": {
-          "sessions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MemorySession"
-            },
-            "description": "The list of session objects."
-          }
-        },
-        "required": [
-          "sessions"
-        ]
-      },
-      "AddProfileMemoryRequest": {
-        "title": "AddProfileMemoryRequest",
-        "type": "object",
-        "description": "Request body for adding a message to the profile memory system.",
-        "properties": {
-          "user_id": {
-            "type": "string",
-            "description": "The ID of the user associated with the message.",
-            "default": ""
-          },
           "content": {
             "type": "string",
-            "description": "The message content.",
+            "title": "Content"
+          },
+          "producer": {
+            "type": "string",
+            "title": "Producer",
+            "default": "user"
+          },
+          "produced_for": {
+            "type": "string",
+            "title": "Produced For",
+            "default": ""
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
             "default": ""
           },
           "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
             "type": "object",
-            "description": "Optional dictionary for message metadata.",
-            "nullable": true
-          },
-          "isolations": {
-            "type": "object",
-            "description": "Optional dictionary for data isolation filtering.",
-            "nullable": true
+            "title": "Metadata"
           }
         },
-        "required": [
-          "user_id",
-          "content"
-        ]
-      },
-      "ProfileSearchRequest": {
-        "title": "ProfileSearchRequest",
         "type": "object",
-        "description": "Request body for performing a semantic search on a user's profile.",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryMessage",
+        "description": "Model representing a memory message."
+      },
+      "MemoryType": {
+        "type": "string",
+        "enum": [
+          "semantic",
+          "episodic"
+        ],
+        "title": "MemoryType",
+        "description": "Memory type."
+      },
+      "ProjectConfig": {
         "properties": {
-          "user_id": {
+          "reranker": {
             "type": "string",
-            "description": "The ID of the user.",
+            "title": "Reranker",
             "default": ""
+          },
+          "embedder": {
+            "type": "string",
+            "title": "Embedder",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ProjectConfig",
+        "description": "Project configuration model."
+      },
+      "ProjectResponse": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProjectConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "ProjectResponse",
+        "description": "Response model for project operations."
+      },
+      "SearchMemoriesSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "default": "universal"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "default": "universal"
+          },
+          "top_k": {
+            "type": "integer",
+            "title": "Top K",
+            "default": 10
           },
           "query": {
             "type": "string",
-            "description": "The search query string.",
+            "title": "Query"
+          },
+          "filter": {
+            "type": "string",
+            "title": "Filter",
             "default": ""
           },
-          "k": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Maximum number of results to retrieve.",
-            "default": 10
-          },
-          "min_cos": {
-            "type": "number",
-            "format": "float",
-            "description": "Minimum cosine similarity score.",
-            "default": -1.0
-          },
-          "max_range": {
-            "type": "number",
-            "format": "float",
-            "description": "Maximum range for the result filter.",
-            "default": 2.0
-          },
-          "max_std": {
-            "type": "number",
-            "format": "float",
-            "description": "Maximum standard deviation for the result filter.",
-            "default": 1.0
-          },
-          "isolations": {
-            "type": "object",
-            "description": "Dictionary for data isolation filtering.",
-            "nullable": true
-          }
-        },
-        "required": [
-          "user_id",
-          "query"
-        ]
-      },
-      "ProfileEntriesResponse": {
-        "title": "ProfileEntriesResponse",
-        "type": "object",
-        "description": "Response model containing a list of profile entries.",
-        "properties": {
-          "entries": {
-            "type": "array",
+          "types": {
             "items": {
-              "type": "object",
-              "description": "A single profile entry (details omitted for brevity)."
+              "$ref": "#/components/schemas/MemoryType"
             },
-            "description": "The list of profile entries."
+            "type": "array",
+            "title": "Types"
           }
         },
+        "type": "object",
         "required": [
-          "entries"
-        ]
+          "query"
+        ],
+        "title": "SearchMemoriesSpec",
+        "description": "Specification model for searching memories."
+      },
+      "SearchResult": {
+        "properties": {
+          "status": {
+            "type": "integer",
+            "title": "Status",
+            "default": 0
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "SearchResult",
+        "description": "Response model for memory search results."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
       }
     }
   }

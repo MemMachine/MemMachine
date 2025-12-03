@@ -70,4 +70,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords')"
 
 EXPOSE 8080
-CMD ["sh", "-c", "memmachine-sync-profile-schema && memmachine-server"]
+CMD ["sh", "-c", "memmachine-server"]

@@ -33,7 +33,9 @@ class MigrationHack:
             self.user_session = json.load(f)
         self.base_url = base_url
         self.client = MemMachineRestClient(
-            base_url=self.base_url, session=self.user_session, verbose=False
+            base_url=self.base_url,
+            session=self.user_session,
+            verbose=False,
         )
         self.chat_history_file = chat_history_file
         self.chat_type = chat_type
@@ -41,7 +43,7 @@ class MigrationHack:
         self.max_messages = max_messages
         # Extract the base filename from the locomo file path
         self.chat_base_name = os.path.splitext(
-            os.path.basename(self.chat_history_file)
+            os.path.basename(self.chat_history_file),
         )[0]
         self.extract_dir = extract_dir
         # list of messages in conversations loaded from file
@@ -59,16 +61,18 @@ class MigrationHack:
             print("-> counting conversations...")
             if self.chat_type == "locomo":
                 conv_count = locomo_count_conversations(
-                    self.chat_history_file, verbose=False
+                    self.chat_history_file,
+                    verbose=False,
                 )
             elif self.chat_type == "openai":
                 conv_count = openai_count_conversations(
-                    self.chat_history_file, verbose=False
+                    self.chat_history_file,
+                    verbose=False,
                 )
             else:
                 raise Exception(f"Error: Invalid chat type: {self.chat_type}")
             print(
-                f"-> loaded {conv_count} conversations from {self.chat_type} file {self.chat_history_file}"
+                f"-> loaded {conv_count} conversations from {self.chat_type} file {self.chat_history_file}",
             )
             self.num_conversations = conv_count
         # write into extract_dir
@@ -82,8 +86,7 @@ class MigrationHack:
                 print(f"== Extract file {extract_file} already cached, load from file")
                 messages = []
                 with open(extract_file, "r") as f:
-                    for line in f:
-                        messages.append(line.strip())
+                    messages.extend(line.strip() for line in f)
                 self.messages[conv_id] = messages
             else:
                 print(f"---> loading messages from conversation {conv_id}...")
@@ -106,20 +109,19 @@ class MigrationHack:
                 else:
                     raise Exception(f"Error: Invalid chat type: {self.chat_type}")
                 print(
-                    f"---> loaded {len(messages)} messages from conversation {conv_id}"
+                    f"---> loaded {len(messages)} messages from conversation {conv_id}",
                 )
                 total_messages += len(messages)
                 self.messages[conv_id] = messages
-                with open(extract_file, "w") as f:
+                with open(extract_file, "w", encoding="utf-8") as f:
                     # Write each message line by line to the extract file
-                    for message in self.messages[conv_id]:
-                        f.write(message + "\n")
+                    f.writelines(message + "\n" for message in self.messages[conv_id])
 
     def summarize_messages(self, summarize_every=20):
         print("== Summarizing messages starts")
         if not self.api_key:
             raise Exception(
-                "Error: API key not found, please set environment variable OPENAI_API_KEY"
+                "Error: API key not found, please set environment variable OPENAI_API_KEY",
             )
         openai_summary = OpenAISummary(api_key=self.api_key, model=self.model)
 
@@ -131,7 +133,7 @@ class MigrationHack:
             summarized_file = os.path.join(self.extract_dir, summarized_file)
             if os.path.exists(summarized_file):
                 print(
-                    f"== Summarized file {summarized_file} already cached, load from file"
+                    f"== Summarized file {summarized_file} already cached, load from file",
                 )
                 if conv_id not in self.summaries or self.summaries[conv_id] is None:
                     self.summaries[conv_id] = []
@@ -169,13 +171,18 @@ class MigrationHack:
         # Create a progress bar for this conversation
         pos = conv_id - 1
         msg_pbar = tqdm(
-            messages, desc=f"Conv {conv_id}", unit="msg", position=pos, leave=True
+            messages,
+            desc=f"Conv {conv_id}",
+            unit="msg",
+            position=pos,
+            leave=True,
         )
         for message in msg_pbar:
             # TODO: insert messages into episodic memory
             if not self.dry_run:
                 self.client.post_episodic_memory(
-                    message, session_id=f"conversation_{conv_id}"
+                    message,
+                    session_id=f"conversation_{conv_id}",
                 )
 
         msg_pbar.close()
@@ -186,7 +193,7 @@ class MigrationHack:
 
         # Process conversations concurrently using ThreadPoolExecutor
         with ThreadPoolExecutor(
-            max_workers=min(self.num_conversations, 10)
+            max_workers=min(self.num_conversations, 10),
         ) as executor:
             if summary:
                 contents = self.summaries
@@ -200,14 +207,16 @@ class MigrationHack:
 
             # Create a progress bar for completed conversations
             completed_pbar = tqdm(
-                total=len(contents), desc="Completed conversations", unit="conv"
+                total=len(contents),
+                desc="Completed conversations",
+                unit="conv",
             )
 
             # Process completed tasks
             for future in as_completed(future_to_conv):
                 conv_id, msg_count = future.result()
                 completed_pbar.set_description(
-                    f"Completed conv {conv_id} ({msg_count} msgs)"
+                    f"Completed conv {conv_id} ({msg_count} msgs)",
                 )
                 completed_pbar.update(1)
 
@@ -230,7 +239,7 @@ class MigrationHack:
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description="Hackathon - Migration from ChatGPT to MemMachine"
+        description="Hackathon - Migration from ChatGPT to MemMachine",
     )
     parser.add_argument(
         "--base_url",
@@ -245,7 +254,10 @@ def get_args():
         help="Chat history file",
     )
     parser.add_argument(
-        "--chat_type", type=str, default="locomo", help="Chat type: locomo or openai"
+        "--chat_type",
+        type=str,
+        default="locomo",
+        help="Chat type: locomo or openai",
     )
     parser.add_argument(
         "--start_time",
@@ -254,13 +266,22 @@ def get_args():
         help="only read messages after this time either YYYY-MM-DDTHH:MM:SS or secs since epoch",
     )
     parser.add_argument(
-        "--max_messages", type=int, default=0, help="only read this many messages"
+        "--max_messages",
+        type=int,
+        default=0,
+        help="only read this many messages",
     )
     parser.add_argument(
-        "--summarize", default=False, action="store_true", help="Summarize messages"
+        "--summarize",
+        default=False,
+        action="store_true",
+        help="Summarize messages",
     )
     parser.add_argument(
-        "--summarize_every", type=int, default=20, help="Summarize every n messages"
+        "--summarize_every",
+        type=int,
+        default=20,
+        help="Summarize every n messages",
     )
     args = parser.parse_args()
     return args

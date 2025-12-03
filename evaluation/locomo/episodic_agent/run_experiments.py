@@ -5,7 +5,7 @@ import argparse
 import asyncio
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Run memory experiments")
     parser.add_argument("--method", default="add", help="Method to use")
     parser.add_argument(
@@ -24,7 +24,7 @@ def main():
     args = parser.parse_args()
 
     print(
-        f"\nMethod: {args.method}\nDataset: {args.dataset}\nBase Url: {args.base_url}"
+        f"\nMethod: {args.method}\nDataset: {args.dataset}\nBase Url: {args.base_url}",
     )
 
     from memmachine_locomo import MemMachineSearch

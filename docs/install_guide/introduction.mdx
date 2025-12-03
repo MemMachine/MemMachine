@@ -7,22 +7,34 @@ icon: "download"
 MemMachine offers flexible installation options to meet diverse development needs. Choose the method that best fits your environment, whether you are starting fresh or integrating with specific AI backends.
 
 - **Standard Installation:** Access the main guide for installing MemMachine using the preferred methods:
-  - **PIP:** Recommended for most users and existing Python environments.
-  - **Source Code:** Ideal for developers looking to contribute or run the latest repository version.
-- **Quickstart & AI Backends:** Find a **Quickstart Guide** and specific configuration details for popular AI platforms:
-  - **Ollama**
-  - **AWS Bedrock**
+<Columns cols={2}>
+<Card title="Using PIP" icon="file-image" href="/install_guide/install_guide">
+  **Quickest Start for Most Developers.** The simplest, one-line setup using Python's package manager. **Recommended for all users** integrating MemMachine into an existing project.
+</Card>
+<Card title="Using Source" icon="sourcetree" href="/install_guide/install_guide">
+  **Contribute and Run the Latest Code.** A detailed guide for cloning the repository and running the project directly from source. **Ideal for contributors** and active development.
+</Card>
+</Columns>
 
-To begin, **click on a card below** to select your installation path:
+- **Configurations:** Find a **Quickstart Guide** and specific details for setting up MemMachine's backend with popular AI platforms:
+<Columns cols={2}>
+<Card title="Using Ollama Models" icon="paw" href="/install_guide/config/ollama">
+  **Self-Host Your AI Backend.** Instructions for configuring MemMachine to use Ollama for local, open-source LLM and embedding models, maximizing privacy and control.
+</Card>
+<Card title="Using AWS Bedrock" icon="aws" href="/install_guide/config/aws_bedrock">
+  **Scale with AWS Managed Services.** Learn how to leverage AWS Bedrock's enterprise-ready models for reliable, high-volume memory management and processing.
+</Card>
+</Columns>
 
+- **Integrations:** Find specific configuration and integration details for using MemMachine in popular AI applications and workflows:
 <Columns cols={3}>
-<Card title="Using PIP or Source Code" icon="bookmark" href="/install_guide/install_guide">
-  Step by step instructions for installing MemMachine using PIP or from source code on GitHub.
+<Card title="Claude Code and MCP" icon="star-of-life" href="/install_guide/integrate/claude_code_mcp">
+  **Give Claude Real-Time Recall.** Step-by-step guide to configuring the MemMachine Control Protocol (MCP) as a **Custom Tool**. Instantly provide Claude with access to persistent user profiles and deep conversation context.
 </Card>
-<Card title="Using Ollama Models" icon="paw" href="/install_guide/ollama">
-  Guide to configure and install MemMachine using Ollama.
+<Card title="OpenAI GPTStore" icon="openai" href="/install_guide/integrate/GPTStore">
+  **Persistent Memory for Custom GPTs.** Learn how to set up MemMachine as a **Custom Action** to furnish your GPTs with reliable, long-term memory and accurate user history.
 </Card>
-<Card title="Using AWS Bedrock" icon="aws" href="/install_guide/aws_bedrock">
-  Guide to configure and install MemMachine using AWS Bedrock.
+<Card title="LangGraph" icon="circle-nodes" href="/install_guide/integrate/LangGraph">
+  **Master State and Workflow with LangGraph.** A practical guide to integrating MemMachine into your graph chains for managing **state, complex agent handoffs,** and durable session memory.
 </Card>
 </Columns>

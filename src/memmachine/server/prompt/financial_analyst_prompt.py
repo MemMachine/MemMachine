@@ -1,10 +1,16 @@
 """
-Financial Analyst-specific prompts for Intelligent Memory System
-Handles financial profiles with direct feature/value pairs (no tags)
+Financial Analyst-specific prompts for Intelligent Memory System.
+
+Handles financial profiles with direct feature/value pairs (no tags).
 """
 
 import zoneinfo
 from datetime import datetime
+
+from memmachine.semantic_memory.semantic_model import (
+    RawSemanticPrompt,
+    SemanticCategory,
+)
 
 # --- Canonical enumerations ---
 INVESTMENT_TYPES = [
@@ -83,11 +89,11 @@ def _categories_inline_list() -> str:
     return ", ".join(FINANCIAL_CATEGORIES)
 
 
-def _enum_list(enum_values) -> str:
+def _enum_list(enum_values: list[str]) -> str:
     return ", ".join(f'"{v}"' for v in enum_values)
 
 
-def _current_date_dow(tz="America/Los_Angeles") -> str:
+def _current_date_dow(tz: str = "America/Los_Angeles") -> str:
     dt = datetime.now(zoneinfo.ZoneInfo(tz))
     return f"{dt.strftime('%Y-%m-%d')}[{dt.strftime('%a')}]"
 
@@ -525,3 +531,13 @@ The financial profile is: {profile}.
 The conversation history is: {context}.
 The query prompt is: {query}.
 """
+
+FinancialAnalystSemanticCategory = SemanticCategory(
+    name="financial_analyst_prompt",
+    prompt=RawSemanticPrompt(
+        update_prompt=UPDATE_PROMPT,
+        consolidation_prompt=CONSOLIDATION_PROMPT,
+    ),
+)
+
+SEMANTIC_TYPE = FinancialAnalystSemanticCategory

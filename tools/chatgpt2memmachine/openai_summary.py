@@ -26,7 +26,8 @@ class OpenAISummary:
 
     def list_models(self):
         response = requests.get(
-            "https://api.openai.com/v1/models", headers=self.headers
+            "https://api.openai.com/v1/models",
+            headers=self.headers,
         )
         return response.json()
 
@@ -54,7 +55,7 @@ if __name__ == "__main__":
     api_key = os.getenv("OPENAI_API_KEY", None)
     if not api_key:
         print(
-            "Error: API key not found, please set environment variable OPENAI_API_KEY"
+            "Error: API key not found, please set environment variable OPENAI_API_KEY",
         )
         exit(1)
 
@@ -81,7 +82,7 @@ if __name__ == "__main__":
     for i in range(0, len(messages), batch_size):
         batch = messages[i : i + batch_size]
         print(
-            f"\n--- Processing Batch {batch_num} (messages {i + 1}-{min(i + batch_size, len(messages))}) ---"
+            f"\n--- Processing Batch {batch_num} (messages {i + 1}-{min(i + batch_size, len(messages))}) ---",
         )
 
         # Join messages for summarization

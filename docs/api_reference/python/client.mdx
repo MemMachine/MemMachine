@@ -1,168 +1,169 @@
 ---
-title: "Client Library"
-description: "A Python client library for the MemMachine memory system."
-icon: "handshake"
+title: "Client Introduction"
+description: "The official Python client for communicating with the MemMachine Server."
+icon: "python"
 ---
 
-## MemMachine Python Client: Seamless Memory for Your AI Applications
+The **MemMachine Python Client SDK** provides a robust, type-safe interface for your applications to interact with the MemMachine Server. It handles the complexity of authentication, connection pooling, retries, and object serialization, allowing you to focus on building intelligent agents.
 
-The **MemMachine Client** is a simple, type-safe Python SDK that gives your AI agents and applications access to a powerful memory backbone. It handles the complexity of context management, retrieval, and storage, allowing you to focus on building intelligent features.
+## Architecture
 
-## Why Use This Client?
+The MemMachine Client SDK acts as a bridge between your application logic (e.g., an AI agent, a chatbot, or a backend service) and the MemMachine Server.
 
-- **Effortless Context:** Automatically links memories to specific users, agents, and conversations, ensuring every interaction is contextually rich.
-- **Unified Memory:** Use a single, intuitive `memory.add()` method to manage **Episodic Memory** (short-term conversation history) and **Profile Memory** (long-term user facts).
-- **Built-in Reliability:** Comes standard with robust error handling, automatic retries, and request timeouts.
-- **Developer Friendly:** Provides full Python **type hints** for a smooth, predictable development experience.
+### Communication Flow
+
+The following diagram illustrates how the Client SDK integrates into your system architecture:
+
+```mermaid
+graph LR
+    subgraph "Your Infrastructure"
+        App[Your Application / Agent] -->|Python SDK| Client[MemMachine Client]
+    end
+
+    subgraph "Network"
+        Client -->|HTTP/REST| LB[Load Balancer / Ingress]
+    end
+
+    subgraph "MemMachine Server"
+        LB --> Server[MemMachine Server API]
+        Server -->|Read/Write| Episodic[Episodic Memory Store]
+        Server -->|Read/Write| Semantic[Semantic Memory Store]
+        Server -->|Query| LLM[LLM Provider (OpenAI/Bedrock)]
+    end
+
+    style Client fill:#f9f,stroke:#333,stroke-width:2px
+    style Server fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### Interaction Sequence
+
+The standard workflow involves initializing the client, selecting a project, defining a memory context, and then performing operations.
+
+```mermaid
+sequenceDiagram
+    participant App as Your App
+    participant SDK as MemMachine Client
+    participant API as MemMachine Server
+    participant DB as Database
+
+    Note over App, SDK: Initialization
+    App->>SDK: Init MemMachineClient(base_url)
+    App->>SDK: create_project(org="my-org", project="agent-1")
+    SDK->>API: POST /api/v2/projects
+    API->>DB: Create Project Record
+    API-->>SDK: 200 OK (Project Config)
+
+    Note over App, SDK: Runtime Operation
+    App->>SDK: project.memory(user="alice", agent="bot")
+    App->>SDK: memory.add("I like pizza")
+    SDK->>API: POST /api/v2/memories
+    API->>DB: Store Episode & Update Semantic Profile
+    API-->>SDK: 200 OK
+
+    App->>SDK: memory.search("What does Alice like?")
+    SDK->>API: POST /api/v2/memories/search
+    API->>DB: Vector Search & Retrieval
+    API-->>SDK: 200 OK (Results)
+    SDK-->>App: Return SearchResult Object
+```
 
 ## Installation
 
-You can easily add the `MemMachine Client` to your project using `pip`.
+Install the client package via pip:
 
 ```bash
-# We recommend installing the full dependencies, including 'requests'
-pip install memmachine-client
+pip install memmachine
 ```
 
-## Quick Start: Your First Memory
+## Hello World Example
 
-### 1. Initialize the Client
-
-Connect to your MemMachine server using the **`MemMachineClient`**.
+This complete example demonstrates the core workflow: connecting to the server, initializing a project workspace, and performing memory operations.
 
 ```python
+import time
 from memmachine import MemMachineClient
 
-client = MemMachineClient(
-    # Set the server URL and optional timeout
-    base_url="http://localhost:8080",
-    timeout=30
-)
-```
+def main():
+    # 1. Initialize the Client
+    # Ensure your MemMachine server is running at this URL
+    client = MemMachineClient(base_url="http://localhost:8080")
 
-### 2. Create a Contextual Memory Instance
+    # 2. Define a Project Workspace
+    # Projects segregate data within an organization.
+    # 'create_project' is idempotent; it returns the existing project if it exists.
+    print("Initializing Project...")
+    project = client.create_project(
+        org_id="acme-corp",
+        project_id="support-bot-v1",
+        description="Memory store for customer support agent"
+    )
+    print(f"Connected to Project: {project.org_id}/{project.project_id}")
 
-To use memory, you must create a **`memory` instance** that defines the context of the conversation. This context is essential for retrieval.
+    # 3. Create a Context-Aware Memory Interface
+    # This interface scopes all operations to a specific user and agent interaction.
+    # - user_id: The end-user (human)
+    # - agent_id: Your AI agent
+    # - session_id: (Optional) A specific conversation thread
+    memory = project.memory(
+        user_id="alice_123",
+        agent_id="support_bot_01",
+        session_id="session_555"
+    )
 
-| **Parameter**    | **Purpose**                                                  |
-| ---------------- | ------------------------------------------------------------ |
-| **`user_id`**    | **Required.** The individual whose memories are being managed. |
-| **`session_id`** | The specific conversation ID (e.g., a chat room).            |
-| **`group_id`**   | A shared group/team identifier (optional).                   |
-| **`agent_id`**   | The ID of the agent/bot interacting with the user (optional). |
-
-```python
-# Create a memory instance for a specific user in a specific session
-memory = client.memory(
-    group_id="my_project_team",
-    user_id="alice_456",
-    session_id="chat_session_007"
-)
-```
-
-### 3. Add and Search Memories
-
-Use the intuitive `add()` and `search()` methods to store and retrieve information.
-
-```python
-# Store long-term facts using metadata
-memory.add(
-    "I work as a software engineer at Acme Corp.", 
-    metadata={"type": "fact", "topic": "work"}
-)
-memory.add(
-    "I prefer working from home on Fridays.",
-    metadata={"type": "preference"}
-)
-
-# Search for relevant context
-results = memory.search("Where does Alice work and what is her job?")
-
-# Output (Results are returned as a combined context dictionary)
-print(results)
-```
-## API Reference
-
-### MemMachineClient (Core)
-
-The main class used to configure the connection to the MemMachine server.
-
-#### Constructor
-
-```python
-MemMachineClient(
-    api_key: Optional[str] = None,
-    base_url: str = "http://localhost:8080",  # Default server location
-    timeout: int = 30,                       # Request timeout in seconds
-    max_retries: int = 3,                    # How many times to retry on connection failure
-    **kwargs
-)
-```
-
-#### Key Methods
-
-| **Method**                  | **Description**                                              |
-| --------------------------- | ------------------------------------------------------------ |
-| **`client.memory(...)`**    | Instantiates a new **`Memory`** object based on the provided context IDs (`user_id`, `session_id`, etc.). This is your primary entry point. |
-| **`client.health_check()`** | Returns the server's health status, useful for confirming connectivity and readiness. |
-
-### Memory (Contextual Interface)
-
-The object returned by `client.memory(...)`, which contains all the primary functions for memory manipulation.
-
-#### Key Methods
-
-| **Method**                      | **Description**                                              |
-| ------------------------------- | ------------------------------------------------------------ |
-| **`memory.add(content, ...)`**  | Records a new memory entry (**episode**). Content is automatically classified and stored in both short-term and long-term memory. |
-| **`memory.search(query, ...)`** | Searches all relevant memory stores (Episodic and Profile) to retrieve the most contextually helpful information for the given `query`. |
-| **`memory.get_context()`**      | Retrieves the full context string of the current session, useful for LLM prompts. |
-
-## Advanced Examples
-
-### Filtering Search Results
-
-You can add a `filter_dict` to the search method to retrieve only memories that match the specific metadata you added earlier.
-
-```python
-# Example: Using a memory instance created in the Quick Start
-# memory.add("I work as a software engineer...", metadata={"topic": "work"})
-
-# Search only memories that have a "topic" of "work"
-work_results = memory.search(
-    query="What is my profession?", 
-    filter_dict={"topic": "work"}
-)
-
-print(f"Work memories: {work_results}")
-```
-
-### Context Manager Usage
-
-Use the client as a **context manager (`with ...`)** to ensure that all resources are properly released when you are done.
-
-```python
-from memmachine import MemMachineClient
-
-# The client handles setup and teardown automatically
-with MemMachineClient(base_url="http://localhost:8080") as client:
-    memory = client.memory(user_id="temp_user")
+    # 4. Add Memories (Simulating a conversation)
+    print("Adding memories...")
     
-    memory.add("This memory is safe.")
-    results = memory.search("Is this safe?")
+    # User states a preference
+    memory.add(
+        content="I am strictly vegetarian and I love spicy food.",
+        role="user",
+        metadata={"topic": "food_preference"}
+    )
     
-    print(f"Results: {results}")
+    # Agent acknowledges
+    memory.add(
+        content="Noted, I will recommend vegetarian spicy options.",
+        role="assistant"
+    )
 
-# Client connection is automatically closed here.
+    # 5. Search Memories
+    # Retrieve relevant context for a new query
+    print("\nSearching for context...")
+    query = "What should I suggest for dinner?"
+    results = memory.search(query)
+
+    print(f"Query: {query}")
+    print("Results found:")
+    for idx, item in enumerate(results.get('episodic_memory', [])):
+        print(f"[{idx+1}] {item['content']} (Role: {item['role']})")
+
+if __name__ == "__main__":
+    main()
 ```
 
-## Configuration
+## Core Concepts
 
-The client can be configured explicitly during initialization or via environment variables, with explicit parameters taking precedence.
+### `MemMachineClient`
+The entry point for the SDK. It manages the persistent HTTP session, connection pooling, and global configuration (like timeouts and retries).
 
-| **Variable/Parameter**                | **Default**             | **Description**                                  |
-| ------------------------------------- | ----------------------- | ------------------------------------------------ |
-| `MEMORY_BACKEND_URL` / **`base_url`** | `http://localhost:8080` | The host and port of the MemMachine server.      |
-| `MEMORY_API_KEY` / **`api_key`**      | `None`                  | API key used for authentication with the server. |
-| N/A / **`timeout`**                   | `30`                    | Request timeout in seconds.                      |
-| N/A / **`max_retries`**               | `3`                     | Maximum number of attempts for failed requests.  |
+**Key Parameters:**
+- `base_url`: The URL of your MemMachine Server (e.g., `http://localhost:8080`).
+- `api_key`: (Optional) Authentication token if your server requires it.
+- `timeout`: Request timeout in seconds (default: 30).
+
+### `Project`
+A **Project** represents an isolated workspace. All data in MemMachine is siloed by `org_id` and `project_id`.
+- Use `client.create_project()` to initialize or retrieve a project.
+- Use `client.get_project()` to retrieve an existing project (raises error if not found).
+
+### `Memory`
+The **Memory** object is a transient interface bound to a specific *context*. It does not hold state itself but ensures that every operation (add, search, delete) is tagged with the correct metadata identifiers:
+- `user_id`: The human user.
+- `agent_id`: The AI agent.
+- `group_id`: (Optional) A group identifier for multi-user contexts.
+- `session_id`: (Optional) A specific session identifier.
+
+**Key Methods:**
+- `add(content, role, ...)`: Stores a new memory episode.
+- `search(query, ...)`: Semantically searches for relevant memories.
+- `delete()`: Deletes memories matching specific criteria.

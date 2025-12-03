@@ -7,7 +7,10 @@ from model_config import MODEL_CHOICES, MODEL_TO_PROVIDER
 
 
 def rewrite_message(
-    msg: str, persona_name: str, show_rationale: bool, skip_rewrite: bool
+    msg: str,
+    persona_name: str,
+    show_rationale: bool,
+    skip_rewrite: bool,
 ) -> str:
     if skip_rewrite:
         rewritten_msg = msg
@@ -16,7 +19,9 @@ def rewrite_message(
     else:
         try:
             rewritten_msg = ingest_and_rewrite(
-                user_id=persona_name, query=msg, model_type=provider
+                user_id=persona_name,
+                query=msg,
+                model_type=provider,
             )
             if show_rationale:
                 rewritten_msg += " At the beginning of your response, please say the following in ITALIC: 'Persona Rationale: ' followed by 1 sentence about how your reasoning for how the persona traits influenced this response, also in italics. Begin your answer on the next line."
@@ -44,7 +49,10 @@ with st.sidebar:
     st.markdown("#### Choose Model")
 
     model_id = st.selectbox(
-        "Choose Model", MODEL_CHOICES, index=0, label_visibility="collapsed"
+        "Choose Model",
+        MODEL_CHOICES,
+        index=0,
+        label_visibility="collapsed",
     )
     provider = MODEL_TO_PROVIDER[model_id]
     set_model(model_id)
@@ -81,7 +89,7 @@ with st.sidebar:
 # Session state
 # ──────────────────────────────────────────────────────────────
 if "history" not in st.session_state:
-    st.session_state.history = cast(list[dict], [])
+    st.session_state.history = cast("list[dict]", [])
 
 
 # ──────────────────────────────────────────────────────────────
@@ -138,17 +146,18 @@ if msg:
         all_answers["Control"] = txt_control
 
         st.session_state.history.append(
-            {"role": "assistant_all", "axis": "role", "content": all_answers}
+            {"role": "assistant_all", "axis": "role", "content": all_answers},
         )
     else:
         rewritten_msg = rewrite_message(msg, persona_name, show_rationale, skip_rewrite)
         msgs = clean_history(st.session_state.history, persona_name)
         msgs = append_user_turn(msgs, rewritten_msg)
         txt, lat, tok, tps = chat(
-            msgs, "Arnold" if persona_name == "Control" else persona_name
+            msgs,
+            "Arnold" if persona_name == "Control" else persona_name,
         )
         st.session_state.history.append(
-            {"role": "assistant", "persona": persona_name, "content": txt}
+            {"role": "assistant", "persona": persona_name, "content": txt},
         )
 
 # ──────────────────────────────────────────────────────────────
@@ -173,7 +182,8 @@ for turn in st.session_state.history:
                 )
             with cols[1]:
                 st.markdown(
-                    '<div class="vertical-divider"></div>', unsafe_allow_html=True
+                    '<div class="vertical-divider"></div>',
+                    unsafe_allow_html=True,
                 )
             with cols[2]:
                 st.markdown(f"**{control_label}**")
@@ -185,5 +195,6 @@ for turn in st.session_state.history:
             for label, response in content_items:
                 st.markdown(f"**{label}**")
                 st.markdown(
-                    f'<div class="answer">{response}</div>', unsafe_allow_html=True
+                    f'<div class="answer">{response}</div>',
+                    unsafe_allow_html=True,
                 )

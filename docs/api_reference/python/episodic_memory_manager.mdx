@@ -1,214 +1,41 @@
 ---
 title: "Episodic Memory Manager"
-description: "APIs that call Episodic Memory Manager"
-icon: "list-check"
+description: "Manager for Episodic Memory instances"
+icon: "sitemap"
 ---
-The `EpisodicMemoryManager` is the brain of the entire episodic memory system. It operates as a **singleton**—ensuring only one central manager exists—and acts as a factory, providing the methods you need to safely create and access memory for any specific conversation context.
 
-### Key Responsibilities:
+Factory and manager for per-session episodic memory instances.
 
-- **Registry:** Tracks all active `EpisodicMemory` instances to ensure each unique group, agent, user, and session combination gets its own dedicated memory.
-- **Lifecycle Control:** Manages memory instances from creation to safe closure, using reference counting to prevent premature cleanup.
-- **Session Management:** Interacts with the underlying storage to persist metadata about groups and sessions (who is in the conversation, what the settings are).
-- **Configuration:** Loads and merges base and session-specific configurations seamlessly.
+## Class `EpisodicMemoryManagerParams`
 
-## Initialization and Access
+Parameters for configuring the EpisodicMemoryManager.
 
-You do not create the manager directly. You access its singleton instance through your main client object.
-
-```python
-from memmachine import MemMachineClient
-
-# Initialize the client with your API key
-client = MemMachineClient(api_key="your_api_key")
-
-# Access the manager instance
-manager = client.episodic_memory_manager
-```
-
-## EpisodicMemoryManager Class
+Attributes:
+    instance_cache_size (int): The maximum number of instances to cache.
+    max_life_time (int): The maximum idle lifetime of an instance in seconds.
+    resource_manager (ResourceManager): The resource manager.
+    session_data_manager (SessionDataManager): The session data manager.
 
 ```python
-class EpisodicMemoryManager()
+def EpisodicMemoryManagerParams()
 ```
 
-Manages the creation and lifecycle of `EpisodicMemory` instances, serving as a factory and central registry.
+## Class `EpisodicMemoryManager`
 
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.create_episodic_memory_manager"></a>
+Manage the lifecycle and access of episodic memory instances.
 
-### create_episodic_memory_manager
+This class is responsible for creating, retrieving, and closing
+`SemanticMemory` instances based on a session key. It uses a
+reference counting mechanism to manage the lifecycle of each memory
+instance, ensuring that resources are properly released when no
+longer needed.
 
 ```python
-@classmethod
-def create_episodic_memory_manager(cls, config_path: str)
+def EpisodicMemoryManager(params: EpisodicMemoryManagerParams)
 ```
 
-The singleton factory method used internally to create and initialize the manager instance. It handles reading the configuration file, setting up logging, and loading default prompts.
+**Parameters**
 
-**Arguments**:
-
-- `config_path`: The path to the main configuration file (e.g., `memmachine.yaml`).
-
-**Returns**:
-
-The single, shared instance of `EpisodicMemoryManager`.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.create_group"></a>
-
-### create_group
-
-```python
-async def create_group(self, group_id: str,
-                       agent_ids: list[str] | None,
-                       user_ids: list[str] | None)
-```
-
-Registers a new conversation group within the system. A **group** defines the permanent participants (users and agents) that can take part in a session. You must create a group before you can create a session within it.
-
-**Arguments**:
-
-- `group_id`: The unique ID for the group (e.g., `"team_alpha"`).
-- `agent_ids`: A list of agent IDs belonging to this group.
-- `user_ids`: A list of user IDs belonging to this group.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.create_episodic_memory_instance"></a>
-
-### create_episodic_memory_instance
-
-```python
-async def create_episodic_memory_instance(
-        self,
-        group_id: str,
-        session_id: str,
-        configuration: dict | None = None
-) -> EpisodicMemory
-```
-
-Creates a **brand new session** and the corresponding `EpisodicMemory` instance. This method will fail if the `session_id` already exists within the `group_id`.
-
-**Arguments**:
-
-- `group_id`: The ID of the group the session belongs to (must exist).
-- `session_id`: The unique identifier for this new session.
-- `configuration`: *Optional.* A dictionary for session-specific settings that override the manager's default configuration.
-
-**Returns**:
-
-A new, ready-to-use `EpisodicMemory` instance.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.open_episodic_memory_instance"></a>
-
-### open_episodic_memory_instance
-
-```python
-async def open_episodic_memory_instance(
-    self,
-    group_id: str,
-    session_id: str
-) -> EpisodicMemory
-```
-
-Opens an **existing session** and retrieves its `EpisodicMemory` instance. If the memory instance is already active (e.g., another part of your application is using it), it safely increments the reference count and returns the shared instance.
-
-**Arguments**:
-
-- `group_id`: The ID of the group.
-- `session_id`: The ID of the existing session.
-
-**Returns**:
-
-The live `EpisodicMemory` instance for the specified context.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.async_open_episodic_memory_instance"></a>
-
-### async_open_episodic_memory_instance (Recommended)
-
-```python
-@asynccontextmanager
-async def async_open_episodic_memory_instance(
-    self,
-    group_id: str,
-    session_id: str,
-)
-```
-
-Provides a robust, safe way to handle the memory instance lifecycle using Python's `async with` statement. This is the **recommended way** to interact with existing memory instances.
-
-**It automatically calls `open_episodic_memory_instance` when entering the block and `instance.close()` when exiting the block**, ensuring the reference count is properly managed.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.async_create_episodic_memory_instance"></a>
-
-### async_create_episodic_memory_instance (Recommended)
-
-```python
-@asynccontextmanager
-async def async_create_episodic_memory_instance(
-    self,
-    group_id: str,
-    session_id: str,
-    configuration: dict | None = None
-)
-```
-
-Similar to `async_open_episodic_memory_instance`, this uses the `async with` pattern for **creating a brand new memory instance**. It handles the creation and guarantees safe closure upon exit.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_episodic_memory_instance"></a>
-
-### get_episodic_memory_instance
-
-```python
-async def get_episodic_memory_instance(
-    self,
-    group_id: str,
-    agent_id: list[str] | None = None,
-    user_id: list[str] | None = None,
-    session_id: str = "",
-    configuration: dict | None = None,
-) -> EpisodicMemory | None
-```
-
-A comprehensive, legacy method that retrieves a memory instance. If the session does not exist, it attempts to create it automatically using the provided user/agent IDs.
-
-**Note:** For explicit control over session existence, use `create_episodic_memory_instance` or `open_episodic_memory_instance` instead.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.close_episodic_memory_instance"></a>
-
-### close_episodic_memory_instance
-
-```python
-async def close_episodic_memory_instance(
-    self,
-    group_id: str,
-    session_id: str,
-) -> bool
-```
-
-Manually closes an active memory instance by calling `instance.close()`, which decrements the reference count. If this was the last active reference, the memory instance is removed from the manager's registry.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.delete_context_memory"></a>
-
-### delete_context_memory
-
-```python
-async def delete_context_memory(self, context: MemoryContext)
-```
-
-**Internal use only.** This removes a specific `EpisodicMemory` instance from the manager's internal registry. It should only be called by an `EpisodicMemory` instance when its reference count drops to zero.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.shut_down"></a>
-
-### shut_down
-
-```python
-async def shut\_down(self)
-```
-
-Safely shuts down the entire manager. It iterates through all currently active `EpisodicMemory` instances and forces them to close, ensuring all resources are released.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_group_configuration"></a>
-
-### get_group_configuration
-
-```python
-def get\_group\_configuration(self, group_id: str) -> GroupConfiguration | None
-```
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `params` | `EpisodicMemoryManagerParams` | - |
