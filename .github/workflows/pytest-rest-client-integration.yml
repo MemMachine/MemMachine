@@ -369,7 +369,7 @@ jobs:
                 console.log(`    - Has integration/rest client: ${hasIntegrationTest}`);
                 console.log(`    - Conclusion: ${check.conclusion}, Is failed: ${isFailed}`);
                 
-                return hasIntegrationTest && hasPullRequest && isFailed;
+                return hasIntegrationTest && isFailed;
               }
             );
             
