@@ -14,25 +14,32 @@ on:
 permissions:
   contents: read
   pull-requests: write  # Required for pull_request_target to checkout PR code
+  checks: write  # Required to update check status via API
 
-# Cancel any preceding run on the pull request after a new commit is pushed.
+# Cancel any preceding run on the pull request after a new commit is pushed or label is added.
+# Use PR number for PR events, or ref for push events
+# Same PR should share the same concurrency group regardless of event type (pull_request vs pull_request_target)
 concurrency:
-  group: rest-client-integration-test-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  group: rest-client-integration-test-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
 
 jobs:
   rest-client-integration-test:
+    # Set explicit check name so pull_request and pull_request_target use the same check
+    # This ensures the successful pull_request_target run can replace the failed pull_request run
+    name: REST Client Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30  # Set job timeout to 30 minutes
     
     # For pull_request_target events, only run if the label is 'safe-to-test'
     # This ensures maintainers review code before secrets are exposed
-    # Allow fork PRs to enter job, but they will exit early in the check step to save CI resources
+    # Fork PR failures will block merge until 'safe-to-test' label is added and pull_request_target succeeds
+    # When pull_request_target succeeds, it will update the pull_request check status to allow merge
     if: |
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'pull_request' ||
-      (github.event_name == 'pull_request_target' && (github.event.label.name == 'safe-to-test' ))
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'safe-to-test')
     
     steps:
       - name: Checkout code
@@ -61,6 +68,8 @@ jobs:
               echo "   3. This will trigger pull_request_target event with secrets access"
               echo ""
               echo "This job will fail to indicate that tests were skipped due to missing secrets."
+              echo "After maintainer adds 'safe-to-test' label and pull_request_target succeeds,"
+              echo "this failed check will be updated to success automatically."
               exit 1
             fi
           fi
@@ -279,6 +288,7 @@ jobs:
           uv sync --all-extras
 
       - name: Run REST client integration tests
+        id: run_tests
         env:
           MEMORY_BACKEND_URL: http://localhost:8080
           # Secrets are available for: push, workflow_dispatch, main repo PRs, and pull_request_target (after label approval)
@@ -315,6 +325,58 @@ jobs:
           docker compose logs postgres || true
           echo "=== Neo4j logs ==="
           docker compose logs neo4j || true
+
+      - name: Update pull_request check status after pull_request_target success
+        if: github.event_name == 'pull_request_target' && steps.run_tests.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // When pull_request_target succeeds, update the failed pull_request check to success
+            // This allows the PR to be merged even though the initial pull_request check failed
+            const prNumber = context.payload.pull_request.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const headSha = context.payload.pull_request.head.sha;
+            
+            console.log(`Looking for failed pull_request check for PR #${prNumber} (SHA: ${headSha})`);
+            
+            // Get all check runs for this PR head SHA
+            const checks = await github.rest.checks.listForRef({
+              owner: owner,
+              repo: repo,
+              ref: headSha,
+            });
+            
+            // Find the failed pull_request check run (has "(pull_request)" suffix in name)
+            const pullRequestCheck = checks.data.check_runs.find(
+              check => check.name.includes('rest-client-integration-test') && 
+                       check.name.includes('(pull_request)') &&
+                       check.conclusion === 'failure'
+            );
+            
+            if (pullRequestCheck) {
+              console.log(`Found failed pull_request check: ${pullRequestCheck.name} (ID: ${pullRequestCheck.id})`);
+              console.log(`Updating check status to success...`);
+              
+              // Update the check status to success
+              await github.rest.checks.update({
+                owner: owner,
+                repo: repo,
+                check_run_id: pullRequestCheck.id,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: 'Tests passed via pull_request_target',
+                  summary: 'This check was updated to success after pull_request_target run succeeded with secrets.\n\n' +
+                           'The pull_request_target check is the authoritative one after maintainer approval via the "safe-to-test" label.'
+                }
+              });
+              
+              console.log(`✅ Successfully updated check ${pullRequestCheck.id} to success`);
+            } else {
+              console.log('ℹ️ No failed pull_request check found to update (may have been cancelled or already updated)');
+            }
 
       - name: Cleanup
         if: always()
