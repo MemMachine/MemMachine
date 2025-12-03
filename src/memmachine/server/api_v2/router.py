@@ -25,6 +25,7 @@ from memmachine.server.api_v2.spec import (
     DeleteEpisodicMemorySpec,
     DeleteProjectSpec,
     DeleteSemanticMemorySpec,
+    EpisodeCountResponse,
     GetProjectSpec,
     ListMemoriesSpec,
     ProjectConfig,
@@ -105,6 +106,23 @@ async def get_project(
             reranker=long_term.reranker if long_term else "",
         ),
     )
+
+
+@router.post("/projects/episode_count/get")
+async def get_episode_count(
+    spec: GetProjectSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> EpisodeCountResponse:
+    """Get the episode count for a project."""
+    session_data = _SessionData(
+        org_id=spec.org_id,
+        project_id=spec.project_id,
+    )
+    try:
+        count = await memmachine.episodes_count(session_data=session_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+    return EpisodeCountResponse(count=count)
 
 
 @router.post("/projects/list")

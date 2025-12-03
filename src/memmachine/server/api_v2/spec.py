@@ -63,6 +63,12 @@ class GetProjectSpec(BaseModel):
     project_id: SafeId
 
 
+class EpisodeCountResponse(BaseModel):
+    """Response model for episode count."""
+
+    count: Annotated[int, Field(...)]
+
+
 class DeleteProjectSpec(BaseModel):
     """Specification model for deleting a project."""
 

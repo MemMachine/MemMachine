@@ -123,6 +123,30 @@ def test_get_project(client, mock_memmachine):
     assert response.json()["detail"] == "Project does not exist"
 
 
+def test_get_episode_count(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+    }
+
+    mock_memmachine.episodes_count.return_value = 42
+
+    response = client.post("/api/v2/projects/episode_count/get", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 42
+
+    mock_memmachine.episodes_count.assert_awaited_once()
+    call_args = mock_memmachine.episodes_count.call_args[1]
+    assert call_args["session_data"].session_key == "test_org/test_proj"
+
+    mock_memmachine.episodes_count.reset_mock()
+    mock_memmachine.episodes_count.side_effect = Exception("Some error")
+    response = client.post("/api/v2/projects/episode_count/get", json=payload)
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Internal server error"
+
+
 def test_list_projects(client, mock_memmachine):
     mock_memmachine.search_sessions.return_value = [
         "org1/proj1",
