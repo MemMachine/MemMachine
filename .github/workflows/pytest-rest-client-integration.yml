@@ -363,12 +363,10 @@ jobs:
               check => {
                 const nameLower = check.name.toLowerCase();
                 const hasIntegrationTest = nameLower.includes('integration') || nameLower.includes('rest client');
-                const hasPullRequest = check.name.includes('(pull_request)');
                 const isFailed = check.conclusion === 'failure';
                 
                 console.log(`  Checking: ${check.name}`);
                 console.log(`    - Has integration/rest client: ${hasIntegrationTest}`);
-                console.log(`    - Has (pull_request): ${hasPullRequest}`);
                 console.log(`    - Conclusion: ${check.conclusion}, Is failed: ${isFailed}`);
                 
                 return hasIntegrationTest && hasPullRequest && isFailed;
