@@ -277,6 +277,8 @@ class MemMachineFastMCP(FastMCP):
         return ParamsContextMiddleware(http_app)
 
 
+# FastMCP instance for MemMachine
+# Note: Logging is configured in mcp_stdio.py to redirect to stderr (STDIO mode)
 mcp = MemMachineFastMCP("MemMachine")
 mcp_app = mcp.get_app("/")
 
