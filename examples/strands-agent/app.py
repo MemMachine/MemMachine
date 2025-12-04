@@ -65,7 +65,7 @@ with st.sidebar:
         st.caption("Enter your name below to enable persistent memory:")
 
         user_name_input = st.text_input(
-            "Your Name", key="name_input", placeholder="e.g., anirudh"
+            "Your Name", key="name_input", placeholder="e.g., alex"
         )
         if st.button("Set Persistent ID", use_container_width=True) and user_name_input:
             new_user_id = user_name_input.lower().replace(" ", "_")

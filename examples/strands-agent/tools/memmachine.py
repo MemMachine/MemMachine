@@ -13,10 +13,21 @@ try:
     from memmachine import MemMachineClient
     MEMMACHINE_AVAILABLE = True
 except ImportError:
-    # Fallback if memmachine is not installed
-    MemMachineClient = None
-    MEMMACHINE_AVAILABLE = False
-    print("Warning: memmachine package not found. Install with: pip install -e ../../")
+    # Fallback: Try adding the path manually (for editable installs where .pth isn't processed)
+    import sys
+    import os
+    # Go up from tools/memmachine.py -> strands-agent -> examples -> MemMachine -> src
+    _memmachine_src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src'))
+    if os.path.exists(_memmachine_src_path) and _memmachine_src_path not in sys.path:
+        sys.path.insert(0, _memmachine_src_path)
+    try:
+        from memmachine import MemMachineClient
+        MEMMACHINE_AVAILABLE = True
+    except ImportError:
+        # Final fallback if memmachine is not installed
+        MemMachineClient = None
+        MEMMACHINE_AVAILABLE = False
+        print("Warning: memmachine package not found. Install with: pip install -e ../../")
 
 # MemMachine server endpoint
 MEMMACHINE_URL = os.getenv("MEMMACHINE_URL", "http://localhost:8080")
