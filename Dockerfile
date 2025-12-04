@@ -20,6 +20,9 @@ WORKDIR /app
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
+COPY packages/ packages/
+COPY src/ src/
+COPY README.md README.md
 
 # Determine whether to include GPU dependencies
 ARG GPU="false"
