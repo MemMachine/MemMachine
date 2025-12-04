@@ -16,23 +16,21 @@ The following diagram illustrates how the Client SDK integrates into your system
 
 ```mermaid
 graph LR
-    subgraph "Your Infrastructure"
-        App[Your Application / Agent] -->|Python SDK| Client[MemMachine Client]
+
+    subgraph "Infra [Your Infrastructure]"
+        App["Your Application / Agent"] -->|Python SDK| Client["MemMachine Client"]
     end
 
-    subgraph "Network"
-        Client -->|HTTP/REST| LB[Load Balancer / Ingress]
+    subgraph "Net [Network]"
+        Client -->|HTTP/REST| LB["Load Balancer / Ingress"]
     end
 
-    subgraph "MemMachine Server"
-        LB --> Server[MemMachine Server API]
-        Server -->|Read/Write| Episodic[Episodic Memory Store]
-        Server -->|Read/Write| Semantic[Semantic Memory Store]
-        Server -->|Query| LLM[LLM Provider (OpenAI/Bedrock)]
+    subgraph "ServerSide [MemMachine Server]"
+        LB --> Server["MemMachine Server API"]
+        Server -->|Read/Write| Episodic["Episodic Memory Store"]
+        Server -->|Read/Write| Semantic["Semantic Memory Store"]
+        Server -->|Query| LLM["LLM Provider (OpenAI/Bedrock)"]
     end
-
-    style Client fill:#f9f,stroke:#333,stroke-width:2px
-    style Server fill:#bbf,stroke:#333,stroke-width:2px
 ```
 
 ### Interaction Sequence
