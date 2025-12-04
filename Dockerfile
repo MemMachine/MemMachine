@@ -18,19 +18,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
-# Copy dependency files
-COPY pyproject.toml uv.lock ./
-
 # Determine whether to include GPU dependencies
 ARG GPU="false"
-
-# Install dependencies into a virtual environment, but NOT the project itself
-RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$GPU" = "true" ]; then \
-        uv sync --locked --no-install-project --no-editable --no-dev --extra gpu; \
-    else \
-        uv sync --locked --no-install-project --no-editable --no-dev; \
-    fi
 
 # Copy the application source code
 COPY . /app
