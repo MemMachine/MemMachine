@@ -99,7 +99,7 @@ def search_user_memories(user_id, query, limit=5)
 **Integration**: MemMachine v2 API (Python Client)
 - Endpoint: `http://localhost:8080`
 - Uses `MemMachineClient` → `Project` → `Memory` pattern
-- User isolation via unique `group_id` per user
+- User isolation via unique `user_id` per user
 - Persistent storage across sessions
 - Requires `org_id` and `project_id` (defaults: `strands-agent` / `morning-brief`)
 
@@ -114,7 +114,7 @@ MemoryKeeper → store_user_info(user_id="test_user",
 MemMachine v2 API → client.create_project() → project.memory() → memory.add()
   ↓
 Storage: org_id="strands-agent", project_id="morning-brief", 
-         group_id="morning-brief-test_user"
+         user_id="test_user"
 ```
 
 ---
@@ -179,7 +179,7 @@ AdvisorBuddy:
   │          └─→ MemMachine v2 API (client → project → memory.add())
   │                stores with org_id="strands-agent", 
   │                project_id="morning-brief", 
-  │                group_id="morning-brief-anirudh"
+  │                user_id="anirudh"
   └─ Responds: "Great to meet you, Anirudh! I'll remember that. 🎙️"
 ```
 
@@ -238,9 +238,9 @@ No hardcoded pattern matching! The orchestrator uses LLM reasoning to decide:
 - How to combine their responses
 
 ### 3. **User Isolation**
-Each user gets a unique namespace:
+Each user gets isolated memories via their unique `user_id`:
 ```python
-group_id = f"morning-brief-{user_id}"
+memory = project.memory(user_id=user_id, agent_id=agent_id)
 ```
 Prevents memory leakage between users.
 

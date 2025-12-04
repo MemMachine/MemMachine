@@ -31,7 +31,6 @@ def store_user_info(user_id: str, info_type: str, info_value: str) -> dict:
         user_id=user_id,
         preference_type=info_type,
         preference_value=info_value,
-        session_id=hashlib.md5(user_id.encode()).hexdigest()[:16],
     )
 
 

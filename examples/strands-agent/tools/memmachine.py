@@ -100,15 +100,11 @@ def _get_project() -> Optional:
     return _project
 
 
-def _get_memory_for_user(user_id: str, session_id: Optional[str] = None, agent_id: str = "advisor_buddy"):
+def _get_memory_for_user(user_id: str, agent_id: str = "advisor_buddy"):
     """Get Memory instance for a specific user.
-    
-    CRITICAL: Use unique group_id per user for proper isolation!
-    MemMachine groups memories by group_id first, so each user needs their own namespace.
     
     Args:
         user_id: The user ID
-        session_id: Optional session ID
         agent_id: The agent ID that will store/access this memory (default: "advisor_buddy")
                   Use a single string, not a list, to avoid API validation errors
     """
@@ -116,15 +112,10 @@ def _get_memory_for_user(user_id: str, session_id: Optional[str] = None, agent_i
     if project is None:
         return None
     
-    group_id = f"morning-brief-{user_id}"
-    session = session_id or f"session_{user_id}"
-    
     # Use single string values, not lists, to match API v2 requirements (dict[str, str] for metadata)
     return project.memory(
-        group_id=group_id,
         agent_id=agent_id,  # Single string, not a list
         user_id=user_id,    # Single string, not a list
-        session_id=session
     )
 
 
@@ -135,8 +126,7 @@ def store_memory(
     produced_for: str = "advisor_buddy",
     episode_type: str = "message",
     metadata: Optional[Dict] = None,
-    user_id: str = "default_user",
-    session_id: Optional[str] = None
+    user_id: str = "default_user"
 ) -> dict:
     """
     Store a memory in MemMachine for later retrieval.
@@ -148,7 +138,6 @@ def store_memory(
         episode_type: Type of memory ("message", "preference", "fact", "event")
         metadata: Additional metadata to store with the memory
         user_id: The user ID for session context
-        session_id: Optional session ID (defaults to user-based session)
     
     Returns:
         dict with status and any error messages
@@ -170,7 +159,7 @@ def store_memory(
     """
     try:
         # Use the produced_for agent_id for the memory instance
-        memory = _get_memory_for_user(user_id, session_id, agent_id=produced_for)
+        memory = _get_memory_for_user(user_id, agent_id=produced_for)
         if memory is None:
             return {
                 "status": "error",
@@ -265,7 +254,6 @@ def store_memory(
 def search_memories(
     query: str,
     user_id: str = "default_user",
-    session_id: Optional[str] = None,
     limit: int = 5,
     filter_dict: Optional[Dict] = None
 ) -> dict:
@@ -275,7 +263,6 @@ def search_memories(
     Args:
         query: Search query (natural language)
         user_id: The user ID for session context
-        session_id: Optional session ID
         limit: Maximum number of results to return
         filter_dict: Optional filters for the search
     
@@ -290,7 +277,7 @@ def search_memories(
         search_memories("previous conversations about stocks", user_id="user_123")
     """
     try:
-        memory = _get_memory_for_user(user_id, session_id)
+        memory = _get_memory_for_user(user_id)
         if memory is None:
             return {
                 "status": "error",
@@ -339,8 +326,7 @@ def search_memories(
         return {
             "status": "success",
             "episodic_memories": formatted_episodic,
-            "profile_memories": formatted_semantic,  # Keep old name for compatibility
-            "semantic_memories": formatted_semantic,  # New name
+            "semantic_memories": formatted_semantic,
             "count": len(formatted_episodic) + len(formatted_semantic)
         }
             
@@ -354,7 +340,6 @@ def search_memories(
 @tool
 def get_user_context(
     user_id: str,
-    session_id: Optional[str] = None,
     topics: Optional[List[str]] = None
 ) -> dict:
     """
@@ -368,7 +353,6 @@ def get_user_context(
     
     Args:
         user_id: The user ID
-        session_id: Optional session ID
         topics: Optional list of topics to search for (e.g., ["preferences", "name", "interests"])
     
     Returns:
@@ -398,13 +382,11 @@ def get_user_context(
             result = search_memories(
                 query=search_query,
                 user_id=user_id,
-                session_id=session_id,
                 limit=3
             )
             
             if result.get("status") == "success":
                 all_memories.extend(result.get("episodic_memories", []))
-                all_memories.extend(result.get("profile_memories", []))
                 all_memories.extend(result.get("semantic_memories", []))
         
         # Parse and structure the context
@@ -539,8 +521,7 @@ def get_user_context(
 def store_user_preference(
     user_id: str,
     preference_type: str,
-    preference_value: str,
-    session_id: Optional[str] = None
+    preference_value: str
 ) -> dict:
     """
     Store a specific user preference for easy retrieval.
@@ -549,7 +530,6 @@ def store_user_preference(
         user_id: The user ID
         preference_type: Type of preference (e.g., "name", "favorite_topics", "reading_style")
         preference_value: The actual preference value
-        session_id: Optional session ID
     
     Returns:
         dict with status
@@ -574,8 +554,7 @@ def store_user_preference(
         produced_for="advisor_buddy",
         episode_type="preference",
         metadata=metadata,
-        user_id=user_id,
-        session_id=session_id
+        user_id=user_id
     )
 
 

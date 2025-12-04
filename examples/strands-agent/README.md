@@ -195,9 +195,9 @@ def ask_news_scout(request: str) -> str:
 
 ### User Isolation
 
-Each user gets a unique namespace:
+Each user gets isolated memories via their unique `user_id`:
 ```python
-group_id = f"morning-brief-{user_id}"  # Unique per user!
+memory = project.memory(user_id=user_id, agent_id=agent_id)
 ```
 
 This ensures memories never leak between users.
