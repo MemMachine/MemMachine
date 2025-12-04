@@ -7,6 +7,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Self, cast
 
 from fastapi import FastAPI
@@ -17,7 +18,7 @@ from starlette import status
 from starlette.applications import Starlette
 from starlette.types import Lifespan, Receive, Scope, Send
 
-from memmachine.common.configuration import load_config_yml_file
+from memmachine.common.configuration import Configuration
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemMachine
 from memmachine.server.api_v2.service import (
@@ -289,7 +290,24 @@ mem_machine: MemMachine | None = None
 # === Lifespan Management ===
 
 
-async def initialize_resource(config_file: str) -> MemMachine:
+def load_configuration() -> Configuration:
+    """Load configuration from the specified YAML file."""
+    config_file = os.getenv("MEMORY_CONFIG")
+    if not config_file:
+        # search cfg.yml in home directory and current directory
+        home_cfg = Path("~/.config/memmachine/cfg.yml").expanduser()
+        if home_cfg.exists():
+            config_file = str(home_cfg)
+        elif Path("cfg.yml").exists():
+            config_file = "cfg.yml"
+    if config_file is None or not Path(config_file).exists():
+        raise FileNotFoundError(f"Configuration file '{config_file}' not found.")
+    ret = Configuration.load_yml_file(config_file)
+    logger.info("Configuration file '%s' loaded.", config_file)
+    return ret
+
+
+async def initialize_resource() -> MemMachine:
     """
     Initialize shared resources for profile and episodic memory.
 
@@ -298,15 +316,12 @@ async def initialize_resource(config_file: str) -> MemMachine:
     instances, and establishes necessary connections (e.g., to the database).
     These resources are cleaned up on shutdown.
 
-    Args:
-        config_file: The path to the configuration file.
-
     Returns:
         A tuple containing the EpisodicMemoryManager, SemanticSessionManager,
         and SessionIdManager instances.
 
     """
-    config = load_config_yml_file(config_file)
+    config = load_configuration()
     resource_mgr = ResourceManagerImpl(config)
     return MemMachine(config, resource_mgr)
 
@@ -327,9 +342,8 @@ async def global_memory_lifespan() -> AsyncIterator[None]:
 
 async def init_global_memory() -> None:
     """Initialize global resource manager based on configuration."""
-    config_file = os.getenv("MEMORY_CONFIG", "cfg.yml")
     global mem_machine
-    mem_machine = await initialize_resource(config_file)
+    mem_machine = await initialize_resource()
     if mem_machine is not None:
         await mem_machine.start()
 

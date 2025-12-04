@@ -1,4 +1,5 @@
 import pytest
+import yaml
 from pydantic import SecretStr
 
 from memmachine.common.configuration.database_conf import (
@@ -50,8 +51,9 @@ def test_invalid_provider_raises():
         SupportedDB.from_provider("invalid_db")
 
 
-def test_parse_valid_storage_dict():
-    input_dict = {
+@pytest.fixture
+def db_conf_dict() -> dict:
+    return {
         "databases": {
             "my_neo4j": {
                 "provider": "neo4j",
@@ -81,7 +83,9 @@ def test_parse_valid_storage_dict():
         },
     }
 
-    storage_conf = DatabasesConf.parse(input_dict)
+
+def test_parse_valid_storage_dict(db_conf_dict):
+    storage_conf = DatabasesConf.parse(db_conf_dict)
 
     # Neo4j check
     neo_conf = storage_conf.neo4j_confs["my_neo4j"]
@@ -127,6 +131,13 @@ def test_parse_empty_storage_returns_empty_conf():
     storage_conf = DatabasesConf.parse(input_dict)
     assert storage_conf.neo4j_confs == {}
     assert storage_conf.relational_db_confs == {}
+
+
+def test_serialize_deserialize_database_conf(db_conf_dict):
+    conf = DatabasesConf.parse(db_conf_dict)
+    yaml_str = conf.to_yaml()
+    conf_cp = DatabasesConf.parse(yaml.safe_load(yaml_str))
+    assert conf == conf_cp
 
 
 def test_neo4j_uri():

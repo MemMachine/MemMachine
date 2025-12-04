@@ -164,6 +164,7 @@ def bedrock_integration_config():
         "aws_secret_access_key": aws_secret_access_key,
         "aws_session_token": aws_session_token,
         "aws_region": aws_region,
+        "model": "openai.gpt-oss-20b-1:0",
     }
 
 

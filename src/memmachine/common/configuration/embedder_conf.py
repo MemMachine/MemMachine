@@ -1,15 +1,19 @@
 """Configuration models for embedder providers."""
 
-from typing import Self
+from typing import ClassVar, Self
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, PrivateAttr, SecretStr, field_validator
+import yaml
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
+from memmachine.common.configuration.mixin_confs import (
+    MetricsFactoryIdMixin,
+    YamlSerializableMixin,
+)
 from memmachine.common.data_types import SimilarityMetric
 
 
-class AmazonBedrockEmbedderConfig(BaseModel):
+class AmazonBedrockEmbedderConf(YamlSerializableMixin):
     """Configuration for AmazonBedrockEmbedder."""
 
     region: str = Field(
@@ -43,7 +47,7 @@ class AmazonBedrockEmbedderConfig(BaseModel):
     )
 
 
-class OpenAIEmbedderConf(WithMetricsFactoryId):
+class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin):
     """Configuration for OpenAI embedding models."""
 
     model: str = Field(
@@ -52,9 +56,8 @@ class OpenAIEmbedderConf(WithMetricsFactoryId):
         description="OpenAI Embeddings API-compatible model",
     )
     api_key: SecretStr = Field(
-        ...,
+        default=SecretStr(""),
         description="OpenAI Chat Completions API key for authentication",
-        min_length=1,
     )
     dimensions: int | None = Field(
         default=1536,
@@ -63,7 +66,7 @@ class OpenAIEmbedderConf(WithMetricsFactoryId):
     )
     base_url: str | None = Field(
         default=None,
-        description=("OpenAI Embeddings API base URL"),
+        description="OpenAI Embeddings API base URL",
     )
     max_retry_interval_seconds: int = Field(
         default=120,
@@ -82,7 +85,7 @@ class OpenAIEmbedderConf(WithMetricsFactoryId):
         return v
 
 
-class SentenceTransformerEmbedderConfig(WithMetricsFactoryId):
+class SentenceTransformerEmbedderConfig(MetricsFactoryIdMixin, YamlSerializableMixin):
     """Configuration for sentence-transformer based embedders."""
 
     model: str = Field(
@@ -95,14 +98,75 @@ class SentenceTransformerEmbedderConfig(WithMetricsFactoryId):
 class EmbeddersConf(BaseModel):
     """Top-level embedder configuration mapping provider ids to configs."""
 
-    amazon_bedrock: dict[str, AmazonBedrockEmbedderConfig] = {}
+    amazon_bedrock: dict[str, AmazonBedrockEmbedderConf] = {}
     openai: dict[str, OpenAIEmbedderConf] = {}
     sentence_transformer: dict[str, SentenceTransformerEmbedderConfig] = {}
-    _saved_embedder_ids: set[str] = PrivateAttr(default_factory=set)
+
+    def get_amazon_bedrock_embedder_name(self) -> str | None:
+        """Return the first Amazon Bedrock embedder id, if any."""
+        if self.amazon_bedrock:
+            return next(iter(self.amazon_bedrock.keys()))
+        return None
+
+    def get_openai_embedder_name(self) -> str | None:
+        """Return the first OpenAI embedder id, if any."""
+        if self.openai:
+            return next(iter(self.openai.keys()))
+        return None
+
+    def get_sentence_transformer_embedder_name(self) -> str | None:
+        """Return the first Sentence Transformer embedder id, if any."""
+        if self.sentence_transformer:
+            return next(iter(self.sentence_transformer.keys()))
+        return None
+
+    def get_openai_embedder_conf(self, name: str) -> OpenAIEmbedderConf:
+        """Return the OpenAI embedder config for the given name."""
+        return self.openai[name]
+
+    def get_amazon_bedrock_embedder_conf(self, name: str) -> AmazonBedrockEmbedderConf:
+        """Return the Amazon Bedrock embedder config for the given name."""
+        return self.amazon_bedrock[name]
 
     def contains_embedder(self, embedder_id: str) -> bool:
         """Return if the embedder id is known."""
-        return embedder_id in self._saved_embedder_ids
+        return (
+            embedder_id in self.amazon_bedrock
+            or embedder_id in self.openai
+            or embedder_id in self.sentence_transformer
+        )
+
+    OPENAI_KEY: ClassVar[str] = "openai"
+    BEDROCK_KEY: ClassVar[str] = "amazon-bedrock"
+    SENTENCE_TRANSFORMER_KEY: ClassVar[str] = "sentence-transformer"
+    PROVIDER_KEY: ClassVar[str] = "provider"
+    CONFIG_KEY: ClassVar[str] = "config"
+
+    def to_yaml_dict(self) -> dict:
+        """Return the embedder configuration as a YAML-serializable dictionary."""
+        embedders: dict[str, dict] = {}
+
+        def add_embedder(name: str, provider: str, config: dict) -> None:
+            embedders[name] = {
+                self.PROVIDER_KEY: provider,
+                self.CONFIG_KEY: config,
+            }
+
+        for embedder_id, cfg in self.openai.items():
+            add_embedder(embedder_id, self.OPENAI_KEY, cfg.to_yaml_dict())
+
+        for embedder_id, cfg in self.amazon_bedrock.items():
+            add_embedder(embedder_id, self.BEDROCK_KEY, cfg.to_yaml_dict())
+
+        for embedder_id, cfg in self.sentence_transformer.items():
+            add_embedder(embedder_id, self.SENTENCE_TRANSFORMER_KEY, cfg.to_yaml_dict())
+
+        # Final structure
+        return embedders
+
+    def to_yaml(self) -> str:
+        data = {"embedders": self.to_yaml_dict()}
+        return yaml.safe_dump(data, sort_keys=True)
 
     @classmethod
     def parse(cls, input_dict: dict) -> Self:
@@ -115,16 +179,15 @@ class EmbeddersConf(BaseModel):
         amazon_bedrock_dict = {}
         openai_dict = {}
         sentence_transformer_dict = {}
-        saved_embedder_ids = set(embedder.keys())
 
         for embedder_id, resource_definition in embedder.items():
-            provider = resource_definition.get("provider")
-            conf = resource_definition.get("config", {})
-            if provider == "openai":
+            provider = resource_definition.get(cls.PROVIDER_KEY)
+            conf = resource_definition.get(cls.CONFIG_KEY, {})
+            if provider == cls.OPENAI_KEY:
                 openai_dict[embedder_id] = OpenAIEmbedderConf(**conf)
-            elif provider == "amazon-bedrock":
-                amazon_bedrock_dict[embedder_id] = AmazonBedrockEmbedderConfig(**conf)
-            elif provider == "sentence-transformer":
+            elif provider == cls.BEDROCK_KEY:
+                amazon_bedrock_dict[embedder_id] = AmazonBedrockEmbedderConf(**conf)
+            elif provider == cls.SENTENCE_TRANSFORMER_KEY:
                 sentence_transformer_dict[embedder_id] = (
                     SentenceTransformerEmbedderConfig(**conf)
                 )
@@ -137,5 +200,4 @@ class EmbeddersConf(BaseModel):
             openai=openai_dict,
             sentence_transformer=sentence_transformer_dict,
         )
-        ret._saved_embedder_ids = saved_embedder_ids
         return ret

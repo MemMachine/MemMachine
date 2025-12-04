@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from openai_summary import OpenAISummary
 from process_chat_history import (

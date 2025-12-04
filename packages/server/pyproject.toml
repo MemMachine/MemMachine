@@ -6,11 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "memmachine-server"
 version = "0.1.0"
 dependencies = [
+    "alembic>=1.17.1",
     "asyncpg>=0.31.0",
+    "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
+    "boto3-stubs==1.40.64",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
     "fastmcp>=2.12.0",
+    "instructor[bedrock]>=1.12.0",
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
     "nltk>=3.9.1",
@@ -22,6 +26,9 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
+    "greenlet>=3.2.4",
+    "tzdata>=2024.1 ; sys_platform == 'win32'",
+    "psutil>=7.1.0",
 ]
 requires-python = ">= 3.12"
 authors = [
@@ -43,10 +50,10 @@ gpu = [
 
 [project.scripts]
 memmachine-server = "memmachine.server.app:main"
-memmachine-sync-profile-schema = "memmachine.profile_memory.storage.syncschema:main"
 memmachine-nltk-setup = "memmachine:setup_nltk"
 memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
 memmachine-mcp-http = "memmachine.server.mcp_http:main"
+memmachine-configure = "memmachine.installation.memmachine_configure:main"
 
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
@@ -70,6 +77,8 @@ packages = [
     "memmachine.episodic_memory.declarative_memory",
     "memmachine.episodic_memory.long_term_memory",
     "memmachine.episodic_memory.short_term_memory",
+    "memmachine.installation",
+    "memmachine.rest_client",
     "memmachine.server",
     "memmachine.main",
     "memmachine.server.prompt",

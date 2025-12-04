@@ -6,7 +6,7 @@ from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine.common.configuration import Configuration
-from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
+from memmachine.common.configuration.mixin_confs import MetricsFactoryIdMixin
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import CountCachingEpisodeStorage, EpisodeStorage
 from memmachine.common.episode_store.episode_sqlalchemy_store import (
@@ -186,7 +186,7 @@ class ResourceManagerImpl:
     @staticmethod
     async def get_metrics_factory(name: str) -> MetricsFactory:
         """Return the metrics factory by name."""
-        factory_cache = WithMetricsFactoryId(metrics_factory_id=name)
+        factory_cache = MetricsFactoryIdMixin(metrics_factory_id=name)
         ret = factory_cache.get_metrics_factory()
         if ret is None:
             raise ValueError(f"MetricsFactory '{name}' could not be created.")

@@ -7,7 +7,9 @@ from enum import Enum
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
+
+from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ def to_log_level(level_str: str) -> LogLevel:
         raise ValueError(f"Invalid log level: {level_str}") from None
 
 
-class LogConf(BaseModel):
+class LogConf(YamlSerializableMixin):
     """Configuration model for application logging."""
 
     level: LogLevel = Field(

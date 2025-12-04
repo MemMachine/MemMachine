@@ -101,9 +101,6 @@ After installing `memmachine-server`:
 # Run server
 memmachine-server
 
-# Sync database schema
-memmachine-sync-profile-schema
-
 # Run MCP stdio mode
 memmachine-mcp-stdio
 

@@ -1,4 +1,5 @@
 import pytest
+import yaml
 from pydantic import SecretStr, ValidationError
 
 from memmachine.common.configuration.language_model_conf import (
@@ -96,6 +97,30 @@ def test_full_language_model_conf(full_model_conf):
         "ollama_model"
     ]
     assert chat_completions_conf.model == "llama3"
+
+
+def test_get_language_model_names(full_model_conf):
+    conf = LanguageModelsConf.parse(full_model_conf)
+
+    assert conf.get_openai_responses_language_model_name() == "openai_model"
+    assert conf.get_amazon_bedrock_language_model_name() == "aws_model"
+    assert conf.get_openai_chat_completions_language_model_name() == "ollama_model"
+
+
+def test_serialize_deserialize_language_model_conf(full_model_conf):
+    conf = LanguageModelsConf.parse(full_model_conf)
+    yaml_str = conf.to_yaml()
+    conf_cp = LanguageModelsConf.parse(yaml.safe_load(yaml_str))
+    assert conf == conf_cp
+    assert len(conf.amazon_bedrock_language_model_confs) == len(
+        conf_cp.amazon_bedrock_language_model_confs
+    )
+    assert len(conf.openai_responses_language_model_confs) == len(
+        conf_cp.openai_responses_language_model_confs
+    )
+    assert len(conf.openai_chat_completions_language_model_confs) == len(
+        conf_cp.openai_chat_completions_language_model_confs
+    )
 
 
 def test_missing_required_field_openai_model():

@@ -3,7 +3,7 @@ from pydantic import SecretStr
 
 from memmachine.common.configuration import EmbeddersConf
 from memmachine.common.configuration.embedder_conf import (
-    AmazonBedrockEmbedderConfig,
+    AmazonBedrockEmbedderConf,
     OpenAIEmbedderConf,
     SentenceTransformerEmbedderConfig,
 )
@@ -15,7 +15,7 @@ from memmachine.common.resource_manager.embedder_manager import EmbedderManager
 def mock_conf():
     conf = EmbeddersConf(
         amazon_bedrock={
-            "aws_embedder_id": AmazonBedrockEmbedderConfig(
+            "aws_embedder_id": AmazonBedrockEmbedderConf(
                 model_id="amazon.embed-v1:0",
                 aws_access_key_id=SecretStr("<AWS_ACCESS_KEY_ID>"),
                 aws_secret_access_key=SecretStr("<AWS_SECRET_ACCESS_KEY>"),

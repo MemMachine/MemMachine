@@ -1,11 +1,14 @@
 """Reranker configuration models."""
 
-from typing import Self
+from typing import ClassVar, Self
 
+import yaml
 from pydantic import BaseModel, Field, PrivateAttr, SecretStr
 
+from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
 
-class BM25RerankerConf(BaseModel):
+
+class BM25RerankerConf(YamlSerializableMixin):
     """Parameters for BM25Reranker."""
 
     k1: float = Field(default=1.5, description="BM25 k1 parameter")
@@ -21,7 +24,7 @@ class BM25RerankerConf(BaseModel):
     )
 
 
-class AmazonBedrockRerankerConf(BaseModel):
+class AmazonBedrockRerankerConf(YamlSerializableMixin):
     """Parameters for AmazonBedrockReranker."""
 
     model_id: str = Field(..., description="The Bedrock model ID to use for reranking")
@@ -47,7 +50,7 @@ class AmazonBedrockRerankerConf(BaseModel):
     )
 
 
-class CrossEncoderRerankerConf(BaseModel):
+class CrossEncoderRerankerConf(YamlSerializableMixin):
     """Parameters for CrossEncoderReranker."""
 
     model_name: str = Field(
@@ -57,7 +60,7 @@ class CrossEncoderRerankerConf(BaseModel):
     )
 
 
-class EmbedderRerankerConf(BaseModel):
+class EmbedderRerankerConf(YamlSerializableMixin):
     """Parameters for EmbedderReranker."""
 
     embedder_id: str = Field(
@@ -66,11 +69,11 @@ class EmbedderRerankerConf(BaseModel):
     )
 
 
-class IdentityRerankerConf(BaseModel):
+class IdentityRerankerConf(YamlSerializableMixin):
     """Parameters for IdentityReranker."""
 
 
-class RRFHybridRerankerConf(BaseModel):
+class RRFHybridRerankerConf(YamlSerializableMixin):
     """Parameters for RrfHybridReranker."""
 
     reranker_ids: list[str] = Field(
@@ -97,6 +100,50 @@ class RerankersConf(BaseModel):
         """Check if a reranker ID is defined in the configuration."""
         return reranker_id in self._saved_reranker_ids
 
+    BM25: ClassVar[str] = "bm25"
+    CROSS_ENCODER: ClassVar[str] = "cross-encoder"
+    EMBEDDER: ClassVar[str] = "embedder"
+    IDENTITY: ClassVar[str] = "identity"
+    RRF_HYBRID: ClassVar[str] = "rrf-hybrid"
+    AMAZON_BEDROCK: ClassVar[str] = "amazon-bedrock"
+    PROVIDER_KEY: ClassVar[str] = "provider"
+    CONFIG_KEY: ClassVar[str] = "config"
+
+    def to_yaml_dict(self) -> dict:
+        """Serialize the reranker configuration to a YAML-compatible dictionary."""
+        rerankers: dict[str, dict] = {}
+
+        def add_reranker(name: str, provider: str, config: dict) -> None:
+            """Add a reranker entry to the YAML dictionary."""
+            rerankers[name] = {
+                self.PROVIDER_KEY: provider,
+                self.CONFIG_KEY: config,
+            }
+
+        for reranker_id, conf in self.bm25.items():
+            add_reranker(reranker_id, self.BM25, conf.to_yaml_dict())
+
+        for reranker_id, conf in self.amazon_bedrock.items():
+            add_reranker(reranker_id, self.AMAZON_BEDROCK, conf.to_yaml_dict())
+
+        for reranker_id, conf in self.cross_encoder.items():
+            add_reranker(reranker_id, self.CROSS_ENCODER, conf.to_yaml_dict())
+
+        for reranker_id, conf in self.embedder.items():
+            add_reranker(reranker_id, self.EMBEDDER, conf.to_yaml_dict())
+
+        for reranker_id, conf in self.identity.items():
+            add_reranker(reranker_id, self.IDENTITY, conf.to_yaml_dict())
+
+        for reranker_id, conf in self.rrf_hybrid.items():
+            add_reranker(reranker_id, self.RRF_HYBRID, conf.to_yaml_dict())
+
+        return rerankers
+
+    def to_yaml(self) -> str:
+        data = {"rerankers": self.to_yaml_dict()}
+        return yaml.safe_dump(data, sort_keys=True)
+
     @classmethod
     def parse(cls, input_dict: dict) -> Self:
         """Parse reranker configuration from a raw mapping."""
@@ -114,19 +161,19 @@ class RerankersConf(BaseModel):
         saved_reranker_ids = set(reranker.keys())
 
         for reranker_id, value in reranker.items():
-            provider = value.get("provider")
-            conf = value.get("config", {})
-            if provider == "bm25":
+            provider = value.get(cls.PROVIDER_KEY)
+            conf = value.get(cls.CONFIG_KEY, {})
+            if provider == cls.BM25:
                 bm25_dict[reranker_id] = BM25RerankerConf(**conf)
-            elif provider == "amazon-bedrock":
+            elif provider == cls.AMAZON_BEDROCK:
                 amazon_bedrock_dict[reranker_id] = AmazonBedrockRerankerConf(**conf)
-            elif provider == "cross-encoder":
+            elif provider == cls.CROSS_ENCODER:
                 cross_encoder_dict[reranker_id] = CrossEncoderRerankerConf(**conf)
-            elif provider == "embedder":
+            elif provider == cls.EMBEDDER:
                 embedder_dict[reranker_id] = EmbedderRerankerConf(**conf)
-            elif provider == "identity":
+            elif provider == cls.IDENTITY:
                 identity_dict[reranker_id] = IdentityRerankerConf()
-            elif provider == "rrf-hybrid":
+            elif provider == cls.RRF_HYBRID:
                 rrf_hybrid_dict[reranker_id] = RRFHybridRerankerConf(**conf)
             else:
                 raise ValueError(
