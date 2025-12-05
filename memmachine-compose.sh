@@ -764,7 +764,7 @@ show_service_info() {
 build_image() {
     local name=""
     local force="false"
-    local gpu="false"
+    local gpu="false" # default to false
     local reply=""
     local key=""
     local value=""
@@ -814,17 +814,19 @@ build_image() {
 
     if [[ "$force" == "false" ]]; then
         print_prompt
-        read -p "Building $name with '--build-arg GPU=$gpu' (y/N): " -r reply
+        read -p "Building $name with '--build-arg GPU=[true|false]' (default: false): " reply
+        gpu=$(echo "${reply:-false}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$gpu" != "true" && "$gpu" != "false" ]]; then
+            print_error "Invalid value for GPU: $gpu"
+            exit 1
+        fi
     else
         print_info "Building $name with '--build-arg GPU=$gpu'"
     fi
 
-    if [[ $reply =~ ^[Yy]$ || $force == "true" ]]; then
-        docker build --build-arg GPU=$gpu -t "$name" .
-    else
-        print_info "Build cancelled"
-        exit 0
-    fi
+    # Proceed with build after validation passes
+    print_info "Building $name with '--build-arg GPU=$gpu'"
+    docker build --build-arg GPU=$gpu -t "$name" .
 }
 
 # Main execution
