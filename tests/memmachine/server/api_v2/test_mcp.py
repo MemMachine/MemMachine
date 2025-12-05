@@ -105,7 +105,7 @@ def test_search_memory_param_get_search_query(params):
     assert spec.project_id == "proj"
     assert spec.top_k == 7
     assert spec.query == "hello"
-    assert spec.filter == "user_id='usr'"
+    assert spec.filter == "metadata.user_id='usr'"
     assert spec.types == ALL_MEMORY_TYPES
 
 

@@ -209,7 +209,7 @@ class Params(BaseModel):
             project_id=self.proj_id,
             query=query,
             top_k=top_k,
-            filter=f"user_id='{self.user_id}'",
+            filter=f"metadata.user_id='{self.user_id}'",
             types=ALL_MEMORY_TYPES,
         )
 
