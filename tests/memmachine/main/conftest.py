@@ -106,9 +106,11 @@ def openai_chat_completions_language_model_config(
 
 @pytest.fixture(scope="session")
 def bedrock_language_model_config(
-    bedrock_integration_config,
+    bedrock_integration_language_model_config,
 ) -> tuple[str, LanguageModelsConf]:
     language_model_id = "bedrock_model"
+    config = bedrock_integration_language_model_config
+
     return (
         language_model_id,
         LanguageModelsConf.parse(
@@ -117,14 +119,14 @@ def bedrock_language_model_config(
                     language_model_id: {
                         "provider": "amazon-bedrock",
                         "config": {
-                            "model_id": bedrock_integration_config["model"],
-                            "aws_access_key_id": bedrock_integration_config[
+                            "model_id": config["model"],
+                            "aws_access_key_id": config[
                                 "aws_access_key_id"
                             ],
-                            "aws_secret_access_key": bedrock_integration_config[
+                            "aws_secret_access_key": config[
                                 "aws_secret_access_key"
                             ],
-                            "region": bedrock_integration_config["aws_region"],
+                            "region": config["aws_region"],
                         },
                     }
                 }
