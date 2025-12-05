@@ -282,11 +282,11 @@ async def test_formalize_query_with_context(
     """Test formalizing a query with context from memory."""
     ep1 = create_test_episode(
         content="hello",
-        created_at=datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC),
+        created_at=datetime(1592, 3, 14, 6, 53, 59, tzinfo=UTC),
     )
     ep2 = create_test_episode(
         content="world",
-        created_at=datetime(2023, 1, 1, 12, 0, 1, tzinfo=UTC),
+        created_at=datetime(1828, 2, 7, 18, 28, 45, tzinfo=UTC),
     )
 
     mock_short_term_memory.get_short_term_memory_context.return_value = (
@@ -306,8 +306,8 @@ async def test_formalize_query_with_context(
         "summary text\n"
         "</Summary>\n"
         "<Episodes>\n"
-        "hello\n"
-        "world\n"
+        '[Saturday, March 14, 1592 at 06:53 AM] test_producer: "hello"\n'
+        '[Thursday, February 07, 1828 at 06:28 PM] test_producer: "world"\n'
         "</Episodes>\n"
         "<Query>\noriginal query\n</Query>"
     )

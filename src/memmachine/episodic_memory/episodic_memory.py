@@ -16,16 +16,21 @@ Key responsibilities include:
 """
 
 import asyncio
+import datetime
+import json
 import logging
 import time
 from collections.abc import Coroutine, Iterable
-from datetime import datetime
 from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
 from memmachine.common.data_types import FilterablePropertyValue
-from memmachine.common.episode_store import Episode, EpisodeResponse
+from memmachine.common.episode_store import (
+    Episode,
+    EpisodeResponse,
+    EpisodeType,
+)
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
 )
@@ -425,10 +430,11 @@ class EpisodicMemory:
         episodes = sorted(
             query_result.short_term_memory.episodes
             + query_result.long_term_memory.episodes,
-            key=lambda x: cast(datetime, x.created_at),
+            key=lambda x: cast(datetime.datetime, x.created_at),
         )
 
         finalized_query = ""
+
         # Add summary if it exists
         if (
             query_result.short_term_memory.episode_summary
@@ -448,14 +454,52 @@ class EpisodicMemory:
         # Add episodes if they exist
         if episodes and len(episodes) > 0:
             finalized_query += "<Episodes>\n"
-            for episode in episodes:
-                # Ensure content is a string before concatenating
-                if isinstance(episode.content, str):
-                    finalized_query += episode.content
-                    finalized_query += "\n"
+            finalized_query += EpisodicMemory.string_from_episode_response_context(
+                episodes,
+            )
             finalized_query += "</Episodes>\n"
 
         # Append the original query
         finalized_query += f"<Query>\n{query}\n</Query>"
 
         return finalized_query
+
+    @staticmethod
+    def string_from_episode_response_context(
+        episode_response_context: Iterable[EpisodeResponse],
+    ) -> str:
+        """Format episode response context as a string."""
+        context_string = ""
+
+        for episode_response in episode_response_context:
+            match episode_response.episode_type:
+                case EpisodeType.MESSAGE:
+                    context_date = (
+                        EpisodicMemory._format_date(
+                            episode_response.created_at.date(),
+                        )
+                        if episode_response.created_at
+                        else "Unknown Date"
+                    )
+                    context_time = (
+                        EpisodicMemory._format_time(
+                            episode_response.created_at.time(),
+                        )
+                        if episode_response.created_at
+                        else "Unknown Time"
+                    )
+                    context_string += f"[{context_date} at {context_time}] {episode_response.producer_id}: {json.dumps(episode_response.content)}\n"
+                case _:
+                    context_string += json.dumps(episode_response.content) + "\n"
+
+        return context_string
+
+    @staticmethod
+    def _format_date(date: datetime.date) -> str:
+        """Format the date as a string."""
+        return date.strftime("%A, %B %d, %Y")
+
+    @staticmethod
+    def _format_time(time: datetime.time) -> str:
+        """Format the time as a string."""
+        return time.strftime("%I:%M %p")

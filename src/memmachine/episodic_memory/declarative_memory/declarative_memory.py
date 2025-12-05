@@ -462,9 +462,9 @@ class DeclarativeMemory:
                     context_time = DeclarativeMemory._format_time(
                         episode.timestamp.time(),
                     )
-                    context_string += f"[{context_date} at {context_time}] {episode.source}: {episode.content}\n"
+                    context_string += f"[{context_date} at {context_time}] {episode.source}: {json.dumps(episode.content)}\n"
                 case ContentType.TEXT:
-                    context_string += episode.content + "\n"
+                    context_string += json.dumps(episode.content) + "\n"
 
         return context_string
 
