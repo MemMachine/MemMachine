@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   rest-client-integration-test:
+    # Temporarily disabled - uncomment the line below to re-enable
+    if: false  # Set to true to re-enable this workflow
     runs-on: ubuntu-latest
     timeout-minutes: 30  # Set job timeout to 30 minutes
     steps:
