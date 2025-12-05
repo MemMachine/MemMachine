@@ -155,7 +155,7 @@ def bedrock_integration_config():
     aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
     aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
     aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
-    aws_region = os.environ.get("AWS_REGION")
+    aws_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     if not aws_access_key_id or not aws_secret_access_key or not aws_region:
         pytest.skip("AWS credentials not set")
 
@@ -168,15 +168,22 @@ def bedrock_integration_config():
 
 
 @pytest.fixture(scope="session")
+def bedrock_integration_language_model_config(bedrock_integration_config):
+    return bedrock_integration_config | {"model": "qwen.qwen3-32b-v1:0"}
+
+
+@pytest.fixture(scope="session")
 def boto3_bedrock_runtime_client(bedrock_integration_config):
     import boto3
 
+    config = bedrock_integration_config
+
     return boto3.client(
         "bedrock-runtime",
-        aws_access_key_id=bedrock_integration_config["aws_access_key_id"],
-        aws_secret_access_key=bedrock_integration_config["aws_secret_access_key"],
-        aws_session_token=bedrock_integration_config["aws_session_token"],
-        region_name=bedrock_integration_config["aws_region"],
+        aws_access_key_id=config["aws_access_key_id"],
+        aws_secret_access_key=config["aws_secret_access_key"],
+        aws_session_token=config["aws_session_token"],
+        region_name=config["aws_region"],
     )
 
 
@@ -184,28 +191,33 @@ def boto3_bedrock_runtime_client(bedrock_integration_config):
 def boto3_bedrock_agent_runtime_client(bedrock_integration_config):
     import boto3
 
+    config = bedrock_integration_config
+
     return boto3.client(
         "bedrock-agent-runtime",
-        aws_access_key_id=bedrock_integration_config["aws_access_key_id"],
-        aws_secret_access_key=bedrock_integration_config["aws_secret_access_key"],
-        aws_session_token=bedrock_integration_config["aws_session_token"],
-        region_name=bedrock_integration_config["aws_region"],
+        aws_access_key_id=config["aws_access_key_id"],
+        aws_secret_access_key=config["aws_secret_access_key"],
+        aws_session_token=config["aws_session_token"],
+        region_name=config["aws_region"],
     )
 
 
 @pytest.fixture(scope="session")
-def bedrock_llm_model(boto3_bedrock_runtime_client):
+def bedrock_llm_model(
+    boto3_bedrock_runtime_client, bedrock_integration_language_model_config
+):
+    config = bedrock_integration_language_model_config
     return AmazonBedrockLanguageModel(
         AmazonBedrockLanguageModelParams(
             client=boto3_bedrock_runtime_client,
-            model_id="openai.gpt-oss-20b-1:0",
+            model_id=config["model"],
         )
     )
 
 
 @pytest.fixture(
     params=[
-        pytest.param("bedrock", marks=pytest.mark.integration),
+        pytest.param("bedrock", marks=[pytest.mark.integration, pytest.mark.slow]),
         pytest.param("openai", marks=pytest.mark.integration),
         pytest.param("openai_chat_completions", marks=pytest.mark.integration),
     ],
