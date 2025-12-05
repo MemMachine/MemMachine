@@ -106,7 +106,12 @@ class LogConf(BaseModel):
             self.path,
         )
 
-        handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+        # In MCP stdio mode, use stderr instead of stdout to avoid polluting JSON-RPC stream
+        # Check environment variable to detect MCP stdio mode
+        use_stderr = os.getenv("MCP_STDIO_MODE") == "1"
+        stream = sys.stderr if use_stderr else sys.stdout
+
+        handlers: list[logging.Handler] = [logging.StreamHandler(stream)]
         if self.path:
             file_handler = logging.FileHandler(self.path)
             file_handler.setFormatter(logging.Formatter(self.format))
