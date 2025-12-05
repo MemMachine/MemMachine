@@ -175,6 +175,7 @@ def bedrock_integration_language_model_config(bedrock_integration_config):
 @pytest.fixture(scope="session")
 def boto3_bedrock_runtime_client(bedrock_integration_config):
     import boto3
+
     config = bedrock_integration_config
 
     return boto3.client(
@@ -189,6 +190,7 @@ def boto3_bedrock_runtime_client(bedrock_integration_config):
 @pytest.fixture(scope="session")
 def boto3_bedrock_agent_runtime_client(bedrock_integration_config):
     import boto3
+
     config = bedrock_integration_config
 
     return boto3.client(
@@ -201,7 +203,9 @@ def boto3_bedrock_agent_runtime_client(bedrock_integration_config):
 
 
 @pytest.fixture(scope="session")
-def bedrock_llm_model(boto3_bedrock_runtime_client, bedrock_integration_language_model_config):
+def bedrock_llm_model(
+    boto3_bedrock_runtime_client, bedrock_integration_language_model_config
+):
     config = bedrock_integration_language_model_config
     return AmazonBedrockLanguageModel(
         AmazonBedrockLanguageModelParams(

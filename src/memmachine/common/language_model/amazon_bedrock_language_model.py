@@ -283,6 +283,8 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 output_format=output_format,
             )
             if parsed is not None:
+                self._collect_metrics({}, start_time, time.monotonic())
+
                 return parsed
             raise
 

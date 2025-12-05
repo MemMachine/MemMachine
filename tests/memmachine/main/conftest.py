@@ -120,12 +120,8 @@ def bedrock_language_model_config(
                         "provider": "amazon-bedrock",
                         "config": {
                             "model_id": config["model"],
-                            "aws_access_key_id": config[
-                                "aws_access_key_id"
-                            ],
-                            "aws_secret_access_key": config[
-                                "aws_secret_access_key"
-                            ],
+                            "aws_access_key_id": config["aws_access_key_id"],
+                            "aws_secret_access_key": config["aws_secret_access_key"],
                             "region": config["aws_region"],
                         },
                     }
