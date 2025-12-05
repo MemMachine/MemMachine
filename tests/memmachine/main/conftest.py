@@ -134,7 +134,12 @@ def bedrock_language_model_config(
 
 
 @pytest.fixture(
-    scope="session", params=["openai", "openai_chat_completions", "bedrock"]
+    scope="session",
+    params=[
+        "openai",
+        "openai_chat_completions",
+        pytest.param("bedrock", marks=[pytest.mark.slow]),
+    ],
 )
 def language_model_config(
     request,
