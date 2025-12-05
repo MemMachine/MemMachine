@@ -106,7 +106,7 @@ class LogConf(BaseModel):
             self.path,
         )
 
-        handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+        handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
         if self.path:
             file_handler = logging.FileHandler(self.path)
             file_handler.setFormatter(logging.Formatter(self.format))
