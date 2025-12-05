@@ -155,7 +155,7 @@ def bedrock_integration_config():
     aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
     aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
     aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
-    aws_region = os.environ.get("AWS_REGION")
+    aws_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     if not aws_access_key_id or not aws_secret_access_key or not aws_region:
         pytest.skip("AWS credentials not set")
 
@@ -164,6 +164,7 @@ def bedrock_integration_config():
         "aws_secret_access_key": aws_secret_access_key,
         "aws_session_token": aws_session_token,
         "aws_region": aws_region,
+        "model": "qwen.qwen3-32b-v1:0",
     }
 
 
@@ -205,7 +206,7 @@ def bedrock_llm_model(boto3_bedrock_runtime_client):
 
 @pytest.fixture(
     params=[
-        pytest.param("bedrock", marks=pytest.mark.integration),
+        pytest.param("bedrock", marks=[pytest.mark.integration, pytest.mark.slow]),
         pytest.param("openai", marks=pytest.mark.integration),
         pytest.param("openai_chat_completions", marks=pytest.mark.integration),
     ],

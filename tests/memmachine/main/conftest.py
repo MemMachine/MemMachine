@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -110,7 +109,6 @@ def bedrock_language_model_config(
     bedrock_integration_config,
 ) -> tuple[str, LanguageModelsConf]:
     language_model_id = "bedrock_model"
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     return (
         language_model_id,
         LanguageModelsConf.parse(
@@ -126,7 +124,7 @@ def bedrock_language_model_config(
                             "aws_secret_access_key": bedrock_integration_config[
                                 "aws_secret_access_key"
                             ],
-                            "region": region or "us-east-1",
+                            "region": bedrock_integration_config["aws_region"],
                         },
                     }
                 }
