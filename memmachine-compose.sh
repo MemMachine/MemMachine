@@ -510,21 +510,40 @@ check_config_file() {
     fi
 }
 
+getYamlValue() {
+    yq -r "$1" $2
+}   
+
+checkYq() {
+    if [[ ! $(command -v yq) ]]; then
+        print_error "yq is not installed. Please install yq to use this function."
+        print_info "sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq"
+        print_info "sudo chmod +x /usr/local/bin/yq"
+        exit 1
+    fi
+}
+
+
 select_openai_base_url() {
     local base_url=""
     local reply=""
-    
-    print_prompt
-    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
-    if [[ $reply =~ ^[Yy]$ ]]; then
+    checkYq
+    embedder_base_url=$(getYamlValue ".resources.embedders.openai_embedder.config.base_url" configuration.yml)
+    lang_base_url=$(getYamlValue ".resources.language_models.ollama_model.config.base_url" configuration.yml)
+    if [[ -z "$embedder_base_url" ]] || [[ -z "$lang_base_url" ]] ; then
         print_prompt
-        read -p "Enter your OpenAI Base URL: " base_url
-        if [ -n "$base_url" ]; then
-            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            print_success "Set OpenAI Base URL to $base_url"
-        fi
+        read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
+        if [[ $reply =~ ^[Yy]$ ]]; then
+            print_prompt
+            read -p "Enter your OpenAI Base URL: " base_url
+            if [ -n "$base_url" ]; then
+                safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                print_success "Set OpenAI Base URL to $base_url"
+            fi
+        fi    
     fi
+    
 }
 
 # Prompt user if they would like to set their API keys based on provider; then set it in the .env file and configuration.yml file
@@ -690,8 +709,10 @@ start_services() {
     # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
     ENV_MEMMACHINE_IMAGE=""
     # Pull the latest images to ensure we are running the latest version
-    print_info "Pulling latest images..."
-    $COMPOSE_CMD pull
+    if [[ -z "${SKIP_PULL}" ]];then
+        print_info "Pulling latest images..."
+        $COMPOSE_CMD pull
+    fi
     ENV_MEMMACHINE_IMAGE="${memmachine_image_tmp:-}"
 
     # Start services (override the image if specified in memmachine-compose.sh start <image>:<tag>)
