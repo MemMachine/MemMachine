@@ -157,6 +157,7 @@ class MemMachine:
         description: str = "",
         embedder_name: str | None = None,
         reranker_name: str | None = None,
+        exist_ok: bool = False,
     ) -> SessionDataManager.SessionInfo:
         """Create a new session."""
         episodic_memory_conf = self._with_default_episodic_memory_conf(
@@ -166,13 +167,18 @@ class MemMachine:
         )
 
         session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.create_new_session(
-            session_key=session_key,
-            configuration={},
-            param=episodic_memory_conf,
-            description=description,
-            metadata={},
-        )
+        try:
+            await session_data_manager.create_new_session(
+                session_key=session_key,
+                configuration={},
+                param=episodic_memory_conf,
+                description=description,
+                metadata={},
+            )
+        except ValueError:
+            if not exist_ok:
+                raise
+
         ret = await self.get_session(session_key=session_key)
         if ret is None:
             raise RuntimeError(f"Failed to create session {session_key}")
@@ -259,19 +265,17 @@ class MemMachine:
         )
         episode_ids = [e.uid for e in episodes]
 
+        if await self.get_session(session_data.session_key) is None:
+            await self.create_session(session_data.session_key, exist_ok=True)
+
         tasks = []
 
         if MemoryType.Episodic in target_memories:
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
-            async with episodic_memory_manager.open_or_create_episodic_memory(
+            async with episodic_memory_manager.open_episodic_memory(
                 session_key=session_data.session_key,
-                description="",
-                episodic_memory_config=self._with_default_episodic_memory_conf(
-                    session_key=session_data.session_key
-                ),
-                metadata={},
             ) as episodic_session:
                 tasks.append(episodic_session.add_memory_episodes(episodes))
 
