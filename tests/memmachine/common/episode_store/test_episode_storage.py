@@ -197,6 +197,26 @@ async def test_history_identity_filters(episode_storage: EpisodeStorage):
 
 
 @pytest.mark.asyncio
+async def test_history_comparison_filters(episode_storage: EpisodeStorage):
+    first = await create_history_entry(episode_storage, content="first")
+    second = await create_history_entry(episode_storage, content="second")
+    third = await create_history_entry(episode_storage, content="third")
+
+    try:
+        greater_than_first = await episode_storage.get_episode_messages(
+            filter_expr=_filter(f"id > {first}"),
+        )
+        assert {entry.uid for entry in greater_than_first} == {second, third}
+
+        up_to_second = await episode_storage.get_episode_messages(
+            filter_expr=_filter(f"id <= {second}"),
+        )
+        assert {entry.uid for entry in up_to_second} == {first, second}
+    finally:
+        await episode_storage.delete_episodes([first, second, third])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("start_key", "end_key", "expected_count"),
     [

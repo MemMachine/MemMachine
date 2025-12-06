@@ -54,6 +54,22 @@ def test_parse_filter_boolean_and_numeric_values() -> None:
     assert children[3] == Comparison(field="flag", op="=", value=False)
 
 
+def test_parse_filter_greater_and_less_than() -> None:
+    expr = parse_filter("count > 10 AND pi < 3.14")
+    assert isinstance(expr, And)
+    children = _flatten_and(expr)
+    assert children[0] == Comparison(field="count", op=">", value=10)
+    assert children[1] == Comparison(field="pi", op="<", value=3.14)
+
+
+def test_parse_filter_greater_equal_and_less_equal() -> None:
+    expr = parse_filter("count >= 10 AND pi <= 3.14")
+    assert isinstance(expr, And)
+    children = _flatten_and(expr)
+    assert children[0] == Comparison(field="count", op=">=", value=10)
+    assert children[1] == Comparison(field="pi", op="<=", value=3.14)
+
+
 def test_parse_filter_and_or_precedence() -> None:
     expr = parse_filter("owner = alice OR priority = HIGH AND status = OPEN")
     assert isinstance(expr, Or)

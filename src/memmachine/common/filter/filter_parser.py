@@ -20,7 +20,7 @@ class Comparison(FilterExpr):
     """Filter comparison of a field against a value or list of values."""
 
     field: str
-    op: str  # "=", "in", "is_null", "is_not_null"
+    op: str  # "=", "in", ">", "<", ">=", "<=", "is_null", "is_not_null"
     value: FilterablePropertyValue | list[FilterablePropertyValue]
 
 
@@ -57,7 +57,11 @@ _TOKEN_SPEC = [
     ("LPAREN", r"\("),
     ("RPAREN", r"\)"),
     ("COMMA", r","),
+    ("GE", r">="),
+    ("LE", r"<="),
     ("EQ", r"="),
+    ("GT", r">"),
+    ("LT", r"<"),
     ("STRING", r"'[^']*'"),
     ("IDENT", r"[A-Za-z0-9_\.]+"),
     ("WS", r"\s+"),
@@ -155,10 +159,12 @@ class _Parser:
         field_tok = self._expect("IDENT")
         field = field_tok.value
 
-        if self._accept("EQ"):
-            # field = value
+        op_tok = self._accept("EQ", "GE", "LE", "GT", "LT")
+        if op_tok:
+            # field =/>=/>/</<= value
             value = self._parse_value()
-            return Comparison(field=field, op="=", value=value)
+            op = {"EQ": "=", "GE": ">=", "LE": "<=", "GT": ">", "LT": "<"}[op_tok.type]
+            return Comparison(field=field, op=op, value=value)
 
         if self._accept("IN"):
             self._expect("LPAREN")
@@ -179,7 +185,9 @@ class _Parser:
             op = "is_not_null" if negate else "is_null"
             return Comparison(field=field, op=op, value=None)
 
-        raise FilterParseError(f"Expected '=' or IN after field {field}")
+        raise FilterParseError(
+            f"Expected comparison operator (=, IN, >, <, >=, <=, IS) after field {field}"
+        )
 
     def _parse_value(self) -> FilterablePropertyValue:
         tok = self._expect("IDENT", "STRING")
