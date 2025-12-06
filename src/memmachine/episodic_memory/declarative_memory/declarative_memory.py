@@ -331,13 +331,13 @@ class DeclarativeMemory:
             for matched_derivative_node in matched_derivative_nodes
         ]
 
-        source_episode_nodes = [
-            episode_node
+        source_episode_nodes = {
+            episode_node: None
             for episode_nodes in await asyncio.gather(
                 *search_derivatives_source_episode_nodes_tasks,
             )
             for episode_node in episode_nodes
-        ]
+        }
 
         # Use source episodes as nuclei for contextualization.
         nuclear_episodes = [
