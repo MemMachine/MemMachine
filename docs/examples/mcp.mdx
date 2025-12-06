@@ -190,8 +190,58 @@ To configure the Claude Desktop App to connect to your MCP server, follow these 
 
 5. The configuration file is named `claude_desktop_config.json`.  Edit the file to include the MCP stdio mode.
 
-    Here is an example of working in the development environment with `uv`.  In order to call the command,
-    you need to have `uv` installed and issue `uv build` to build the project first.
+#### Option 1: Using Docker Compose (Recommended)
+
+This is the recommended method for running MemMachine locally using Docker. It's the easiest way to get started.
+
+**Step 1: Start MemMachine with Docker Compose**
+
+First, start MemMachine using the provided script:
+
+```
+./memmachine-compose.sh
+```
+
+This will start all required services (PostgreSQL, Neo4j, and MemMachine) in Docker containers. The MemMachine container will be named `memmachine-app`.
+
+**Step 2: Configure Claude Desktop**
+
+Edit `claude_desktop_config.json` with the following configuration:
+
+```
+{
+  "mcpServers": {
+    "memmachine": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-e",
+        "MM_USER_ID=Your Name",
+        "-i",
+        "memmachine-app",
+        "/app/.venv/bin/memmachine-mcp-stdio"
+      ],
+      "env": {
+        "MEMORY_CONFIG": "/app/configuration.yml",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+Replace `Your Name` with your desired user ID. The `memmachine-app` is the default container name created by the Docker Compose setup.
+
+**Configuration Details:**
+- `memmachine-app`: The Docker container name (default from `memmachine-compose.sh`)
+- `MEMORY_CONFIG`: Path to the configuration file inside the container
+- `MM_USER_ID`: Your user identifier for memory sessions
+- `PYTHONUNBUFFERED`: Ensures immediate output from Python
+
+#### Option 2: Using UV (Development Environment)
+
+Here is an example of working in the development environment with `uv`.  In order to call the command,
+you need to have `uv` installed and issue `uv build` to build the project first.
 
 ```
 {
@@ -234,7 +284,26 @@ memmachine-mcp-stdio
 
 <img height="200" src="../images/claude-mcp-stdio.png" />
 
-9. If you want to connect to a MCP running in HTTP mode.  You can replace the configuration with this:
+9. Add a Global Prompt in Claude Desktop
+
+This step helps Claude consistently call MemMachine MCP in every conversation.
+
+Claude Desktop lets you set a personal preference prompt. If you want Claude to use MemMachine MCP on every question, add the following line:
+
+```
+you MUST actively use MemMachine MCP on EVERY Question
+```
+
+**How to add it:**
+
+1. Open Claude Desktop
+2. Go to **Settings**
+3. Click **General**
+4. Find "What personal preferences should Claude consider in responses?"
+5. Paste the sentence into the text box
+6. Save your settings
+
+10. If you want to connect to a MCP running in HTTP mode.  You can replace the configuration with this:
 
 ```
 {
@@ -263,16 +332,16 @@ memmachine-mcp-stdio
   * `proj-id`: (Optional) Project ID, default to `mcp-<user-id>` if not specified.
   * `org-id`: (Optional) Organization ID, default to `mcp-universal`
 
-10. If something went wrong, you will see an error message popup when you start Claude Desktop App.
+11. If something went wrong, you will see an error message popup when you start Claude Desktop App.
 You can also check the logs by clicking on `View Logs` button in the `Developer` tab.
 
-11. Now we can go back to the main screen and start a new conversation. You can say something like "I like Disneyland"
+12. Now we can go back to the main screen and start a new conversation. You can say something like "I like Disneyland"
 and Claude should be able to remember that in the next conversation.  You may need to allow the model to call MCP for
 the first time.
 
 <img height="200" src="../images/claude-add-memory.png" />
 
-12. Restart the Claude Desktop App and start a new conversation.  Ask about your favorite places and see if Claude can
+13. Restart the Claude Desktop App and start a new conversation.  Ask about your favorite places and see if Claude can
 remember them.
 
 <img height="200" src="../images/claude-remember.png" />
