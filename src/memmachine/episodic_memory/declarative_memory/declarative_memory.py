@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import logging
+from collections import deque
 from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
@@ -97,6 +98,8 @@ class DeclarativeMemory:
         self._derivative_collection = f"Derivative_{session_id}"
 
         self._derived_from_relation = f"DERIVED_FROM_{session_id}"
+
+        self._episode_context_content_length_quota_factor = 10
 
     async def add_episodes(
         self,
@@ -348,6 +351,8 @@ class DeclarativeMemory:
         contextualize_episode_tasks = [
             self._contextualize_episode(
                 nuclear_episode,
+                episode_context_content_length_quota=self._episode_context_content_length_quota_factor
+                * max_num_episodes,
                 mangled_property_filter=mangled_property_filter,
             )
             for nuclear_episode in nuclear_episodes
@@ -385,10 +390,17 @@ class DeclarativeMemory:
     async def _contextualize_episode(
         self,
         nuclear_episode: Episode,
-        max_backward_episodes: int = 1,
-        max_forward_episodes: int = 2,
+        episode_context_content_length_quota: int,
+        max_backward_episodes: int = 4,
+        max_forward_episodes: int = 8,
         mangled_property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
+        episode_context = deque([nuclear_episode])
+        episode_context_content_length = len(nuclear_episode.content)
+
+        if episode_context_content_length >= episode_context_content_length_quota:
+            return list(episode_context)
+
         previous_episode_nodes = (
             await self._vector_graph_store.search_directional_nodes(
                 collection=self._episode_collection,
@@ -417,19 +429,48 @@ class DeclarativeMemory:
             property_filter=mangled_property_filter,
         )
 
-        context = (
-            [
-                DeclarativeMemory._episode_from_episode_node(episode_node)
-                for episode_node in reversed(previous_episode_nodes)
-            ]
-            + [nuclear_episode]
-            + [
-                DeclarativeMemory._episode_from_episode_node(episode_node)
-                for episode_node in next_episode_nodes
-            ]
-        )
+        previous_episodes = [
+            DeclarativeMemory._episode_from_episode_node(episode_node)
+            for episode_node in previous_episode_nodes
+        ]
+        next_episodes = [
+            DeclarativeMemory._episode_from_episode_node(episode_node)
+            for episode_node in next_episode_nodes
+        ]
 
-        return context
+        previous_episode_index = 0
+        next_episode_index = 0
+        while previous_episode_index < len(
+            previous_episodes
+        ) or next_episode_index < len(
+            next_episodes,
+        ):
+            for _ in range(2):
+                if next_episode_index < len(next_episodes):
+                    next_episode = next_episodes[next_episode_index]
+                    next_episode_index += 1
+
+                    episode_context.append(next_episode)
+                    episode_context_content_length += len(next_episode.content)
+                    if (
+                        episode_context_content_length
+                        >= episode_context_content_length_quota
+                    ):
+                        return list(episode_context)
+
+            if previous_episode_index < len(previous_episodes):
+                previous_episode = previous_episodes[previous_episode_index]
+                previous_episode_index += 1
+
+                episode_context.appendleft(previous_episode)
+                episode_context_content_length += len(previous_episode.content)
+                if (
+                    episode_context_content_length
+                    >= episode_context_content_length_quota
+                ):
+                    return list(episode_context)
+
+        return list(episode_context)
 
     async def _score_episode_contexts(
         self,
