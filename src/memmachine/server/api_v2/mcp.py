@@ -226,7 +226,7 @@ class ParamsContextMiddleware:
         self,
         app: StarletteWithLifespan,
         org_header_name: str = "org-id",
-        proj_header_name: str = "project-id",
+        proj_header_name: str = "proj-id",
         user_header_name: str = "user-id",
     ) -> None:
         """Store the wrapped app and the name of the header carrying user id."""

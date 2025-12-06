@@ -190,11 +190,18 @@ To configure the Claude Desktop App to connect to your MCP server, follow these 
 
 5. The configuration file is named `claude_desktop_config.json`.  Edit the file to include the MCP stdio mode.
 
+    Here is an example of working in the development environment with `uv`.  In order to call the command,
+    you need to have `uv` installed and issue `uv build` to build the project first.
+
 ```
 {
   "mcpServers": {
     "memmachine": {
-      "command": "uv run memmachine-mcp-stdio",
+      "command": "[path to]/uv",
+      "args": [
+        "run",
+        "[path to]/MemMachine/.venv/bin/memmachine-mcp-stdio"
+      ],
       "env": {
         "PYTHONUNBUFFERED": "1",
         "MEMORY_CONFIG": "config.yml",
@@ -210,10 +217,18 @@ In which `config.yml` is your MemMachine configuration file.  `user` is the user
 6. If you installed MemMachine as a python package, you can replace the command with:
 
 ```
-MEMORY_CONFIG=config.yml MM_USER_ID="user" memmachine-mcp-stdio
+memmachine-mcp-stdio
 ```
 
-7. Save the configuration file and restart the Claude Desktop App.
+  Note that in stdio mode, you can use environment variables to pass the configuration to the MCP server.
+
+  * `MEMORY_CONFIG`: Path to the MemMachine configuration file.
+  * `MM_USER_ID`: User ID for the session.
+  * `MM_PROJ_ID`: (Optional) Project ID, default to `mcp-<MM_USER_ID>` if not specified.
+  * `MM_ORG_ID`: (Optional) Organization ID, default to `mcp-universal` if not specified.`
+
+7. Save the configuration file and restart the Claude Desktop App.  Note that the logs are written to `stderr` as well
+   so they will be available in Claude's log folder.  Check that log if anything went wrong.
 
 8. If you navigate to the `Developer` tab again, you should see `memmachine` as an option in the `MCP Server` dropdown.
 
@@ -238,10 +253,15 @@ MEMORY_CONFIG=config.yml MM_USER_ID="user" memmachine-mcp-stdio
 }
 ```
 
-In which `localhost` and `8080` are the host and port where your MCP server is running.
-`user` is the user ID you want to use for the session.
-Note that you need node v20+ and npx installed to use the `mcp-remote` command.  It basically acts as a proxy between
-the Claude Desktop App and the MCP HTTP server.
+  In which `localhost` and `8080` are the host and port where your MCP server is running.
+  `user` is the user ID you want to use for the session.
+  Note that you need node v20+ and npx installed to use the `mcp-remote` command.  It basically acts as a proxy between
+  the Claude Desktop App and the MCP HTTP server.
+
+  Here is the list of supported headers you can pass to the MCP server:
+  * `user-id`: User ID for the session.
+  * `proj-id`: (Optional) Project ID, default to `mcp-<user-id>` if not specified.
+  * `org-id`: (Optional) Organization ID, default to `mcp-universal`
 
 10. If something went wrong, you will see an error message popup when you start Claude Desktop App.
 You can also check the logs by clicking on `View Logs` button in the `Developer` tab.
