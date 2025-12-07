@@ -1,0 +1,335 @@
+"""API documentation strings for MemMachine server v2."""
+
+from typing import ClassVar
+
+
+class SpecDoc:
+    """Common descriptions for API fields."""
+
+    ORG_ID = """
+    The unique identifier of the organization.
+
+    - Must not contain slashes (`/`).
+    - Must contain only letters, numbers, underscores, hyphens, and Unicode
+      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols
+      are allowed.
+
+    This value determines the namespace the project belongs to.
+    """
+
+    ORG_ID_RETURN = """
+    The unique identifier of the organization this project belongs to.
+
+    Returned exactly as stored by the system.
+    """
+
+    PROJECT_ID = """
+    The identifier of the project.
+
+    - Must be unique within the organization.
+    - Must not contain slashes (`/`).
+    - Must contain only letters, numbers, underscores, hyphens, and Unicode
+      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols
+      are allowed.
+
+    This ID is used in API paths and resource locations.
+    """
+
+    PROJECT_ID_RETURN = """
+    The identifier of the project.
+
+    This value uniquely identifies the project within the organization.
+    """
+
+    PROJECT_DESCRIPTION = """
+    A human-readable description of the project.
+    Used for display purposes in UIs and dashboards.
+    Optional; defaults to an empty string.
+    """
+
+    PROJECT_CONFIG = """
+    Configuration settings associated with this project.
+
+    Defines which models (reranker, embedder) to use. If any values within
+    `ProjectConfig` are empty, global defaults are applied.
+    """
+
+    RERANKER_ID = """
+    The name of the reranker model to use for this project.
+
+    - Must refer to a reranker model defined in the system configuration.
+    - If set to an empty string (default), the globally configured reranker will
+      be used.
+
+    Rerankers typically re-score retrieved documents to improve result quality.
+    """
+
+    EMBEDDER_ID = """
+    The name of the embedder model to use for this project.
+
+    - Must refer to an embedder model defined in the system configuration.
+    - If set to an empty string (default), the globally configured embedder will
+      be used.
+
+    Embedders generate vector embeddings for text to support semantic search and
+    similarity operations.
+    """
+
+    EPISODE_COUNT = "The total number of episodic memories in the project."
+
+    MEMORY_CONTENT = "The content or text of the message."
+
+    MEMORY_PRODUCER = """
+    The sender of the message. This is a user-friendly name for
+    the LLM to understand the message context. Defaults to 'user'.
+    """
+
+    MEMORY_PRODUCE_FOR = """
+    The intended recipient of the message. This is a user-friendly name for
+    the LLM to understand the message context. Defaults to an empty string.
+    """
+
+    MEMORY_TIMESTAMP = """
+    The timestamp when the message was created, in ISO 8601 format.
+    If not provided, the server assigns the current time.
+    """
+
+    MEMORY_ROLE = """
+    The role of the message in a conversation (e.g., 'user', 'assistant',
+    'system'). Optional; defaults to an empty string.
+    """
+
+    MEMORY_METADATA = """
+    Additional metadata associated with the message, represented as key-value
+    pairs. Optional; defaults to an empty object.
+    Retrieval operations may utilize this metadata for filtering.
+    Use 'metadata.{key}' to filter based on specific metadata keys.
+    """
+
+    MEMORY_MESSAGES = """
+    A list of messages to be added (batch input).
+    Must contain at least one message.
+    """
+
+    MEMORY_UID = "The unique identifier of the memory message."
+
+    ADD_MEMORY_RESULTS = "The list of results for each added memory message."
+
+    TOP_K = """
+    The maximum number of memories to return in the search results.
+    """
+
+    QUERY = """
+    The natural language query used for semantic memory search. This should be
+    a descriptive string of the information you are looking for.
+    """
+
+    FILTER_MEM = """
+    An optional string filter applied to the memory metadata. This uses a
+    simple query language (e.g., 'metadata.user_id=123') for exact matches.
+    Multiple conditions can be combined using AND operators.  The metadata
+    fields are prefixed with 'metadata.' to distinguish them from other fields.
+    """
+
+    MEMORY_TYPES = """
+    A list of memory types to include in the search (e.g., Episodic, Semantic).
+    If empty, all available types are searched.
+    """
+
+    PAGE_SIZE = """
+    The maximum number of memories to return per page. Use this for pagination.
+    """
+    PAGE_NUM = """
+    The zero-based page number to retrieve. Use this for pagination.
+    """
+    MEMORY_TYPE_SINGLE = """
+    The specific memory type to list (e.g., Episodic or Semantic).
+    """
+
+    EPISODIC_ID = """
+    The unique ID of the specific episodic memory to be deleted.
+    """
+    SEMANTIC_ID = """
+    The unique ID of the specific semantic memory to be deleted.
+    """
+
+    STATUS = """
+    The status code of the search operation. 0 typically indicates success.
+    """
+
+    CONTENT = """
+    The dictionary containing the memory search results (e.g., list of memory
+    objects).
+    """
+
+
+class Examples:
+    """Common examples for API fields."""
+
+    ORG_ID: ClassVar[list[str]] = ["MemVerge", "AI_Labs"]
+    PROJECT_ID: ClassVar[list[str]] = ["memmachine", "research123", "qa_pipeline"]
+    PROJECT_DESCRIPTION: ClassVar[list[str]] = [
+        "Test project for RAG pipeline",
+        "Production semantic search index",
+    ]
+    RERANKER: ClassVar[list[str]] = ["bge-reranker-large", "my-custom-reranker"]
+    EMBEDDER: ClassVar[list[str]] = ["bge-base-en", "my-embedder"]
+    TOP_K: ClassVar[list[int]] = [5, 10, 20]
+    QUERY: ClassVar[list[str]] = [
+        "What was the user's last conversation about finance?"
+    ]
+    FILTER_MEM: ClassVar[list[str]] = [
+        "metadata.user_id=123 AND metadata.session_id=abc",
+    ]
+    MEMORY_TYPES: ClassVar[list[list[str]]] = [["Episodic", "Semantic"]]
+    MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["Episodic", "Semantic"]
+    PAGE_SIZE: ClassVar[list[int]] = [50, 100]
+    PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]
+    EPISODIC_ID: ClassVar[list[str]] = ["123", "345"]
+    SEMANTIC_ID: ClassVar[list[str]] = ["12", "23"]
+    SEARCH_RESULT_STATUS: ClassVar[list[int]] = [0]
+
+
+class RouterDoc:
+    """Common descriptions for API routers."""
+
+    CREATE_PROJECT = """
+    Create a new project.
+
+    This endpoint creates a project under the specified organization using the
+    provided identifiers and configuration. Both `org_id` and `project_id`
+    follow the rules: no slashes; only letters, numbers, underscores,
+    hyphens, and Unicode characters.
+
+    Each project acts as an isolated memory namespace. All memories (episodes)
+    inserted into a project belong exclusively to that project. Queries,
+    listings, and any background operations such as memory summarization or
+    knowledge extraction only access data within the same project. No
+    cross-project memory access is allowed.
+
+    If a project with the same ID already exists within the organization,
+    the request will fail with an error.
+
+    Returns the fully resolved project record, including configuration defaults
+    applied by the system.
+    """
+
+    GET_PROJECT = """
+    Retrieve a project.
+
+    Returns the project identified by `org_id` and `project_id`, following
+    the same rules as project creation.
+
+    Each project acts as an isolated memory namespace. Queries and operations
+    only access memories (episodes) stored within this project. No data from
+    other projects is visible or included in any background processing, such as
+    memory summarization or knowledge extraction.
+
+    The response includes the project's description and effective configuration.
+    If the project does not exist, a not-found error is returned.
+    """
+
+    GET_EPISODE_COUNT = """
+    Retrieve the episode count for a project.
+
+    An *episode* is the minimal unit of memory stored in the MemMachine system.
+    In most cases, a single episode corresponds to one message or interaction
+    from a user. Episodes are appended as the project accumulates conversational
+    or operational data.
+
+    This endpoint returns the total number of episodes currently recorded for
+    the specified project. If the project does not exist, a not-found error is
+    returned.
+    """
+
+    LIST_PROJECTS = """
+    List all projects.
+
+    Returns a list of all projects accessible within the system. Each entry
+    contains the project's organization ID and project ID. Identifiers follow
+    the standard rules: no slashes; only letters, numbers, underscores,
+    hyphens, and Unicode characters.
+
+    Projects are isolated memory namespaces. Memories (episodes) belong
+    exclusively to their project. All project operations, including queries and
+    any background processes (e.g., memory summarization or knowledge
+    extraction), only operate within the project's own data. No cross-project
+    access is allowed.
+    """
+
+    DELETE_PROJECT = """
+    Delete a project.
+
+    Deletes the specified project identified by `org_id` and `project_id`,
+    following the same rules as project creation.
+
+    This operation removes the project and all associated memories (episodes)
+    permanently from the system. It cannot be undone.
+
+    If the project does not exist, a not-found error is returned.
+    """
+
+    ADD_MEMORIES = """
+    Add memory messages to a project.  If not specified, the memory will be
+    added to all the sub-types (Episodic, Semantic).
+
+    Each memory message represents a discrete piece of information to be stored
+    in the project's memory system. Messages can include content, metadata,
+    timestamps, and other contextual details.
+
+    The producer field indicates who created the message, while the
+    produced_for field specifies the intended recipient. These fields help
+    provide context for the memory and if provided should be user-friendly names.
+
+    The endpoint accepts a batch of messages to be added in a single request.
+    """
+
+    ADD_EPISODIC_MEMORIES = """
+    Add episodic memory messages to a project.  Same as Add Memories but only adds
+    to the Episodic memory type."""
+
+    ADD_SEMANTIC_MEMORIES = """
+    Add semantic memory messages to a project.  Same as Add Memories but only adds
+    to the Semantic memory type."""
+
+    SEARCH_MEMORIES = """
+    Search memories within a project.
+
+    System returns the top K relevant memories matching the natural language query.
+    The result is sorted by timestamp to help with context.
+
+    The filter field allows for filtering based on metadata key-value pairs.
+    The types field allows specifying which memory types to include in the search.
+    """
+
+    LIST_MEMORIES = """
+    List memories within a project.
+
+    System returns a paginated list of memories stored in the project.
+    The page_size and page_num fields control pagination.
+
+    The filter field allows for filtering based on metadata key-value pairs.
+    The type field allows specifying which memory type to list.
+    """
+
+    DELETE_EPISODIC_MEMORY = """
+    Delete a specific episodic memory from a project.
+
+    Removes the episodic memory identified by `episodic_id` from the specified
+    project. This operation is permanent and cannot be undone.
+    If the episodic memory does not exist, a not-found error is returned.
+    """
+
+    DELETE_SEMANTIC_MEMORY = """
+    Delete a specific semantic memory from a project.
+
+    Removes the semantic memory identified by `semantic_id` from the specified
+    project. This operation is permanent and cannot be undone.
+    If the semantic memory does not exist, a not-found error is returned.
+    """
+
+    METRICS_PROMETHEUS = """
+    Expose Prometheus metrics."""
+
+    HEALTH_CHECK = """
+    Health check endpoint to verify server is running."""

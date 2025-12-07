@@ -12,6 +12,7 @@ from memmachine.common.errors import (
     ResourceNotFoundError,
 )
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemoryType
+from memmachine.server.api_v2.doc import RouterDoc
 from memmachine.server.api_v2.service import (
     _add_messages_to,
     _search_target_memories,
@@ -37,7 +38,7 @@ from memmachine.server.api_v2.spec import (
 router = APIRouter()
 
 
-@router.post("/projects", status_code=201)
+@router.post("/projects", status_code=201, description=RouterDoc.CREATE_PROJECT)
 async def create_project(
     spec: CreateProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -78,12 +79,12 @@ async def create_project(
     )
 
 
-@router.post("/projects/get")
+@router.post("/projects/get", description=RouterDoc.GET_PROJECT)
 async def get_project(
     spec: GetProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> ProjectResponse:
-    """Get a project."""
+    """Retrieve a project."""
     session_data = _SessionData(
         org_id=spec.org_id,
         project_id=spec.project_id,
@@ -108,12 +109,12 @@ async def get_project(
     )
 
 
-@router.post("/projects/episode_count/get")
+@router.post("/projects/episode_count/get", description=RouterDoc.GET_EPISODE_COUNT)
 async def get_episode_count(
     spec: GetProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> EpisodeCountResponse:
-    """Get the episode count for a project."""
+    """Retrieve the episode count for a project."""
     session_data = _SessionData(
         org_id=spec.org_id,
         project_id=spec.project_id,
@@ -125,7 +126,7 @@ async def get_episode_count(
     return EpisodeCountResponse(count=count)
 
 
-@router.post("/projects/list")
+@router.post("/projects/list", description=RouterDoc.LIST_PROJECTS)
 async def list_projects(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> list[dict[str, str]]:
@@ -142,7 +143,7 @@ async def list_projects(
     ]
 
 
-@router.post("/projects/delete", status_code=204)
+@router.post("/projects/delete", status_code=204, description=RouterDoc.DELETE_PROJECT)
 async def delete_project(
     spec: DeleteProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -164,7 +165,7 @@ async def delete_project(
         ) from e
 
 
-@router.post("/memories")
+@router.post("/memories", description=RouterDoc.ADD_MEMORIES)
 async def add_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -176,7 +177,7 @@ async def add_memories(
     return AddMemoriesResponse(results=results)
 
 
-@router.post("/memories/episodic/add")
+@router.post("/memories/episodic/add", description=RouterDoc.ADD_EPISODIC_MEMORIES)
 async def add_episodic_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -188,7 +189,7 @@ async def add_episodic_memories(
     return AddMemoriesResponse(results=results)
 
 
-@router.post("/memories/semantic/add")
+@router.post("/memories/semantic/add", description=RouterDoc.ADD_SEMANTIC_MEMORIES)
 async def add_semantic_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -200,7 +201,7 @@ async def add_semantic_memories(
     return AddMemoriesResponse(results=results)
 
 
-@router.post("/memories/search")
+@router.post("/memories/search", description=RouterDoc.SEARCH_MEMORIES)
 async def search_memories(
     spec: SearchMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -249,7 +250,7 @@ async def _list_target_memories(
     )
 
 
-@router.post("/memories/list")
+@router.post("/memories/list", description=RouterDoc.LIST_MEMORIES)
 async def list_memories(
     spec: ListMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -258,7 +259,11 @@ async def list_memories(
     return await _list_target_memories(spec=spec, memmachine=memmachine)
 
 
-@router.post("/memories/episodic/delete", status_code=204)
+@router.post(
+    "/memories/episodic/delete",
+    status_code=204,
+    description=RouterDoc.DELETE_EPISODIC_MEMORY,
+)
 async def delete_episodic_memory(
     spec: DeleteEpisodicMemorySpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -284,7 +289,11 @@ async def delete_episodic_memory(
         ) from e
 
 
-@router.post("/memories/semantic/delete", status_code=204)
+@router.post(
+    "/memories/semantic/delete",
+    status_code=204,
+    description=RouterDoc.DELETE_SEMANTIC_MEMORY,
+)
 async def delete_semantic_memory(
     spec: DeleteSemanticMemorySpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -306,13 +315,13 @@ async def delete_semantic_memory(
         ) from e
 
 
-@router.get("/metrics")
+@router.get("/metrics", description=RouterDoc.METRICS_PROMETHEUS)
 async def metrics() -> Response:
     """Expose Prometheus metrics endpoint."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@router.get("/health")
+@router.get("/health", description=RouterDoc.HEALTH_CHECK)
 async def health_check() -> dict[str, str]:
     """Health check endpoint for container orchestration."""
     try:

@@ -11,13 +11,49 @@ from memmachine.server.api_v2.spec import (
     DeleteEpisodicMemorySpec,
     DeleteProjectSpec,
     DeleteSemanticMemorySpec,
+    InvalidNameError,
     ListMemoriesSpec,
     MemoryMessage,
     ProjectConfig,
     ProjectResponse,
     SearchMemoriesSpec,
     SearchResult,
+    _is_valid_name,
 )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "abc",
+        "abc123",
+        "ABC_xyz-123",
+        "你好世界",
+        "テスト123",
+        "안녕-세상",
+        "名字_123",
+        "中文-english_混合",
+    ],
+)
+def test_validate_no_slash_valid(value):
+    assert _is_valid_name(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a/b",  # slash
+        "/abc",  # slash
+        "abc/",  # slash
+        "hello world",  # space
+        "name@123",  # symbol
+        "value!",  # symbol
+        "中文 test",  # space
+    ],
+)
+def test_validate_no_slash_invalid(value):
+    with pytest.raises(InvalidNameError):
+        _is_valid_name(value)
 
 
 def assert_pydantic_errors(exc_info, expected_checks: dict[str, str]):
