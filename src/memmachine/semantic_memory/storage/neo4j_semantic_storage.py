@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from asyncio import Lock
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -111,6 +112,9 @@ class Neo4jSemanticStorage(SemanticStorage):
         self._vector_index_by_set: dict[str, int] = {}
         self._set_embedding_dimensions: dict[str, int] = {}
         self._filter_param_counter = 0
+
+        self._vector_global_lock = Lock()
+        self._vector_index_creation_lock: dict[str, Lock] = {}
 
     async def startup(self) -> None:
         await self._driver.execute_query(
@@ -1003,35 +1007,71 @@ class Neo4jSemanticStorage(SemanticStorage):
             return int(dimensions)
         return None
 
+    async def _create_vector_index(
+        self, index_name: str, set_id: str, dimensions: int
+    ) -> int:
+        if index_name not in self._vector_index_creation_lock:
+            async with self._vector_global_lock:
+                self._vector_index_creation_lock.setdefault(index_name, Lock())
+
+        async with self._vector_index_creation_lock[index_name]:
+            val = self._vector_index_by_set.get(set_id)
+            if val is not None:
+                return val
+
+            label = self._set_label_for_set(set_id)
+            await self._driver.execute_query(
+                f"""
+                CREATE VECTOR INDEX {index_name}
+                IF NOT EXISTS
+                FOR (f:{label})
+                ON (f.embedding)
+                OPTIONS {{
+                    indexConfig: {{
+                        `vector.dimensions`: $dimensions,
+                        `vector.similarity_function`: 'cosine'
+                    }}
+                }}
+                """,
+                dimensions=dimensions,
+            )
+            await self._driver.execute_query("CALL db.awaitIndexes()")
+
+            records, _, _ = await self._driver.execute_query(
+                """
+                SHOW VECTOR INDEXES
+                YIELD name, type, labelsOrTypes, properties, options
+                WHERE name = $index_name
+                  AND properties = ['embedding']
+                RETURN options
+                """,
+                index_name=index_name,
+            )
+
+            if not records:
+                raise ValueError("Index not found after creation")
+
+            index_config = records[0]["options"].get("indexConfig", {})
+            actual_dim = index_config.get("vector.dimensions")
+
+            if not actual_dim:
+                raise ValueError("Index dim not found after creation")
+
+            self._vector_index_by_set.setdefault(set_id, actual_dim)
+            return self._vector_index_by_set[set_id]
+
     async def _ensure_vector_index(self, set_id: str, dimensions: int) -> str:
         cached = self._vector_index_by_set.get(set_id)
         index_name = self._vector_index_name(set_id)
-        if cached is not None:
-            if cached != dimensions:
-                raise ValueError(
-                    "Embedding dimension mismatch for set_id "
-                    f"{set_id}: expected {cached}, got {dimensions}",
-                )
-            return index_name
 
-        label = self._set_label_for_set(set_id)
-        await self._driver.execute_query(
-            f"""
-            CREATE VECTOR INDEX {index_name}
-            IF NOT EXISTS
-            FOR (f:{label})
-            ON (f.embedding)
-            OPTIONS {{
-                indexConfig: {{
-                    `vector.dimensions`: $dimensions,
-                    `vector.similarity_function`: 'cosine'
-                }}
-            }}
-            """,
-            dimensions=dimensions,
-        )
-        await self._driver.execute_query("CALL db.awaitIndexes()")
-        self._vector_index_by_set[set_id] = dimensions
+        if cached is None:
+            cached = await self._create_vector_index(index_name, set_id, dimensions)
+
+        if cached != dimensions:
+            raise ValueError(
+                "Embedding dimension mismatch for set_id "
+                f"{set_id}: expected {cached}, got {dimensions}",
+            )
         return index_name
 
     def _vector_index_name(self, set_id: str) -> str:
