@@ -1,0 +1,66 @@
+---
+title: "Configuration Wizard"
+description: "Tutorial on using the MemMachine configuration wizard for setup."
+icon: "bookmark"
+---
+
+## MemMachine Configuration Wizard
+
+The MemMachine Configuration Wizard is an interactive tool designed to simplify
+the setup and configuration process of MemMachine. It guides users through a
+series of prompts to gather necessary information and automatically generates
+a configuration file (`cfg.yml`) based on the provided inputs.
+
+## Getting Started
+
+First of all, install the MemMachine package if you haven't already:
+
+```bash
+pip install memmachine-server
+```
+
+Next, run the configuration wizard using the following command:
+
+```bash
+memmachine-configure
+```
+
+## Configuration Steps
+The wizard will prompt you for various configuration options, including:
+- **Install Neo4j**: Option to install and configure a Neo4j database for memory storage.
+- Or **Use Existing Neo4j**: Provide connection details for an existing Neo4j instance.
+- **Large Language Model (LLM) Provider**: Choose from supported providers like OpenAI, AWS Bedrock, or Ollama.
+- **Model Selection**: Select the specific LLM and embedding models you wish to use.
+- **API Keys and Credentials**: Input necessary API keys or credentials for the selected LLM provider.
+- **LLM Base URL**: Specify the base URL for the LLM Model API if applicable.
+- **Embedding Model Configuration**: Configure settings related to the embedding model.
+- **AWS Bedrock Settings**: If AWS Bedrock is selected, provide AWS credentials and region information.
+- **Server Settings**: Configure server-related settings such as host, port
+
+The wizard only supports Neo4j as the vector database at the moment.  The relational database
+is configured to use SQLite by default.  For users who wish to use other vector or relational databases,
+manual configuration of the `cfg.yml` file will be necessary after running the wizard.
+
+By default, the configuration file will be available in `<HOME>/.config/memmachine/cfg.yml`.
+
+__Note__:
+* The wizard will install Neo4j together with Java *natively* when the user
+  chooses `y` for "install Neo4j".
+* The wizard will NOT install large language model such as Ollama.  User could either
+  install them manually or use cloud-based LLM services such as OpenAI or AWS Bedrock.
+
+Platform-specific behavior:
+- **Windows**: Downloads and extracts the ZIP distributions of both Java and Neo4j.
+- **macOS**: Installs Java and Neo4j via `brew`.
+- **Linux**: Downloads and extracts the tar.gz distributions of Java and Neo4j.
+
+## Completing the Setup
+Once all prompts are answered, the wizard will generate a `cfg.yml` file in
+`<HOME>/.config/memmachine/cfg.yml` by default.
+This file contains all the configuration settings needed to run MemMachine.
+
+You can now start the MemMachine server with the generated configuration:
+
+```bash
+memmachine-server
+```
