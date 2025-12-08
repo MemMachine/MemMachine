@@ -648,7 +648,7 @@ class InMemorySemanticStorage(SemanticStorage):
             metadata = entry.metadata or {}
             return metadata.get(key), True
 
-        raise ValueError(f"Unsupported feature filter field: {field}")
+        return None, False
 
     @staticmethod
     def _normalize_metadata_value(value: Any) -> str:
