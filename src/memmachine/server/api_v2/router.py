@@ -275,7 +275,7 @@ async def delete_episodic_memory(
                 org_id=spec.org_id,
                 project_id=spec.project_id,
             ),
-            episode_ids=[spec.episodic_id],
+            episode_ids=spec.get_ids(),
         )
     except ValueError as e:
         raise HTTPException(
@@ -301,7 +301,7 @@ async def delete_semantic_memory(
     """Delete semantic memories in a project."""
     try:
         await memmachine.delete_features(
-            feature_ids=[spec.semantic_id],
+            feature_ids=spec.get_ids(),
         )
     except ValueError as e:
         raise HTTPException(

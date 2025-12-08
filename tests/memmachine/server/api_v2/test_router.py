@@ -11,6 +11,7 @@ from memmachine.common.errors import (
 )
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine.server.api_v2.router import get_memmachine, load_v2_api_router
+from memmachine.server.api_v2.service import _SessionData
 
 
 @pytest.fixture
@@ -323,6 +324,36 @@ def test_delete_episodic_memory(client, mock_memmachine):
     assert "Unable to delete episodic memory" in response.json()["detail"]
 
 
+def test_delete_episodic_memories(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "episodic_id": "ep1",
+        "episodic_ids": ["ep3", "ep1"],
+    }
+
+    # Success
+    response = client.post("/api/v2/memories/episodic/delete", json=payload)
+    assert response.status_code == 204
+    mock_memmachine.delete_episodes.assert_awaited_once_with(
+        session_data=_SessionData(
+            org_id="test_org",
+            project_id="test_proj",
+        ),
+        episode_ids=["ep1", "ep3"],
+    )
+
+
+def test_delete_episodic_memories_empty(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+    }
+    response = client.post("/api/v2/memories/episodic/delete", json=payload)
+    assert response.status_code == 422
+    assert "At least one episodic ID" in response.json()["detail"][0]["msg"]
+
+
 def test_delete_semantic_memory(client, mock_memmachine):
     payload = {
         "org_id": "test_org",
@@ -333,7 +364,7 @@ def test_delete_semantic_memory(client, mock_memmachine):
     # Success
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 204
-    mock_memmachine.delete_features.assert_awaited_once()
+    mock_memmachine.delete_features.assert_awaited_once_with(feature_ids=["sem1"])
 
     # Invalid arg
     mock_memmachine.delete_features.reset_mock()
@@ -355,6 +386,32 @@ def test_delete_semantic_memory(client, mock_memmachine):
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 500
     assert "Unable to delete semantic memory" in response.json()["detail"]
+
+
+def test_delete_semantic_memories(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "semantic_id": "sem1",
+        "semantic_ids": ["sem3", "sem1"],
+    }
+
+    # Success
+    response = client.post("/api/v2/memories/semantic/delete", json=payload)
+    assert response.status_code == 204
+    mock_memmachine.delete_features.assert_awaited_once_with(
+        feature_ids=["sem1", "sem3"]
+    )
+
+
+def test_delete_semantic_memories_empty(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+    }
+    response = client.post("/api/v2/memories/semantic/delete", json=payload)
+    assert response.status_code == 422
+    assert "At least one semantic ID" in response.json()["detail"][0]["msg"]
 
 
 def test_metrics(client):

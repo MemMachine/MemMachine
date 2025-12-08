@@ -527,7 +527,8 @@ class Memory:
 
     def delete_episodic(
         self,
-        episodic_id: str,
+        episodic_id: str = "",
+        episodic_ids: list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """
@@ -535,6 +536,7 @@ class Memory:
 
         Args:
             episodic_id: The unique identifier of the episodic memory to delete
+            episodic_ids: List of episodic memory IDs to delete (optional, can be used instead of episodic_id)
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -558,6 +560,7 @@ class Memory:
             "org_id": self.__org_id,
             "project_id": self.__project_id,
             "episodic_id": episodic_id,
+            "episodic_ids": episodic_ids or [],
         }
 
         try:
@@ -577,7 +580,8 @@ class Memory:
 
     def delete_semantic(
         self,
-        semantic_id: str,
+        semantic_id: str = "",
+        semantic_ids: list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """
@@ -585,6 +589,7 @@ class Memory:
 
         Args:
             semantic_id: The unique identifier of the semantic memory to delete
+            semantic_ids: List of semantic memory IDs to delete
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -608,6 +613,7 @@ class Memory:
             "org_id": self.__org_id,
             "project_id": self.__project_id,
             "semantic_id": semantic_id,
+            "semantic_ids": semantic_ids or [],
         }
 
         try:

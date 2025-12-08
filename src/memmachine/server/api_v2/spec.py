@@ -1,10 +1,10 @@
 """API v2 specification models for request and response structures."""
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 import regex
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from memmachine.main.memmachine import MemoryType
 from memmachine.server.api_v2.doc import Examples, SpecDoc
@@ -393,10 +393,34 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
     episodic_id: Annotated[
         SafeId,
         Field(
+            default="",
             description=SpecDoc.EPISODIC_ID,
             examples=Examples.EPISODIC_ID,
         ),
     ]
+    episodic_ids: Annotated[
+        list[SafeId],
+        Field(
+            default=[],
+            description=SpecDoc.EPISODIC_IDS,
+            examples=Examples.EPISODIC_IDS,
+        ),
+    ]
+
+    def get_ids(self) -> list[str]:
+        """Get a list of episodic IDs to delete."""
+        id_set = set(self.episodic_ids)
+        if len(self.episodic_id) > 0:
+            id_set.add(self.episodic_id)
+        id_set = {i.strip() for i in id_set if i and i.strip()}
+        return sorted(id_set)
+
+    @model_validator(mode="after")
+    def validate_ids(self) -> Self:
+        """Ensure at least one ID is provided."""
+        if len(self.get_ids()) == 0:
+            raise ValueError("At least one episodic ID must be provided")
+        return self
 
 
 # ---
@@ -408,10 +432,34 @@ class DeleteSemanticMemorySpec(_WithOrgAndProj):
     semantic_id: Annotated[
         SafeId,
         Field(
+            default="",
             description=SpecDoc.SEMANTIC_ID,
             examples=Examples.SEMANTIC_ID,
         ),
     ]
+    semantic_ids: Annotated[
+        list[SafeId],
+        Field(
+            default=[],
+            description=SpecDoc.SEMANTIC_IDS,
+            examples=Examples.SEMANTIC_IDS,
+        ),
+    ]
+
+    def get_ids(self) -> list[str]:
+        """Get a list of semantic IDs to delete."""
+        id_set = set(self.semantic_ids)
+        if len(self.semantic_id) > 0:
+            id_set.add(self.semantic_id)
+        id_set = {i.strip() for i in id_set if len(i.strip()) > 0}
+        return sorted(id_set)
+
+    @model_validator(mode="after")
+    def validate_ids(self) -> Self:
+        """Ensure at least one ID is provided."""
+        if len(self.get_ids()) == 0:
+            raise ValueError("At least one semantic ID must be provided")
+        return self
 
 
 class SearchResult(BaseModel):

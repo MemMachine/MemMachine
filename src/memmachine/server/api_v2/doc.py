@@ -139,19 +139,28 @@ class SpecDoc:
     PAGE_SIZE = """
     The maximum number of memories to return per page. Use this for pagination.
     """
+
     PAGE_NUM = """
     The zero-based page number to retrieve. Use this for pagination.
     """
+
     MEMORY_TYPE_SINGLE = """
     The specific memory type to list (e.g., Episodic or Semantic).
     """
 
     EPISODIC_ID = """
-    The unique ID of the specific episodic memory to be deleted.
+    The unique ID of the specific episodic memory.
     """
+
+    EPISODIC_IDS = """
+    A list of unique IDs of episodic memories."""
+
     SEMANTIC_ID = """
-    The unique ID of the specific semantic memory to be deleted.
+    The unique ID of the specific semantic memory.
     """
+
+    SEMANTIC_IDS = """
+    A list of unique IDs of semantic memories."""
 
     STATUS = """
     The status code of the search operation. 0 typically indicates success.
@@ -186,7 +195,9 @@ class Examples:
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
     PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]
     EPISODIC_ID: ClassVar[list[str]] = ["123", "345"]
+    EPISODIC_IDS: ClassVar[list[list[str]]] = [["123", "345"], ["23"]]
     SEMANTIC_ID: ClassVar[list[str]] = ["12", "23"]
+    SEMANTIC_IDS: ClassVar[list[list[str]]] = [["123", "345"], ["23"]]
     SEARCH_RESULT_STATUS: ClassVar[list[int]] = [0]
 
 
@@ -313,19 +324,27 @@ class RouterDoc:
     """
 
     DELETE_EPISODIC_MEMORY = """
-    Delete a specific episodic memory from a project.
+    Delete episodic memories from a project.
 
-    Removes the episodic memory identified by `episodic_id` from the specified
-    project. This operation is permanent and cannot be undone.
-    If the episodic memory does not exist, a not-found error is returned.
+    This operation permanently removes one or more episodic memories from the
+    specified project. You may provide either `episodic_id` to delete a single
+    memory or `episodic_ids` to delete multiple memories in one request.
+    This action cannot be undone.
+
+    If any of the specified episodic memories do not exist, a not-found error
+    is returned for those entries.
     """
 
     DELETE_SEMANTIC_MEMORY = """
-    Delete a specific semantic memory from a project.
+    Delete semantic memories from a project.
 
-    Removes the semantic memory identified by `semantic_id` from the specified
-    project. This operation is permanent and cannot be undone.
-    If the semantic memory does not exist, a not-found error is returned.
+    This operation permanently removes one or more semantic memories from the
+    specified project. You may provide either `semantic_id` to delete a single
+    memory or `semantic_ids` to delete multiple memories in one request.
+    This action cannot be undone.
+
+    If any of the specified semantic memories do not exist, a not-found error
+    is returned for those entries.
     """
 
     METRICS_PROMETHEUS = """

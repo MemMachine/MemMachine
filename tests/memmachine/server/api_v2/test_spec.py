@@ -193,9 +193,8 @@ def test_list_memories_spec():
 
 
 def test_delete_episodic_memory_spec():
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises(ValidationError):
         DeleteEpisodicMemorySpec()
-    assert_pydantic_errors(exc_info, {"episodic_id": "missing"})
 
     spec = DeleteEpisodicMemorySpec(episodic_id="ep-123")
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
@@ -204,14 +203,29 @@ def test_delete_episodic_memory_spec():
 
 
 def test_delete_semantic_memory_spec():
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises(ValidationError):
         DeleteSemanticMemorySpec()
-    assert_pydantic_errors(exc_info, {"semantic_id": "missing"})
 
     spec = DeleteSemanticMemorySpec(semantic_id="sem-123")
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.project_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.semantic_id == "sem-123"
+
+
+def test_get_semantic_ids():
+    spec = DeleteSemanticMemorySpec(semantic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
+
+    spec = DeleteSemanticMemorySpec(semantic_id="1", semantic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
+
+
+def test_get_episodic_ids():
+    spec = DeleteEpisodicMemorySpec(episodic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
+
+    spec = DeleteEpisodicMemorySpec(episodic_id="1", episodic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
 
 
 def test_search_result_model():
