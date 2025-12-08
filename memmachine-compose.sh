@@ -514,12 +514,88 @@ getYamlValue() {
     yq -r "$1" $2
 }   
 
+gh_release_url() {
+    local owner="$1"
+    local repo="$2"
+    local name="$3"
+    local tag="${4:-}"   # optional
+
+    if [[ -z "$owner" || -z "$repo" || -z "$name" ]]; then
+        echo "Usage: gh_release_url <owner> <repo> <name> [tag]" >&2
+        return 1
+    fi
+
+    # If tag is empty or 'latest', query GitHub for latest release
+    if [[ -z "$tag" || "$tag" == "latest" ]]; then
+        local api="https://api.github.com/repos/${owner}/${repo}/releases/latest"
+        local auth_header=()
+
+        # Optional: use GITHUB_TOKEN to avoid rate limits (if set)
+        if [[ -n "$GITHUB_TOKEN" ]]; then
+            auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
+        fi
+
+        # Fetch JSON fully into a variable (safe with pipefail)
+        local json
+        if ! json=$(curl -fsSL "${auth_header[@]}" "$api"); then
+            echo "Error: could not fetch latest release info from ${api}" >&2
+            return 1
+        fi
+
+        # Extract tag_name from JSON without closing the pipe early
+        tag=$(printf '%s\n' "$json" \
+              | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
+              | head -n 1)
+
+        if [[ -z "$tag" ]]; then
+            echo "Error: could not parse tag_name from GitHub API response" >&2
+            return 1
+        fi
+    fi
+
+    # Determine OS and architecture
+    # Underscore-style filename
+    local ext="tar.gz"
+    local filename="$(generate_filename "$name").${ext}"
+
+    # Final URL
+    local url="https://github.com/${owner}/${repo}/releases/download/${tag}/${filename}"
+
+    echo "$url"
+}
+
+generate_filename(){
+    local name=$1
+     # Detect OS
+    local os
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    case "$os" in
+        linux)   os="linux" ;;
+        darwin)  os="darwin" ;;
+        msys*|mingw*|cygwin*|windows*) os="windows" ;;
+        *) echo "Unsupported OS: $os" >&2; return 1 ;;
+    esac
+
+    # Detect ARCH
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)  arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) echo "Unsupported ARCH: $arch" >&2; return 1 ;;
+    esac
+    echo "${name}_${os}_${arch}"
+}
+
 checkYq() {
     if [[ ! $(command -v yq) ]]; then
-        print_error "yq is not installed. Please install yq to use this function."
-        print_info "sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq"
-        print_info "sudo chmod +x /usr/local/bin/yq"
-        exit 1
+        print_error "yq is not installed. Install yq to use this function."
+        URL=$(gh_release_url mikefarah yq yq)
+        print_info "Downloading yq from URL: $URL"
+        curl -sL -o - "$URL" | tar xz -C /tmp -
+        mv /tmp/$(generate_filename "yq") /tmp/yq
+        chmod +x /tmp/yq
+        export PATH="$PATH:/tmp"
     fi
 }
 
