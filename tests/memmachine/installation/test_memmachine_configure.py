@@ -132,17 +132,12 @@ def test_install_in_windows_default_dir(mock_input, monkeypatch, mock_wizard):
 
 
 @patch("builtins.input")
-def test_cancel_install_in_windows(mock_input, mock_wizard):
+def test_use_custom_neo4j(mock_input, mock_wizard):
     mock_input.side_effect = [
-        "n",  # Cancel installation
+        "n",  # do not install neo4j
     ]
     installer = WindowsInstaller(MockWindowsEnvironment())
-    with pytest.raises(RuntimeError) as excinfo:
-        installer.install()
-    assert (
-        str(excinfo.value)
-        == "Neo4j installation is required to proceed. Exiting installation."
-    )
+    installer.install()
     assert not installer.environment.neo4j_installed
 
 
