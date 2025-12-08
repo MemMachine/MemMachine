@@ -75,7 +75,7 @@ def test_create_project(client, mock_memmachine):
     mock_memmachine.create_session.side_effect = ConfigurationError("mock config error")
     response = client.post("/api/v2/projects", json=payload)
     assert response.status_code == 500
-    assert "mock config error" in response.json()["detail"]
+    assert "mock config error" in response.json()["detail"]["internal_error"]
 
     mock_memmachine.create_session.reset_mock()
     mock_memmachine.create_session.side_effect = ValueError(
@@ -83,7 +83,7 @@ def test_create_project(client, mock_memmachine):
     )
     response = client.post("/api/v2/projects", json=payload)
     assert response.status_code == 409
-    assert response.json()["detail"] == "Project already exists"
+    assert response.json()["detail"]["message"] == "Project already exists"
 
 
 def test_get_project(client, mock_memmachine):
@@ -114,7 +114,7 @@ def test_get_project(client, mock_memmachine):
     mock_memmachine.get_session.side_effect = Exception("Some other error")
     response = client.post("/api/v2/projects/get", json=payload)
     assert response.status_code == 500
-    assert response.json()["detail"] == "Internal server error"
+    assert response.json()["detail"]["message"] == "Internal server error"
 
     mock_memmachine.get_session.reset_mock()
     mock_memmachine.get_session.side_effect = None
@@ -145,7 +145,7 @@ def test_get_episode_count(client, mock_memmachine):
     mock_memmachine.episodes_count.side_effect = Exception("Some error")
     response = client.post("/api/v2/projects/episode_count/get", json=payload)
     assert response.status_code == 500
-    assert response.json()["detail"] == "Internal server error"
+    assert response.json()["detail"]["message"] == "Internal server error"
 
 
 def test_list_projects(client, mock_memmachine):
@@ -181,14 +181,14 @@ def test_delete_project(client, mock_memmachine):
     )
     response = client.post("/api/v2/projects/delete", json=payload)
     assert response.status_code == 404
-    assert response.json()["detail"] == "Project does not exist"
+    assert response.json()["detail"]["message"] == "Project does not exist"
 
     # Error
     mock_memmachine.delete_session.reset_mock()
     mock_memmachine.delete_session.side_effect = Exception("Delete error")
     response = client.post("/api/v2/projects/delete", json=payload)
     assert response.status_code == 500
-    assert "Unable to delete project" in response.json()["detail"]
+    assert "Unable to delete project" in response.json()["detail"]["message"]
 
 
 def test_add_memories(client, mock_memmachine):
@@ -257,14 +257,14 @@ def test_search_memories(client, mock_memmachine):
         mock_search.side_effect = ValueError("Invalid arg")
         response = client.post("/api/v2/memories/search", json=payload)
         assert response.status_code == 422
-        assert "invalid argument" in response.json()["detail"]
+        assert "invalid argument" in response.json()["detail"]["message"]
 
         # Not found
         mock_search.reset_mock()
         mock_search.side_effect = RuntimeError("No session info found for session")
         response = client.post("/api/v2/memories/search", json=payload)
         assert response.status_code == 404
-        assert response.json()["detail"] == "Project does not exist"
+        assert response.json()["detail"]["message"] == "Project does not exist"
 
 
 def test_list_memories(client, mock_memmachine):
@@ -307,21 +307,21 @@ def test_delete_episodic_memory(client, mock_memmachine):
     mock_memmachine.delete_episodes.side_effect = ValueError("Invalid")
     response = client.post("/api/v2/memories/episodic/delete", json=payload)
     assert response.status_code == 422
-    assert "invalid argument" in response.json()["detail"]
+    assert "invalid argument" in response.json()["detail"]["message"]
 
     # Not found
     mock_memmachine.delete_episodes.reset_mock()
     mock_memmachine.delete_episodes.side_effect = ResourceNotFoundError("Not found")
     response = client.post("/api/v2/memories/episodic/delete", json=payload)
     assert response.status_code == 404
-    assert response.json()["detail"] == "Not found"
+    assert response.json()["detail"]["message"] == "Not found"
 
     # Error
     mock_memmachine.delete_episodes.reset_mock()
     mock_memmachine.delete_episodes.side_effect = Exception("Error")
     response = client.post("/api/v2/memories/episodic/delete", json=payload)
     assert response.status_code == 500
-    assert "Unable to delete episodic memory" in response.json()["detail"]
+    assert "Unable to delete episodic memory" in response.json()["detail"]["message"]
 
 
 def test_delete_episodic_memories(client, mock_memmachine):
@@ -371,21 +371,21 @@ def test_delete_semantic_memory(client, mock_memmachine):
     mock_memmachine.delete_features.side_effect = ValueError("Invalid")
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 422
-    assert "invalid argument" in response.json()["detail"]
+    assert "invalid argument" in response.json()["detail"]["message"]
 
     # Not found
     mock_memmachine.delete_features.reset_mock()
     mock_memmachine.delete_features.side_effect = ResourceNotFoundError("Not found")
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 404
-    assert response.json()["detail"] == "Not found"
+    assert response.json()["detail"]["message"] == "Not found"
 
     # Error
     mock_memmachine.delete_features.reset_mock()
     mock_memmachine.delete_features.side_effect = Exception("Error")
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 500
-    assert "Unable to delete semantic memory" in response.json()["detail"]
+    assert "Unable to delete semantic memory" in response.json()["detail"]["message"]
 
 
 def test_delete_semantic_memories(client, mock_memmachine):

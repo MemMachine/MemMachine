@@ -1,15 +1,21 @@
 """API v2 specification models for request and response structures."""
 
+import logging
+import traceback
 from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 import regex
+from fastapi import HTTPException
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from memmachine.main.memmachine import MemoryType
 from memmachine.server.api_v2.doc import Examples, SpecDoc
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
+
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidNameError(ValueError):
@@ -480,3 +486,87 @@ class SearchResult(BaseModel):
             description=SpecDoc.CONTENT,
         ),
     ]
+
+
+class RestErrorModel(BaseModel):
+    """Model representing an error response."""
+
+    code: Annotated[
+        int,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_CODE,
+            examples=[422, 404],
+        ),
+    ]
+    message: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_MESSAGE,
+        ),
+    ]
+    internal_error: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_INTERNAL,
+        ),
+    ]
+    exception: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_EXCEPTION,
+        ),
+    ]
+    trace: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_TRACE,
+        ),
+    ]
+
+
+class RestError(HTTPException):
+    """HTTPException with a structured RestErrorModel as the 'detail'."""
+
+    def __init__(
+        self,
+        code: int,
+        message: str,
+        ex: Exception | None = None,
+    ) -> None:
+        """Initialize HTTPException and RestErrorModel."""
+        self.payload: RestErrorModel | None = None
+        if ex is not None:
+            # Extract traceback safely
+            trace = "".join(
+                traceback.format_exception(
+                    type(ex),
+                    ex,
+                    ex.__traceback__,
+                )
+            ).strip()
+
+            self.payload = RestErrorModel(
+                code=code,
+                message=message,
+                exception=type(ex).__name__,
+                internal_error=str(ex),
+                trace=trace,
+            )
+
+        # Call HTTPException with structured detail
+        if self.payload is not None:
+            logger.warning(
+                "exception handling request, code %d, message: %s, payload: %s",
+                code,
+                message,
+                self.payload,
+            )
+            super().__init__(status_code=code, detail=self.payload.model_dump())
+        else:
+            logger.info("error handling request, code %d, message: %s", code, message)
+            super().__init__(status_code=code, detail=message)

@@ -171,6 +171,21 @@ class SpecDoc:
     objects).
     """
 
+    ERROR_CODE = """
+    The http status code if the operation failed."""
+
+    ERROR_MESSAGE = """
+    A descriptive error message if the operation failed."""
+
+    ERROR_EXCEPTION = """
+    The exception details if an error occurred during the operation."""
+
+    ERROR_TRACE = """
+    The stack trace of the exception if available."""
+
+    ERROR_INTERNAL = """
+    The real error that triggered the exception, for internal debugging."""
+
 
 class Examples:
     """Common examples for API fields."""

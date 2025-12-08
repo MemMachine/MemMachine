@@ -16,6 +16,7 @@ from memmachine.server.api_v2.spec import (
     MemoryMessage,
     ProjectConfig,
     ProjectResponse,
+    RestError,
     SearchMemoriesSpec,
     SearchResult,
     _is_valid_name,
@@ -236,3 +237,21 @@ def test_search_result_model():
     result = SearchResult(status=0, content={"key": "value"})
     assert result.status == 0
     assert result.content == {"key": "value"}
+
+
+def test_rest_error():
+    err = RestError(422, "sample", RuntimeError("for test"))
+    assert err.status_code == 422
+    assert isinstance(err.detail, dict)
+    assert err.detail["message"] == "sample"
+    assert err.detail["code"] == 422
+    assert err.payload.exception == "RuntimeError"
+    assert err.payload.internal_error == "for test"
+    assert err.payload.trace == "RuntimeError: for test"
+
+
+def test_rest_error_without_exception():
+    err = RestError(404, "resource not found")
+    assert err.status_code == 404
+    assert err.detail == "resource not found"
+    assert err.payload is None
