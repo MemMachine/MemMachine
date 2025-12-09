@@ -32,18 +32,14 @@ jobs:
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
     steps:
-      # Step 0: Free Disk Space (Remove unused tools)
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space-action@v1.3.1
-        with:
-          # We don't need these large tools for Docker builds
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
+      # Step 0: Free Disk Space (Manual)
+      - name: Free Disk Space (Manual)
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
 
       # Step 1: Checkout source for Release triggers
       - name: Checkout source (Release)
@@ -119,18 +115,14 @@ jobs:
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
     steps:
-      # Step 0: Free Disk Space (Remove unused tools)
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space-action@v1.3.1
-        with:
-          # We don't need these large tools for Docker builds
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
+      # Step 0: Free Disk Space (Manual)
+      - name: Free Disk Space (Manual)
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
 
       # Step 1: Checkout source for Release triggers
       - name: Checkout source (Release)
