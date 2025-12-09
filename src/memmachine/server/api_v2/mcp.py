@@ -147,10 +147,10 @@ class Params(BaseModel):
         Override proj_id if MM_PROJ_ID is set or user_id is set.
         Override org_id if MM_ORG_ID is set.
         """
-        env_org_id = os.getenv("MC_ORG_ID")
+        env_org_id = os.getenv("MM_ORG_ID")
         if env_org_id:
             self.org_id = env_org_id
-        env_proj_id = os.getenv("MC_PROJ_ID")
+        env_proj_id = os.getenv("MM_PROJ_ID")
         if env_proj_id:
             self.proj_id = env_proj_id
         env_user_id = os.environ.get("MM_USER_ID")

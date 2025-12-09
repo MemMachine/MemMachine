@@ -17,13 +17,23 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def clear_env():
-    """Automatically clear MM_USER_ID env var before and after each test."""
-    old_env = os.environ.pop("MM_USER_ID", None)
+    """Automatically clear env vars before and after each test."""
+    old_org_id = os.getenv("MM_ORG_ID")
+    old_proj_id = os.getenv("MM_PROJ_ID")
+    old_user_id = os.getenv("MM_USER_ID")
     yield
-    if old_env:
-        os.environ["MM_USER_ID"] = old_env
+    if old_user_id:
+        os.environ["MM_USER_ID"] = old_user_id
     else:
         os.environ.pop("MM_USER_ID", None)
+    if old_org_id:
+        os.environ["MM_ORG_ID"] = old_org_id
+    else:
+        os.environ.pop("MM_ORG_ID", None)
+    if old_proj_id:
+        os.environ["MM_PROJ_ID"] = old_proj_id
+    else:
+        os.environ.pop("MM_PROJ_ID", None)
 
 
 def test_user_id_without_env():
@@ -37,6 +47,20 @@ def test_user_id_with_env_override(monkeypatch):
     monkeypatch.setenv("MM_USER_ID", "env_user")
     model = Params(user_id="original_user")
     assert model.user_id == "env_user"
+
+
+def test_org_id_with_env_override(monkeypatch):
+    """Should override org_id when MM_ORG_ID is set in environment."""
+    monkeypatch.setenv("MM_ORG_ID", "env_org")
+    model = Params(org_id="original_org", user_id="user")
+    assert model.org_id == "env_org"
+
+
+def test_proj_id_with_env_override(monkeypatch):
+    """Should override proj_id when MM_PROJ_ID is set in environment."""
+    monkeypatch.setenv("MM_PROJ_ID", "env_proj")
+    model = Params(proj_id="original_proj", user_id="user")
+    assert model.proj_id == "env_proj"
 
 
 def test_user_id_with_empty_env(monkeypatch):
