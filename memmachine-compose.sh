@@ -504,21 +504,116 @@ check_config_file() {
     fi
 }
 
+getYamlValue() {
+    yq -r "$1" $2
+}   
+
+gh_release_url() {
+    local owner="$1"
+    local repo="$2"
+    local name="$3"
+    local tag="${4:-}"   # optional
+
+    if [[ -z "$owner" || -z "$repo" || -z "$name" ]]; then
+        echo "Usage: gh_release_url <owner> <repo> <name> [tag]" >&2
+        return 1
+    fi
+
+    # If tag is empty or 'latest', query GitHub for latest release
+    if [[ -z "$tag" || "$tag" == "latest" ]]; then
+        local api="https://api.github.com/repos/${owner}/${repo}/releases/latest"
+        local auth_header=()
+
+        # Optional: use GITHUB_TOKEN to avoid rate limits (if set)
+        if [[ -n "$GITHUB_TOKEN" ]]; then
+            auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
+        fi
+
+        # Fetch JSON fully into a variable (safe with pipefail)
+        local json
+        if ! json=$(curl -fsSL "${auth_header[@]}" "$api"); then
+            echo "Error: could not fetch latest release info from ${api}" >&2
+            return 1
+        fi
+
+        # Extract tag_name from JSON without closing the pipe early
+        tag=$(printf '%s\n' "$json" \
+              | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
+              | head -n 1)
+
+        if [[ -z "$tag" ]]; then
+            echo "Error: could not parse tag_name from GitHub API response" >&2
+            return 1
+        fi
+    fi
+
+    # Determine OS and architecture
+    # Underscore-style filename
+    local ext="tar.gz"
+    local filename="$(generate_filename "$name").${ext}"
+
+    # Final URL
+    local url="https://github.com/${owner}/${repo}/releases/download/${tag}/${filename}"
+
+    echo "$url"
+}
+
+generate_filename(){
+    local name=$1
+     # Detect OS
+    local os
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    case "$os" in
+        linux)   os="linux" ;;
+        darwin)  os="darwin" ;;
+        msys*|mingw*|cygwin*|windows*) os="windows" ;;
+        *) echo "Unsupported OS: $os" >&2; return 1 ;;
+    esac
+
+    # Detect ARCH
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)  arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) echo "Unsupported ARCH: $arch" >&2; return 1 ;;
+    esac
+    echo "${name}_${os}_${arch}"
+}
+
+checkYq() {
+    if [[ ! $(command -v yq) ]]; then
+        print_error "yq is not installed. Please install yq to use this function."
+        URL=$(gh_release_url mikefarah yq yq)
+        print_info "E.g download yq:"
+        echo "curl -sL -o - "$URL" | tar xz -"
+        echo "chmod +x $(generate_filename yq)"
+        echo "sudo mv $(generate_filename yq) /usr/local/bin/yq"
+        exit 1
+    fi
+}
+
+
 select_openai_base_url() {
     local base_url=""
     local reply=""
-    
-    print_prompt
-    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
-    if [[ $reply =~ ^[Yy]$ ]]; then
+    checkYq
+    embedder_base_url=$(getYamlValue ".resources.embedders.openai_embedder.config.base_url" configuration.yml)
+    lang_base_url=$(getYamlValue ".resources.language_models.ollama_model.config.base_url" configuration.yml)
+    if [[ -z "$embedder_base_url" ]] || [[ -z "$lang_base_url" ]] ; then
         print_prompt
-        read -p "Enter your OpenAI Base URL: " base_url
-        if [ -n "$base_url" ]; then
-            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            print_success "Set OpenAI Base URL to $base_url"
-        fi
+        read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
+        if [[ $reply =~ ^[Yy]$ ]]; then
+            print_prompt
+            read -p "Enter your OpenAI Base URL: " base_url
+            if [ -n "$base_url" ]; then
+                safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                print_success "Set OpenAI Base URL to $base_url"
+            fi
+        fi    
     fi
+    
 }
 
 # Prompt user if they would like to set their API keys based on provider; then set it in the .env file and configuration.yml file
@@ -684,8 +779,10 @@ start_services() {
     # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
     ENV_MEMMACHINE_IMAGE=""
     # Pull the latest images to ensure we are running the latest version
-    print_info "Pulling latest images..."
-    $COMPOSE_CMD pull
+    if [[ -z "${SKIP_PULL}" ]];then
+        print_info "Pulling latest images..."
+        $COMPOSE_CMD pull
+    fi
     ENV_MEMMACHINE_IMAGE="${memmachine_image_tmp:-}"
 
     # Start services (override the image if specified in memmachine-compose.sh start <image>:<tag>)

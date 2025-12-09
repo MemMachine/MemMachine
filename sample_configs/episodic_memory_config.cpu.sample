@@ -33,9 +33,9 @@ resources:
       config:
         host: localhost
         port: 5432
-        user: postgres
+        user: memmachine
         password: <YOUR_PASSWORD_HERE>
-        db_name: postgres
+        db_name: memmachine
     my_storage_id:
       provider: neo4j
       config:

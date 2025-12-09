@@ -1,11 +1,17 @@
 services:
   # PostgreSQL with pgvector extension for profile memory storage
+  paused:
+    image: portainer/pause:latest
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP
+      - "${NEO4J_HTTPS_PORT:-7473}:7473"  # HTTPS
+      - "${NEO4J_PORT:-7687}:7687"  # Bolt
+      - "${MEMORY_SERVER_PORT:-8080}:8080"
+      - "8081:8081"
   postgres:
     image: pgvector/pgvector:pg16
     container_name: memmachine-postgres
     restart: unless-stopped
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
@@ -19,18 +25,23 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - memmachine-network
+    network_mode: "service:paused"
+
+  pgweb:
+    image: sosedoff/pgweb  
+    environment:
+      - DATABASE_URL=postgres://memmachine:${POSTGRES_PASSWORD:-memmachine_password}@localhost:5432/memmachine?sslmode=disable
+    restart: unless-stopped
+    mem_limit: 128m
+    depends_on:
+      - postgres
+    network_mode: "service:paused"
 
   # Neo4j database for graph storage
   neo4j:
     image: neo4j:5.23-community
     container_name: memmachine-neo4j
     restart: unless-stopped
-    ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP
-      - "${NEO4J_HTTPS_PORT:-7473}:7473"  # HTTPS
-      - "${NEO4J_PORT:-7687}:7687"  # Bolt
     environment:
       NEO4J_EDITION: community
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j_password}
@@ -53,26 +64,23 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    networks:
-      - memmachine-network
+    network_mode: "service:paused"
 
   # MemMachine application
   memmachine:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
     container_name: memmachine-app
-    restart: unless-stopped
-    ports:
-      - "${MEMORY_SERVER_PORT:-8080}:8080"
+    restart: unless-stopped  
     environment:
       # Database configuration
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_HOST: ${POSTGRES_HOST:-localhost}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_USER: ${POSTGRES_USER:-memmachine}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_DB: ${POSTGRES_DB:-memmachine}
 
       # Neo4j configuration
-      NEO4J_HOST: ${NEO4J_HOST:-neo4j}
+      NEO4J_HOST: ${NEO4J_HOST:-localhost}
       NEO4J_PORT: ${NEO4J_PORT:-7687}
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_password}
@@ -99,8 +107,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    networks:
-      - memmachine-network
+    network_mode: "service:paused"
 
 volumes:
   postgres_data:
@@ -115,8 +122,3 @@ volumes:
     driver: local
   memmachine_logs:
     driver: local
-
-networks:
-  memmachine-network:
-    driver: bridge
-    name: memmachine-network
