@@ -589,13 +589,13 @@ generate_filename(){
 
 checkYq() {
     if [[ ! $(command -v yq) ]]; then
-        print_error "yq is not installed. Install yq to use this function."
+        print_error "yq is not installed. Please install yq to use this function."
         URL=$(gh_release_url mikefarah yq yq)
-        print_info "Downloading yq from URL: $URL"
-        curl -sL -o - "$URL" | tar xz -C /tmp -
-        mv /tmp/$(generate_filename "yq") /tmp/yq
-        chmod +x /tmp/yq
-        export PATH="$PATH:/tmp"
+        print_info "Download yq:"
+        echo "curl -sL -o - "$URL" | tar xz -"
+        echo "chmod +x $(generate_filename yq)"
+        echo "sudo mv $(generate_filename yq) /usr/local/bin/yq"
+        exit 1
     fi
 }
 
