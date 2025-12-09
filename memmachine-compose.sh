@@ -591,7 +591,7 @@ checkYq() {
     if [[ ! $(command -v yq) ]]; then
         print_error "yq is not installed. Please install yq to use this function."
         URL=$(gh_release_url mikefarah yq yq)
-        print_info "Download yq:"
+        print_info "E.g download yq:"
         echo "curl -sL -o - "$URL" | tar xz -"
         echo "chmod +x $(generate_filename yq)"
         echo "sudo mv $(generate_filename yq) /usr/local/bin/yq"
