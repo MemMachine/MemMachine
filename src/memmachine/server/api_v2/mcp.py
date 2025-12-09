@@ -18,18 +18,18 @@ from starlette import status
 from starlette.applications import Starlette
 from starlette.types import Lifespan, Receive, Scope, Send
 
+from memmachine.common.api.spec import (
+    AddMemoriesSpec,
+    MemoryMessage,
+    SearchMemoriesSpec,
+    SearchResult,
+)
 from memmachine.common.configuration import Configuration
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemMachine
 from memmachine.server.api_v2.service import (
     _add_messages_to,
     _search_target_memories,
-)
-from memmachine.server.api_v2.spec import (
-    AddMemoriesSpec,
-    MemoryMessage,
-    SearchMemoriesSpec,
-    SearchResult,
 )
 
 logger = logging.getLogger(__name__)

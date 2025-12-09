@@ -1,8 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from memmachine.main.memmachine import MemoryType
-from memmachine.server.api_v2.spec import (
+from memmachine.common.api.spec import (
     DEFAULT_ORG_AND_PROJECT_ID,
     AddMemoriesResponse,
     AddMemoriesSpec,
@@ -21,6 +20,7 @@ from memmachine.server.api_v2.spec import (
     SearchResult,
     _is_valid_name,
 )
+from memmachine.main.memmachine import MemoryType
 
 
 @pytest.mark.parametrize(

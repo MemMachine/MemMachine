@@ -19,6 +19,7 @@ from uuid import uuid4
 
 import pytest
 import requests
+from pydantic import ValidationError
 
 from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.project import Project
@@ -744,23 +745,23 @@ class TestMemMachineIntegration:
 
     def test_invalid_org_id_format(self, client):
         """Test creating project with invalid org_id format."""
-        # Server validates ID format and returns 422 for invalid IDs
-        with pytest.raises(requests.HTTPError) as exc_info:
+        # Client-side validation catches invalid IDs before request is sent
+        with pytest.raises(ValidationError) as exc_info:
             client.create_project(
                 org_id="invalid/org",  # Contains slash
                 project_id="test_project",
             )
-        assert exc_info.value.response.status_code == 422
+        assert "org_id" in str(exc_info.value)
 
     def test_invalid_project_id_format(self, client):
         """Test creating project with invalid project_id format."""
-        # Server validates ID format and returns 422 for invalid IDs
-        with pytest.raises(requests.HTTPError) as exc_info:
+        # Client-side validation catches invalid IDs before request is sent
+        with pytest.raises(ValidationError) as exc_info:
             client.create_project(
                 org_id="test_org",
                 project_id="invalid/project",  # Contains slash
             )
-        assert exc_info.value.response.status_code == 422
+        assert "project_id" in str(exc_info.value)
 
     def test_delete_nonexistent_episodic_memory(self, memory):
         """Test deleting a non-existent episodic memory."""

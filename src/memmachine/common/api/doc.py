@@ -296,8 +296,13 @@ class RouterDoc:
     """
 
     ADD_MEMORIES = """
-    Add memory messages to a project.  If not specified, the memory will be
-    added to all the sub-types (Episodic, Semantic).
+    Add memory messages to a project.
+
+    The `types` field in the request specifies which memory types to add to:
+    - If `types` is empty or not provided, memories are added to all types (Episodic and Semantic)
+    - If `types` only contains `"episodic"`, memories are added only to Episodic memory
+    - If `types` only contains `"semantic"`, memories are added only to Semantic memory
+    - If `types` contains both, memories are added to both types
 
     Each memory message represents a discrete piece of information to be stored
     in the project's memory system. Messages can include content, metadata,

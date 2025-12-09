@@ -9,8 +9,8 @@ import regex
 from fastapi import HTTPException
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+from memmachine.common.api.doc import Examples, SpecDoc
 from memmachine.main.memmachine import MemoryType
-from memmachine.server.api_v2.doc import Examples, SpecDoc
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 

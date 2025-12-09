@@ -6,20 +6,8 @@ from fastapi import APIRouter, Depends, FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from memmachine import MemMachine
-from memmachine.common.errors import (
-    ConfigurationError,
-    InvalidArgumentError,
-    ResourceNotFoundError,
-)
-from memmachine.main.memmachine import ALL_MEMORY_TYPES
-from memmachine.server.api_v2.doc import RouterDoc
-from memmachine.server.api_v2.service import (
-    _add_messages_to,
-    _search_target_memories,
-    _SessionData,
-    get_memmachine,
-)
-from memmachine.server.api_v2.spec import (
+from memmachine.common.api.doc import RouterDoc
+from memmachine.common.api.spec import (
     AddMemoriesResponse,
     AddMemoriesSpec,
     CreateProjectSpec,
@@ -34,6 +22,18 @@ from memmachine.server.api_v2.spec import (
     RestError,
     SearchMemoriesSpec,
     SearchResult,
+)
+from memmachine.common.errors import (
+    ConfigurationError,
+    InvalidArgumentError,
+    ResourceNotFoundError,
+)
+from memmachine.main.memmachine import ALL_MEMORY_TYPES
+from memmachine.server.api_v2.service import (
+    _add_messages_to,
+    _search_target_memories,
+    _SessionData,
+    get_memmachine,
 )
 
 router = APIRouter()
@@ -166,6 +166,7 @@ async def add_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> AddMemoriesResponse:
     """Add memories to a project."""
+    # Use types from spec if provided, otherwise use all memory types
     target_memories = spec.types if spec.types else ALL_MEMORY_TYPES
     results = await _add_messages_to(
         target_memories=target_memories, spec=spec, memmachine=memmachine

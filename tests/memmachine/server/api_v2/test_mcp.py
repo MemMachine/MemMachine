@@ -7,9 +7,9 @@ import pytest_asyncio
 from fastapi import HTTPException
 from fastmcp import Client
 
+from memmachine.common.api.spec import SearchResult
 from memmachine.main.memmachine import ALL_MEMORY_TYPES
 from memmachine.server.api_v2.mcp import MCP_SUCCESS, Params
-from memmachine.server.api_v2.spec import SearchResult
 from memmachine.server.mcp_stdio import mcp
 
 pytestmark = pytest.mark.asyncio

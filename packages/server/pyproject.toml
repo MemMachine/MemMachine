@@ -63,6 +63,7 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 packages = [
     "memmachine",
     "memmachine.common",
+    "memmachine.common.api",
     "memmachine.common.configuration",
     "memmachine.common.embedder",
     "memmachine.common.episode_store",
