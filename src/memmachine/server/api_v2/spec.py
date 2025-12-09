@@ -23,11 +23,10 @@ class InvalidNameError(ValueError):
 
 
 def _is_valid_name(v: str) -> str:
-    # Allow: Unicode letters, Unicode numbers, underscore, hyphen
-    if not regex.fullmatch(r"^[\p{L}\p{N}_-]+$", v):
+    if not regex.fullmatch(r"^[\p{L}\p{N}_:-]+$", v):
         raise InvalidNameError(
             "ID can only contain letters, numbers, underscore, hyphen, "
-            "or Unicode characters"
+            f"colon, or Unicode characters, found: '{v}'",
         )
     return v
 

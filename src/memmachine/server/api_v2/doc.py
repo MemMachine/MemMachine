@@ -10,7 +10,7 @@ class SpecDoc:
     The unique identifier of the organization.
 
     - Must not contain slashes (`/`).
-    - Must contain only letters, numbers, underscores, hyphens, and Unicode
+    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode
       characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols
       are allowed.
 
@@ -28,7 +28,7 @@ class SpecDoc:
 
     - Must be unique within the organization.
     - Must not contain slashes (`/`).
-    - Must contain only letters, numbers, underscores, hyphens, and Unicode
+    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode
       characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols
       are allowed.
 
@@ -225,7 +225,7 @@ class RouterDoc:
     This endpoint creates a project under the specified organization using the
     provided identifiers and configuration. Both `org_id` and `project_id`
     follow the rules: no slashes; only letters, numbers, underscores,
-    hyphens, and Unicode characters.
+    hyphens, colon, and Unicode characters.
 
     Each project acts as an isolated memory namespace. All memories (episodes)
     inserted into a project belong exclusively to that project. Queries,
@@ -274,7 +274,7 @@ class RouterDoc:
     Returns a list of all projects accessible within the system. Each entry
     contains the project's organization ID and project ID. Identifiers follow
     the standard rules: no slashes; only letters, numbers, underscores,
-    hyphens, and Unicode characters.
+    hyphens, colon, and Unicode characters.
 
     Projects are isolated memory namespaces. Memories (episodes) belong
     exclusively to their project. All project operations, including queries and
