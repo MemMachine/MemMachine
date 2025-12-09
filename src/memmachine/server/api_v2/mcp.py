@@ -189,6 +189,7 @@ class Params(BaseModel):
         return AddMemoriesSpec(
             org_id=self.org_id,
             project_id=self.proj_id,
+            types=ALL_MEMORY_TYPES,
             messages=[
                 MemoryMessage(
                     content=content,

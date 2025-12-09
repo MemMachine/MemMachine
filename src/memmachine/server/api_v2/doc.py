@@ -310,14 +310,6 @@ class RouterDoc:
     The endpoint accepts a batch of messages to be added in a single request.
     """
 
-    ADD_EPISODIC_MEMORIES = """
-    Add episodic memory messages to a project.  Same as Add Memories but only adds
-    to the Episodic memory type."""
-
-    ADD_SEMANTIC_MEMORIES = """
-    Add semantic memory messages to a project.  Same as Add Memories but only adds
-    to the Semantic memory type."""
-
     SEARCH_MEMORIES = """
     Search memories within a project.
 

@@ -140,6 +140,7 @@ def test_add_memory_spec():
 
     message = MemoryMessage(content="Test content", producer="test_producer")
     spec = AddMemoriesSpec(messages=[message])
+    assert spec.types == []
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.project_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.messages == [message]

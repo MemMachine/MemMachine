@@ -286,6 +286,15 @@ class MemoryMessage(BaseModel):
 class AddMemoriesSpec(_WithOrgAndProj):
     """Specification model for adding memories."""
 
+    types: Annotated[
+        list[MemoryType],
+        Field(
+            default_factory=list,
+            description=SpecDoc.MEMORY_TYPES,
+            examples=Examples.MEMORY_TYPES,
+        ),
+    ]
+
     messages: Annotated[
         list[MemoryMessage],
         Field(

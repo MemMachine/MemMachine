@@ -212,7 +212,8 @@ def test_add_memories(client, mock_memmachine):
         # Episodic add
         mock_add_messages.reset_mock()
         mock_add_messages.return_value = [{"status": "ok", "uid": "123"}]
-        response = client.post("/api/v2/memories/episodic/add", json=payload)
+        payload["types"] = [MemoryType.Episodic.value]
+        response = client.post("/api/v2/memories", json=payload)
         assert response.status_code == 200
         assert response.json() == {"results": [{"uid": "123"}]}
         call_args = mock_add_messages.call_args[1]
@@ -221,7 +222,8 @@ def test_add_memories(client, mock_memmachine):
         # Semantic add
         mock_add_messages.reset_mock()
         mock_add_messages.return_value = [{"status": "ok", "uid": "123"}]
-        response = client.post("/api/v2/memories/semantic/add", json=payload)
+        payload["types"] = [MemoryType.Semantic.value]
+        response = client.post("/api/v2/memories", json=payload)
         assert response.status_code == 200
         assert response.json() == {"results": [{"uid": "123"}]}
         call_args = mock_add_messages.call_args[1]
