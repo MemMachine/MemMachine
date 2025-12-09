@@ -1570,12 +1570,16 @@ name = "memmachine-client"
 version = "0.1.0"
 source = { editable = "packages/client" }
 dependencies = [
+    { name = "pydantic" },
+    { name = "regex" },
     { name = "requests" },
     { name = "urllib3" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "regex", specifier = ">=2023.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "urllib3", specifier = ">=2.0.0" },
 ]
