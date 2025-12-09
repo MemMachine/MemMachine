@@ -124,19 +124,19 @@ select_llm_model() {
         "OPENAI")
             print_prompt
             read -p "Which OpenAI LLM model would you like to use? [gpt-4o-mini]: " llm_model
-            llm_model=${llm_model:-gpt-4o-mini}
+            llm_model=$(echo "${llm_model:-gpt-4o-mini}" | tr -d '\n\r')
             print_success "Selected OpenAI LLM model: $llm_model" >&2
             ;;
         "BEDROCK")
             print_prompt
             read -p "Which AWS Bedrock LLM model would you like to use? [openai.gpt-oss-20b-1:0]: " llm_model
-            llm_model=${llm_model:-openai.gpt-oss-20b-1:0}
+            llm_model=$(echo "${llm_model:-openai.gpt-oss-20b-1:0}" | tr -d '\n\r')
             print_success "Selected AWS Bedrock LLM model: $llm_model" >&2
             ;;
         "OLLAMA")
             print_prompt
             read -p "Which Ollama LLM model would you like to use? [llama3]: " llm_model
-            llm_model=${llm_model:-llama3}
+            llm_model=$(echo "${llm_model:-llama3}" | tr -d '\n\r')
             print_success "Selected Ollama LLM model: $llm_model" >&2
             ;;
         *)
@@ -157,19 +157,19 @@ select_embedding_model() {
         "OPENAI")
             print_prompt
             read -p "Which OpenAI embedding model would you like to use? [text-embedding-3-small]: " embedding_model
-            embedding_model=${embedding_model:-text-embedding-3-small}
+            embedding_model=$(echo "${embedding_model:-text-embedding-3-small}" | tr -d '\n\r')
             print_success "Selected OpenAI embedding model: $embedding_model" >&2
             ;;
         "BEDROCK")
             print_prompt
             read -p "Which AWS Bedrock embedding model would you like to use? [amazon.titan-embed-text-v2:0]: " embedding_model
-            embedding_model=${embedding_model:-amazon.titan-embed-text-v2:0}
+            embedding_model=$(echo "${embedding_model:-amazon.titan-embed-text-v2:0}" | tr -d '\n\r')
             print_success "Selected AWS Bedrock embedding model: $embedding_model" >&2
             ;;
         "OLLAMA")
             print_prompt
             read -p "Which Ollama embedding model would you like to use? [nomic-embed-text]: " embedding_model
-            embedding_model=${embedding_model:-nomic-embed-text}
+            embedding_model=$(echo "${embedding_model:-nomic-embed-text}" | tr -d '\n\r')
             print_success "Selected Ollama embedding model: $embedding_model" >&2
             ;;
         *)
@@ -232,8 +232,6 @@ generate_config_for_provider() {
         in_embedder_section = 0
         in_current_model = 0
         in_current_embedder = 0
-        skip_model = 0
-        skip_embedder = 0
         current_section = ""
         in_episodic = 0
         in_semantic = 0
@@ -241,18 +239,48 @@ generate_config_for_provider() {
         in_short_term = 0
     }
     
-    # Track current top-level section
-    /^[a-zA-Z]/ && !/^[[:space:]]/ {
-        # If we're leaving language_models or embedders section, add blank line first
+    # Track embedders and language_models sections (2 spaces, under resources:)
+    /^  embedders:$/ {
         if (in_model_section || in_embedder_section) {
             print ""
         }
-        current_section = $1
-        current_section = substr(current_section, 1, length(current_section) - 1)  # Remove trailing :
-        in_model_section = (current_section == "language_models")
-        in_embedder_section = (current_section == "embedders")
-        skip_model = 0
-        skip_embedder = 0
+        in_embedder_section = 1
+        in_model_section = 0
+        in_current_embedder = 0
+        print
+        next
+    }
+    
+    /^  language_models:$/ {
+        if (in_model_section || in_embedder_section) {
+            print ""
+        }
+        in_model_section = 1
+        in_embedder_section = 0
+        in_current_model = 0
+        print
+        next
+    }
+    
+    # Exit embedders/language_models when hitting another 2-space section
+    /^  [a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  (embedders|language_models):$/ && !in_episodic && !in_semantic {
+        if (in_model_section || in_embedder_section) {
+            print ""
+            in_model_section = 0
+            in_embedder_section = 0
+        }
+        print
+        next
+    }
+    
+    # Track current top-level section
+    /^[a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  / {
+        if (in_model_section || in_embedder_section) {
+            print ""
+        }
+        current_section = substr($1, 1, length($1) - 1)
+        in_model_section = 0
+        in_embedder_section = 0
         in_current_model = 0
         in_current_embedder = 0
         
@@ -279,31 +307,20 @@ generate_config_for_provider() {
     
     # Handle language_models section
     in_model_section {
-        # Check if this is a model definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z0-9_]*:$/) {
+        # Check if this is a model definition line (4 spaces)
+        if (/^    [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             model_key = substr($1, 1, length($1) - 1)  # Remove trailing :
-            if (model_key == model_name) {
-                in_current_model = 1
-                skip_model = 0
-                print
-                next
-            } else {
-                in_current_model = 0
-                skip_model = 1
-                next
-            }
-        }
-        # Print lines for current model, skip others
-        if (skip_model) {
+            in_current_model = (model_key == model_name)
+            print
             next
         }
         if (in_current_model) {
             # Replace model field value if this is the model line
-            if (model_field == "model" && /^      model:/) {
-                print "      model: \"" llm_model "\""
+            if (model_field == "model" && /^        model:/) {
+                print "        model: \"" llm_model "\""
                 next
-            } else if (model_field == "model_id" && /^      model_id:/) {
-                print "      model_id: \"" llm_model "\""
+            } else if (model_field == "model_id" && /^        model_id:/) {
+                print "        model_id: \"" llm_model "\""
                 next
             }
         }
@@ -313,31 +330,20 @@ generate_config_for_provider() {
     
     # Handle embedders section
     in_embedder_section {
-        # Check if this is an embedder definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z0-9_]*:$/) {
+        # Check if this is an embedder definition line (4 spaces)
+        if (/^    [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             embedder_key = substr($1, 1, length($1) - 1)  # Remove trailing :
-            if (embedder_key == embedder_name) {
-                in_current_embedder = 1
-                skip_embedder = 0
-                print
-                next
-            } else {
-                in_current_embedder = 0
-                skip_embedder = 1
-                next
-            }
-        }
-        # Print lines for current embedder, skip others
-        if (skip_embedder) {
+            in_current_embedder = (embedder_key == embedder_name)
+            print
             next
         }
         if (in_current_embedder) {
             # Replace embedder model field value
-            if (embedder_field == "model" && /^      model:/) {
-                print "      model: \"" embedding_model "\""
+            if (embedder_field == "model" && /^        model:/) {
+                print "        model: \"" embedding_model "\""
                 next
-            } else if (embedder_field == "model_id" && /^      model_id:/) {
-                print "      model_id: \"" embedding_model "\""
+            } else if (embedder_field == "model_id" && /^        model_id:/) {
+                print "        model_id: \"" embedding_model "\""
                 next
             }
         }
