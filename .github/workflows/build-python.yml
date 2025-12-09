@@ -38,6 +38,9 @@ jobs:
           sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
           sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/client/pyproject.toml
           sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/server/pyproject.toml
+          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/meta/pyproject.toml
+          sed -i -E "s/\"memmachine-client==.*\"/\"memmachine-client==$VERSION\"/" packages/meta/pyproject.toml
+          sed -i -E "s/\"memmachine-server==.*\"/\"memmachine-server==$VERSION\"/" packages/meta/pyproject.toml
 
       - name: Install dependencies and uv
         run: |
@@ -47,7 +50,7 @@ jobs:
 
       - name: Build the packages with uv
         run: |
-          uv build --project packages/client && uv build --project packages/server
+          uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
           ls -lh dist/
 
       - name: Upload built distributions as artifact

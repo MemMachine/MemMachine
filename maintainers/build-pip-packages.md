@@ -2,9 +2,20 @@
 
 **This document is specifically for building pip packages** (`memmachine-client` and `memmachine-server`) for distribution via PyPI or local installation.
 
-This project supports creating two independent pip packages:
-- `memmachine-client` - Contains only the REST client
-- `memmachine-server` - Contains the complete server functionality
+This project supports creating three pip packages:
+- `memmachine-client` - Contains only the REST client ([PyPI](https://pypi.org/project/memmachine-client/))
+- `memmachine-server` - Contains the complete server functionality ([PyPI](https://pypi.org/project/memmachine-server/))
+- `memmachine` - A meta-package that installs both the client and server ([PyPI](https://pypi.org/project/memmachine/))
+
+## Directory Hierarchy
+
+The project uses a monorepo-like structure under the `/packages` directory:
+
+- `/packages/client`: Source code and configuration for `memmachine-client`.
+- `/packages/server`: Source code and configuration for `memmachine-server`.
+- `/packages/meta`: Configuration for the `memmachine` meta-package.
+
+This structure allows us to maintain separate build configurations and dependencies for each component while keeping them in the same repository. It also provides the flexibility to version the client and server independently if needed in the future, although we currently aim for lock-step versioning.
 
 ## Building
 
@@ -30,12 +41,18 @@ uv build --project packages/server
 
 This will create the distribution files in `/dist` within the root of the project.
 
-### Building Both Packages
-
-You can run both commands sequentially:
+### Building Meta-Package
 
 ```bash
-uv build --project packages/client && uv build --project packages/server
+uv build --project packages/meta
+```
+
+### Building All Packages
+
+You can run all commands sequentially:
+
+```bash
+uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
 ```
 
 ## Installation
@@ -72,6 +89,11 @@ pip install memmachine-server
 To install the server with GPU support (includes `sentence-transformers`):
 ```bash
 pip install "memmachine-server[gpu]"
+```
+
+#### Installing Full Suite (Meta-Package)
+```bash
+pip install memmachine
 ```
 
 ## Usage
@@ -122,6 +144,11 @@ memmachine-mcp-http
   - `memmachine.server` - Server application
 - Contains all server dependencies (database, FastAPI, etc.)
 - Includes command-line tools
+
+### memmachine (Meta-Package)
+- Empty package with no source code.
+- Depends on `memmachine-client` and `memmachine-server`.
+- Ensures both components are installed.
 
 ## Notes
 
