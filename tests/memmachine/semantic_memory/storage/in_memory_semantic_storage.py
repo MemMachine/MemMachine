@@ -69,6 +69,7 @@ class InMemorySemanticStorage(SemanticStorage):
         self._feature_ids_by_set: dict[str, list[FeatureIdT]] = {}
         # History tracking mirrors the SetIngestedHistory table
         self._set_history_map: dict[str, dict[EpisodeIdT, bool]] = {}
+        self._history_created_at: dict[tuple[str, EpisodeIdT], datetime] = {}
         self._history_to_sets: dict[EpisodeIdT, dict[str, bool]] = {}
         self._next_feature_id = 1
         self._next_history_id = 1
@@ -85,6 +86,7 @@ class InMemorySemanticStorage(SemanticStorage):
             self._features_by_id.clear()
             self._feature_ids_by_set.clear()
             self._set_history_map.clear()
+            self._history_created_at.clear()
             self._history_to_sets.clear()
             self._next_feature_id = 1
             self._next_history_id = 1
@@ -287,17 +289,38 @@ class InMemorySemanticStorage(SemanticStorage):
         self,
         *,
         min_uningested_messages: int | None = None,
+        older_than: datetime | None = None,
     ) -> list[SetIdT]:
         async with self._lock:
-            if min_uningested_messages is None or min_uningested_messages <= 0:
+            if (
+                min_uningested_messages is None or min_uningested_messages <= 0
+            ) and older_than is None:
                 return list(self._set_history_map.keys())
 
             set_ids: list[str] = []
             for set_id, history_map in self._set_history_map.items():
-                uningested_count = sum(
-                    1 for ingested in history_map.values() if not ingested
-                )
-                if uningested_count >= min_uningested_messages:
+                meets_uningested_threshold = False
+                if min_uningested_messages is not None and min_uningested_messages > 0:
+                    uningested_count = sum(
+                        1 for ingested in history_map.values() if not ingested
+                    )
+                    meets_uningested_threshold = (
+                        uningested_count >= min_uningested_messages
+                    )
+
+                has_older_history = False
+                if older_than is not None:
+                    has_older_history = any(
+                        self._history_created_at.get(
+                            (set_id, history_id),
+                            _utcnow(),
+                        )
+                        <= older_than
+                        for history_id, ingested in history_map.items()
+                        if not ingested
+                    )
+
+                if meets_uningested_threshold or has_older_history:
                     set_ids.append(set_id)
 
             return set_ids
@@ -396,7 +419,10 @@ class InMemorySemanticStorage(SemanticStorage):
         async with self._lock:
             history_map = self._set_history_map.setdefault(set_id, {})
             history_id = EpisodeIdT(history_id)
+            is_new_association = history_id not in history_map
             history_map[history_id] = history_map.get(history_id, False)
+            if is_new_association:
+                self._history_created_at[(set_id, history_id)] = _utcnow()
             self._history_to_sets.setdefault(history_id, {})[set_id] = history_map[
                 history_id
             ]
@@ -418,6 +444,7 @@ class InMemorySemanticStorage(SemanticStorage):
                         continue
 
                     history_map.pop(normalized_id, None)
+                    self._history_created_at.pop((set_id, normalized_id), None)
                     if not history_map:
                         self._set_history_map.pop(set_id, None)
 
@@ -432,6 +459,7 @@ class InMemorySemanticStorage(SemanticStorage):
                     continue
 
                 for history_id in list(history_map.keys()):
+                    self._history_created_at.pop((set_id, history_id), None)
                     sets_map = self._history_to_sets.get(history_id)
                     if sets_map is None:
                         continue
