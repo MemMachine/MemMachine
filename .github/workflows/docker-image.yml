@@ -32,6 +32,15 @@ jobs:
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
     steps:
+      # Step 0: Free Disk Space (Manual)
+      - name: Free Disk Space (Manual)
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+
       # Step 1: Checkout source for Release triggers
       - name: Checkout source (Release)
         if: github.event_name == 'release'
@@ -78,6 +87,10 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
+      # Step 5.5: Prune Docker system
+      - name: Prune Docker system
+        run: docker system prune -af
+
       # Step 6: Build and push the CPU image
       - name: Build and push CPU image
         id: build_cpu
@@ -98,9 +111,19 @@ jobs:
 
   build-gpu:
     name: Build and Push GPU Image
+    needs: build-cpu
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
     steps:
+      # Step 0: Free Disk Space (Manual)
+      - name: Free Disk Space (Manual)
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+
       # Step 1: Checkout source for Release triggers
       - name: Checkout source (Release)
         if: github.event_name == 'release'
@@ -144,6 +167,10 @@ jobs:
             type=semver,pattern=latest-gpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
+
+      # Step 5.5: Prune Docker system
+      - name: Prune Docker system
+        run: docker system prune -af
 
       # Step 6: Build and push the GPU image
       - name: Build and push GPU image

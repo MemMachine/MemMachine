@@ -1,4 +1,5 @@
 import pytest
+import yaml
 from pydantic import SecretStr, ValidationError
 
 from memmachine.common.configuration.reranker_conf import (
@@ -159,6 +160,13 @@ def test_full_reranker_conf(full_reranker_input):
         conf.embedder["embedder_id"].embedder_id
         == "sentence-transformers/all-MiniLM-L6-v2"
     )
+
+
+def test_serialize_deserialize_reranker_conf(full_reranker_input):
+    conf = RerankersConf.parse(full_reranker_input)
+    serialized = conf.to_yaml()
+    conf_cp = RerankersConf.parse(yaml.safe_load(serialized))
+    assert conf == conf_cp
 
 
 def test_missing_required_field_in_bedrock_reranker():

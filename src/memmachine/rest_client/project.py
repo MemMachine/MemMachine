@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from memmachine.common.api.spec import DeleteProjectSpec, GetProjectSpec
+
 if TYPE_CHECKING:
     from .client import MemMachineClient
     from .memory import Memory
@@ -140,10 +142,8 @@ class Project:
             raise RuntimeError("Cannot delete project: client has been closed")
 
         url = f"{self.client.base_url}/api/v2/projects/delete"
-        data = {
-            "org_id": self.org_id,
-            "project_id": self.project_id,
-        }
+        spec = DeleteProjectSpec(org_id=self.org_id, project_id=self.project_id)
+        data = spec.model_dump(exclude_none=True)
 
         try:
             response = self.client.request("POST", url, json=data, timeout=timeout)
@@ -173,10 +173,8 @@ class Project:
             raise RuntimeError("Cannot refresh project: client has been closed")
 
         url = f"{self.client.base_url}/api/v2/projects/get"
-        data = {
-            "org_id": self.org_id,
-            "project_id": self.project_id,
-        }
+        spec = GetProjectSpec(org_id=self.org_id, project_id=self.project_id)
+        data = spec.model_dump(exclude_none=True)
 
         try:
             response = self.client.request("POST", url, json=data, timeout=timeout)

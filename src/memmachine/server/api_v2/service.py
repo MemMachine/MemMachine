@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from fastapi import Request
 
 from memmachine import MemMachine
-from memmachine.common.episode_store.episode_model import EpisodeEntry
-from memmachine.main.memmachine import MemoryType as MemoryTypeE
-from memmachine.server.api_v2.spec import (
+from memmachine.common.api.spec import (
     AddMemoriesSpec,
     AddMemoryResult,
     SearchMemoriesSpec,
     SearchResult,
 )
+from memmachine.common.episode_store.episode_model import EpisodeEntry
+from memmachine.main.memmachine import MemoryType as MemoryTypeE
 
 
 # Placeholder dependency injection function

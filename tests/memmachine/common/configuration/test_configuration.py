@@ -1,17 +1,21 @@
+import logging
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import SecretStr
 
 from memmachine.common.configuration import (
+    Configuration,
     EpisodicMemoryConfPartial,
-    load_config_yml_file,
 )
 from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.configuration.log_conf import LogLevel
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
@@ -99,7 +103,7 @@ def find_config_file(filename: str, start_path: Path | None = None) -> Path:
 
 def test_load_sample_cpu_config():
     config_path = find_config_file("episodic_memory_config.cpu.sample")
-    conf = load_config_yml_file(str(config_path))
+    conf = Configuration.load_yml_file(str(config_path))
     resources_conf = conf.resources
     assert conf.logging.level == LogLevel.INFO
     assert conf.session_manager.database == "profile_storage"
@@ -126,5 +130,15 @@ def test_load_sample_cpu_config():
 
 def test_load_sample_gpu_config():
     config_path = find_config_file("episodic_memory_config.gpu.sample")
-    conf = load_config_yml_file(str(config_path))
+    conf = Configuration.load_yml_file(str(config_path))
     assert conf.logging.level == LogLevel.INFO
+
+
+def test_serialize_and_deserialize_configuration():
+    config_path = find_config_file("episodic_memory_config.gpu.sample")
+    conf = Configuration.load_yml_file(str(config_path))
+    yaml_str = conf.to_yaml()
+    logger.debug("configuration yaml string:\n%s", yaml_str)
+    data = yaml.safe_load(yaml_str)
+    conf_cp = Configuration(**data)
+    assert conf == conf_cp

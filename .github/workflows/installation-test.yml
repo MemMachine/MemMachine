@@ -1,0 +1,244 @@
+name: Installation Test
+
+permissions:
+  contents: read
+
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  group: installation-test-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
+
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-python.yml
+    with:
+      python-version: "3.12"
+
+  test-install:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.12"]
+
+    steps:
+      #
+      # ─────────────────────────────────────
+      # Shared Steps (all OSes)
+      # ─────────────────────────────────────
+      #
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-dist
+
+      #
+      # ─────────────────────────────────────
+      # Linux Steps
+      # ─────────────────────────────────────
+      #
+      - name: Linux - Start Ollama
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          docker pull ollama/ollama
+          docker run -d --name ollama -p 11434:11434 ollama/ollama
+
+      - name: Linux - Wait for Ollama and pull models
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -eo pipefail
+          until curl -s http://localhost:11434/ > /dev/null; do
+            echo "Ollama not up yet, sleeping..."
+            sleep 1
+          done
+
+          curl -sSf http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}' -v
+          curl -sSf http://localhost:11434/api/pull -d '{"name": "nomic-embed-text"}' -v
+
+      - name: Linux - Test installation
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -eo pipefail
+          whl_name=$(ls *server*.whl)
+          python -m pip install "$whl_name"
+
+      #
+      # ─────────────────────────────────────
+      # Windows Steps
+      # ─────────────────────────────────────
+      #
+      - name: Windows - Setup Miniconda
+        if: matrix.os == 'windows-latest'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+          auto-update-conda: true
+          run-post: false
+
+      - name: Windows - Set up dev tools
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Windows - Install Ollama
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -eo pipefail
+          winget install Ollama.Ollama --accept-source-agreements
+
+          until curl -s http://localhost:11434/ > /dev/null; do
+            echo "Ollama not up yet, sleeping..."
+            sleep 1
+          done
+
+          curl -sSf http://localhost:11434/api/pull -d '{"name":"qwen3:0.6b"}'
+          curl -sSf http://localhost:11434/api/pull -d '{"name":"nomic-embed-text"}'
+
+      - name: Windows - Install the package
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -eo pipefail
+          export PYTHONUTF8=1
+          whl_name=$(ls *server*.whl)
+          python -m pip install "$whl_name"
+
+      #
+      # ─────────────────────────────────────
+      # macOS Steps
+      # ─────────────────────────────────────
+      #
+      - name: macOS - Install Ollama
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -eo pipefail
+          brew install ollama
+          brew services start ollama
+
+          until curl -s http://localhost:11434/ > /dev/null; do
+            sleep 1
+          done
+
+          curl -sSf http://localhost:11434/api/pull -d '{"name":"qwen3:0.6b"}'
+          curl -sSf http://localhost:11434/api/pull -d '{"name":"nomic-embed-text"}'
+
+      - name: macOS - Test installation
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -eo pipefail
+          whl_name=$(ls *server*.whl)
+          python -m pip install "$whl_name"
+
+      #
+      # ─────────────────────────────────────
+      # Shared Steps (all OSes)
+      # ─────────────────────────────────────
+      #
+
+      - name: Run memmachine-configure
+        shell: bash
+        run: |
+          memmachine-configure << EOF
+          y
+          Ollama
+          qwen3:0.6b
+      
+          http://localhost:11434/v1
+          nomic-embed-text
+          768
+          localhost
+          8080
+          EOF
+
+      - name: Start memmachine-server
+        shell: bash
+        run: |
+          set -eo pipefail
+          echo "Starting memmachine-server..."
+          memmachine-server >server.log 2>&1 &
+          echo $! > server.pid
+          echo "Server PID: $(cat server.pid)"
+
+      - name: Wait for server to be ready
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          SERVER_URL="http://127.0.0.1:8080/api/v2/projects/list"
+          
+          echo "Waiting for server to be ready..."
+          max_attempts=12   # 12 × 10 sec = 120 sec
+          attempt=1
+          
+          while true; do
+            echo "Attempt $attempt/$max_attempts — checking server..."
+          
+            # Capture HTTP body and code separately (portable!)
+            http_code=$(curl -X POST -s -o curl_body.tmp -w "%{http_code}" "$SERVER_URL" || true)
+            body=$( [ -f curl_body.tmp ] && cat curl_body.tmp || echo "empty body" )
+            rm -f curl_body.tmp
+          
+            if [ "$http_code" = "200" ]; then
+              echo "Server is ready!"
+              echo "===== Server Response ====="
+              echo "$body"
+              break
+            fi
+          
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Server did not become ready after 2 minutes."
+              echo "===== Last HTTP Response ====="
+              echo "HTTP $http_code"
+              echo "$body"
+              echo ""
+              echo "===== Server Logs ====="
+              cat server.log 2>/dev/null || echo "(No server.log found)"
+              exit 1
+            fi
+          
+            attempt=$((attempt+1))
+            sleep 10
+          done
+
+      - name: Install uv
+        shell: bash
+        run: pip install uv
+
+      - name: Create uv virtual environment
+        shell: bash
+        run: uv venv
+
+      - name: Run REST client integration tests
+        shell: bash
+        run: |
+          uv pip install pytest
+          uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v --integration -m integration

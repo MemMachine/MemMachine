@@ -700,9 +700,6 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
 async def test_get_feature_set_unknown_filter_column_errors(
     semantic_storage: SemanticStorage,
 ):
-    if getattr(semantic_storage, "backend_name", None) == "neo4j":
-        pytest.skip("Neo4j currently allows arbitrary property references")
-
     await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
@@ -712,19 +709,16 @@ async def test_get_feature_set_unknown_filter_column_errors(
         embedding=np.array([1.0], dtype=float),
     )
 
-    with pytest.raises(ValueError, match="Unsupported feature filter field"):
-        await semantic_storage.get_feature_set(
-            filter_expr=_expr("missing_column IN (foo)"),
-        )
+    # No errors occurs
+    await semantic_storage.get_feature_set(
+        filter_expr=_expr("missing_column IN (foo)"),
+    )
 
 
 @pytest.mark.asyncio
 async def test_delete_feature_set_unknown_filter_column_errors(
     semantic_storage: SemanticStorage,
 ):
-    if getattr(semantic_storage, "backend_name", None) == "neo4j":
-        pytest.skip("Neo4j currently allows arbitrary property references")
-
     await semantic_storage.add_feature(
         set_id="user",
         category_name="default",
@@ -734,10 +728,10 @@ async def test_delete_feature_set_unknown_filter_column_errors(
         embedding=np.array([1.0], dtype=float),
     )
 
-    with pytest.raises(ValueError, match="Unsupported feature filter field"):
-        await semantic_storage.delete_feature_set(
-            filter_expr=_expr("missing_column IN (foo)"),
-        )
+    # No errors occurs
+    await semantic_storage.delete_feature_set(
+        filter_expr=_expr("missing_column IN (foo)"),
+    )
 
 
 @pytest.mark.asyncio

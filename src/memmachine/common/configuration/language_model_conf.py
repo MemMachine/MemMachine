@@ -1,17 +1,23 @@
 """Language model configuration models."""
 
-from typing import Any, Self
+from typing import Any, ClassVar, Self
 from urllib.parse import urlparse
 
+import yaml
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
-from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
+from memmachine.common.configuration.mixin_confs import (
+    MetricsFactoryIdMixin,
+    YamlSerializableMixin,
+)
 from memmachine.common.language_model.amazon_bedrock_language_model import (
     AmazonBedrockConverseInferenceConfig,
 )
 
+DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1"
 
-class OpenAIResponsesLanguageModelConf(WithMetricsFactoryId):
+
+class OpenAIResponsesLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMixin):
     """Configuration for OpenAI Responses-compatible models."""
 
     model: str = Field(
@@ -43,7 +49,9 @@ class OpenAIResponsesLanguageModelConf(WithMetricsFactoryId):
         return v
 
 
-class OpenAIChatCompletionsLanguageModelConf(WithMetricsFactoryId):
+class OpenAIChatCompletionsLanguageModelConf(
+    MetricsFactoryIdMixin, YamlSerializableMixin
+):
     """Configuration for OpenAI Chat Completions-compatible models."""
 
     model: str = Field(
@@ -52,13 +60,13 @@ class OpenAIChatCompletionsLanguageModelConf(WithMetricsFactoryId):
         description="OpenAI Chat Completions API-compatible model",
     )
     api_key: SecretStr = Field(
-        ...,
+        default=SecretStr(""),
         description="OpenAI Chat Completions API key for authentication",
     )
     base_url: str | None = Field(
         default=None,
         description="OpenAI Chat Completions API base URL",
-        examples=["http://host.docker.internal:11434/v1"],
+        examples=[DEFAULT_OLLAMA_BASE_URL],
     )
     max_retry_interval_seconds: int = Field(
         default=120,
@@ -77,7 +85,7 @@ class OpenAIChatCompletionsLanguageModelConf(WithMetricsFactoryId):
         return v
 
 
-class AmazonBedrockLanguageModelConf(WithMetricsFactoryId):
+class AmazonBedrockLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMixin):
     """
     Configuration for AmazonBedrockLanguageModel.
 
@@ -118,7 +126,7 @@ class AmazonBedrockLanguageModelConf(WithMetricsFactoryId):
         description="Inference configuration for the Bedrock Converse API.",
     )
     additional_model_request_fields: dict[str, Any] | None = Field(
-        None,
+        default=None,
         description=(
             "Keys are request fields for the model "
             "and values are values for those fields "
@@ -144,6 +152,73 @@ class LanguageModelsConf(BaseModel):
         OpenAIChatCompletionsLanguageModelConf,
     ] = {}
     amazon_bedrock_language_model_confs: dict[str, AmazonBedrockLanguageModelConf] = {}
+
+    def get_openai_responses_language_model_name(self) -> str | None:
+        """Get the name of the first OpenAI Responses language model, if any."""
+        if self.openai_responses_language_model_confs:
+            return next(iter(self.openai_responses_language_model_confs))
+        return None
+
+    def get_openai_chat_completions_language_model_name(self) -> str | None:
+        """Get the name of the first OpenAI Chat Completions language model, if any."""
+        if self.openai_chat_completions_language_model_confs:
+            return next(iter(self.openai_chat_completions_language_model_confs))
+        return None
+
+    def get_amazon_bedrock_language_model_name(self) -> str | None:
+        """Get the name of the first Amazon Bedrock language model, if any."""
+        if self.amazon_bedrock_language_model_confs:
+            return next(iter(self.amazon_bedrock_language_model_confs))
+        return None
+
+    def get_openai_responses_language_model_conf(
+        self, name: str
+    ) -> OpenAIResponsesLanguageModelConf:
+        """Get OpenAI Responses language model configuration by name."""
+        return self.openai_responses_language_model_confs[name]
+
+    def get_openai_chat_completions_language_model_conf(
+        self, name: str
+    ) -> OpenAIChatCompletionsLanguageModelConf:
+        """Get OpenAI Chat Completions language model configuration by name."""
+        return self.openai_chat_completions_language_model_confs[name]
+
+    def get_amazon_bedrock_language_model_conf(
+        self, name: str
+    ) -> AmazonBedrockLanguageModelConf:
+        """Get Amazon Bedrock language model configuration by name."""
+        return self.amazon_bedrock_language_model_confs[name]
+
+    OPENAI_RESPONSE: ClassVar[str] = "openai-responses"
+    OPEN_CHAT_COMPLETION: ClassVar[str] = "openai-chat-completions"
+    AMAZON_BEDROCK: ClassVar[str] = "amazon-bedrock"
+    PROVIDER_KEY: ClassVar[str] = "provider"
+    CONFIG_KEY: ClassVar[str] = "config"
+
+    def to_yaml_dict(self) -> dict:
+        """Serialize language model configurations to a YAML-compatible dictionary."""
+        language_models: dict[str, dict] = {}
+
+        def add_language_model(name: str, provider: str, config: dict) -> None:
+            language_models[name] = {
+                self.PROVIDER_KEY: provider,
+                self.CONFIG_KEY: config,
+            }
+
+        for lm_id, cfg in self.openai_responses_language_model_confs.items():
+            add_language_model(lm_id, self.OPENAI_RESPONSE, cfg.to_yaml_dict())
+
+        for lm_id, cfg in self.openai_chat_completions_language_model_confs.items():
+            add_language_model(lm_id, self.OPEN_CHAT_COMPLETION, cfg.to_yaml_dict())
+
+        for lm_id, cfg in self.amazon_bedrock_language_model_confs.items():
+            add_language_model(lm_id, self.AMAZON_BEDROCK, cfg.to_yaml_dict())
+
+        return language_models
+
+    def to_yaml(self) -> str:
+        data = {"language_models": self.to_yaml_dict()}
+        return yaml.safe_dump(data, sort_keys=True)
 
     @classmethod
     def parse(cls, input_dict: dict) -> Self:

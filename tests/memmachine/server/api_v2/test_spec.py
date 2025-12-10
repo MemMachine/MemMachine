@@ -1,8 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from memmachine.main.memmachine import MemoryType
-from memmachine.server.api_v2.spec import (
+from memmachine.common.api.spec import (
     DEFAULT_ORG_AND_PROJECT_ID,
     AddMemoriesResponse,
     AddMemoriesSpec,
@@ -11,13 +10,54 @@ from memmachine.server.api_v2.spec import (
     DeleteEpisodicMemorySpec,
     DeleteProjectSpec,
     DeleteSemanticMemorySpec,
+    InvalidNameError,
     ListMemoriesSpec,
     MemoryMessage,
     ProjectConfig,
     ProjectResponse,
+    RestError,
     SearchMemoriesSpec,
     SearchResult,
+    _is_valid_name,
 )
+from memmachine.main.memmachine import MemoryType
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "abc",
+        "abc123",
+        "ABC:xyz-123",
+        "你好世界",
+        "テスト123",
+        "안녕-세상",
+        "名字:123",
+        "中文-english_混合",
+    ],
+)
+def test_validate_no_slash_valid(value):
+    assert _is_valid_name(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a/b",  # slash
+        "/abc",  # slash
+        "abc/",  # slash
+        "hello world",  # space
+        "name@123",  # symbol
+        "value!",  # symbol
+        "中文 test",  # space
+        "",  # empty
+    ],
+)
+def test_validate_no_slash_invalid(value):
+    with pytest.raises(InvalidNameError) as exe_info:
+        _is_valid_name(value)
+    message = f"found: '{value}'"
+    assert message in str(exe_info.value)
 
 
 def assert_pydantic_errors(exc_info, expected_checks: dict[str, str]):
@@ -103,6 +143,7 @@ def test_add_memory_spec():
 
     message = MemoryMessage(content="Test content", producer="test_producer")
     spec = AddMemoriesSpec(messages=[message])
+    assert spec.types == []
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.project_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.messages == [message]
@@ -157,9 +198,8 @@ def test_list_memories_spec():
 
 
 def test_delete_episodic_memory_spec():
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises(ValidationError):
         DeleteEpisodicMemorySpec()
-    assert_pydantic_errors(exc_info, {"episodic_id": "missing"})
 
     spec = DeleteEpisodicMemorySpec(episodic_id="ep-123")
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
@@ -168,14 +208,29 @@ def test_delete_episodic_memory_spec():
 
 
 def test_delete_semantic_memory_spec():
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises(ValidationError):
         DeleteSemanticMemorySpec()
-    assert_pydantic_errors(exc_info, {"semantic_id": "missing"})
 
     spec = DeleteSemanticMemorySpec(semantic_id="sem-123")
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.project_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.semantic_id == "sem-123"
+
+
+def test_get_semantic_ids():
+    spec = DeleteSemanticMemorySpec(semantic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
+
+    spec = DeleteSemanticMemorySpec(semantic_id="1", semantic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
+
+
+def test_get_episodic_ids():
+    spec = DeleteEpisodicMemorySpec(episodic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
+
+    spec = DeleteEpisodicMemorySpec(episodic_id="1", episodic_ids=["2", "1"])
+    assert spec.get_ids() == ["1", "2"]
 
 
 def test_search_result_model():
@@ -186,3 +241,21 @@ def test_search_result_model():
     result = SearchResult(status=0, content={"key": "value"})
     assert result.status == 0
     assert result.content == {"key": "value"}
+
+
+def test_rest_error():
+    err = RestError(422, "sample", RuntimeError("for test"))
+    assert err.status_code == 422
+    assert isinstance(err.detail, dict)
+    assert err.detail["message"] == "sample"
+    assert err.detail["code"] == 422
+    assert err.payload.exception == "RuntimeError"
+    assert err.payload.internal_error == "for test"
+    assert err.payload.trace == "RuntimeError: for test"
+
+
+def test_rest_error_without_exception():
+    err = RestError(404, "resource not found")
+    assert err.status_code == 404
+    assert err.detail == "resource not found"
+    assert err.payload is None

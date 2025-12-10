@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
-from typing import TypeGuard, cast
+from typing import Any, TypeGuard, cast
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -15,6 +17,7 @@ from memmachine.common.configuration.episodic_config import (
 )
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
+from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
 from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
@@ -29,7 +32,10 @@ from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGOR
 YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | bool | None
 
 
-class SessionManagerConf(BaseModel):
+logger = logging.getLogger(__name__)
+
+
+class SessionManagerConf(YamlSerializableMixin):
     """Configuration for the session database connection."""
 
     database: str = Field(
@@ -38,8 +44,8 @@ class SessionManagerConf(BaseModel):
     )
 
 
-class EpisodeStoreConf(BaseModel):
-    """Configuration for the episod storage."""
+class EpisodeStoreConf(YamlSerializableMixin):
+    """Configuration for the episode storage."""
 
     database: str = Field(
         default="",
@@ -51,7 +57,7 @@ class EpisodeStoreConf(BaseModel):
     )
 
 
-class SemanticMemoryConf(BaseModel):
+class SemanticMemoryConf(YamlSerializableMixin):
     """Configuration for semantic memory defaults."""
 
     database: str = Field(
@@ -78,7 +84,7 @@ def _read_txt(filename: str) -> str:
         return f.read()
 
 
-class PromptConf(BaseModel):
+class PromptConf(YamlSerializableMixin):
     """Prompt configuration for semantic memory contexts."""
 
     profile: list[str] = Field(
@@ -160,6 +166,19 @@ class ResourcesConf(BaseModel):
     rerankers: RerankersConf
     databases: DatabasesConf
 
+    def to_yaml_dict(self) -> dict:
+        return {
+            "embedders": self.embedders.to_yaml_dict(),
+            "language_models": self.language_models.to_yaml_dict(),
+            "rerankers": self.rerankers.to_yaml_dict(),
+            "databases": self.databases.to_yaml_dict(),
+        }
+
+    def to_yaml(self) -> str:
+        """Serialize the resources configuration to a YAML string."""
+        data = self.to_yaml_dict()
+        return yaml.safe_dump(data, sort_keys=True)
+
     @model_validator(mode="before")
     @classmethod
     def parse(cls, data: object) -> object:
@@ -179,6 +198,36 @@ class ResourcesConf(BaseModel):
         }
 
 
+class ServerConf(YamlSerializableMixin):
+    """Configuration for MemMachine API server settings."""
+
+    host: str = Field(
+        default="localhost",
+        description="The host address for the MemMachine API server",
+    )
+    port: int = Field(
+        default=8080,
+        description="The port number for the MemMachine API server",
+        gt=0,
+        lt=65536,
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _overwrite_with_env_variable(cls, data: dict) -> dict:
+        data = dict(data or {})
+
+        host = os.getenv("HOST")
+        if host:
+            data["host"] = host
+
+        port = os.getenv("PORT")
+        if port:
+            data["port"] = port
+
+        return data
+
+
 class Configuration(BaseModel):
     """Aggregate configuration for MemMachine services."""
 
@@ -189,6 +238,7 @@ class Configuration(BaseModel):
     session_manager: SessionManagerConf
     resources: ResourcesConf
     episode_store: EpisodeStoreConf
+    server: ServerConf = ServerConf()
 
     def check_reranker(self, reranker_name: str) -> None:
         long_term_memory = self.episodic_memory.long_term_memory
@@ -218,35 +268,49 @@ class Configuration(BaseModel):
             raise DefaultRerankerNotConfiguredError
         return long_term_memory.reranker
 
+    def to_yaml(self) -> str:
+        data = {
+            "episodic_memory": self.episodic_memory.to_yaml_dict(),
+            "semantic_memory": self.semantic_memory.to_yaml_dict(),
+            "logging": self.logging.to_yaml_dict(),
+            "prompt": self.prompt.to_yaml_dict(),
+            "session_manager": self.session_manager.to_yaml_dict(),
+            "resources": self.resources.to_yaml_dict(),
+            "episode_store": self.episode_store.to_yaml_dict(),
+            "server": self.server.to_yaml_dict(),
+        }
+        return yaml.safe_dump(data, sort_keys=True)
 
-def load_config_yml_file(config_file: str) -> Configuration:
-    """Load configuration from a YAML file path."""
-    config_path = Path(config_file)
-    try:
-        yaml_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError as err:
-        raise FileNotFoundError(f"Config file {config_file} not found") from err
-    except yaml.YAMLError as err:
-        raise ValueError(f"Config file {config_file} is not valid YAML") from err
-    except Exception as err:
-        raise RuntimeError(f"Failed to load config file {config_file}") from err
+    @classmethod
+    def load_yml_file(cls, config_file: str) -> Configuration:
+        """Load configuration from a YAML file path."""
+        config_path = Path(config_file)
+        logger.info("Loading configuration from '%s'", config_file)
+        try:
+            yaml_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as err:
+            raise FileNotFoundError(f"Config file {config_file} not found") from err
+        except yaml.YAMLError as err:
+            raise ValueError(f"Config file {config_file} is not valid YAML") from err
+        except Exception as err:
+            raise RuntimeError(f"Failed to load config file {config_file}") from err
 
-    def config_to_lowercase(data: YamlValue) -> YamlValue:
-        """Recursively convert dictionary keys in a nested structure to lowercase."""
-        if isinstance(data, dict):
-            return {k.lower(): config_to_lowercase(v) for k, v in data.items()}
-        if isinstance(data, list):
-            return [config_to_lowercase(i) for i in data]
-        return data
+        def config_to_lowercase(data: YamlValue) -> YamlValue:
+            """Recursively convert dictionary keys in a nested structure to lowercase."""
+            if isinstance(data, dict):
+                return {k.lower(): config_to_lowercase(v) for k, v in data.items()}
+            if isinstance(data, list):
+                return [config_to_lowercase(i) for i in data]
+            return data
 
-    yaml_config = config_to_lowercase(yaml_config)
+        yaml_config = config_to_lowercase(yaml_config)
 
-    def is_mapping(val: YamlValue) -> TypeGuard[dict[str, YamlValue]]:
-        return isinstance(val, dict)
+        def is_mapping(val: YamlValue) -> TypeGuard[dict[str, YamlValue]]:
+            return isinstance(val, dict)
 
-    if not is_mapping(yaml_config):
-        raise TypeError(f"Root of YAML config '{config_path}' must be a mapping")
+        if not is_mapping(yaml_config):
+            raise TypeError(f"Root of YAML config '{config_path}' must be a mapping")
 
-    mapping_config = cast(dict[str, YamlValue], yaml_config)
+        mapping_config = cast(dict[str, Any], yaml_config)
 
-    return Configuration(**mapping_config)
+        return Configuration(**mapping_config)

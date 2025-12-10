@@ -16,23 +16,21 @@ The following diagram illustrates how the Client SDK integrates into your system
 
 ```mermaid
 graph LR
-    subgraph "Your Infrastructure"
-        App[Your Application / Agent] -->|Python SDK| Client[MemMachine Client]
+
+    subgraph "Infra [Your Infrastructure]"
+        App["Your Application / Agent"] -->|Python SDK| Client["MemMachine Client"]
     end
 
-    subgraph "Network"
-        Client -->|HTTP/REST| LB[Load Balancer / Ingress]
+    subgraph "Net [Network]"
+        Client -->|HTTP/REST| LB["Load Balancer / Ingress"]
     end
 
-    subgraph "MemMachine Server"
-        LB --> Server[MemMachine Server API]
-        Server -->|Read/Write| Episodic[Episodic Memory Store]
-        Server -->|Read/Write| Semantic[Semantic Memory Store]
-        Server -->|Query| LLM[LLM Provider (OpenAI/Bedrock)]
+    subgraph "ServerSide [MemMachine Server]"
+        LB --> Server["MemMachine Server API"]
+        Server -->|Read/Write| Episodic["Episodic Memory Store"]
+        Server -->|Read/Write| Semantic["Semantic Memory Store"]
+        Server -->|Query| LLM["LLM Provider (OpenAI/Bedrock)"]
     end
-
-    style Client fill:#f9f,stroke:#333,stroke-width:2px
-    style Server fill:#bbf,stroke:#333,stroke-width:2px
 ```
 
 ### Interaction Sequence
@@ -72,14 +70,14 @@ sequenceDiagram
 Install the client package via pip:
 
 ```bash
-pip install memmachine
+pip install memmachine-client
 ```
 
 ## Hello World Example
 
 This complete example demonstrates the core workflow: connecting to the server, initializing a project workspace, and performing memory operations.
 
-```python
+```python title="MemMachineClient Hello World" Expandable
 import time
 from memmachine import MemMachineClient
 
@@ -90,9 +88,9 @@ def main():
 
     # 2. Define a Project Workspace
     # Projects segregate data within an organization.
-    # 'create_project' is idempotent; it returns the existing project if it exists.
+    # 'get_or_create_project' is idempotent; it returns the existing project if it exists.
     print("Initializing Project...")
-    project = client.create_project(
+    project = client.get_or_create_project(
         org_id="acme-corp",
         project_id="support-bot-v1",
         description="Memory store for customer support agent"
@@ -135,10 +133,26 @@ def main():
     print(f"Query: {query}")
     print("Results found:")
     for idx, item in enumerate(results.get('episodic_memory', [])):
-        print(f"[{idx+1}] {item['content']} (Role: {item['role']})")
+        print(f"[{idx+1}] {item['content']} (Role: {item['producer_role']})")
 
 if __name__ == "__main__":
     main()
+```
+
+The expected output from running the above Hello World script should look like this:
+```bash title="Hello World Expected Output"
+python sample.py 
+Initializing Project...
+Connected to Project: acme-corp/support-bot-v1
+Adding memories...
+
+Searching for context...
+Query: What should I suggest for dinner?
+Results found:
+[1] I am strictly vegetarian and I love spicy food. (Role: user)
+[2] Noted, I will recommend vegetarian spicy options. (Role: assistant)
+[3] I am strictly vegetarian and I love spicy food. (Role: user)
+[4] Noted, I will recommend vegetarian spicy options. (Role: assistant)
 ```
 
 ## Core Concepts

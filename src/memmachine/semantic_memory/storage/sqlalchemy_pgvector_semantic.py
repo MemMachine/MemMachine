@@ -1,5 +1,6 @@
 """SQLAlchemy-backed semantic storage implementation using pgvector."""
 
+import logging
 from pathlib import Path
 from typing import Any, overload
 
@@ -53,6 +54,8 @@ from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class BaseSemanticStorage(DeclarativeBase):
@@ -611,7 +614,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         expr: FilterComparison,
         table: type[Feature],
-    ) -> ColumnElement[bool]:
+    ) -> ColumnElement[bool] | None:
         column, is_metadata = self._resolve_feature_field(table, expr.field)
 
         return parse_sql_filter(
@@ -624,7 +627,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         expr: FilterExpr,
         table: type[Feature],
-    ) -> ColumnElement[bool]:
+    ) -> ColumnElement[bool] | None:
         if isinstance(expr, FilterComparison):
             return self._compile_feature_comparison_expr(expr, table)
 

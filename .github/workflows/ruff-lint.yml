@@ -3,6 +3,13 @@ name: Lint Python code
 permissions:
   contents: read
 
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  group: ruff-lint-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
+
 on:
   release:
   push:

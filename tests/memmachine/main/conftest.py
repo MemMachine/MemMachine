@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -107,10 +106,11 @@ def openai_chat_completions_language_model_config(
 
 @pytest.fixture(scope="session")
 def bedrock_language_model_config(
-    bedrock_integration_config,
+    bedrock_integration_language_model_config,
 ) -> tuple[str, LanguageModelsConf]:
     language_model_id = "bedrock_model"
-    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    config = bedrock_integration_language_model_config
+
     return (
         language_model_id,
         LanguageModelsConf.parse(
@@ -119,14 +119,10 @@ def bedrock_language_model_config(
                     language_model_id: {
                         "provider": "amazon-bedrock",
                         "config": {
-                            "model_id": bedrock_integration_config["model"],
-                            "aws_access_key_id": bedrock_integration_config[
-                                "aws_access_key_id"
-                            ],
-                            "aws_secret_access_key": bedrock_integration_config[
-                                "aws_secret_access_key"
-                            ],
-                            "region": region or "us-east-1",
+                            "model_id": config["model"],
+                            "aws_access_key_id": config["aws_access_key_id"],
+                            "aws_secret_access_key": config["aws_secret_access_key"],
+                            "region": config["aws_region"],
                         },
                     }
                 }
@@ -136,7 +132,12 @@ def bedrock_language_model_config(
 
 
 @pytest.fixture(
-    scope="session", params=["openai", "openai_chat_completions", "bedrock"]
+    scope="session",
+    params=[
+        "openai",
+        "openai_chat_completions",
+        pytest.param("bedrock", marks=[pytest.mark.slow]),
+    ],
 )
 def language_model_config(
     request,

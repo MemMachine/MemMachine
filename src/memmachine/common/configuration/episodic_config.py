@@ -4,7 +4,10 @@ from typing import Self, TypeVar
 
 from pydantic import BaseModel, Field
 
-from memmachine.common.configuration.metrics_conf import WithMetricsFactoryId
+from memmachine.common.configuration.mixin_confs import (
+    MetricsFactoryIdMixin,
+    YamlSerializableMixin,
+)
 
 TFull = TypeVar("TFull", bound=BaseModel)
 TPartial = TypeVar("TPartial", bound=BaseModel)
@@ -140,7 +143,7 @@ class LongTermMemoryConfPartial(BaseModel):
         return merge_partial_configs(self, other, LongTermMemoryConf)
 
 
-class EpisodicMemoryConf(WithMetricsFactoryId):
+class EpisodicMemoryConf(MetricsFactoryIdMixin, YamlSerializableMixin):
     """Configuration for episodic memory service."""
 
     session_key: str = Field(
@@ -174,7 +177,7 @@ class EpisodicMemoryConf(WithMetricsFactoryId):
     )
 
 
-class EpisodicMemoryConfPartial(BaseModel):
+class EpisodicMemoryConfPartial(YamlSerializableMixin):
     """Partial configuration for episodic memory with nested sections."""
 
     session_key: str | None = Field(

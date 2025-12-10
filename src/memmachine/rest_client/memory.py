@@ -13,6 +13,15 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from memmachine.common.api.spec import (
+    AddMemoriesSpec,
+    DeleteEpisodicMemorySpec,
+    DeleteSemanticMemorySpec,
+    MemoryMessage,
+    SearchMemoriesSpec,
+)
+from memmachine.main.memmachine import MemoryType
+
 if TYPE_CHECKING:
     from .client import MemMachineClient
 
@@ -272,23 +281,31 @@ class Memory:
             if episode_type:
                 combined_metadata["episode_type"] = episode_type
 
-            # Convert to v2 API format
-            v2_data = {
-                "org_id": self.__org_id,
-                "project_id": self.__project_id,
-                "messages": [
-                    {
-                        "content": content,
-                        "producer": producer,
-                        "produced_for": produced_for or "",
-                        "timestamp": datetime.now(tz=UTC)
-                        .isoformat()
-                        .replace("+00:00", "Z"),
-                        "role": role,  # "user", "assistant", or "system"
-                        "metadata": combined_metadata,
-                    }
-                ],
-            }
+            # Use shared API Pydantic models
+            message = MemoryMessage(
+                content=content,
+                producer=producer,
+                produced_for=produced_for or "",
+                timestamp=datetime.now(tz=UTC),
+                role=role,  # "user", "assistant", or "system"
+                metadata=combined_metadata,
+            )
+            # Determine memory types based on episode_type
+            memory_types = []
+            if episode_type:
+                if episode_type.lower() == "episodic":
+                    memory_types = [MemoryType.Episodic]
+                elif episode_type.lower() == "semantic":
+                    memory_types = [MemoryType.Semantic]
+            # If no episode_type specified, empty list means all types (server default)
+
+            spec = AddMemoriesSpec(
+                org_id=self.__org_id,
+                project_id=self.__project_id,
+                messages=[message],
+                types=memory_types,
+            )
+            v2_data = spec.model_dump(mode="json", exclude_none=True)
 
             response = self.client.request(
                 "POST",
@@ -382,15 +399,16 @@ class Memory:
         if merged_filters:
             filter_str = self._dict_to_filter_string(merged_filters)
 
-        # Convert to v2 API format
-        v2_search_data = {
-            "org_id": self.__org_id,
-            "project_id": self.__project_id,
-            "query": query,
-            "top_k": limit or 10,
-            "filter": filter_str,
-            "types": ["episodic", "semantic"],  # Search both types
-        }
+        # Use shared API Pydantic models
+        spec = SearchMemoriesSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            query=query,
+            top_k=limit or 10,
+            filter=filter_str,
+            types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
+        )
+        v2_search_data = spec.model_dump(mode="json", exclude_none=True)
 
         try:
             response = self.client.request(
@@ -527,7 +545,8 @@ class Memory:
 
     def delete_episodic(
         self,
-        episodic_id: str,
+        episodic_id: str = "",
+        episodic_ids: list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """
@@ -535,6 +554,7 @@ class Memory:
 
         Args:
             episodic_id: The unique identifier of the episodic memory to delete
+            episodic_ids: List of episodic memory IDs to delete (optional, can be used instead of episodic_id)
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -554,11 +574,13 @@ class Memory:
         if self._client_closed:
             raise RuntimeError("Cannot delete episodic memory: client has been closed")
 
-        v2_delete_data = {
-            "org_id": self.__org_id,
-            "project_id": self.__project_id,
-            "episodic_id": episodic_id,
-        }
+        spec = DeleteEpisodicMemorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            episodic_id=episodic_id,
+            episodic_ids=episodic_ids or [],
+        )
+        v2_delete_data = spec.model_dump(mode="json", exclude_none=True)
 
         try:
             response = self.client.request(
@@ -577,7 +599,8 @@ class Memory:
 
     def delete_semantic(
         self,
-        semantic_id: str,
+        semantic_id: str = "",
+        semantic_ids: list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """
@@ -585,6 +608,7 @@ class Memory:
 
         Args:
             semantic_id: The unique identifier of the semantic memory to delete
+            semantic_ids: List of semantic memory IDs to delete
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -604,11 +628,13 @@ class Memory:
         if self._client_closed:
             raise RuntimeError("Cannot delete semantic memory: client has been closed")
 
-        v2_delete_data = {
-            "org_id": self.__org_id,
-            "project_id": self.__project_id,
-            "semantic_id": semantic_id,
-        }
+        spec = DeleteSemanticMemorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            semantic_id=semantic_id,
+            semantic_ids=semantic_ids or [],
+        )
+        v2_delete_data = spec.model_dump(mode="json", exclude_none=True)
 
         try:
             response = self.client.request(
