@@ -13,6 +13,8 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+is_first_run=false
+
 ## Function to run a command with a timeout
 timeout() {
     local duration=$1
@@ -505,6 +507,7 @@ check_config_file() {
         fi
 
         set_config_defaults
+        is_first_run=true
     else
         print_success "configuration.yml file found"
     fi
@@ -513,17 +516,22 @@ check_config_file() {
 select_openai_base_url() {
     local base_url=""
     local reply=""
-    
-    print_prompt
-    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
-    if [[ $reply =~ ^[Yy]$ ]]; then
+
+    if [ "$is_first_run" = true ]; then
         print_prompt
-        read -p "Enter your OpenAI Base URL: " base_url
-        if [ -n "$base_url" ]; then
-            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            print_success "Set OpenAI Base URL to $base_url"
+        read -p "Model base URL is not set. Would you like to configure a custom model base URL? (y/N) " reply
+        if [[ $reply =~ ^[Yy]$ ]]; then
+            print_prompt
+            read -p "Please enter your model base URL [https://api.openai.com/v1]: " base_url
+            base_url=$(echo "${base_url:-https://api.openai.com/v1}" | tr -d '\n\r')
+            if [ -n "$base_url" ]; then
+                safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                print_success "Set model base URL to $base_url"
+            fi
         fi
+    else
+        print_success "Model model base URL appears to be configured"
     fi
 }
 
