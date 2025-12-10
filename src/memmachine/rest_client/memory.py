@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from memmachine.common.api import MemoryType
 from memmachine.common.api.spec import (
     AddMemoriesSpec,
     DeleteEpisodicMemorySpec,
@@ -20,7 +21,6 @@ from memmachine.common.api.spec import (
     MemoryMessage,
     SearchMemoriesSpec,
 )
-from memmachine.main.memmachine import MemoryType
 
 if TYPE_CHECKING:
     from .client import MemMachineClient
