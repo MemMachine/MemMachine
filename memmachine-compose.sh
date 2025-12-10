@@ -816,7 +816,7 @@ wait_for_health() {
     
     # Wait for PostgreSQL
     print_info "Waiting for PostgreSQL to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-postgres pg_isready -U ${POSTGRES_USER:-memmachine} -d ${POSTGRES_DB:-memmachine}; do sleep 2; done"; then
+    if timeout 120 bash -c "${COMPOSE_CMD} up -d --wait postgres"; then
         print_success "PostgreSQL is ready"
     else
         print_error "PostgreSQL failed to become ready in 120 seconds. Check container logs and configuration."
@@ -825,7 +825,7 @@ wait_for_health() {
     
     # Wait for Neo4j
     print_info "Waiting for Neo4j to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
+    if timeout 120 bash -c "${COMPOSE_CMD} up -d --wait neo4j"; then
         print_success "Neo4j is ready"
     else
         print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
