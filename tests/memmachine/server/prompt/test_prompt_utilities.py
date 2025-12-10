@@ -3,6 +3,10 @@
 import pytest
 
 from memmachine.server.prompt.crm_prompt import current_date_dow, enum_list
+from memmachine.server.prompt.prompt_utilities import (
+    InvalidMetaTagError,
+    parse_raw_meta_tags,
+)
 
 
 def test_current_date_dow_default():
@@ -29,3 +33,56 @@ def test_enum_list_single():
 
 def test_enum_list_multiple():
     assert enum_list(["A", "B", "C"]) == '"A", "B", "C"'
+
+
+def test_parse_basic():
+    raw = """
+    Key1: Value1
+    Key2: Value2
+    """
+    result = parse_raw_meta_tags(raw)
+    assert result == {
+        "Key1": "Value1",
+        "Key2": "Value2",
+    }
+
+
+def test_parse_strips_whitespace():
+    raw = """
+        Key1   :    Value1
+        Key2:Value2
+    """
+    result = parse_raw_meta_tags(raw)
+    assert result["Key1"] == "Value1"
+    assert result["Key2"] == "Value2"
+
+
+def test_parse_ignores_empty_lines():
+    raw = """
+
+    Key1: Value1
+
+    Key2: Value2
+
+    """
+    result = parse_raw_meta_tags(raw)
+    assert result == {
+        "Key1": "Value1",
+        "Key2": "Value2",
+    }
+
+
+def test_parse_allows_colons_in_value():
+    raw = "Title: Something: With: Colons"
+    result = parse_raw_meta_tags(raw)
+    assert result == {"Title": "Something: With: Colons"}
+
+
+def test_parse_raises_on_invalid_line():
+    raw = """
+    Key1: Value1
+    InvalidLineWithoutColon
+    """
+    with pytest.raises(InvalidMetaTagError) as excinfo:
+        parse_raw_meta_tags(raw)
+    assert "Invalid meta tag line" in str(excinfo.value)
