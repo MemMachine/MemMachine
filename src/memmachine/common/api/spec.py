@@ -6,11 +6,22 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 import regex
-from fastapi import HTTPException
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+try:
+    # Prefer real FastAPI HTTPException when available (server/runtime).
+    from fastapi import HTTPException as _HTTPError
+except ModuleNotFoundError:
+    # Lightweight fallback to avoid pulling FastAPI into the client package.
+    class _HTTPError(Exception):  # type: ignore[too-many-ancestors]
+        def __init__(self, status_code: int, detail: object | None = None) -> None:
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+
+from memmachine.common.api import MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
-from memmachine.main.memmachine import MemoryType
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
@@ -537,7 +548,7 @@ class RestErrorModel(BaseModel):
     ]
 
 
-class RestError(HTTPException):
+class RestError(_HTTPError):
     """HTTPException with a structured RestErrorModel as the 'detail'."""
 
     def __init__(
