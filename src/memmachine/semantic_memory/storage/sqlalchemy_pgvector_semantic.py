@@ -47,6 +47,7 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
+from memmachine.common.filter.sql_filter_util import parse_sql_filter
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -613,33 +614,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     ) -> ColumnElement[bool]:
         column, is_metadata = self._resolve_feature_field(table, expr.field)
 
-        if column is None:
-            raise ValueError(f"Unsupported feature filter field: {expr.field}")
-
-        op = expr.op
-        normalize = self._normalize_metadata_value if is_metadata else lambda v: v
-
-        match op:
-            case "is_null":
-                return column.is_(None)
-            case "is_not_null":
-                return column.is_not(None)
-            case "in":
-                values = self._ensure_list_value(expr.value)
-                if is_metadata:
-                    values = [normalize(v) for v in values]
-                return column.in_(values)
-            case ">" | "<" | ">=" | "<=" | "=":
-                value = normalize(self._ensure_scalar_value(expr.value, op))
-                return {
-                    ">": column > value,
-                    "<": column < value,
-                    ">=": column >= value,
-                    "<=": column <= value,
-                    "=": column == value,
-                }[op]
-            case _:
-                raise ValueError(f"Unsupported operator: {expr.op}")
+        return parse_sql_filter(
+            column=column,
+            is_metadata=is_metadata,
+            expr=expr,
+        )
 
     def _compile_feature_filter_expr(
         self,
@@ -663,29 +642,6 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
-    @staticmethod
-    def _normalize_metadata_value(
-        value: FilterablePropertyValue | list[FilterablePropertyValue],
-    ) -> str:
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        return "" if value is None else str(value)
-
-    @staticmethod
-    def _ensure_scalar_value(
-        value: FilterablePropertyValue | list[FilterablePropertyValue], op: str
-    ) -> FilterablePropertyValue:
-        if isinstance(value, list):
-            raise TypeError(f"'{op}' comparison cannot accept list values")
-        return value
-
-    @staticmethod
-    def _ensure_list_value(
-        value: FilterablePropertyValue | list[FilterablePropertyValue],
-    ) -> list[FilterablePropertyValue]:
-        if not isinstance(value, list):
-            raise TypeError("IN comparison requires a list of values")
-        return value
 
     @staticmethod
     def _resolve_feature_field(
