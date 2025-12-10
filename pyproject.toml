@@ -3,14 +3,14 @@ requires = ["uv_build"]
 build-backend = "uv_build"
 
 [tool.uv.workspace]
-members = ["packages/client", "packages/server"]
+members = ["packages/client", "packages/server", "packages/meta"]
 
 [tool.uv.sources]
 memmachine-server = { workspace = true }
 memmachine-client = { workspace = true }
 
 [project]
-name = "memmachine"
+name = "memmachine-dev"
 version = "0.1.0"
 dependencies = [
     "alembic>=1.17.1",
