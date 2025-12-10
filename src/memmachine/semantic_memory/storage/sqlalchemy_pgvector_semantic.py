@@ -30,10 +30,15 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, aliased, mapped_column
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    InstrumentedAttribute,
+    MappedColumn,
+    aliased,
+    mapped_column,
+)
 from sqlalchemy.sql import Delete, Select, func
 
-from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store.episode_model import EpisodeIdT
 from memmachine.common.errors import InvalidArgumentError, ResourceNotFoundError
 from memmachine.common.filter.filter_parser import (
@@ -645,12 +650,13 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
-
     @staticmethod
     def _resolve_feature_field(
         table: type[Feature],
         field: str,
-    ) -> tuple[Any, bool] | tuple[None, bool]:
+    ) -> (
+        tuple[MappedColumn[Any] | InstrumentedAttribute[Any], bool] | tuple[None, bool]
+    ):
         normalized = field
         field_mapping = {
             "set_id": table.set_id,

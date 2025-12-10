@@ -30,7 +30,6 @@ from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.episode_store.episode_model import Episode as EpisodeE
 from memmachine.common.episode_store.episode_model import EpisodeEntry, EpisodeType
 from memmachine.common.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
@@ -247,7 +246,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         filters: list[ColumnElement[bool]] = []
 
         if filter_expr is not None:
-            filters.append(self._compile_episode_filter_expr(filter_expr))
+            parsed_filter = self._compile_episode_filter_expr(filter_expr)
+            if parsed_filter is not None:
+                filters.append(parsed_filter)
 
         if start_time is not None:
             filters.append(Episode.created_at >= start_time)
@@ -267,7 +268,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     def _compile_episode_comparison_expr(
         self,
         expr: FilterComparison,
-    ) -> ColumnElement[bool]:
+    ) -> ColumnElement[bool] | None:
         column, is_metadata = self._resolve_episode_field(expr.field)
 
         return parse_sql_filter(
@@ -276,7 +277,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             expr=expr,
         )
 
-    def _compile_episode_filter_expr(self, expr: FilterExpr) -> ColumnElement[bool]:
+    def _compile_episode_filter_expr(
+        self, expr: FilterExpr
+    ) -> ColumnElement[bool] | None:
         if isinstance(expr, FilterComparison):
             return self._compile_episode_comparison_expr(expr)
 
@@ -291,7 +294,6 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             return or_(left, right)
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
 
     @staticmethod
     def _resolve_episode_field(
