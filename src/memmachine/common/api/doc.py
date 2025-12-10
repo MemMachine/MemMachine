@@ -205,8 +205,8 @@ class Examples:
     FILTER_MEM: ClassVar[list[str]] = [
         "metadata.user_id=123 AND metadata.session_id=abc",
     ]
-    MEMORY_TYPES: ClassVar[list[list[str]]] = [["Episodic", "Semantic"]]
-    MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["Episodic", "Semantic"]
+    MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
+    MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
     PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]
     EPISODIC_ID: ClassVar[list[str]] = ["123", "345"]
