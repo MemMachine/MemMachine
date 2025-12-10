@@ -1,0 +1,125 @@
+---
+title: "LangGraph"
+description: "Setting up MemMachine with LangGraph"
+icon: "circle-nodes"
+---
+
+For a complete, runnable example (including python files), see the official **[LangGraph Example](https://github.com/MemMachine/MemMachine/tree/main/examples/langgraph)** in the repository.
+
+## Overview
+
+MemMachine provides memory tools that can be integrated into LangGraph workflows to enable AI agents with persistent memory capabilities. This allows agents to remember past interactions, user preferences, and context across multiple sessions.
+
+## Configuration
+
+The demo can be configured via environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MEMORY_BACKEND_URL` | URL of the MemMachine backend service | `http://localhost:8080` |
+| `LANGGRAPH_GROUP_ID` | Group identifier for the demo | `langgraph_demo` |
+| `LANGGRAPH_AGENT_ID` | Agent identifier for the demo | `demo_agent` |
+| `LANGGRAPH_USER_ID` | User identifier for the demo | `demo_user` |
+| `LANGGRAPH_SESSION_ID` | Session identifier for the demo | `demo_session_001` |
+
+## Usage
+
+### Setting Environment Variables
+
+```bash
+# Set environment variables (optional)
+export MEMORY_BACKEND_URL="http://localhost:8080"
+export LANGGRAPH_GROUP_ID="my_group"
+export LANGGRAPH_AGENT_ID="my_agent"
+export LANGGRAPH_USER_ID="my_user"
+export LANGGRAPH_SESSION_ID="my_session"
+
+# Run the demo
+python examples/langgraph/demo.py
+```
+
+### Running the Demo
+
+```bash
+cd examples/langgraph
+python demo.py
+```
+
+## Integration Guide
+
+### 1. Initialize MemMachineTools
+
+```python
+import os
+from tool import MemMachineTools
+
+# Get configuration from environment variables or use defaults
+base_url = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
+group_id = os.getenv("LANGGRAPH_GROUP_ID", "my_group")
+agent_id = os.getenv("LANGGRAPH_AGENT_ID", "my_agent")
+user_id = os.getenv("LANGGRAPH_USER_ID", "user123")
+
+tools = MemMachineTools(
+    base_url=base_url,
+    group_id=group_id,
+    agent_id=agent_id,
+    user_id=user_id,
+)
+```
+
+### 2. Create Tool Functions
+
+```python
+from tool import create_add_memory_tool, create_search_memory_tool
+
+add_memory = create_add_memory_tool(tools)
+search_memory = create_search_memory_tool(tools)
+```
+
+### 3. Use in LangGraph Nodes
+
+```python
+from langgraph.graph import StateGraph, END
+
+def memory_node(state: AgentState):
+    # Search for relevant memories
+    search_result = search_memory(
+        query=state["messages"][-1].content,
+        user_id=state["user_id"],
+    )
+
+    # Add new memory
+    add_memory(
+        content=state["messages"][-1].content,
+        user_id=state["user_id"],
+    )
+
+    return {
+        "context": search_result.get("summary", ""),
+        "memory_tool_results": [search_result],
+    }
+
+# Build graph
+workflow = StateGraph(AgentState)
+workflow.add_node("memory", memory_node)
+workflow.set_entry_point("memory")
+workflow.add_edge("memory", END)
+```
+
+### 4. Run the Workflow
+
+```python
+app = workflow.compile()
+result = app.invoke({
+    "messages": [{"content": "I like Python"}],
+    "user_id": "user123",
+    "context": "",
+    "memory_tool_results": [],
+})
+```
+
+## Requirements
+
+- MemMachine server running (default: http://localhost:8080)
+- Python 3.12+
+- LangGraph (for full workflow integration)

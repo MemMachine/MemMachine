@@ -1,6 +1,4 @@
-"""
-Amazon Bedrock-based embedder implementation.
-"""
+"""Amazon Bedrock-based embedder implementation."""
 
 import asyncio
 import logging
@@ -9,34 +7,19 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import uuid4
 
+from botocore.exceptions import ClientError
 from langchain_aws import BedrockEmbeddings
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 
-from .data_types import SimilarityMetric
 from .embedder import Embedder
 
 logger = logging.getLogger(__name__)
 
 
 class AmazonBedrockEmbedderParams(BaseModel):
-    """
-    Parameters for AmazonBedrockEmbedder.
-
-    Attributes:
-        client (langchain_aws.BedrockEmbeddings):
-            BedrockEmbeddings client instance.
-        model_id (str):
-            ID of the Bedrock model to use for embedding
-            (e.g. 'amazon.titan-embed-text-v2:0').
-        similarity_metric (SimilarityMetric):
-            Similarity metric to use for comparing embeddings
-            (default: SimilarityMetric.COSINE).
-        max_retry_interval_seconds (int):
-            Maximal retry interval in seconds
-            (default: 120).
-    """
+    """Parameters for AmazonBedrockEmbedder."""
 
     client: InstanceOf[BedrockEmbeddings] = Field(
         ...,
@@ -61,20 +44,10 @@ class AmazonBedrockEmbedderParams(BaseModel):
 
 
 class AmazonBedrockEmbedder(Embedder):
-    """
-    Embedder that uses Amazon Bedrock models
-    to generate embeddings for inputs and queries.
-    """
+    """Embedder that uses Amazon Bedrock models for embeddings."""
 
-    def __init__(self, params: AmazonBedrockEmbedderParams):
-        """
-        Initialize an AmazonBedrockEmbedder
-        with the provided parameters.
-
-        Args:
-            params (AmazonBedrockEmbedderParams):
-                Parameters for the AmazonBedrockEmbedder.
-        """
+    def __init__(self, params: AmazonBedrockEmbedderParams) -> None:
+        """Initialize the embedder with Bedrock client parameters."""
         super().__init__()
 
         self._client = params.client
@@ -84,14 +57,23 @@ class AmazonBedrockEmbedder(Embedder):
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
         # Get dimensions by embedding a dummy string.
-        response = self._client.embed_documents(["."])
-        self._dimensions = len(response[0])
+        try:
+            response = self._client.embed_documents(["."])
+            self._dimensions = len(response[0])
+        except ClientError:
+            logger.exception("Failed to get embedding dimensions")
+
+    @property
+    def embeddings(self) -> BedrockEmbeddings:
+        """Return the underlying BedrockEmbeddings client."""
+        return self._client
 
     async def ingest_embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
+        """Embed input documents."""
         return await self._embed(
             inputs,
             self._ingest_embed_func,
@@ -102,6 +84,7 @@ class AmazonBedrockEmbedder(Embedder):
         self,
         inputs: list[Any],
     ) -> list[list[float]]:
+        """Call Bedrock for document embeddings."""
         return await self._client.aembed_documents(inputs)
 
     async def search_embed(
@@ -109,6 +92,7 @@ class AmazonBedrockEmbedder(Embedder):
         queries: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
+        """Embed search queries."""
         return await self._embed(
             queries,
             self._search_embed_func,
@@ -128,6 +112,7 @@ class AmazonBedrockEmbedder(Embedder):
         async_embed_func: Callable[[list[Any]], Coroutine[Any, Any, list[list[float]]]],
         max_attempts: int = 1,
     ) -> list[list[float]]:
+        """Shared retry logic for embedding requests."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
@@ -135,6 +120,7 @@ class AmazonBedrockEmbedder(Embedder):
 
         start_time = time.monotonic()
 
+        embeddings = []
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
             logger.debug(
@@ -142,7 +128,7 @@ class AmazonBedrockEmbedder(Embedder):
                 "Attempting to create embeddings using %s Amazon Bedrock model: "
                 "on attempt %d with max attempts %d",
                 embed_call_uuid,
-                self._model_id,
+                self.model_id,
                 attempt,
                 max_attempts,
             )
@@ -160,8 +146,8 @@ class AmazonBedrockEmbedder(Embedder):
                         f"due to assumed retryable {type(e).__name__}: "
                         f"max attempts {max_attempts} reached"
                     )
-                    logger.error(error_message)
-                    raise ExternalServiceAPIError(error_message)
+                    logger.exception(error_message)
+                    raise ExternalServiceAPIError(error_message) from e
 
                 logger.info(
                     "[call uuid: %s] "
@@ -173,7 +159,7 @@ class AmazonBedrockEmbedder(Embedder):
                     type(e).__name__,
                 )
                 await asyncio.sleep(
-                    min(sleep_seconds, self._max_retry_interval_seconds)
+                    min(sleep_seconds, self._max_retry_interval_seconds),
                 )
                 sleep_seconds *= 2
 
@@ -188,12 +174,15 @@ class AmazonBedrockEmbedder(Embedder):
 
     @property
     def model_id(self) -> str:
+        """Return the identifier for the embedding model."""
         return self._model_id
 
     @property
     def dimensions(self) -> int:
+        """Return the embedding dimensionality."""
         return self._dimensions
 
     @property
     def similarity_metric(self) -> SimilarityMetric:
+        """Return the similarity metric used by the embedder."""
         return self._similarity_metric

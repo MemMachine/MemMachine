@@ -1,0 +1,242 @@
+---
+title: "Server Introduction"
+description: "MemMachine Python Server Overview"
+icon: "python"
+---
+
+The **MemMachine Python Server SDK** is the core backend component powering your memory infrastructure. It provides all necessary tools to host, manage, and serve memory storage and retrieval operations—supporting both **short-term conversational memory (episodic)** and **long-term user data (semantic/profile memory)**.
+
+## Server Architecture and Components
+
+The MemMachine Python Server SDK provides the backend memory services that your applications or agents interact with. The architecture is modular, ensuring scalability and clarity between memory types and services.
+![MemMachine Server Architecture](/images/MemMachine_Architecture.png)
+### Key Components
+
+- **Server Client (`server_client`):** Acts as the primary interface to the MemMachine server, managing communication even when client code is running locally on the server machine.
+- **Episodic Memory Store:** Stores short-term conversational memory, linking it to a specific user, agent, and session.
+- **Profile Memory Store:** Stores long-term user attributes and knowledge, persisting across multiple sessions and agents.
+- **LLM Provider (Optional):** Integrates and manages queries for embedding, retrieval, or ranking, primarily used for semantic memory operations.
+- **Network Layer:** Handles all interaction over HTTP/REST, facilitating scalable, multi-agent, and multi-client access.
+
+This modular architecture ensures that server-side code can efficiently create projects, manage sessions, and read/write both short- and long-term memory, all unified through the Python SDK interface.
+
+## Benefits of the Server SDK
+
+The Server SDK is ideal for teams needing maximum control and flexibility over their memory infrastructure.
+
+- **Full Backend Control:** Run the memory service within your own infrastructure (self-hosted, on-prem, or cloud-managed setups).
+- **Unified Memory Store:** Seamlessly manage and serve both short-term (episodic) and long-term (semantic/profile) memories through a single access point.
+- **Plug-and-Play REST Interface:** Exposes a clean, HTTP/REST API that works with any client or language, including the official Python Client SDK.
+- **Scalable & Reliable:** Handles connections, data persistence, and integrated LLM operations (embedding, retrieval, ranking) while ensuring data consistency.
+- **Architectural Flexibility:** Integrates easily with existing load balancers, authentication layers, and external storage or LLM providers.
+
+## Typical Deployment and Usage
+
+The server is designed to be the central hub for all memory operations.
+
+1. **Deployment:** Deploy the server (e.g., via Docker / Docker Compose) to establish a stable memory backend endpoint.
+2. **Configuration:** Configure authentication, storage backends, and LLM integrations (e.g., embedding model, vector store settings) as needed.
+3. **Client Connection:** Connect client applications (using the Python Client SDK or any HTTP-capable client) to the server.
+4. **Interaction:** Allow agents, bots, or services to read and write memory, enabling personalized, context-aware behavior across sessions.
+
+For more information on deploying the MemMachine PythonSDK Server, please check out our [Quickstart Guide](../../getting_started/quickstart)
+
+## Hello World Example
+
+This basic example demonstrates how to **write and search memories**.
+<Tabs>
+<Tab title="hello_world_server.py">
+```python expandable
+import asyncio
+import os
+import sys
+from datetime import datetime, timezone
+from typing import Any
+
+# Ensure we can import memmachine
+sys.path.append(os.getcwd())
+
+from memmachine.main.memmachine import MemMachine, MemoryType
+from memmachine.common.episode_store import EpisodeEntry
+from memmachine.server.api_v2.mcp import initialize_resource
+
+class SessionDataWrapper:
+    """Wrapper to adapt SessionInfo to SessionData protocol."""
+    def __init__(self, session_info: Any):
+        self._info = session_info
+
+    @property
+    def session_key(self) -> str:
+        return self._info.episode_memory_conf.session_key
+
+    @property
+    def user_profile_id(self) -> str | None:
+        return None
+
+    @property
+    def role_profile_id(self) -> str | None:
+        return None
+
+    @property
+    def session_id(self) -> str | None:
+        return self.session_key
+
+async def main():
+    config_file = "configuration.yml"
+    if not os.path.exists(config_file):
+        print(f"Error: Configuration file '{config_file}' not found in the current directory.")
+        print("Please ensure you are running this script from the project root and that 'configuration.yml' exists.")
+        sys.exit(1)
+
+    print(f"Initializing MemMachine using {config_file}...")
+    
+    try:
+        # Initialize MemMachine using the helper from mcp module which handles config loading
+        mem_machine = await initialize_resource(config_file)
+        
+        # Create or get session
+        session_key = "hello_session"
+        print(f"Checking for session: {session_key}")
+        
+        session_info = await mem_machine.get_session(session_key=session_key)
+        if session_info:
+            print(f"Session {session_key} already exists, using it.")
+        else:
+            print(f"Creating session: {session_key}")
+            # Note: create_session might fail if DBs are not reachable
+            session_info = await mem_machine.create_session(session_key=session_key)
+        
+        # Wrap session info to satisfy SessionData protocol
+        session = SessionDataWrapper(session_info)
+        
+        # Add a memory
+        print("Adding memory...")
+        episode = EpisodeEntry(
+            content="Hello World! I am learning MemMachine.",
+            producer_id="user1",
+            producer_role="user",
+            created_at=datetime.now(timezone.utc)
+        )
+        await mem_machine.add_episodes(
+            session_data=session,
+            episode_entries=[episode],
+            target_memories=[MemoryType.Episodic]
+        )
+        
+        # Search memory
+        print("Searching memory...")
+        results = await mem_machine.query_search(
+            session_data=session,
+            query="What am I learning?",
+            limit=1
+        )
+        
+        found = False
+        if results.episodic_memory:
+            # Check short-term memory
+            if results.episodic_memory.short_term_memory and results.episodic_memory.short_term_memory.episodes:
+                print(f"Found in Short Term Memory: {results.episodic_memory.short_term_memory.episodes[0].content}")
+                found = True
+            
+            # Check long-term memory
+            if results.episodic_memory.long_term_memory and results.episodic_memory.long_term_memory.episodes:
+                print(f"Found in Long Term Memory: {results.episodic_memory.long_term_memory.episodes[0].content}")
+                found = True
+                
+        if not found:
+            print("No memory found (might need time to index or mock setup)")
+
+        # Cleanup session
+        print("Cleaning up session...")
+        await mem_machine.delete_session(session)
+        await mem_machine.stop()
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"An error occurred: {e}")
+        print("Ensure Neo4j is running and API keys are set in configuration.yml.")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+```
+
+</Tab>
+<Tab title="Expected Output">
+When running inside the memmachine-app (server) Docker container, the output looks like this:
+```bash expandable
+root@bfd3cd481517:/app# python3 ./hello_world_server.py
+Initializing MemMachine using configuration.yml...
+Checking for session: hello_session
+Creating session: hello_session
+Adding memory...
+2025-12-06 00:39:37,443 [INFO] httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-12-06 00:39:37,474 [INFO] neo4j.notifications - Received notification from DBMS server: <GqlStatusObject gql_status='03N90', status_description='info: cartesian product. The disconnected patterns `(source:SANITIZED_Derivative_u5f_hello_u5f_session {uid: edge.source_uid}), (target:SANITIZED_Episode_u5f_hello_u5f_session {uid: edge.target_uid})` build a cartesian product. A cartesian product may produce a large amount of data and slow down query processing.', position=<SummaryInputPosition line=2, column=1, offset=22>, raw_classification='PERFORMANCE', classification=<NotificationClassification.PERFORMANCE: 'PERFORMANCE'>, raw_severity='INFORMATION', severity=<NotificationSeverity.INFORMATION: 'INFORMATION'>, diagnostic_record={'_classification': 'PERFORMANCE', '_status_parameters': {'pat': '(source:SANITIZED_Derivative_u5f_hello_u5f_session {uid: edge.source_uid}), (target:SANITIZED_Episode_u5f_hello_u5f_session {uid: edge.target_uid})'}, '_severity': 'INFORMATION', '_position': {'offset': 22, 'line': 2, 'column': 1}, 'OPERATION': '', 'OPERATION_CODE': '0', 'CURRENT_SCHEMA': '/'}> for query: 'UNWIND $edges AS edge\nMATCH    (source:SANITIZED_Derivative_u5f_hello_u5f_session {uid: edge.source_uid}),    (target:SANITIZED_Episode_u5f_hello_u5f_session {uid: edge.target_uid})\nCREATE (source)    -[r:SANITIZED_DERIVED_u5f_FROM_u5f_hello_u5f_session {uid: edge.uid}]->    (target)\nSET r += edge.properties'
+Searching memory...
+2025-12-06 00:39:37,480 [INFO] alembic.runtime.migration - Context impl PostgresqlImpl.
+2025-12-06 00:39:37,480 [INFO] alembic.runtime.migration - Will assume transactional DDL.
+2025-12-06 00:39:38,200 [INFO] httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-12-06 00:39:38,669 [INFO] httpx - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+Found in Short Term Memory: Hello World! I am learning MemMachine.
+Cleaning up session...
+```
+</Tab>
+</Tabs>
+
+### Useful Tips for Working in a Docker Container
+
+**Connecting to a running MemMachine Server Container**
+
+To connect to the `memmachine-app` container with an interactive Bash shell, run this from the host:
+```bash
+docker exec -it memmachine-app /bin/bash
+```
+You'll see a new prompt similar to this, which confirms you're inside the container:
+```bash
+root@bfd3cd481517:/app#
+```
+
+**Creating files inside the container**
+
+This method is intended for testing only; it should not be used for developing applications.
+`vim` and other editors are not available. Instead, use:
+```bash
+cat > my_file.py << 'EOF'
+# Paste your code here
+EOF
+``` 
+
+## Core Concepts
+
+The Python Server SDK exposes several key APIs for managing memories. These are the foundational concepts for understanding server interactions:
+
+### Episodic Memory (`episodic_memory`)
+
+- Manages short-term memory tied to a user, agent, and session.
+- Stores conversation-like events that are context-specific and transient.
+- Main system calls: `add()`, `search()`, `get_all()`.
+
+### Episodic Memory Manager (`episodic_memory_manager`)
+
+- Provides management utilities for episodic memories across multiple sessions or users.
+- Handles session lifecycle, cleanup, and advanced memory queries.
+
+### Profile Memory (`profile_memory`)
+
+- Manages long-term, persistent user memory.
+- Stores attributes like preferences, traits, or other semantic knowledge.
+- Main system calls: `upsert()`, `get_all()`, `delete()`.
+
+### Memory Types (`memory_types`)
+
+- Defines the different types of memories available: episodic, profile, and possibly hybrid semantic stores.
+- Provides a consistent interface for creating, retrieving, and interacting with each memory type.
+
+## Intended Audience
+
+The MemMachine Python Server SDK is best suited for:
+
+- Developers or teams who need to **self-host** their memory backend for maximum control and data privacy.
+- Scenarios where **multiple agents, services, or languages** need to access a shared memory store.
+- Use cases requiring **custom configuration** (storage, LLM provider, scaling, network topology) beyond what a managed solution provides.

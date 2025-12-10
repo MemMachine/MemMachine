@@ -21,7 +21,7 @@ After the re-ranker completes it's activity, memory is stored into an associated
 
 ### Semantic Memory
 
-Semantic, or profile memory specifically focuses on information and data specific to a user and their experience.  The data is stored in a PostgreSQL database.
+Semantic, or profile memory specifically focuses on information and data specific to a user and their experience.  The data is stored in an SQL database, such as PostgreSQL.
 
 **Memory Storage Process**
      1. Raw user messages go into `history` table
@@ -38,8 +38,9 @@ Semantic, or profile memory specifically focuses on information and data specifi
 
 #### Database Semantic Memory Table Structures
 
-MemMachine is built on a **PostgreSQL database**, which uses the pgvector extension to perform an efficient vector similarity search. Think of this as a way to instantly find similar or related information. The system's memory is organized across **three main tables** that work together to store user profiles, conversation history, and the key relationships between them.
+MemMachine is built on a **PostgreSQL database**, which uses the pgvector extension to perform an efficient vector similarity search. Think of this as a way to instantly find similar or related information.
 
+The Semantic Memory system uses two main tables to organize user profiles and their sources. Note that raw conversation history is now managed by the separate **Episode Store**, and semantic features cite those episodes directly.
 
 <Tabs>
     <Tab title ="Semantic Table">
@@ -47,25 +48,20 @@ MemMachine is built on a **PostgreSQL database**, which uses the pgvector extens
  
  **Purpose:** This is where we store a user's profile information. We use a **two-level key-value structure** (tag → feature → value) and **vector embeddings** to make it easy to find relevant user characteristics quickly through a **semantic search**.
 
-Here's an example Semantic table:
+Here's an example Semantic table (`prof`):
 ```bash
-Column   |           Type           | Collation | Nullable |             Default              
-------------+--------------------------+-----------+----------+----------------------------------
- id         | integer                  |           | not null | nextval('prof_id_seq'::regclass)
- user_id    | text                     |           | not null | 
- tag        | text                     |           | not null | 'Miscellaneous'::text
- feature    | text                     |           | not null | 
- value      | text                     |           | not null | 
- create_at  | timestamp with time zone |           | not null | CURRENT_TIMESTAMP
- update_at  | timestamp with time zone |           | not null | CURRENT_TIMESTAMP
- embedding  | vector                   |           | not null | 
- metadata   | jsonb                    |           | not null | '{}'::jsonb
- isolations | jsonb                    |           | not null | '{}'::jsonb
-Indexes:
-    "prof_pkey" PRIMARY KEY, btree (id)
-    "prof_user_idx" btree (user_id)
-Referenced by:
-    TABLE "citations" CONSTRAINT "citations_profile_id_fkey" FOREIGN KEY (profile_id) REFERENCES prof(id) ON DELETE CASCADE
+Column   |           Type           | Nullable |             Default              
+------------+--------------------------+----------+----------------------------------
+ id         | integer                  | not null | nextval('prof_id_seq'::regclass)
+ set_id     | text                     | not null | 
+ category   | text                     | not null |
+ tag        | text                     | not null | 'Miscellaneous'::text
+ feature    | text                     | not null | 
+ value      | text                     | not null | 
+ create_at  | timestamp with time zone | not null | CURRENT_TIMESTAMP
+ update_at  | timestamp with time zone | not null | CURRENT_TIMESTAMP
+ embedding  | vector                   | not null | 
+ metadata   | jsonb                    | not null | '{}'::jsonb
 ```
 
 Here are the fields you'll find in this table:
@@ -73,87 +69,45 @@ Here are the fields you'll find in this table:
 | Field       | Explanation                                                  |
 | ----------- | ------------------------------------------------------------ |
 | id        | Unique identifier for each knowledge entry. |
-| user_id   | This integer is a unique ID specific to the user that is interacting with the agent.  The ID organizes all information about the user, and only this user. |
+| set_id    | A unique ID organizing the information (e.g., grouping by user or role). |
+| category  | The category of information (e.g., "user_profile", "role_definition"). |
 | tag       | A high-level categorization (e.g., "Preferences", "Skills", "Background"). |
 | feature   | An executive summary of the information (e.g., "likes_pizza", "programming_language") |
 | value     | Detailed content of the knowledge (e.g., "Margherita with extra cheese", "Python, JavaScript, Go") |
 | create_at | This is a timestamp for when the listing in the table was created. |
 | update_at | This is a timestamp for when the listing in the table was last updated. |
-| embedding | MemMachine creates a numerical fingerprint (vector embedding) for each memory, enabling smart, meaning-based searches to find the most relevant context. The dimension depends on the configured embedder (e.g., 768 for nomic-embed-text, 1536 for some OpenAI models). |
+| embedding | MemMachine creates a numerical fingerprint (vector embedding) for each memory, enabling smart, meaning-based searches. |
 | metadata  | A JSONB field for storing additional structured information about the knowledge entry. |
-| isolations | A JSONB field for storing isolation parameters, which can be used to restrict access to certain knowledge entries based on specific criteria. |
 
 <Danger>
 **Vector Dimension Mismatch** 
 
-Vector dimension in a memory table must never change.
-
-If you switch to an embedding model that generates vectors of a different dimension (length), all similarity searches will immediately fail due to the mismatch.
+Vector dimension in a memory table must never change. If you switch to an embedding model that generates vectors of a different dimension (length), all similarity searches will immediately fail.
 
 Solution: You must either re-embed all existing memory data with the new model, or use a separate table/namespace for the new model's embeddings.
 </Danger>
-<Note> The `unique_utfv` constraint ensures no duplicate knowledge entries for the same user, tag, feature, and value combination. </Note>
-</Tab>
-    <Tab title="History Table">
-
-**Description:** This table holds all the messages and interactions from a conversation. It's how the system can remember **context** and refer back to what was said, allowing for a more coherent and helpful experience.
-
-**Purpose:** This table maintains a **history** of conversations and interactions. This record helps build comprehensive user profiles and provides crucial **context**.
-
-Below is an example of a History Table:
-```bash
-   Column   |           Type           | Collation | Nullable |               Default               
-------------+--------------------------+-----------+----------+-------------------------------------
- id         | integer                  |           | not null | nextval('history_id_seq'::regclass)
- user_id    | text                     |           | not null | 
- ingested   | boolean                  |           | not null | false
- content    | text                     |           | not null | 
- create_at  | timestamp with time zone |           | not null | CURRENT_TIMESTAMP
- metadata   | jsonb                    |           | not null | '{}'::jsonb
- isolations | jsonb                    |           | not null | '{}'::jsonb
-Indexes:
-    "history_pkey" PRIMARY KEY, btree (id)
-    "history_user_idx" btree (user_id)
-    "history_user_ingested_idx" btree (user_id, ingested)
-    "history_user_ingested_ts_desc" btree (user_id, ingested, create_at DESC)
-Referenced by:
-    TABLE "citations" CONSTRAINT "citations_content_id_fkey" FOREIGN KEY (content_id) REFERENCES history(id) ON DELETE CASCADE
-```
-Here are the fields you'll find in this table:
-
-| Field       | Explanation                                                  |
-| ----------- | ------------------------------------------------------------ |
-| id          | Unique identifier for each conversation entry. |
-| user_id     | This integer is a unique ID specific to the user that is interacting with the agent.  The ID organizes all information about the user, and only this user. |
-| ingested    | A boolean flag indicating whether this message has been processed by the profile memory ingestion system. |
-| content     | The actual conversation text |
-| create_at  | This is a timestamp for when the listing in the table was created. |
-| metadata    | A JSONB field for storing additional structured information about the conversation entry. |
-| isolations | A JSONB field for storing isolation parameters, which can be used to restrict access to certain conversation entries based on specific criteria. |
-
 </Tab>
     <Tab title="Citations Table">
 
-**Description:** This table acts as a link between a user's profile and their conversation history. It connects profile features to the specific conversations that support or cite them.
+**Description:** This table acts as a link between a semantic feature and the episodes (messages) that support it.
 
-**Purpose:** This table links profile features to the conversation history that created them. This lets you trace exactly where a feature came from and confirm its validity.
+**Purpose:** This table links profile features to the specific **Episode IDs** that created them. This allows you to trace exactly which conversation turn resulted in a specific profile fact, providing provenance and validatability.
 
 Below is an example of a Citations Table:
 ```bash
-    Column   |  Type   | Collation | Nullable | Default 
-------------+---------+-----------+----------+---------
- profile_id | integer |           | not null | 
- content_id | integer |           | not null | 
+    Column   |  Type   | Nullable | Default 
+------------+---------+----------+---------
+ profile_id | integer | not null | 
+ episode_id | text    | not null | 
 Indexes:
-    "citations_pkey" PRIMARY KEY, btree (profile_id, content_id)
+    "citations_pkey" PRIMARY KEY, btree (profile_id, episode_id)
 Foreign-key constraints:
-    "citations_content_id_fkey" FOREIGN KEY (content_id) REFERENCES history(id) ON DELETE CASCADE
-    "citations_profile_id_fkey" FOREIGN KEY (profile_id) REFERENCES prof(id) ON DELETE CASCADEgit st
+    "citations_profile_id_fkey" FOREIGN KEY (profile_id) REFERENCES prof(id) ON DELETE CASCADE
 ```
 This table consists of the following fields:
 | Field       | Explanation                                                  |
 | ----------- | ------------------------------------------------------------ |
 | profile_id  | References the knowledge entry in `prof` |
-| content_id  | References the conversation source in `history` |
+| episode_id  | References the unique ID of the source episode (stored in the Episode Store). |
     </Tab>
 </Tabs>

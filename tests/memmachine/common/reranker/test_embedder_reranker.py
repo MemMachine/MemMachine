@@ -2,36 +2,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from memmachine.common.embedder import Embedder, SimilarityMetric
+from memmachine.common.data_types import SimilarityMetric
+from memmachine.common.embedder import Embedder
 from memmachine.common.reranker.embedder_reranker import (
     EmbedderReranker,
     EmbedderRerankerParams,
 )
-
-
-class FakeEmbedder(Embedder):
-    def __init__(self, similarity_metric=SimilarityMetric.COSINE):
-        super().__init__()
-
-        self._similarity_metric = similarity_metric
-
-    async def ingest_embed(self, inputs: list[str]) -> list[list[float]]:
-        return [[float(len(input)), -float(len(input))] for input in inputs]
-
-    async def search_embed(self, queries: list[str]) -> list[list[float]]:
-        return [[float(len(query)), -float(len(query))] for query in queries]
-
-    @property
-    def model_id(self) -> str:
-        return "fake-model"
-
-    @property
-    def dimensions(self) -> int:
-        return 2
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return self._similarity_metric
+from tests.memmachine.common.reranker.fake_embedder import FakeEmbedder
 
 
 @pytest.fixture(
@@ -40,7 +17,7 @@ class FakeEmbedder(Embedder):
         SimilarityMetric.DOT,
         SimilarityMetric.EUCLIDEAN,
         SimilarityMetric.MANHATTAN,
-    ]
+    ],
 )
 def embedder(request):
     return FakeEmbedder(similarity_metric=request.param)
@@ -62,7 +39,7 @@ def query(request):
         ["Apples are fruits.", "Tomatoes are red.", ""],
         [""],
         [],
-    ]
+    ],
 )
 def candidates(request):
     return request.param

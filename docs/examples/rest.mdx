@@ -6,96 +6,119 @@ icon: "bed"
 
 # REST API Examples
 
+## Hello World: A Guide to the MemMachine RESTful API v2
 
- ## Hello World: A Guide to the MemMachine RESTful API
-
-This guide provides a quick and simple way to get started with the MemMachine RESTful API using `curl` commands.  It can also be found in our [Quick Start Guide](https://memmachine.ai/docs/getting-started/quick-start-guide).
+This guide provides a quick and simple way to get started with the MemMachine RESTful API v2 using `curl` commands.
 
 ### Prerequisites
 
-First, make sure your FastAPI application is running. Open your terminal, navigate to the directory containing your `app.py` file, and run the following command. The output should confirm that the server is listening for requests.
+Ensure your MemMachine server is running.
 
+```bash
+memmachine-server
 ```
-uvicorn app:app --reload
-```
+
 <Steps>
-<Step title="Get All Sessions">
+<Step title="List Projects">
 
-The simplest way to start is by checking for existing sessions. This `GET` request doesn't require any data. You will likely see an empty list since no sessions have been created yet.
+Check for existing projects. This `POST` request returns a list of all projects available in your organization.
 
+**Command:**
+
+```bash
+curl -X POST "http://127.0.0.1:8080/api/v2/projects/list" \
+-H "Content-Type: application/json" \
+-d '{}'
 ```
-curl http://127.0.0.1:8080/v1/sessions
+</Step>
+<Step title="Create a Project">
+
+Before adding memories, you must ensure a project exists.
+
+**Command:**
+
+```bash
+curl -X POST "http://127.0.0.1:8080/api/v2/projects" \
+-H "Content-Type: application/json" \
+-d '{
+  "org_id": "my-org",
+  "project_id": "my-first-project",
+  "description": "A test project for REST API",
+  "config": {
+    "embedder": "my-openai-embedder",
+    "reranker": "my-rrf-reranker"
+  }
+}'
 ```
 </Step>
 <Step title="Add a New Memory">
 
-This is where you'll create your first memory episode. The `POST /v1/memories` endpoint requires a JSON body that includes session details, a producer, a recipient, and the content of the memory itself.
+The `POST /api/v2/memories` endpoint allows you to add one or more messages to the system.
 
 **Command:**
 
-```
-curl -X POST "http://127.0.0.1:8080/v1/memories" \
+```bash
+curl -X POST "http://127.0.0.1:8080/api/v2/memories" \
 -H "Content-Type: application/json" \
 -d '{
-  "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
-  },
-  "producer": "test_user",
-  "produced_for": "test_agent",
-  "episode_content": "This is a simple test memory.",
-  "episode_type": "message",
-  "metadata": {}
+  "org_id": "my-org",
+  "project_id": "my-first-project",
+  "messages": [
+    {
+      "content": "This is a simple test memory.",
+      "producer": "user-alice",
+      "produced_for": "agent-bob",
+      "role": "user",
+      "timestamp": "2025-11-24T10:00:00Z",
+      "metadata": {
+        "type": "fact",
+        "topic": "testing"
+      }
+    }
+  ]
 }'
 ```
 
 **Expected Output:**
 
-You will receive an empty `200 OK` response, confirming the memory was added successfully.
+You will receive a JSON response containing the results of the operation.
 </Step>
 <Step title="Search for the Memory">
 
-Now that a memory has been added, let's try to find it. The `POST /v1/memories/search` endpoint also requires a JSON body to specify the search query and session.
+Now let's find the memory we just added. The `POST /api/v2/memories/search` endpoint searches both episodic and semantic memory.
 
 **Command:**
 
-```
-curl -X POST "http://127.0.0.1:8080/v1/memories/search" \
+```bash
+curl -X POST "http://127.0.0.1:8080/api/v2/memories/search" \
 -H "Content-Type: application/json" \
 -d '{
-  "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
-  },
+  "org_id": "my-org",
+  "project_id": "my-first-project",
   "query": "simple test memory",
-  "filter": {},
-  "limit": 5
+  "top_k": 5,
+  "types": ["episodic", "semantic"]
 }'
 ```
 
 **Expected Output:**
 
-You should see a `200 OK` response containing the search results, including the memory episode you just added. The output will be formatted as a JSON object, confirming that your memory was successfully found.
+You should see a JSON response containing `episodic_memory` and `semantic_memory` results that match your query.
 </Step>
-<Step title=" Delete the Session Data">
+<Step title="Delete Memories">
 
-To clean up after your test, you can use the `DELETE /v1/memories` endpoint. This also requires a JSON body to specify which session's data should be removed.
+To clean up, you can use the `POST /api/v2/memories/delete` endpoint to remove memories matching a specific filter.
 
 **Command:**
 
-```
-curl -X DELETE "http://127.0.0.1:8080/v1/memories" \
+```bash
+curl -X POST "http://127.0.0.1:8080/api/v2/memories/delete" \
 -H "Content-Type: application/json" \
 -d '{
-  "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
+  "org_id": "my-org",
+  "project_id": "my-first-project",
+  "filter": {
+    "producer": "user-alice"
   }
 }'
 ```

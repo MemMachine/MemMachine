@@ -1,10 +1,12 @@
 import logging
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 import requests
 from fastapi import FastAPI
 from query_constructor import HealthAssistantQueryConstructor
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 MEMORY_BACKEND_URL = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
@@ -32,18 +34,20 @@ async def store_data(user_id: str, query: str):
             "episode_type": "message",
             "metadata": {
                 "speaker": user_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "type": "message",
             },
         }
 
         response = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories", json=episode_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories",
+            json=episode_data,
+            timeout=1000,
         )
         response.raise_for_status()
         return {"status": "success", "data": response.json()}
     except Exception:
-        logging.exception("Error occurred in /memory get_data")
+        logger.exception("Error occurred in /memory get_data")
         return {"status": "error", "message": "Internal error in /memory get_data"}
 
 
@@ -63,27 +67,34 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "filter": {"producer_id": user_id},
         }
 
-        logging.debug(
-            f"Sending POST request to {MEMORY_BACKEND_URL}/v1/memories/search"
+        logger.debug(
+            "Sending POST request to %s/v1/memories/search",
+            MEMORY_BACKEND_URL,
         )
-        logging.debug(f"Search data: {search_data}")
+        logger.debug("Search data: %s", search_data)
 
         response = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories/search",
+            json=search_data,
+            timeout=1000,
         )
 
-        logging.debug(f"Response status: {response.status_code}")
-        logging.debug(f"Response headers: {dict(response.headers)}")
+        logger.debug("Response status: %s", response.status_code)
+        logger.debug("Response headers: %s", dict(response.headers))
 
         if response.status_code != 200:
-            logging.error(f"Backend returned {response.status_code}: {response.text}")
+            logger.error(
+                "Backend returned %s: %s",
+                response.status_code,
+                response.text,
+            )
             return {
                 "status": "error",
                 "message": "Failed to retrieve memory data",
             }
 
         response_data = response.json()
-        logging.debug(f"Response data: {response_data}")
+        logger.debug("Response data: %s", response_data)
 
         content = response_data.get("content", {})
         episodic_memory = content.get("episodic_memory", [])
@@ -104,7 +115,9 @@ async def get_data(query: str, user_id: str, timestamp: str):
                 context_str = str(episodic_memory)
 
         formatted_query = query_constructor.create_query(
-            profile=profile_str, context=context_str, query=query
+            profile=profile_str,
+            context=context_str,
+            query=query,
         )
 
         return {
@@ -114,7 +127,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
             "query_type": "example",
         }
     except Exception:
-        logging.exception("Error occurred in /memory get_data")
+        logger.exception("Error occurred in /memory get_data")
         return {"status": "error", "message": "Internal error in /memory get_data"}
 
 
@@ -135,18 +148,20 @@ async def store_and_search_data(user_id: str, query: str):
             "episode_type": "message",
             "metadata": {
                 "speaker": user_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "type": "message",
             },
         }
 
         resp = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories", json=episode_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories",
+            json=episode_data,
+            timeout=1000,
         )
 
-        logging.debug(f"Store-and-search response status: {resp.status_code}")
+        logger.debug("Store-and-search response status: %s", resp.status_code)
         if resp.status_code != 200:
-            logging.error(f"Store failed with {resp.status_code}: {resp.text}")
+            logger.error("Store failed with %s: %s", resp.status_code, resp.text)
             return {
                 "status": "error",
                 "message": "Failed to store memory data",
@@ -160,13 +175,18 @@ async def store_and_search_data(user_id: str, query: str):
         }
 
         search_resp = requests.post(
-            f"{MEMORY_BACKEND_URL}/v1/memories/search", json=search_data, timeout=1000
+            f"{MEMORY_BACKEND_URL}/v1/memories/search",
+            json=search_data,
+            timeout=1000,
         )
 
-        logging.debug(f"Store-and-search response status: {search_resp.status_code}")
+        logger.debug(
+            "Store-and-search response status: %s",
+            search_resp.status_code,
+        )
         if search_resp.status_code != 200:
-            logging.error(
-                f"Search failed with {search_resp.status_code}: {search_resp.text}"
+            logger.error(
+                "Search failed with %s: %s", search_resp.status_code, search_resp.text
             )
             return {
                 "status": "error",
@@ -196,20 +216,21 @@ async def store_and_search_data(user_id: str, query: str):
                 context_str = str(episodic_memory)
 
         formatted_response = query_constructor.create_query(
-            profile=profile_str, context=context_str, query=query
+            profile=profile_str,
+            context=context_str,
+            query=query,
         )
 
         if profile_memory and episodic_memory:
             return f"Profile: {profile_memory}\n\nContext: {episodic_memory}\n\nFormatted Response:\n{formatted_response}"
-        elif profile_memory:
+        if profile_memory:
             return f"Profile: {profile_memory}\n\nFormatted Response:\n{formatted_response}"
-        elif episodic_memory:
+        if episodic_memory:
             return f"Context: {episodic_memory}\n\nFormatted Response:\n{formatted_response}"
-        else:
-            return f"Message ingested successfully. No relevant context found yet.\n\nFormatted Response:\n{formatted_response}"
+        return f"Message ingested successfully. No relevant context found yet.\n\nFormatted Response:\n{formatted_response}"
 
     except Exception:
-        logging.exception("Error occurred in store_and_search_data")
+        logger.exception("Error occurred in store_and_search_data")
         return {"status": "error", "message": "Internal error in store_and_search"}
 
 

@@ -14,12 +14,15 @@ RUN apt-get update && \
 RUN python -m pip install --upgrade pip
 
 # Copy uv binary from the source image INTO the builder stage
-COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
+COPY packages/ packages/
+COPY src/ src/
+COPY README.md README.md
 
 # Determine whether to include GPU dependencies
 ARG GPU="false"
@@ -27,9 +30,9 @@ ARG GPU="false"
 # Install dependencies into a virtual environment, but NOT the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --locked --no-install-project --no-editable --no-dev --extra gpu; \
+    uv sync --locked --no-install-project --no-editable --no-dev --extra gpu; \
     else \
-        uv sync --locked --no-install-project --no-editable --no-dev; \
+    uv sync --locked --no-install-project --no-editable --no-dev; \
     fi
 
 # Copy the application source code
@@ -38,9 +41,9 @@ COPY . /app
 # Install the project itself from the local source
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --locked --no-editable --no-dev --extra gpu; \
+    uv sync --locked --no-editable --no-dev --extra gpu; \
     else \
-        uv sync --locked --no-editable --no-dev; \
+    uv sync --locked --no-editable --no-dev; \
     fi
 
 #
@@ -69,5 +72,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Download NLTK data and models
 RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords')"
 
+# Set host to 0.0.0.0 to allow external access
+ENV HOST=0.0.0.0
+
 EXPOSE 8080
-CMD ["sh", "-c", "memmachine-sync-profile-schema && memmachine-server"]
+CMD ["sh", "-c", "memmachine-server"]

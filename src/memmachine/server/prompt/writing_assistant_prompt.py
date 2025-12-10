@@ -1,7 +1,13 @@
 """
-Writing Assistant prompt for MemMachine
-Handles writing style analysis and content generation using persona-based approach
+Writing Assistant prompt for MemMachine.
+
+Handles writing style analysis and content generation using persona-based approach.
 """
+
+from memmachine.semantic_memory.semantic_model import (
+    RawSemanticPrompt,
+    SemanticCategory,
+)
 
 # -----------------------
 # WRITING STYLE FEATURES
@@ -435,26 +441,37 @@ CONFIG = {
 # -----------------------
 # Main Configuration Export
 # -----------------------
-def get_writing_assistant_config():
-    """Get the complete writing assistant configuration"""
+def get_writing_assistant_config() -> dict:
+    """Get the complete writing assistant configuration."""
     return CONFIG.copy()
 
 
-def get_update_prompt():
-    """Get the profile update prompt"""
+def get_update_prompt() -> str:
+    """Get the profile update prompt."""
     return UPDATE_PROMPT
 
 
-def get_query_construction_prompt():
-    """Get the query construction prompt"""
+def get_query_construction_prompt() -> str:
+    """Get the query construction prompt."""
     return QUERY_CONSTRUCTION_PROMPT
 
 
-def get_writing_style_features():
-    """Get the list of writing style features"""
+def get_writing_style_features() -> list[str]:
+    """Get the list of writing style features."""
     return WRITING_STYLE_FEATURES.copy()
 
 
-def get_consolidation_prompt():
-    """Get the consolidation prompt"""
+def get_consolidation_prompt() -> str:
+    """Get the consolidation prompt."""
     return CONSOLIDATION_PROMPT
+
+
+WritingAssistantSemanticCategory = SemanticCategory(
+    name="writing_assistant",
+    prompt=RawSemanticPrompt(
+        update_prompt=get_update_prompt(),
+        consolidation_prompt=get_consolidation_prompt(),
+    ),
+)
+
+SEMANTIC_TYPE = WritingAssistantSemanticCategory

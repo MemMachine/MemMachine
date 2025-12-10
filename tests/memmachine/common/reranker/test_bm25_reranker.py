@@ -11,8 +11,8 @@ def reranker():
     setup_nltk()
     return BM25Reranker(
         BM25RerankerParams(
-            tokenize=lambda text: re.sub(r"\W+", " ", text).lower().split()
-        )
+            tokenize=lambda text: re.sub(r"\W+", " ", text).lower().split(),
+        ),
     )
 
 
@@ -27,7 +27,7 @@ def query(request):
         ["Apples are fruits.", "Tomatoes are red.", ""],
         [""],
         [],
-    ]
+    ],
 )
 def candidates(request):
     return request.param

@@ -2,19 +2,19 @@ import argparse
 import asyncio
 import json
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import cast
 
 from dotenv import load_dotenv
 
-from memmachine.episodic_memory.data_types import ContentType
+from memmachine.common.episode_store import ContentType
 from memmachine.episodic_memory.episodic_memory import EpisodicMemory
 from memmachine.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data-path", required=True, help="Path to the data file")
@@ -27,10 +27,14 @@ async def main():
         locomo_data = json.load(f)
 
     memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
-        "locomo_config.yaml"
+        "locomo_config.yaml",
     )
 
-    async def process_conversation(idx, item, memory_manager: EpisodicMemoryManager):
+    async def process_conversation(
+        idx,
+        item,
+        memory_manager: EpisodicMemoryManager,
+    ) -> None:
         if "conversation" not in item:
             return
 
@@ -39,13 +43,13 @@ async def main():
         speaker_b = conversation["speaker_b"]
 
         print(
-            f"Processing conversation for group {idx} with speakers {speaker_a} and {speaker_b}..."
+            f"Processing conversation for group {idx} with speakers {speaker_a} and {speaker_b}...",
         )
 
         group_id = f"group_{idx}"
 
         memory = cast(
-            EpisodicMemory,
+            "EpisodicMemory",
             await memory_manager.get_episodic_memory_instance(
                 group_id=group_id,
                 session_id=group_id,
@@ -71,7 +75,7 @@ async def main():
                 message_text = message["text"]
 
                 context_messages.append(
-                    f"[{session_date_time}] {speaker}: {message_text}"
+                    f"[{session_date_time}] {speaker}: {message_text}",
                 )
 
                 await memory.add_memory_episode(
@@ -80,7 +84,7 @@ async def main():
                     episode_content=message_text,
                     episode_type="default",
                     content_type=ContentType.STRING,
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(tz=UTC),
                     metadata={
                         "source_timestamp": session_date_time,
                         "source_speaker": speaker,

@@ -84,187 +84,251 @@ uv pip install .
 </Step>
 <Step title="Create Your Configuration File - `cfg.yml`">
 
-MemMachine uses a single configuration file, `cfg.yml` to provide login and options to it.
+MemMachine uses a single configuration file, `cfg.yml`, to define its resources and behavior. This file should be placed in the directory where you run the MemMachine server.
 
-Create a file named `cfg.yml` in the same directory that you plan on running memmachine from. This file configures the various models and storage options for MemMachine.
+Alternatively, you can use the [Configure Wizard](./configure_wizard) to assist in configuring MemMachine for your environment and to provide the necessary information.
 
-There are two examples of `cfg.yml` files in the `sample_configs` directory of the GitHub repository: one for CPU-only installations and another for GPU-enabled setups. Be sure to choose the one that matches your environment.
+Below are examples for CPU-only and GPU-enabled setups.
 
 <AccordionGroup>
-<Accordion title="CPU-Only Installations">
-You can download this file from our GitHub repository as a template using the following curl command:
-```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.cpu.sample
-```
-Below is an example of what the CPU-only `config.yml` file should look like:
+<Accordion title="CPU-Only Configuration">
+You can download a sample file or copy the content below.
 
-```sh expandable lines
+```yaml expandable lines
 logging:
-  path: /tmp/memory_log
+  path: mem-machine.log
   level: info #| debug | error
 
-long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$timestamp] $producer_id: "
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
-
-SessionDB:
-  uri: sqlitetest.db
-
-Model:
-  testmodel:
-    model_vendor: openai
-    model_name: "gpt-4o-mini"
-    api_key: <YOUR_API_KEY>
-    
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
-
-  profile_storage:
-    vendor_name: postgres
-    host: localhost
-    port: 5432
-    user: postgres
-    db_name: postgres
-    password: <YOUR_PASSWORD_HERE>
-
-profile_memory:
-  llm_model: testmodel
-  embedding_model: my_embedder_id
+episode_store:
   database: profile_storage
-  prompt: profile_prompt
 
-sessionMemory:
-  model_name: testmodel
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
 
-embedder:
-  my_embedder_id:
-    model_vendor: openai
-    model_name: "text-embedding-3-small"
-    api_key: <YOUR_API_KEY>
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
 
-reranker:
-  my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-  id_ranker_id:
-    type: "identity"
-  bm_ranker_id:
-    type: "bm25"
+session_manager:
+  database: profile_storage
 
 prompt:
-  profile: profile_prompt
+  session:
+  - profile_prompt
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: <YOUR_PASSWORD_HERE>
+        db_name: postgres
+    my_storage_id:
+      provider: neo4j
+      config:
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
+      provider: openai-chat-completions
+      config:
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
 ```
-<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
+<Tip> Replace `<YOUR_OPENAI_API_KEY>` and database passwords with your actual credentials.</Tip>
 </Accordion>
-<Accordion title="GPU-Enabled Installations">
-You can download this file from our GitHub repository as a template using the following curl command:
-```sh
-curl -o cfg.yml https://raw.githubusercontent.com/MemMachine/MemMachine/refs/heads/main/sample_configs/episodic_memory_config.gpu.sample
-```
-Below is an example of what the GPU-enabled `config.yml` file should look like:
 
-```sh expandable lines
+<Accordion title="GPU-Enabled Configuration">
+For GPU setups, you might use local models for embeddings or reranking.
+
+```yaml expandable lines
 logging:
-  path: /tmp/memory_log
+  path: mem-machine.log
   level: info #| debug | error
 
-long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$timestamp] $producer_id: "
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
-
-profile_memory:
-  llm_model: testmodel
-  embedding_model: my_embedder_id
+episode_store:
   database: profile_storage
-  prompt: profile_prompt
 
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
 
-SessionDB:
-  uri: sqlitetest.db
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
 
-Model:
-  testmodel:
-    model_vendor: openai
-    model_name: "gpt-4o-mini"
-    api_key: <YOUR_API_KEY>
-    
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: localhost
-    port: 7687
-    user: neo4j
-    password: <YOUR_PASSWORD_HERE>
-
-  profile_storage:
-    vendor_name: postgres
-    host: localhost
-    port: 5432
-    user: postgres
-    db_name: postgres
-    password: <YOUR_PASSWORD_HERE>
-
-sessionMemory:
-  model_name: testmodel
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
-
-embedder:
-  my_embedder_id:
-    model_vendor: openai
-    model_name: "text-embedding-3-small"
-    api_key: <YOUR_API_KEY>
-
-reranker:
-  my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-      - ce_ranker_id
-  id_ranker_id:
-    type: "identity"
-  bm_ranker_id:
-    type: "bm25"
-  ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
+session_manager:
+  database: profile_storage
 
 prompt:
-  profile: profile_prompt
+  session:
+  - profile_prompt
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        db_name: postgres
+        password: <YOUR_PASSWORD_HERE>
+    my_storage_id:
+      provider: neo4j
+      config:
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
+      provider: openai-chat-completions
+      config:
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+          - ce_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    ce_ranker_id:
+      provider: "cross-encoder"
+      config:
+        model_name: "cross-encoder/qnli-electra-base"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
 ```
-<Tip> Remember to replace the placeholders for your specific information, like OpenAI API key and Neo4j passwords, in this file.</Tip>
 </Accordion>
 </AccordionGroup>
-<Tip> 
-You can name this configuration file whatever you like, then pass it to MemMachine using the `MEMORY_CONFIG` environment variable, like in the following examples:
-
- ```sh
- export MEMORY_CONFIG="/home/steve/wibble.cfg" # Sets the config file name
- memmachine # start memmachine
- ```
-
-```sh
-MEMORY_CONFIG="/home/steve/wibble.cfg" memmachine #defines the variable and starts memmachine
-```
-</Tip>
 </Step>
 <Step title="Run MemMachine">
 

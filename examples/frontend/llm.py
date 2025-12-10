@@ -70,7 +70,7 @@ def chat(messages, persona):
         )
 
         return text, dt, total_tok, (total_tok / dt if dt else total_tok)
-    elif provider == "anthropic":
+    if provider == "anthropic":
         print("Using anthropic: ", MODEL_STRING)
         t0 = time.time()
 
@@ -88,7 +88,7 @@ def chat(messages, persona):
                     "messages": claude_messages,
                     "max_tokens": 500,
                     "temperature": 0.5,
-                }
+                },
             ),
         )
 
@@ -101,14 +101,14 @@ def chat(messages, persona):
         total_tok = len(text.split())
 
         return text, dt, total_tok, (total_tok / dt if dt else total_tok)
-    elif provider == "deepseek":
+    if provider == "deepseek":
         print("Using deepseek: ", MODEL_STRING)
         t0 = time.time()
 
         prompt = messages[-1]["content"]
 
         formatted_prompt = (
-            f"<｜begin▁of▁sentence｜><｜User｜>{prompt}<｜Assistant｜><think>\n"
+            f"<|begin▁of▁sentence|><|User|>{prompt}<|Assistant|><think>\n"
         )
 
         response = bedrock_runtime.invoke_model(
@@ -121,7 +121,7 @@ def chat(messages, persona):
                     "max_tokens": 500,
                     "temperature": 0.5,
                     "top_p": 0.9,
-                }
+                },
             ),
         )
 
@@ -132,7 +132,7 @@ def chat(messages, persona):
         total_tok = len(text.split())
 
         return text, dt, total_tok, (total_tok / dt if dt else total_tok)
-    elif provider == "meta":
+    if provider == "meta":
         print("Using meta (LLaMA): ", MODEL_STRING)
         t0 = time.time()
 
@@ -150,7 +150,7 @@ def chat(messages, persona):
             contentType="application/json",
             accept="application/json",
             body=json.dumps(
-                {"prompt": formatted_prompt, "max_gen_len": 512, "temperature": 0.5}
+                {"prompt": formatted_prompt, "max_gen_len": 512, "temperature": 0.5},
             ),
         )
 
@@ -160,7 +160,7 @@ def chat(messages, persona):
         total_tok = len(text.split())
 
         return text, dt, total_tok, (total_tok / dt if dt else total_tok)
-    elif provider == "mistral":
+    if provider == "mistral":
         print("Using mistral: ", MODEL_STRING)
         t0 = time.time()
 
@@ -172,7 +172,7 @@ def chat(messages, persona):
             contentType="application/json",
             accept="application/json",
             body=json.dumps(
-                {"prompt": formatted_prompt, "max_tokens": 512, "temperature": 0.5}
+                {"prompt": formatted_prompt, "max_tokens": 512, "temperature": 0.5},
             ),
         )
 
@@ -183,12 +183,13 @@ def chat(messages, persona):
         total_tok = len(text.split())
 
         return text, dt, total_tok, (total_tok / dt if dt else total_tok)
+    return None
 
 
 # ──────────────────────────────────────────────────────────────
 # Diagnostics / CLI test
 # ──────────────────────────────────────────────────────────────
-def check_credentials():
+def check_credentials() -> bool:
     required = ["MODEL_API_KEY"]
     missing = [var for var in required if not os.getenv(var)]
     if missing:
@@ -197,14 +198,14 @@ def check_credentials():
     return True
 
 
-def test_chat():
+def test_chat() -> None:
     print("Testing chat...")
     try:
         test_messages = [
             {
                 "role": "user",
                 "content": "Hello! Please respond with just 'Test successful'.",
-            }
+            },
         ]
         text, latency, tokens, tps = chat(test_messages)
         print(f"Test passed!  {text}  {latency:.2f}s  {tokens} ⚡ {tps:.1f} tps")

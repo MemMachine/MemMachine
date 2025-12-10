@@ -2,15 +2,27 @@
 requires = ["uv_build"]
 build-backend = "uv_build"
 
+[tool.uv.workspace]
+members = ["packages/client", "packages/server", "packages/meta"]
+
+[tool.uv.sources]
+memmachine-server = { workspace = true }
+memmachine-client = { workspace = true }
+
 [project]
-name = "memmachine"
+name = "memmachine-dev"
 version = "0.1.0"
 dependencies = [
-    "asyncpg>=0.30.0",
+    "alembic>=1.17.1",
+    "asyncpg>=0.31.0",
+    "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
+    "boto3-stubs==1.40.64",
+    "coverage>=7.11.0",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
     "fastmcp>=2.12.0",
+    "instructor[bedrock]>=1.12.0",
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
     "nltk>=3.9.1",
@@ -22,6 +34,11 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
+    "greenlet>=3.2.4",
+    "tzdata>=2024.1 ; sys_platform == 'win32'",
+    "psutil>=7.1.0",
+    "memmachine-server",
+    "memmachine-client",
 ]
 requires-python = ">= 3.12"
 authors = [
@@ -44,10 +61,10 @@ gpu = [
 
 [project.scripts]
 memmachine-server = "memmachine.server.app:main"
-memmachine-sync-profile-schema = "memmachine.profile_memory.storage.syncschema:main"
 memmachine-nltk-setup = "memmachine:setup_nltk"
 memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
 memmachine-mcp-http = "memmachine.server.mcp_http:main"
+memmachine-configure = "memmachine.installation.memmachine_configure:main"
 
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
@@ -55,11 +72,13 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 
 [dependency-groups]
 dev = [
+    "complexipy>=4.2.0",
     "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "ruff>=0.13.2",
     "testcontainers[neo4j,postgres]>=4.13.1",
+    "ty>=0.0.1a26",
 ]
 
 [tool.mypy]
@@ -68,9 +87,91 @@ enable_error_code = ["deprecated"]
 exclude = ["venv/", ".venv/"]
 plugins = ['pydantic.mypy']
 
+[tool.ruff]
+exclude = ["tools"]
+
 [tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP"]
-ignore = ["E501", "UP015"]
+select = [
+    "A",
+    "ANN",
+    "ARG",
+    "ASYNC",
+    "B",
+    "C4",
+    "C90",
+    "D",
+    "DTZ",
+    "E",
+    "F",
+    "FA",
+    "FAST",
+    "FURB",
+    "G",
+    "I",
+    "ICN",
+    "INP",
+    "INT",
+    "ISC",
+    "LOG",
+    "N",
+    "NPY",
+    "PERF",
+    "PIE",
+    "PLC",
+    "PT",
+    "PTH",
+    "PYI",
+    "Q",
+    "RET",
+    "RSE",
+    "RUF",
+    "SLF",
+    "SIM",
+    "T20",
+    "TID",
+    "TRY",
+    "UP",
+    "W",
+    "YTT",
+]
+ignore = [
+    "E501", "UP015", "TRY002", "PLC0415",
+    "D102", "D212", "D203", "RET504",
+    "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
+"examples/**/*.py" = [
+    "ANN",
+    "ASYNC210",
+    "T201",
+    "D",
+    "ARG",
+    "T201",
+    "TRY401",
+    "C901",
+    "TRY300",
+    "PTH",
+]
+"evaluation/**/*.py" = [
+    "D",
+    "ARG",
+    "T201",
+    "ANN",
+    "PTH123",
+    "PTH120",
+    "PTH110",
+    "PTH100",
+    "ASYNC230",
+    "RUF001",
+    "N806",
+    "B023",
+    "B007",
+    "TRY300",
+    "PERF401",
+]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"
@@ -78,4 +179,23 @@ asyncio_default_test_loop_scope = "session"
 
 markers = [
     "integration: mark the test as an integration test",
+    "slow: mark the test as slow"
 ]
+
+[tool.complexipy]
+paths = ["src", "tests"]
+max-complexity-allowed = 10
+quiet = false
+ignore-complexity = false
+details = "low"
+color = "auto"
+sort = "desc"
+exclude = []
+
+[tool.coverage.run]
+source = [
+  "src/memmachine",
+]
+
+[tool.coverage.report]
+sort = "cover"

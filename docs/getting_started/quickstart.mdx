@@ -4,30 +4,51 @@ description: "Start using MemMachine's personalized memory in minutes"
 icon: "circle-play"
 ---
 
+MemMachine uses a client-server architecture. The **Server** manages the storage, retrieval, and processing of memories, while your application uses a **Client** SDK to interact with it.
+
+This guide focuses on getting the **MemMachine Server** up and running.
+
 ## Installation
 
-Our fastest method to get started with MemMachine is by using Docker and Docker Compose. This approach bundles all necessary components into containers, simplifying the setup process.
+The fastest method to get started with MemMachine is by using Docker and Docker Compose. This approach bundles all necessary components into containers, simplifying the setup process.
 
 ### Prerequisites
 
 Before installing MemMachine, ensure you have the following prerequisites:
 
-- **Python 3.12+** - MemMachine requires Python 3.12 or higher
-- **OpenAI API Key** - For language models and embeddings
-<Note> MemMachine itself is free to install, but please note that tokens are consumed when you use the software. </Note>
+- **Docker & Docker Compose** - Required to run the server containers.
+- **OpenAI API Key** - For language models and embeddings (configured in the server).
 
-### Download and Start Using MemMachine
-This method is recommended for most users.
+### Download and Start the Server
+
 <Steps>
-  <Step title="Have Docker and Docker Compose Installed">
+  <Step title="Install Docker">
       Make sure that you have [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed on your machine.
   </Step>
-  <Step title="Download MemMachine and Run the Script">
+  <Step title="Download MemMachine and Run">
       <Tabs>
+        <Tab title="Linux/MacOS" icon="linux">
+          Open your terminal and run the following commands:
+          ```bash
+          # Download the latest release tarball
+          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep "tarball_url" \
+            | cut -d '"' -f 4 \
+            | xargs curl -L -o MemMachine-latest.tar.gz
+
+          # Extract the release
+          tar -xzf MemMachine-latest.tar.gz
+
+          # Enter the folder (GitHub adds a hash to the folder name)
+          cd MemMachine-MemMachine-*
+
+          # Run the setup script
+          ./memmachine-compose.sh
+          ```
+        </Tab>
         <Tab title="Windows" icon="windows">
-          If you're using Windows, you can use Powershell.  If you are using WSL, see the Linux tab.
+          Use PowerShell to download and run the script:
           ```powershell
-          # One-block install for Windows PowerShell
           $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/MemMachine/MemMachine/releases/latest"; `
           $tarballUrl = $latestRelease.tarball_url; `
           $destination = "MemMachine"; `
@@ -39,422 +60,45 @@ This method is recommended for most users.
           ./memmachine-compose.sh
           ```
         </Tab>
-        <Tab title="MacOS" icon="apple">
-          If you're using MacOS, you can use the built-in Terminal application to run the following commands.
-          ```bash
-          # Download the latest release tarball
-          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
-            | grep "tarball_url" \
-            | cut -d '"' -f 4 \
-            | xargs curl -L -o MemMachine-latest.tar.gz
-
-          # Extract the release
-          tar -xzf MemMachine-latest.tar.gz
-
-          # Enter the folder (GitHub adds a hash to the folder name)
-          cd MemMachine-MemMachine-*
-
-          # Run the setup
-          ./memmachine-compose.sh
-          ```
-        </Tab>
-        <Tab title="Linux" icon="linux">
-          If you're using Linux, you can use the built-in Terminal application to run the following commands.
-          ```bash
-          # Download the latest release tarball
-          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
-            | grep "tarball_url" \
-            | cut -d '"' -f 4 \
-            | xargs curl -L -o MemMachine-latest.tar.gz
-
-          # Extract the release
-          tar -xzf MemMachine-latest.tar.gz
-
-          # Enter the folder (GitHub adds a hash to the folder name)
-          cd MemMachine-MemMachine-*
-
-          # Run the setup
-          ./memmachine-compose.sh
-          ```
-          
-        </Tab>
       </Tabs>
 
-      That's it!  The script will walk you through all of the remaining steps and check the health of your memmachine installation and configuration.        
+      The script will walk you through the setup process, including configuring your OpenAI API key.
   </Step>
-  <Step title="The MemMachine-compose.sh Script">
-    The `MemMachine-compose.sh` script does more than simply install memmachine, although that is it's default behavior.  As the commands associated with this script (shown below) describe, it can be used for stopping, restarting, viewing logs, and cleaning up your memmachine installation.
-    ```sh
-      ./memmachine-compose.sh --help
-        MemMachine Docker Startup Script
+  <Step title="Verify Installation">
+    Once the script completes, your MemMachine server should be running. You can verify it by checking the health endpoint:
 
-        Usage: ./memmachine-compose.sh [command]
-
-        Commands:
-          (no args) | start [<image>:<tag>]                      Start MemMachine services
-          stop                                                   Stop MemMachine services
-          restart                                                Restart MemMachine services
-          logs                                                   Show service logs
-          clean                                                  Remove all services and data
-          build [<image>:<tag>] [--gpu true/false] [-f|--force]  Build a custom MemMachine image
-          help                                                   Show this help message
-    ```
-  </Step>
-</Steps>
-
-### Hello World Examples
-Validate that your installation is working by following one of the examples below. Each example demonstrates how to add, search, and delete memory episodes using different interfaces: RESTful API, MCP Server, and Python SDK.
-
-<Tabs>
-  <Tab title="RESTful API" icon="server">
-    ### Hello World: A Guide to the MemMachine RESTful API
-
-This guide provides a quick and simple way to get started with the MemMachine RESTful API using `curl` commands.
-
-### Prerequisites
-
-First, make sure your FastAPI application is running. Open your terminal, navigate to the directory containing your `app.py` file, and run the following command. The output should confirm that the server is listening for requests.
-
-```
-uvicorn app:app --reload
-```
-<Steps>
-<Step title="Get All Sessions">
-
-The simplest way to start is by checking for existing sessions. This `GET` request doesn't require any data. You will likely see an empty list since no sessions have been created yet.
-
-```
-curl http://127.0.0.1:8080/v1/sessions
-```
-</Step>
-<Step title="Add a New Memory">
-
-This is where you'll create your first memory episode. The `POST /v1/memories` endpoint requires a JSON body that includes session details, a producer, a recipient, and the content of the memory itself.
-
-**Command:**
-
-```
-curl -X POST "http://127.0.0.1:8080/v1/memories" \
--H "Content-Type: application/json" \
--d '{
-  "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
-  },
-  "producer": "test_user",
-  "produced_for": "test_agent",
-  "episode_content": "This is a simple test memory.",
-  "episode_type": "message",
-  "metadata": {}
-}'
-```
-
-**Expected Output:**
-
-You will receive an empty `200 OK` response, confirming the memory was added successfully.
-</Step>
-<Step title="Search for the Memory">
-
-Now that a memory has been added, let's try to find it. The `POST /v1/memories/search` endpoint also requires a JSON body to specify the search query and session.
-
-**Command:**
-
-```
-curl -X POST "http://127.0.0.1:8080/v1/memories/search" \
--H "Content-Type: application/json" \
--d '{
-  "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
-  },
-  "query": "simple test memory",
-  "filter": {},
-  "limit": 5
-}'
-```
-
-**Expected Output:**
-
-You should see a `200 OK` response containing the search results, including the memory episode you just added. The output will be formatted as a JSON object, confirming that your memory was successfully found.
-</Step>
-<Step title=" Delete the Session Data">
-
-To clean up after your test, you can use the `DELETE /v1/memories` endpoint. This also requires a JSON body to specify which session's data should be removed.
-
-**Command:**
-
-```
-curl -X DELETE "http://127.0.0.1:8080/v1/memories" \
--H "Content-Type: application/json" \
--d '{
-  "session": {
-    "group_id": "test_group",
-    "agent_id": ["test_agent"],
-    "user_id": ["test_user"],
-    "session_id": "session_123"
-  }
-}'
-```
-</Step>
-</Steps>
-  </Tab>
-  <Tab title="MCP Server" icon="terminal">
-    ### Hello World: A Guide to the MemMachine MCP Server API
-
-This guide provides a quick and simple way to get started with the MemMachine Model Content Protocol (MCP) Server API using `curl` commands.
-
-### Prerequisites
-
-First, ensure your FastAPI application is running. Open your terminal, navigate to the directory containing your `app.py` file, and run the following command. The output should confirm that the server is listening for requests.
-
-```
-uvicorn app:app --reload
-```
-<Steps>
-<Step title="Get All Sessions">
-
-The simplest way to start is by checking for existing sessions. This is an MCP **resource**, which returns a list of all available sessions.
-
-**Command:**
-
-```
-curl http://127.0.0.1:8080/v1/mcp/sessions
-```
-
-**Expected Output:**
-
-You will likely see an empty list since no sessions have been created yet.
-</Step>
-<Step title="Add a New Memory">
-
-This is where you'll use an MCP **tool** to create your first memory episode. The `/v1/mcp/add_session_memory` tool is invoked with a `POST` request to its dedicated endpoint.
-
-**Command:**
-
-```
-curl --request POST \
-  --url http://localhost:8080/v1/mcp/add_session_memory \
-  --header 'Content-Type: application/json' \
-  --data '{
-  "session": {
-    "group_id": "<string>",
-    "agent_id": [
-      "<string>"
-    ],
-    "user_id": [
-      "<string>"
-    ],
-    "session_id": "<string>"
-  },
-  "producer": "<string>",
-  "produced_for": "<string>",
-  "episode_content": "<string>",
-  "episode_type": "<string>",
-  "metadata": {}
-}'
-```
-
-**Expected Output:**
-
-You will receive a JSON response confirming the status. A status of `0` indicates success.
-
-```
-{
-  "status": 0,
-  "error_msg": ""
-}
-```
-</Step>
-<Step title="Search for the Memory">
-
-Now that a memory has been added, let's use another MCP **tool** to find it. The `/v1/mcp/search_session_memory` tool is designed for this purpose.
-
-**Command:**
-
-```
-curl --request POST \
-  --url http://localhost:8080/v1/mcp/search_session_memory \
-  --header 'Content-Type: application/json' \
-  --data '{
-  "session": {
-    "group_id": "<string>",
-    "agent_id": [
-      "<string>"
-    ],
-    "user_id": [
-      "<string>"
-    ],
-    "session_id": "<string>"
-  },
-  "query": "<string>",
-  "filter": {},
-  "limit": 123
-}'
-```
-
-**Expected Output:**
-
-You should see a `200 OK` response containing the search results, including the memory episode you just added.
-</Step>
-<Step title="Delete the Session Data">
-
-To clean up after your test, use the `/v1/mcp/delete_session_data` **tool**. This is a great way to ensure your database remains clean.
-
-**Command:**
-
-```
-curl --request POST \
-  --url http://localhost:8080/v1/mcp/delete_session_data \
-  --header 'Content-Type: application/json' \
-  --data '{
-  "session": {
-    "group_id": "<string>",
-    "agent_id": [
-      "<string>"
-    ],
-    "user_id": [
-      "<string>"
-    ],
-    "session_id": "<string>"
-  }
-}'
-```
-
-**Expected Output:**
-
-You will receive a JSON response confirming the status of the deletion. A status of `0` indicates that the data was deleted successfully.
-
-```
-{
-  "status": 0,
-  "error_msg": ""
-}
-```
-</Step>
-</Steps>
-  </Tab>
-  <Tab title="PythonSDK" icon="python">
-    Below is a short python script that demonstrates how to use both Episodic Memory and Profile Memory from the MemMachine Python SDK.
-
-    <Note>If you used a method other than Docker Compose, be sure to have your `cfg.yml` configuration file set up as described in the [Install Guide](../install_guide/install_guide.mdx).</Note>
-    
-  ```python HelloWorld.py expandable
-    from dotenv import load_dotenv
-    import os
-    from importlib import import_module
-
-    from memmachine.common.embedder.openai_embedder import OpenAIEmbedder
-    from memmachine.common.language_model.openai_language_model import (
-      OpenAILanguageModel,
-    )
-    from memmachine.episodic_memory.data_types import ContentType
-    from memmachine.episodic_memory.episodic_memory import (
-      AsyncEpisodicMemory,
-      EpisodicMemory,
-    )
-    from memmachine.episodic_memory.episodic_memory_manager import (
-      EpisodicMemoryManager,
-    )
-    from memmachine.profile_memory.profile_memory import ProfileMemory
-
-    async def episodic_memory_test(config_path: str):
-      manager = EpisodicMemoryManager.create_episodic_memory_manager(config_path)
-      inst: EpisodicMemory = await manager.get_episodic_memory_instance(
-          group_id="test_group",
-          agent_id=["test_agent"],
-          user_id=["test_user1", "test_user2"],
-          session_id="test_session",
-      )
-      async with AsyncEpisodicMemory(inst) as inst:
-          success = await inst.add_memory_episode(
-              producer="test_user1",
-              produced_for="test_user2",
-              episode_content="test_content",
-              episode_type="test_type",
-              content_type=ContentType.STRING
-          )
-          print(success)
-          success = await inst.add_memory_episode(
-            producer="test_user2",
-            produced_for="test_user1",
-            episode_content="test_content2",
-            episode_type="test_type",
-            content_type=ContentType.STRING
-        )
-        print(success)
-        res = await inst.query_memory("test_query")
-        print(res)
-
-        usr_filter = {"producer": "test_user1"}
-        res = await inst.query_memory("test_query", filter=usr_filter)
-        print(res)
-
-  async def profile_memory_test():
-    load_dotenv()
-    api_key = os.getenv("OPENAI_API_KEY")
-    model_name = "gpt-4.1-mini"
-    llm_model = OpenAILanguageModel({"api_key": api_key, "model": model_name})
-    embeddings = OpenAIEmbedder({"api_key": api_key})
-    profile_memory = ProfileMemory(
-        model=llm_model,
-        embeddings=embeddings,
-        db_config={
-            "host": os.getenv("POSTGRES_HOST"),
-            "port": os.getenv("POSTGRES_PORT"),
-            "user": os.getenv("POSTGRES_USER"),
-            "password": os.getenv("POSTGRES_PASSWORD"),
-            "database": os.getenv("POSTGRES_DB"),
-        },
-        prompt_module=import_module(".prompt.profile_prompt", __package__),
-    )
-    await profile_memory.add_persona_message(
-            str("Persona message"),
-            {},
-            user_id="user1",
-        )
-    
-    await profile_memory.semantic_search("test_query", user_id="user1")
-
-
-
-  async def main():
-    await episodic_memory_test("cfg.yml")
-    await profile_memory_test()
-
-  if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
-
-    ```
-
-    Once the file is in your directory, execute it to see the text output it generates:
     ```bash
-    python3 ./HelloWorld.py
+    curl http://localhost:8080/health
     ```
-  </Tab>
-</Tabs>
 
-### Troubleshooting
+    You should receive a response indicating the server status is healthy.
+  </Step>
+</Steps>
 
-#### Common Issues
+## Next Steps: Connect Your App
 
-1. **Configuration File Names**: In some earlier versions of MemMachine, the configuration file within Docker Compose was named `configuration.yml`.  This name still works. However, the preferred name is now `cfg.yml`. 
+Now that the server is running, you need to install the Python Client SDK to interact with it from your application.
 
-2. **Neo4j Connection Error**: Ensure the Neo4j host in `cfg.yml` is set to `memmachine-neo4j-custom` (not `localhost`)
+<CardGroup cols={2}>
+  <Card title="Python Client Guide" icon="python" href="../examples/python">
+    Install the SDK and write your first "Hello World" program.
+  </Card>
+  <Card title="API Reference" icon="code" href="../api_reference/intro">
+    Explore the full REST API documentation.
+  </Card>
+</CardGroup>
 
-3. **OpenAI API Key Error**: Make sure you have a valid OpenAI API key and it's correctly set in the `cfg.yml` file.
+## Management Scripts
 
-4. **Port Access Issues**: If you can't access the API, ensure the MemMachine container is running on the `memmachine-network` and port 8080 is accessible
+The `memmachine-compose.sh` script is your main tool for managing the server.
 
-5. **Container Network Issues**: Make sure both containers are on the same Docker network (`memmachine-network`)
+```bash
+./memmachine-compose.sh --help
+```
 
-#### Useful Commands
+Common commands:
+- `./memmachine-compose.sh stop` - Stop the services.
+- `./memmachine-compose.sh restart` - Restart the services.
+- `./memmachine-compose.sh logs` - View server logs.
 
-- Check container status: `docker ps`
-- View container logs: `docker logs <container_id>`
-- Stop containers: `docker stop <container_id>`
-- Remove containers: `docker rm <container_id>`
+```

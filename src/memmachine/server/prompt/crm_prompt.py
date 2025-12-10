@@ -1,10 +1,14 @@
 """
-CRM-specific prompts for Intelligent Memory System
-Handles company profiles with direct feature/value pairs (no tags)
+CRM-specific prompts for Intelligent Memory System.
+
+Handles company profiles with direct feature/value pairs (no tags).
 """
 
-import zoneinfo
-from datetime import datetime
+from memmachine.semantic_memory.semantic_model import (
+    RawSemanticPrompt,
+    SemanticCategory,
+)
+from memmachine.server.prompt.prompt_utilities import current_date_dow, enum_list
 
 # --- Canonical enumerations ---
 SALES_STAGE_ENUM = [
@@ -66,15 +70,6 @@ def _features_inline_list() -> str:
     return ", ".join(CRM_FEATURES)
 
 
-def _enum_list(enum_values) -> str:
-    return ", ".join(f'"{v}"' for v in enum_values)
-
-
-def _current_date_dow(tz="America/Los_Angeles") -> str:
-    dt = datetime.now(zoneinfo.ZoneInfo(tz))
-    return f"{dt.strftime('%Y-%m-%d')}[{dt.strftime('%a')}]"
-
-
 # -----------------------
 # Repeat Sections
 # -----------------------
@@ -96,7 +91,7 @@ def _build_unified_crm_prompt() -> str:
     return f"""You are an AI assistant that manages company CRM profiles based on sales team messages.
 
 <CURRENT_DATE>
-{_current_date_dow()}
+{current_date_dow()}
 </CURRENT_DATE>
 
 **ROUTING RULES:**
@@ -171,8 +166,8 @@ Company identification & normalization:
 Field guidance:
 **NON-TIMELINE FIELDS** (no date fields, no EDTF formatting):
 - company: Company name (single-valued)
-- sales_stage: Allowed values: [{_enum_list(SALES_STAGE_ENUM)}] (single-valued) - ALWAYS extract if determinable
-- memverge_product: One of [{_enum_list(PRODUCTS)}] (multi-valued)
+- sales_stage: Allowed values: [{enum_list(SALES_STAGE_ENUM)}] (single-valued) - ALWAYS extract if determinable
+- memverge_product: One of [{enum_list(PRODUCTS)}] (multi-valued)
   • Product name variations: "MVAI" → "MMAI", "MemVerge AI" → "MMAI", "Memory Machine" → "Intelligent Memory"
   • Extract when mentioned: SpotSurfing, Fractional GPUs, Checkpoint Restore → related to MMBatch/MMCloud
   • Kubernetes operator → typically MMAI
@@ -554,3 +549,14 @@ The final output schema is:
 
 
 CONSOLIDATION_PROMPT = _build_consolidation_prompt()
+
+
+CrmSemanticCategory = SemanticCategory(
+    name="crm_prompt",
+    prompt=RawSemanticPrompt(
+        update_prompt=UPDATE_PROMPT,
+        consolidation_prompt=CONSOLIDATION_PROMPT,
+    ),
+)
+
+SEMANTIC_TYPE = CrmSemanticCategory

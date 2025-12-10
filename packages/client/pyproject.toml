@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memmachine-client"
+version = "0.1.0"
+dependencies = [
+    "pydantic>=2.0.0",
+    "regex>=2023.0.0",
+    "requests>=2.31.0",
+    "urllib3>=2.0.0",
+]
+requires-python = ">= 3.12"
+authors = [
+  {name="MemMachine", email="noreply@memmachine.ai"},
+]
+description = "MemMachine REST Client - A lightweight Python client library for MemMachine memory system"
+readme = "README.md"
+keywords = ["memmachine", "client", "memory", "ai", "agent"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+
+[project.urls]
+Homepage = "https://github.com/MemMachine/MemMachine"
+Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[tool.setuptools]
+packages = ["memmachine", "memmachine.common.api", "memmachine.rest_client"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.yml", "*.yaml"]
+
+[tool.setuptools.package-dir]
+"" = "src"

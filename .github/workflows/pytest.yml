@@ -5,10 +5,17 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main ]
 
 permissions:
   contents: read
+
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  group: pytest-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
+
 
 jobs:
   unit-test:
@@ -17,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: [ "3.12", "3.13", "3.14" ]
-        os: [ ubuntu-latest, ubuntu-24.04-arm ]
+        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -28,4 +35,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Test with python ${{ matrix.python-version }}
-        run: uv run --frozen --all-extras pytest
+        run: uv run --frozen --all-extras coverage run -m pytest
+
+      - name: Print coverage report
+        run: uv run --frozen --all-extras coverage report --sort=cover

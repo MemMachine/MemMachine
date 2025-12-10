@@ -124,19 +124,19 @@ select_llm_model() {
         "OPENAI")
             print_prompt
             read -p "Which OpenAI LLM model would you like to use? [gpt-4o-mini]: " llm_model
-            llm_model=${llm_model:-gpt-4o-mini}
+            llm_model=$(echo "${llm_model:-gpt-4o-mini}" | tr -d '\n\r')
             print_success "Selected OpenAI LLM model: $llm_model" >&2
             ;;
         "BEDROCK")
             print_prompt
             read -p "Which AWS Bedrock LLM model would you like to use? [openai.gpt-oss-20b-1:0]: " llm_model
-            llm_model=${llm_model:-openai.gpt-oss-20b-1:0}
+            llm_model=$(echo "${llm_model:-openai.gpt-oss-20b-1:0}" | tr -d '\n\r')
             print_success "Selected AWS Bedrock LLM model: $llm_model" >&2
             ;;
         "OLLAMA")
             print_prompt
             read -p "Which Ollama LLM model would you like to use? [llama3]: " llm_model
-            llm_model=${llm_model:-llama3}
+            llm_model=$(echo "${llm_model:-llama3}" | tr -d '\n\r')
             print_success "Selected Ollama LLM model: $llm_model" >&2
             ;;
         *)
@@ -157,19 +157,19 @@ select_embedding_model() {
         "OPENAI")
             print_prompt
             read -p "Which OpenAI embedding model would you like to use? [text-embedding-3-small]: " embedding_model
-            embedding_model=${embedding_model:-text-embedding-3-small}
+            embedding_model=$(echo "${embedding_model:-text-embedding-3-small}" | tr -d '\n\r')
             print_success "Selected OpenAI embedding model: $embedding_model" >&2
             ;;
         "BEDROCK")
             print_prompt
             read -p "Which AWS Bedrock embedding model would you like to use? [amazon.titan-embed-text-v2:0]: " embedding_model
-            embedding_model=${embedding_model:-amazon.titan-embed-text-v2:0}
+            embedding_model=$(echo "${embedding_model:-amazon.titan-embed-text-v2:0}" | tr -d '\n\r')
             print_success "Selected AWS Bedrock embedding model: $embedding_model" >&2
             ;;
         "OLLAMA")
             print_prompt
             read -p "Which Ollama embedding model would you like to use? [nomic-embed-text]: " embedding_model
-            embedding_model=${embedding_model:-nomic-embed-text}
+            embedding_model=$(echo "${embedding_model:-nomic-embed-text}" | tr -d '\n\r')
             print_success "Selected Ollama embedding model: $embedding_model" >&2
             ;;
         *)
@@ -232,60 +232,95 @@ generate_config_for_provider() {
         in_embedder_section = 0
         in_current_model = 0
         in_current_embedder = 0
-        skip_model = 0
-        skip_embedder = 0
         current_section = ""
+        in_episodic = 0
+        in_semantic = 0
         in_long_term = 0
-        in_profile = 0
-        in_session = 0
+        in_short_term = 0
     }
     
-    # Track current top-level section (but skip sections with specific handlers)
-    /^[a-zA-Z]/ && !/^[[:space:]]/ && !/^long_term_memory:/ && !/^profile_memory:/ && !/^sessionMemory:/ {
-        # If we're leaving Model or embedder section, add blank line first
+    # Track embedders and language_models sections (2 spaces, under resources:)
+    /^  embedders:$/ {
         if (in_model_section || in_embedder_section) {
             print ""
         }
-        current_section = $1
-        current_section = substr(current_section, 1, length(current_section) - 1)  # Remove trailing :
-        in_model_section = (current_section == "Model")
-        in_embedder_section = (current_section == "embedder")
-        skip_model = 0
-        skip_embedder = 0
-        in_current_model = 0
+        in_embedder_section = 1
+        in_model_section = 0
         in_current_embedder = 0
-        # Don't reset in_long_term, in_profile, in_session here - let their handlers manage them
         print
         next
     }
     
-    # Handle Model section
-    in_model_section {
-        # Check if this is a model definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z_]*:$/) {
-            model_key = substr($1, 1, length($1) - 1)  # Remove trailing :
-            if (model_key == model_name) {
-                in_current_model = 1
-                skip_model = 0
-                print
-                next
-            } else {
-                in_current_model = 0
-                skip_model = 1
-                next
-            }
+    /^  language_models:$/ {
+        if (in_model_section || in_embedder_section) {
+            print ""
         }
-        # Print lines for current model, skip others
-        if (skip_model) {
+        in_model_section = 1
+        in_embedder_section = 0
+        in_current_model = 0
+        print
+        next
+    }
+    
+    # Exit embedders/language_models when hitting another 2-space section
+    /^  [a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  (embedders|language_models):$/ && !in_episodic && !in_semantic {
+        if (in_model_section || in_embedder_section) {
+            print ""
+            in_model_section = 0
+            in_embedder_section = 0
+        }
+        print
+        next
+    }
+    
+    # Track current top-level section
+    /^[a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  / {
+        if (in_model_section || in_embedder_section) {
+            print ""
+        }
+        current_section = substr($1, 1, length($1) - 1)
+        in_model_section = 0
+        in_embedder_section = 0
+        in_current_model = 0
+        in_current_embedder = 0
+        
+        # Track episodic_memory and semantic_memory sections
+        if (current_section == "episodic_memory") {
+            in_episodic = 1
+            in_long_term = 0
+            in_short_term = 0
+        } else {
+            in_episodic = 0
+            in_long_term = 0
+            in_short_term = 0
+        }
+        
+        if (current_section == "semantic_memory") {
+            in_semantic = 1
+        } else {
+            in_semantic = 0
+        }
+        
+        print
+        next
+    }
+    
+    # Handle language_models section
+    in_model_section {
+        # Check if this is a model definition line (4 spaces)
+        if (/^    [a-zA-Z_][a-zA-Z0-9_]*:$/) {
+            model_key = substr($1, 1, length($1) - 1)  # Remove trailing :
+            in_current_model = (model_key == model_name)
+            print
             next
         }
         if (in_current_model) {
             # Replace model field value if this is the model line
-            if (model_field == "model" && /^    model:/) {
-                print "    model: \"" llm_model "\""
+            if (model_field == "model" && /^        model:/) {
+                print "        model: \"" llm_model "\""
                 next
-            } else if (model_field == "model_id" && /^    model_id:/) {
-                print "    model_id: \"" llm_model "\""
+            } else if (model_field == "model_id" && /^        model_id:/) {
+                print "        model_id: \"" llm_model "\""
                 next
             }
         }
@@ -293,33 +328,22 @@ generate_config_for_provider() {
         next
     }
     
-    # Handle embedder section
+    # Handle embedders section
     in_embedder_section {
-        # Check if this is an embedder definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z_]*:$/) {
+        # Check if this is an embedder definition line (4 spaces)
+        if (/^    [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             embedder_key = substr($1, 1, length($1) - 1)  # Remove trailing :
-            if (embedder_key == embedder_name) {
-                in_current_embedder = 1
-                skip_embedder = 0
-                print
-                next
-            } else {
-                in_current_embedder = 0
-                skip_embedder = 1
-                next
-            }
-        }
-        # Print lines for current embedder, skip others
-        if (skip_embedder) {
+            in_current_embedder = (embedder_key == embedder_name)
+            print
             next
         }
         if (in_current_embedder) {
             # Replace embedder model field value
-            if (embedder_field == "model" && /^      model:/) {
-                print "      model: \"" embedding_model "\""
+            if (embedder_field == "model" && /^        model:/) {
+                print "        model: \"" embedding_model "\""
                 next
-            } else if (embedder_field == "model_id" && /^      model_id:/) {
-                print "      model_id: \"" embedding_model "\""
+            } else if (embedder_field == "model_id" && /^        model_id:/) {
+                print "        model_id: \"" embedding_model "\""
                 next
             }
         }
@@ -327,64 +351,47 @@ generate_config_for_provider() {
         next
     }
     
-    # Handle long_term_memory section - update embedder reference
-    /^long_term_memory:/ {
-        in_long_term = 1
-        print
-        next
-    }
-    in_long_term {
-        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
-            in_long_term = 0
-            # Fall through to let top-level tracker or default rule handle this line
-        } else if (/^  embedder:/) {
-            print "  embedder: " embedder_name
-            next
-        } else {
+    # Handle episodic_memory section
+    in_episodic {
+        # Track long_term_memory subsection
+        if (/^  long_term_memory:/) {
+            in_long_term = 1
+            in_short_term = 0
             print
             next
         }
-    }
-    
-    # Handle profile_memory section - update model references
-    /^profile_memory:/ {
-        in_profile = 1
+        # Track short_term_memory subsection
+        if (/^  short_term_memory:/) {
+            in_short_term = 1
+            in_long_term = 0
+            print
+            next
+        }
+        # Update embedder reference in long_term_memory
+        if (in_long_term && /^    embedder:/) {
+            print "    embedder: " embedder_name
+            next
+        }
+        # Update llm_model reference in short_term_memory
+        if (in_short_term && /^    llm_model:/) {
+            print "    llm_model: " model_name
+            next
+        }
         print
         next
     }
-    in_profile {
-        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
-            in_profile = 0
-            # Fall through to let top-level tracker or default rule handle this line
-        } else if (/^  llm_model:/) {
+    
+    # Handle semantic_memory section - update model references
+    in_semantic {
+        if (/^  llm_model:/) {
             print "  llm_model: " model_name
             next
         } else if (/^  embedding_model:/) {
             print "  embedding_model: " embedder_name
             next
-        } else {
-            print
-            next
         }
-    }
-    
-    # Handle sessionMemory section - update model_name
-    /^sessionMemory:/ {
-        in_session = 1
         print
         next
-    }
-    in_session {
-        if (/^[a-zA-Z]/ && !/^[[:space:]]/) {
-            in_session = 0
-            # Fall through to let top-level tracker or default rule handle this line
-        } else if (/^  model_name:/) {
-            print "  model_name: " model_name
-            next
-        } else {
-            print
-            next
-        }
     }
     
     # Default: print all other lines
@@ -503,6 +510,23 @@ check_config_file() {
     fi
 }
 
+select_openai_base_url() {
+    local base_url=""
+    local reply=""
+    
+    print_prompt
+    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
+    if [[ $reply =~ ^[Yy]$ ]]; then
+        print_prompt
+        read -p "Enter your OpenAI Base URL: " base_url
+        if [ -n "$base_url" ]; then
+            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+            print_success "Set OpenAI Base URL to $base_url"
+        fi
+    fi
+}
+
 # Prompt user if they would like to set their API keys based on provider; then set it in the .env file and configuration.yml file
 set_provider_api_keys() {
     local api_key=""
@@ -537,6 +561,8 @@ set_provider_api_keys() {
             else
                 print_success "OpenAI API key appears to be configured"
             fi
+            
+            select_openai_base_url
         fi
         
         # Configure Bedrock if selected
@@ -711,7 +737,7 @@ wait_for_health() {
     
     # Wait for MemMachine
     print_info "Waiting for MemMachine to be ready..."
-    if timeout 120 bash -c "until curl -f http://localhost:${MEMORY_SERVER_PORT:-8080}/health > /dev/null 2>&1; do sleep 5; done"; then
+    if timeout 120 bash -c "until curl -f http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health > /dev/null 2>&1; do sleep 5; done"; then
         print_success "MemMachine is ready"
     else
         print_error "MemMachine failed to become ready in 120 seconds. Check container logs and configuration."
@@ -744,7 +770,7 @@ show_service_info() {
 build_image() {
     local name=""
     local force="false"
-    local gpu="false"
+    local gpu="false" # default to false
     local reply=""
     local key=""
     local value=""
@@ -794,17 +820,19 @@ build_image() {
 
     if [[ "$force" == "false" ]]; then
         print_prompt
-        read -p "Building $name with '--build-arg GPU=$gpu' (y/N): " -r reply
+        read -p "Building $name with '--build-arg GPU=[true|false]' (default: false): " reply
+        gpu=$(echo "${reply:-false}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$gpu" != "true" && "$gpu" != "false" ]]; then
+            print_error "Invalid value for GPU: $gpu"
+            exit 1
+        fi
     else
         print_info "Building $name with '--build-arg GPU=$gpu'"
     fi
 
-    if [[ $reply =~ ^[Yy]$ || $force == "true" ]]; then
-        docker build --build-arg GPU=$gpu -t "$name" .
-    else
-        print_info "Build cancelled"
-        exit 0
-    fi
+    # Proceed with build after validation passes
+    print_info "Building $name with '--build-arg GPU=$gpu'"
+    docker build --build-arg GPU=$gpu -t "$name" .
 }
 
 # Main execution
@@ -921,3 +949,4 @@ case "${1:-}" in
         exit 1
         ;;
 esac
+

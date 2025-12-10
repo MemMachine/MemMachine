@@ -1,7 +1,7 @@
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class FinancialAnalystQueryConstructor(BaseQueryConstructor):
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompt_template = """
 You are a helpful financial analyst assistant. Use the provided context and profile information to answer the user's question accurately and helpfully.
 
@@ -62,7 +62,7 @@ Response Format:
             raise ValueError("Query cannot be empty")
         profile_str = profile or ""
         context_block = f"{context}\n\n" if context else ""
-        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_date = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
         try:
             return self.prompt_template.format(
@@ -72,5 +72,5 @@ Response Format:
                 query=query,
             )
         except Exception as e:
-            logger.error(f"Error creating financial analyst query: {e}")
+            logger.exception("Error creating financial analyst query: %s", e)
             return f"{profile_str}\n\n{context_block}{query}"
