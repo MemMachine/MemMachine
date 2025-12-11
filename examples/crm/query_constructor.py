@@ -1,14 +1,12 @@
-"""
-CRM Query Constructor for agent query prompt for Intelligent Memory System
+"""CRM Query Constructor for agent query prompt for Intelligent Memory System
 Optimized for text rendering in Slack with structured prompt templates
 """
 
-from typing import Optional
-import logging
-import sys
-import os
 import json
-from datetime import datetime
+import logging
+import os
+import sys
+from datetime import UTC, datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -28,7 +26,7 @@ logger = logging.getLogger(__name__)
 # -----------------------
 def _current_date_iso() -> str:
     """Get current date in ISO format"""
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
 
 # -----------------------
@@ -214,7 +212,7 @@ FIELD_ALIASES = {
 MULTIPLICITY_RULES = """
 Multiplicity rules
 • contacts: format as "Name, Role, email@domain.com" or "Name, _, email@domain.com" for missing data. List up to 3, then "+N more".
-• next_step: single value timeline field with date (delete-then-add pattern, timeline format). 
+• next_step: single value timeline field with date (delete-then-add pattern, timeline format).
 • multivalue timeline fields: (status / comments) limit to 4 bullets for status, 3 bullets for comments, then "+N more" unless user requests more.
 • products: list up to 8 products before "+N more" unless user requests more.
 • general lists: for most other multi-item responses, list up to 6 items before "+N more" unless user requests more.
@@ -431,12 +429,10 @@ def _build_unified_query_template() -> str:
 class CRMQueryConstructor(BaseQueryConstructor):
     """CRM Query Constructor optimized for text rendering in Slack"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompt_template = _build_unified_query_template()
 
-    def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
-    ) -> str:
+    def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a CRM query using the prompt template"""
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
@@ -457,7 +453,7 @@ class CRMQueryConstructor(BaseQueryConstructor):
             try:
                 config_json = json.dumps(current_config, indent=2)
             except (TypeError, ValueError) as e:
-                logger.error(f"Error serializing CONFIG to JSON: {e}")
+                logger.exception("Error serializing CONFIG to JSON: %s", e)
                 config_json = '{"error": "Configuration serialization failed"}'
 
             result = self.prompt_template.format(
@@ -466,14 +462,20 @@ class CRMQueryConstructor(BaseQueryConstructor):
                 context_block=context_block,
                 query=query,
             )
-            logger.info(f"[DEBUG] Query constructor generated {len(result)} characters")
-            logger.info(f"[DEBUG] Query constructor preview: {result[:500]}...")
+            logger.info(
+                "[DEBUG] Query constructor generated %d characters",
+                len(result),
+            )
+            logger.info("[DEBUG] Query constructor preview: %s...", result[:500])
             return result
         except KeyError as e:
-            logger.error(f"Template formatting error - missing placeholder: {e}")
+            logger.exception(
+                "Template formatting error - missing placeholder: %s",
+                e,
+            )
             raise RuntimeError(
-                f"Failed to format prompt due to missing key: {e}"
+                f"Failed to format prompt due to missing key: {e}",
             ) from e
         except Exception as e:
-            logger.error(f"Error creating CRM query: {e}")
+            logger.exception("Error creating CRM query: %s", e)
             return f"{profile_str}\n\n{context_block}{query}"

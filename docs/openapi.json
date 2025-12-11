@@ -1,9 +1,8 @@
 {
-  "openapi": "3.0.0",
+  "openapi": "3.1.0",
   "info": {
-    "title": "MemMachine API",
-    "version": "1.0.0",
-    "description": "API endpoints for interacting with the Profile Memory and Episodic Memory components of the MemMachine memory system."
+    "title": "FastAPI",
+    "version": "0.1.0"
   },
   "servers": [
     {
@@ -21,81 +20,316 @@
     }
   ],
   "paths": {
-    "/memories": {
+    "/api/v2/projects": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/memories",
-        "description": "This endpoint first retrieves the appropriate episodic memory instance based on the session context (group, agent, user, session IDs). It then adds the episode to the episodic memory. If successful, it also passes the message to the profile memory for ingestion.",
+        "summary": "Create Project",
+        "description": "Create a new project.\n\n    This endpoint creates a project under the specified organization using the\n    provided identifiers and configuration. Both `org_id` and `project_id`\n    follow the rules: no slashes; only letters, numbers, underscores,\n    hyphens, and Unicode characters.\n\n    Each project acts as an isolated memory namespace. All memories (episodes)\n    inserted into a project belong exclusively to that project. Queries,\n    listings, and any background operations such as memory summarization or\n    knowledge extraction only access data within the same project. No\n    cross-project memory access is allowed.\n\n    If a project with the same ID already exists within the organization,\n    the request will fail with an error.\n\n    Returns the fully resolved project record, including configuration defaults\n    applied by the system.",
+        "operationId": "create_project_api_v2_projects_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewEpisode"
+                "$ref": "#/components/schemas/CreateProjectSpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
-            "description": "Memory successfully added."
-          },
-          "400": {
-            "description": "Invalid producer or produced_for ID."
-          },
-          "404": {
-            "description": "No matching episodic memory instance found."
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/memories",
-        "description": "Deletes all data for a particular session.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeleteDataRequest"
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
               }
             }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Session data successfully deleted."
           },
-          "404": {
-            "description": "No matching episodic memory instance found."
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/memories/search": {
+    "/api/v2/projects/get": {
       "post": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/memories/search",
-        "description": "Retrieves the relevant episodic memory instance and then performs concurrent searches in both the episodic memory and the profile memory. The results are combined into a single response object.",
+        "summary": "Get Project",
+        "description": "Retrieve a project.\n\n    Returns the project identified by `org_id` and `project_id`, following\n    the same rules as project creation.\n\n    Each project acts as an isolated memory namespace. Queries and operations\n    only access memories (episodes) stored within this project. No data from\n    other projects is visible or included in any background processing, such as\n    memory summarization or knowledge extraction.\n\n    The response includes the project's description and effective configuration.\n    If the project does not exist, a not-found error is returned.",
+        "operationId": "get_project_api_v2_projects_get_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchQuery"
+                "$ref": "#/components/schemas/GetProjectSpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Search results returned.",
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/projects/episode_count/get": {
+      "post": {
+        "summary": "Get Episode Count",
+        "description": "Retrieve the episode count for a project.\n\n    An *episode* is the minimal unit of memory stored in the MemMachine system.\n    In most cases, a single episode corresponds to one message or interaction\n    from a user. Episodes are appended as the project accumulates conversational\n    or operational data.\n\n    This endpoint returns the total number of episodes currently recorded for\n    the specified project. If the project does not exist, a not-found error is\n    returned.",
+        "operationId": "get_episode_count_api_v2_projects_episode_count_get_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GetProjectSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpisodeCountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/projects/list": {
+      "post": {
+        "summary": "List Projects",
+        "description": "List all projects.\n\n    Returns a list of all projects accessible within the system. Each entry\n    contains the project's organization ID and project ID. Identifiers follow\n    the standard rules: no slashes; only letters, numbers, underscores,\n    hyphens, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
+        "operationId": "list_projects_api_v2_projects_list_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api V2 Projects List Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/projects/delete": {
+      "post": {
+        "summary": "Delete Project",
+        "description": "Delete a project.\n\n    Deletes the specified project identified by `org_id` and `project_id`,\n    following the same rules as project creation.\n\n    This operation removes the project and all associated memories (episodes)\n    permanently from the system. It cannot be undone.\n\n    If the project does not exist, a not-found error is returned.",
+        "operationId": "delete_project_api_v2_projects_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteProjectSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories": {
+      "post": {
+        "summary": "Add Memories",
+        "description": "Add memory messages to a project.  If not specified, the memory will be\n    added to all the sub-types (Episodic, Semantic).\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
+        "operationId": "add_memories_api_v2_memories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories/episodic/add": {
+      "post": {
+        "summary": "Add Episodic Memories",
+        "description": "Add episodic memory messages to a project.  Same as Add Memories but only adds\n    to the Episodic memory type.",
+        "operationId": "add_episodic_memories_api_v2_memories_episodic_add_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories/semantic/add": {
+      "post": {
+        "summary": "Add Semantic Memories",
+        "description": "Add semantic memory messages to a project.  Same as Add Memories but only adds\n    to the Semantic memory type.",
+        "operationId": "add_semantic_memories_api_v2_memories_semantic_add_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/memories/search": {
+      "post": {
+        "summary": "Search Memories",
+        "description": "Search memories within a project.\n\n    System returns the top K relevant memories matching the natural language query.\n    The result is sorted by timestamp to help with context.\n\n    The filter field allows for filtering based on metadata key-value pairs.\n    The types field allows specifying which memory types to include in the search.",
+        "operationId": "search_memories_api_v2_memories_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -104,26 +338,12 @@
               }
             }
           },
-          "404": {
-            "description": "No matching episodic memory instance found."
-          }
-        }
-      }
-    },
-    "/sessions": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/sessions",
-        "description": "Get all sessions",
-        "responses": {
-          "200": {
-            "description": "A list of all sessions.",
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -131,154 +351,24 @@
         }
       }
     },
-    "/users/{user_id}/sessions": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/users/{user_id}/sessions",
-        "description": "Get all sessions for a particular user",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A list of sessions for the specified user.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/groups/{group_id}/sessions": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/groups/{group_id}/sessions",
-        "description": "Get all sessions for a particular group",
-        "parameters": [
-          {
-            "name": "group_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A list of sessions for the specified group.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/agents/{agent_id}/sessions": {
-      "get": {
-        "tags": [
-          "RESTful APIs"
-        ],
-        "summary": "/agents/{agent_id}/sessions",
-        "description": "Get all sessions for a particular agent",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A list of sessions for the specified agent.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/add_session_memory": {
+    "/api/v2/memories/list": {
       "post": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "add_session_memory",
-        "description": "Adds a memory episode directly using the session data provided in the `NewEpisode` object. This endpoint is for internal use by LLMs via FastMCP.",
+        "summary": "List Memories",
+        "description": "List memories within a project.\n\n    System returns a paginated list of memories stored in the project.\n    The page_size and page_num fields control pagination.\n\n    The filter field allows for filtering based on metadata key-value pairs.\n    The type field allows specifying which memory type to list.",
+        "operationId": "list_memories_api_v2_memories_list_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewEpisode"
+                "$ref": "#/components/schemas/ListMemoriesSpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Status 0 if the memory was added successfully.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "type": "integer" },
-                    "error_msg": { "type": "string" }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/search_session_memory": {
-      "post": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "search_session_memory",
-        "description": "Searches both episodic and profile memories for the provided query. This endpoint is for internal use by LLMs via FastMCP.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SearchQuery"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "A search result object.",
+            "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
@@ -286,38 +376,45 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
     },
-    "/mcp/delete_session_data": {
+    "/api/v2/memories/episodic/delete": {
       "post": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "delete_session_data",
-        "description": "Deletes all data associated with the provided session data. This endpoint is for internal use by LLMs via FastMCP.",
+        "summary": "Delete Episodic Memory",
+        "description": "Delete a specific episodic memory from a project.\n\n    Removes the episodic memory identified by `episodic_id` from the specified\n    project. This operation is permanent and cannot be undone.\n    If the episodic memory does not exist, a not-found error is returned.",
+        "operationId": "delete_episodic_memory_api_v2_memories_episodic_delete_post",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DeleteDataRequest"
+                "$ref": "#/components/schemas/DeleteEpisodicMemorySpec"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
-            "description": "Status 0 if deletion was successful.",
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "type": "integer" },
-                    "error_msg": { "type": "string" }
-                  }
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -325,146 +422,71 @@
         }
       }
     },
-    "/mcp/delete_data": {
+    "/api/v2/memories/semantic/delete": {
       "post": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "delete_data",
-        "description": "Deletes all data associated with the session stored in the MCP context. This endpoint is for internal use by LLMs via FastMCP.",
+        "summary": "Delete Semantic Memory",
+        "description": "Delete a specific semantic memory from a project.\n\n    Removes the semantic memory identified by `semantic_id` from the specified\n    project. This operation is permanent and cannot be undone.\n    If the semantic memory does not exist, a not-found error is returned.",
+        "operationId": "delete_semantic_memory_api_v2_memories_semantic_delete_post",
         "requestBody": {
-          "required": false,
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/DeleteSemanticMemorySpec"
+              }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
-          "200": {
-            "description": "Status 0 if deletion was successful.",
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/metrics": {
+      "get": {
+        "summary": "Metrics",
+        "description": "Expose Prometheus metrics.",
+        "operationId": "metrics_api_v2_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Health check endpoint to verify server is running.",
+        "operationId": "health_check_api_v2_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
                   "type": "object",
-                  "properties": {
-                    "status": { "type": "integer" },
-                    "error_msg": { "type": "string" }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/sessions": {
-      "get": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "sessions",
-        "description": "Retrieves all memory sessions. This endpoint is for internal use by LLMs via FastMCP.",
-        "responses": {
-          "200": {
-            "description": "An AllSessionsResponse containing a list of all sessions.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/users/{user_id}/sessions": {
-      "get": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "users/{user_id}/sessions",
-        "description": "Retrieves all sessions for a specific user. This endpoint is for internal use by LLMs via FastMCP.",
-        "parameters": [
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A list of sessions for the user.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/groups/{group_id}/sessions": {
-      "get": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "groups/{group_id}/sessions",
-        "description": "Retrieves all sessions for a specific group. This endpoint is for internal use by LLMs via FastMCP.",
-        "parameters": [
-          {
-            "name": "group_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A list of sessions for the group.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp/agents/{agent_id}/sessions": {
-      "get": {
-        "tags": [
-          "MCP Server APIs"
-        ],
-        "summary": "agents/{agent_id}/sessions",
-        "description": "Retrieves all sessions for a specific agent. This endpoint is for internal use by LLMs via FastMCP.",
-        "parameters": [
-          {
-            "name": "agent_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "A list of sessions for the agent.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AllSessionsResponse"
+                  "title": "Response Health Check Api V2 Health Get"
                 }
               }
             }
@@ -475,143 +497,604 @@
   },
   "components": {
     "schemas": {
-      "SessionData": {
-        "type": "object",
+      "AddMemoriesResponse": {
         "properties": {
-          "group_id": {
-            "type": "string",
-            "nullable": true
-          },
-          "agent_id": {
-            "type": "array",
+          "results": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/AddMemoryResult"
             },
-            "nullable": true
-          },
-          "user_id": {
             "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "nullable": true
-          },
-          "session_id": {
-            "type": "string"
+            "title": "Results",
+            "description": "The list of results for each added memory message."
           }
-        }
-      },
-      "NewEpisode": {
+        },
         "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "AddMemoriesResponse",
+        "description": "Response model for adding memories."
+      },
+      "AddMemoriesSpec": {
         "properties": {
-          "session": {
-            "$ref": "#/components/schemas/SessionData"
-          },
-          "producer": {
-            "type": "string"
-          },
-          "produced_for": {
-            "type": "string"
-          },
-          "episode_content": {
-            "oneOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "type": "number"
-                }
-              }
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "default": "universal",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
             ]
           },
-          "episode_type": {
-            "type": "string"
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "default": "universal",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
           },
-          "metadata": {
-            "type": "object",
-            "additionalProperties": true,
-            "nullable": true
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryMessage"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Messages",
+            "description": "\n    A list of messages to be added (batch input).\n    Must contain at least one message.\n    "
           }
-        }
-      },
-      "SearchQuery": {
+        },
         "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "AddMemoriesSpec",
+        "description": "Specification model for adding memories."
+      },
+      "AddMemoryResult": {
         "properties": {
-          "session": {
-            "$ref": "#/components/schemas/SessionData"
+          "uid": {
+            "type": "string",
+            "title": "Uid",
+            "description": "The unique identifier of the memory message."
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid"
+        ],
+        "title": "AddMemoryResult",
+        "description": "Response model for adding memories."
+      },
+      "CreateProjectSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
           },
-          "query": {
-            "type": "string"
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "\n    A human-readable description of the project.\n    Used for display purposes in UIs and dashboards.\n    Optional; defaults to an empty string.\n    ",
+            "default": "",
+            "examples": [
+              "Test project for RAG pipeline",
+              "Production semantic search index"
+            ]
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProjectConfig",
+            "description": "\n    Configuration settings associated with this project.\n\n    Defines which models (reranker, embedder) to use. If any values within\n    `ProjectConfig` are empty, global defaults are applied.\n    "
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "CreateProjectSpec",
+        "description": "Specification model for creating a new project.\n\nA project belongs to an organization and has its own identifiers,\ndescription, and configuration. The project ID must be unique within\nthe organization."
+      },
+      "DeleteEpisodicMemorySpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "default": "universal",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "default": "universal",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          },
+          "episodic_id": {
+            "type": "string",
+            "title": "Episodic Id",
+            "description": "\n    The unique ID of the specific episodic memory to be deleted.\n    ",
+            "examples": [
+              "123",
+              "345"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "episodic_id"
+        ],
+        "title": "DeleteEpisodicMemorySpec",
+        "description": "Specification model for deleting episodic memories."
+      },
+      "DeleteProjectSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "DeleteProjectSpec",
+        "description": "Specification model for deleting a project.\n\nThis model defines the identifiers required to delete a project from a\nspecific organization. The identifiers must comply with the `SafeId`\nrules.\n\nDeletion operations are typically irreversible and remove both metadata and\nassociated configuration for the specified project."
+      },
+      "DeleteSemanticMemorySpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "default": "universal",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "default": "universal",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          },
+          "semantic_id": {
+            "type": "string",
+            "title": "Semantic Id",
+            "description": "\n    The unique ID of the specific semantic memory to be deleted.\n    ",
+            "examples": [
+              "12",
+              "23"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "semantic_id"
+        ],
+        "title": "DeleteSemanticMemorySpec",
+        "description": "Specification model for deleting semantic memories."
+      },
+      "EpisodeCountResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Count",
+            "description": "The total number of episodic memories in the project."
+          }
+        },
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "title": "EpisodeCountResponse",
+        "description": "Response model representing the number of episodes associated with a project.\n\nThis model is typically returned by analytics or monitoring endpoints\nthat track usage activity (e.g., number of computation episodes, workflow\nruns, or operational cycles).\n\nThe count reflects the current recorded total at the time of the request."
+      },
+      "GetProjectSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "GetProjectSpec",
+        "description": "Specification model for retrieving a project.\n\nThis model defines the parameters required to fetch an existing project.\nBoth the organization ID and project ID follow the standard `SafeId`\nvalidation rules.\n\nThe combination of `org_id` and `project_id` uniquely identifies the\nproject to retrieve."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ListMemoriesSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "default": "universal",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "default": "universal",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size",
+            "description": "\n    The maximum number of memories to return per page. Use this for pagination.\n    ",
+            "default": 100,
+            "examples": [
+              50,
+              100
+            ]
+          },
+          "page_num": {
+            "type": "integer",
+            "title": "Page Num",
+            "description": "\n    The zero-based page number to retrieve. Use this for pagination.\n    ",
+            "default": 0,
+            "examples": [
+              0,
+              1,
+              5,
+              10
+            ]
           },
           "filter": {
-            "type": "object",
-            "additionalProperties": true,
-            "nullable": true
+            "type": "string",
+            "title": "Filter",
+            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    ",
+            "default": "",
+            "examples": [
+              "metadata.user_id=123 AND metadata.session_id=abc"
+            ]
           },
-          "limit": {
-            "type": "integer",
-            "nullable": true
+          "type": {
+            "$ref": "#/components/schemas/MemoryType",
+            "description": "\n    The specific memory type to list (e.g., Episodic or Semantic).\n    ",
+            "default": "episodic",
+            "examples": [
+              "Episodic",
+              "Semantic"
+            ]
           }
-        }
+        },
+        "type": "object",
+        "title": "ListMemoriesSpec",
+        "description": "Specification model for listing memories."
+      },
+      "MemoryMessage": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The content or text of the message."
+          },
+          "producer": {
+            "type": "string",
+            "title": "Producer",
+            "description": "\n    The sender of the message. This is a user-friendly name for\n    the LLM to understand the message context. Defaults to 'user'.\n    ",
+            "default": "user"
+          },
+          "produced_for": {
+            "type": "string",
+            "title": "Produced For",
+            "description": "\n    The intended recipient of the message. This is a user-friendly name for\n    the LLM to understand the message context. Defaults to an empty string.\n    ",
+            "default": ""
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "\n    The timestamp when the message was created, in ISO 8601 format.\n    If not provided, the server assigns the current time.\n    "
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "description": "\n    The role of the message in a conversation (e.g., 'user', 'assistant',\n    'system'). Optional; defaults to an empty string.\n    ",
+            "default": ""
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Metadata",
+            "description": "\n    Additional metadata associated with the message, represented as key-value\n    pairs. Optional; defaults to an empty object.\n    Retrieval operations may utilize this metadata for filtering.\n    Use 'metadata.{key}' to filter based on specific metadata keys.\n    "
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryMessage",
+        "description": "Model representing a memory message."
+      },
+      "MemoryType": {
+        "type": "string",
+        "enum": [
+          "semantic",
+          "episodic"
+        ],
+        "title": "MemoryType",
+        "description": "Memory type."
+      },
+      "ProjectConfig": {
+        "properties": {
+          "reranker": {
+            "type": "string",
+            "title": "Reranker",
+            "description": "\n    The name of the reranker model to use for this project.\n\n    - Must refer to a reranker model defined in the system configuration.\n    - If set to an empty string (default), the globally configured reranker will\n      be used.\n\n    Rerankers typically re-score retrieved documents to improve result quality.\n    ",
+            "default": "",
+            "examples": [
+              "bge-reranker-large",
+              "my-custom-reranker"
+            ]
+          },
+          "embedder": {
+            "type": "string",
+            "title": "Embedder",
+            "description": "\n    The name of the embedder model to use for this project.\n\n    - Must refer to an embedder model defined in the system configuration.\n    - If set to an empty string (default), the globally configured embedder will\n      be used.\n\n    Embedders generate vector embeddings for text to support semantic search and\n    similarity operations.\n    ",
+            "default": "",
+            "examples": [
+              "bge-base-en",
+              "my-embedder"
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ProjectConfig",
+        "description": "Project configuration model.\n\nThis section defines which reranker and embedder models should be used for\nthe project.  If any field is left empty (\"\"), the system automatically falls\nback to the globally configured defaults in the server configuration file."
+      },
+      "ProjectResponse": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization this project belongs to.\n\n    Returned exactly as stored by the system.\n    "
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    This value uniquely identifies the project within the organization.\n    "
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "\n    A human-readable description of the project.\n    Used for display purposes in UIs and dashboards.\n    Optional; defaults to an empty string.\n    ",
+            "default": ""
+          },
+          "config": {
+            "$ref": "#/components/schemas/ProjectConfig",
+            "description": "\n    Configuration settings associated with this project.\n\n    Defines which models (reranker, embedder) to use. If any values within\n    `ProjectConfig` are empty, global defaults are applied.\n    "
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id",
+          "project_id"
+        ],
+        "title": "ProjectResponse",
+        "description": "Response model returned after project operations (e.g., creation, update, fetch).\n\nContains the resolved identifiers and configuration of the project as stored\nin the system. Field formats follow the same validation rules as in\n`CreateProjectSpec`."
+      },
+      "SearchMemoriesSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "default": "universal",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "default": "universal",
+            "examples": [
+              "memmachine",
+              "research123",
+              "qa_pipeline"
+            ]
+          },
+          "top_k": {
+            "type": "integer",
+            "title": "Top K",
+            "description": "\n    The maximum number of memories to return in the search results.\n    ",
+            "default": 10,
+            "examples": [
+              5,
+              10,
+              20
+            ]
+          },
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "\n    The natural language query used for semantic memory search. This should be\n    a descriptive string of the information you are looking for.\n    ",
+            "examples": [
+              "What was the user's last conversation about finance?"
+            ]
+          },
+          "filter": {
+            "type": "string",
+            "title": "Filter",
+            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    ",
+            "default": "",
+            "examples": [
+              "metadata.user_id=123 AND metadata.session_id=abc"
+            ]
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryType"
+            },
+            "type": "array",
+            "title": "Types",
+            "description": "\n    A list of memory types to include in the search (e.g., Episodic, Semantic).\n    If empty, all available types are searched.\n    ",
+            "examples": [
+              [
+                "Episodic",
+                "Semantic"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchMemoriesSpec",
+        "description": "Specification model for searching memories."
       },
       "SearchResult": {
-        "type": "object",
         "properties": {
           "status": {
             "type": "integer",
-            "default": 0
+            "title": "Status",
+            "description": "\n    The status code of the search operation. 0 typically indicates success.\n    ",
+            "default": 0,
+            "examples": [
+              0
+            ]
           },
           "content": {
+            "additionalProperties": true,
             "type": "object",
-            "additionalProperties": true
+            "title": "Content",
+            "description": "\n    The dictionary containing the memory search results (e.g., list of memory\n    objects).\n    "
           }
-        }
-      },
-      "DeleteDataRequest": {
+        },
         "type": "object",
-        "properties": {
-          "session": {
-            "$ref": "#/components/schemas/SessionData"
-          }
-        }
+        "required": [
+          "content"
+        ],
+        "title": "SearchResult",
+        "description": "Response model for memory search results."
       },
-      "MemorySession": {
-        "type": "object",
+      "ValidationError": {
         "properties": {
-          "user_ids": {
-            "type": "array",
+          "loc": {
             "items": {
-              "type": "string"
-            }
-          },
-          "session_id": {
-            "type": "string"
-          },
-          "group_id": {
-            "type": "string",
-            "nullable": true
-          },
-          "agent_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
             },
-            "nullable": true
-          }
-        }
-      },
-      "AllSessionsResponse": {
-        "type": "object",
-        "properties": {
-          "sessions": {
             "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/MemorySession"
-            }
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
           }
-        }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
       }
     }
   }

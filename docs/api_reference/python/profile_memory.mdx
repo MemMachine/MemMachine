@@ -21,101 +21,119 @@ The magic of `ProfileMemory` lies in its ability to:
 
 Here's a breakdown of the key methods you'll use to interact with `ProfileMemory`.
 
-### `startup()`
+### 1. Lifecycle Methods
 
-**What it does:** This is the first method you'll call. It gets `ProfileMemory` up and running by initializing all the necessary resources, like the database connection.
+#### `startup()`
 
-```
+**What it does:** This is the first method you'll call. It gets `ProfileMemory` up and running by initializing all the necessary resources, like the database connection pool.
+
+```python
 await profile_memory_instance.startup()
 ```
 
-### **`cleanup()`**
+#### **`cleanup()`**
 
 **What it does:** This method gracefully shuts down the `ProfileMemory` instance by closing resources, like the database connection pool, when you're finished.
 
-```
+```python
 await profile_memory_instance.cleanup()
 ```
 
-### **`get_user_profile()`**
+### 2. Ingestion and Automatic Update
 
-**What it does:** This method retrieves a user's entire profile. For better performance, it first checks a cache before looking up the data in the database.
+#### `add_persona_message()`
 
-- `user_id`: The ID of the user whose profile you want to retrieve.
-- `isolations`: (Optional) A dictionary for data isolation, allowing you to get a specific subset of the profile.
+**What it does:** This is the core ingestion method. You send it a message, and `ProfileMemory` adds it to the user's conversation history. Periodically (after a set number of messages, defined by `_update_interval`), it will use these new messages to automatically update and consolidate the user's profile.
 
-```
-profile = await profile_memory_instance.get_user_profile(user_id="user_123")
-```
+| Parameter    | Type             | Default | Description                                            |
+| ------------ | ---------------- | ------- | ------------------------------------------------------ |
+| `content`    | `str`            |         | The message content (required).                        |
+| `metadata`   | `dict[str, str]` | `None`  | Optional metadata for the message (e.g., who said it). |
+| `isolations` | `dict`           | `None`  | A dictionary for data isolation.                       |
+| `user_id`    | `str`            | `""`    | The ID of the user.                                    |
 
-### `add_new_profile()`
+**Returns:** `bool` - A boolean indicating whether the asynchronous profile **consolidation process was triggered and awaited**.
 
-**What it does:** Use this method to manually add a new piece of information (a "feature") to a user's profile. This is useful for adding foundational information that isn't learned from a conversation.
-
-- `user_id`: The ID of the user.
-- `feature`: The name of the profile feature (e.g., "hobbies").
-- `value`: The value for the feature (e.g., "hiking").
-- `tag`: A category for the feature (e.g., "leisure").
-
-```
-await profile_memory_instance.add_new_profile(
-    user_id="user_123",
-    feature="location",
-    value="Colorado",
-    tag="demographics"
-)
-```
-
-### `semantic_search()`
-
-**What it does:** This powerful method allows you to search a user's profile for specific information. It's a "semantic" search, which means it understands the *meaning* of your query, not just the exact words.
-
-- `user_id`: The ID of the user you are searching.
-- `query`: The search query (e.g., "Where does the user live?").
-
-```
-results = await profile_memory_instance.semantic_search(
-    user_id="user_123",
-    query="what are they interested in?"
-)
-```
-
-### `add_persona_message()`
-
-**What it does:** This is the core ingestion method. You send it a message, and `ProfileMemory` adds it to the user's conversation history. Periodically, it will use these new messages to automatically update and consolidate the user's profile.
-
-- `user_id`: The ID of the user.
-- `content`: The message content.
-- `metadata`: (Optional) Metadata for the message (e.g., who said it).
-
-```
+```python
+# The method will asynchronously trigger a profile update and consolidation
+# if the internal message count threshold is met.
 await profile_memory_instance.add_persona_message(
     user_id="user_123",
-    content="I love to go hiking on weekends.",
+    content="I love to go hiking on weekends, especially in the Rockies.",
     metadata={"speaker": "user"}
 )
 ```
 
-### `delete_user_profile()`
+### 3. CRUD Operations
+
+#### **`get_user_profile()`**
+
+**What it does:** This method retrieves a user's entire profile. For better performance, it first checks a cache before looking up the data in the database.
+
+| Parameter    | Type   | Default | Description                                                  |
+| ------------ | ------ | ------- | ------------------------------------------------------------ |
+| `user_id`    | `str`  |         | The ID of the user whose profile you want to retrieve.       |
+| `isolations` | `dict` | `None`  | A dictionary for data isolation, allowing you to get a specific subset of the profile. |
+
+**Returns:** The raw user's profile data (a list of profile entries).
+
+```python
+profile = await profile_memory_instance.get_user_profile(
+    user_id="user_123",
+    isolations={"app_context": "finance"}
+)
+```
+
+#### `add_new_profile()`
+
+**What it does:** Use this method to manually add a new piece of information (a "feature") to a user's profile. This is useful for adding foundational information that isn't learned from a conversation.
+
+| Parameter    | Type             | Default | Description                                              |
+| ------------ | ---------------- | ------- | -------------------------------------------------------- |
+| `user_id`    | `str`            |         | The ID of the user.                                      |
+| `feature`    | `str`            |         | The name of the profile feature (e.g., "hobbies").       |
+| `value`      | `str`            |         | The value for the feature (e.g., "hiking").              |
+| `tag`        | `str`            |         | A category for the feature (e.g., "leisure").            |
+| `metadata`   | `dict[str, str]` | `None`  | Additional metadata for the entry.                       |
+| `isolations` | `dict`           | `None`  | A dictionary for data isolation.                         |
+| `citations`  | `list[int]`      | `None`  | A list of message IDs that are sources for this feature. |
+
+```python
+await profile_memory_instance.add_new_profile(
+    user_id="user_123",
+    feature="location",
+    value="Colorado",
+    tag="demographics",
+    isolations={"app_context": "demographic_setup"}
+)
+```
+
+#### `delete_user_profile()`
 
 **What it does:** Deletes an entire user profile.
 
-- `user_id`: The ID of the user whose profile will be deleted.
+| Parameter    | Type   | Default | Description                                       |
+| ------------ | ------ | ------- | ------------------------------------------------- |
+| `user_id`    | `str`  |         | The ID of the user whose profile will be deleted. |
+| `isolations` | `dict` | `None`  | A dictionary for data isolation.                  |
 
-```
+```python
 await profile_memory_instance.delete_user_profile(user_id="user_123")
 ```
 
-### `delete_user_profile_feature()`
+#### `delete_user_profile_feature()`
 
-**What it does:** Deletes a specific feature from a user's profile.
+**What it does:** Deletes a specific feature from a user's profile, optionally targeted by a specific value.
 
-- `user_id`: The ID of the user.
-- `feature`: The feature to delete (e.g., "hobbies").
-- `tag`: The tag of the feature to delete (e.g., "leisure").
-- `value`: (Optional) The specific value to delete. If this is not provided, all values for that feature and tag are deleted.
+| Parameter    | Type   | Default | Description                                                  |
+| ------------ | ------ | ------- | ------------------------------------------------------------ |
+| `user_id`    | `str`  |         | The ID of the user.                                          |
+| `feature`    | `str`  |         | The profile feature to delete.                               |
+| `tag`        | `str`  |         | The tag of the feature to delete.                            |
+| `value`      | `str`  | `None`  | The specific value to delete. If `None`, all values for that feature and tag are deleted. |
+| `isolations` | `dict` | `None`  | A dictionary for data isolation.                             |
 
-```
+```python
 await profile_memory_instance.delete_user_profile_feature(
     user_id="user_123",
     feature="location",
@@ -123,10 +141,55 @@ await profile_memory_instance.delete_user_profile_feature(
 )
 ```
 
-### `delete_all()`
+#### `delete_all()`
 
-**What it does:** Use this method with caution! It completely wipes all user profiles from the database and clears the cache. This is typically used for development and testing.
+**What it does:** **Use this method with caution!** It completely wipes all user profiles from the database and clears the cache. This is typically used for development and testing.
 
-```
+```python
 await profile_memory_instance.delete_all()
+```
+
+### 4. Search and Filtering
+
+#### `semantic_search()`
+
+**What it does:** This powerful method allows you to search a user's profile for specific information. It's a "semantic" search, which means it understands the *meaning* of your query, not just the exact words.
+
+| Parameter    | Type    | Default     | Description                                                  |
+| ------------ | ------- | ----------- | ------------------------------------------------------------ |
+| `query`      | `str`   |             | The search query string (e.g., "Where does the user live?"). |
+| `k`          | `int`   | `1_000_000` | The maximum number of results to retrieve from the database. |
+| `min_cos`    | `float` | `-1.0`      | The minimum cosine similarity score to consider.             |
+| `max_range`  | `float` | `2.0`       | The maximum range (max-min similarity) for the result filter. |
+| `max_std`    | `float` | `1.0`       | The maximum standard deviation for the result filter.        |
+| `isolations` | `dict`  | `None`      | A dictionary for data isolation.                             |
+| `user_id`    | `str`   | `""`        | The ID of the user you are searching.                        |
+
+**Returns:** `list[Any]` - A list of matching profile entries, filtered by similarity scores.
+
+```python
+results = await profile_memory_instance.semantic_search(
+    user_id="user_123",
+    query="what are they interested in for fun?",
+    max_range=0.1 # Tighter filter for high relevance
+)
+```
+
+#### `get_large_profile_sections()`
+
+**What it does:** Retrieves groups of profile entries (sections) that share the same `feature` and `tag` and exceed a specific count threshold. This is primarily used internally to identify profile sections that are large enough to require **consolidation** (deduplication) by the Language Model.
+
+| Parameter    | Type   | Default | Description                                                  |
+| ------------ | ------ | ------- | ------------------------------------------------------------ |
+| `user_id`    | `str`  |         | The ID of the user.                                          |
+| `thresh`     | `int`  | `5`     | The minimum number of entries for a section to be considered "large." |
+| `isolations` | `dict` | `None`  | A dictionary for data isolation.                             |
+
+**Returns:** `list[list[dict[str, Any]]]` - A list of large profile sections, where each section is a list of profile entries.
+
+```python
+sections_to_consolidate = await profile_memory_instance.get_large_profile_sections(
+    user_id="user_456",
+    thresh=10
+)
 ```

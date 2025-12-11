@@ -1,0 +1,354 @@
+---
+title: "Using PIP and Source"
+description: "Your Home for Localized MemMachine Installation"
+icon: "bookmark"
+---
+
+## MemMachine Installation Guide
+
+This guide will walk you through the process of installing MemMachine. We'll start with the prerequisites you need to get set up, followed by two different installation methods.
+
+<Steps>
+<Step title="Gather Your Prerequisites">
+
+Before you install the MemMachine software itself, you'll need to set up a few things. Be sure to note down any passwords or keys you create, as you'll need them later.
+
+### A. Core Software
+
+- **Python 3.12+**: MemMachine requires Python version 3.12 or newer.
+- **PostgreSQL**: You will need a local PostgreSQL instance with the `pgvector` extension. You can find installation instructions on the official [PostgreSQL Downloads page](https://www.postgresql.org/download/). Once installed, create a new database and a user with full privileges for that database.
+- **Neo4j**: A Neo4j database is required.  You can find installation instructions on the official [Neo4j Documentation page](https://neo4j.com/docs/). After installation, start the Neo4j server and set a password for the default `neo4j` user.
+
+### B. Accounts and Keys
+
+- **OpenAI API Key**: You will need an OpenAI account to use MemMachine. You can sign up on the [OpenAI Platform](https://platform.openai.com/). You'll need to generate and copy your **API Key** for a later step.
+
+<Note> MemMachine itself is free to install, but please be aware that using the software consumes tokens from your OpenAI account.</Note>
+
+</Step>
+<Step title="Choose Your Installation Method">
+
+You can install MemMachine using a Python package manager or by cloning the source code from our GitHub repository.
+<AccordionGroup>
+<Accordion title="Option 1: Install with Pip">
+
+This is the recommended method for most users who want to add MemMachine to an existing Python environment.
+
+To create a python environment(if it does not already exist), you can use `venv` as follows:
+```sh
+python -m venv memmachine-env
+source memmachine-env/bin/activate  # On Windows use `source memmachine-env/Scripts/activate`
+```
+
+A. Run the following command in your terminal:
+<Note> Choose the package that is correct for your needs.  If you want to install the Client, use `pip install memmachine-client` and if you want to use Server, use `pip install memmachine-server`. Examples below assume server.  Should you wish to install client, use the same command, but replace "server" with "client" </Note>
+
+ - If you are using MemMachine in a CPU-only environment, use:
+```sh
+   pip install memmachine-server
+```
+ - If you have an NVIDIA GPU and want to leverage it, use:
+```sh
+pip install memmachine-server[gpu]
+```
+B. Next, install dependencies from NLTK through the following MemMachine command:
+```sh
+memmachine-nltk-setup
+```
+</Accordion>
+<Accordion title="Option 2: Install from Source (GitHub)">
+
+This method is for users who want to contribute to the project or run from the latest source code.
+
+First, clone the repository and navigate into the project directory:
+
+```sh
+git clone https://github.com/MemMachine/MemMachine.git
+cd MemMachine
+```
+
+Second, Ensure you have a python environment set up. You can use `venv`, `conda`, or any other environment manager of your choice. 
+
+
+Next, use the `uv` tool to install all dependencies. If you don't have `uv`, you'll need to install it first.
+
+```sh
+# If you don't have uv installed, run this command:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Now, install the project dependencies:
+uv pip install .
+```
+<Note> If you wish to run with an NVIDIA GPU, you will need to install dependencies for GPU by using the `uv pip install ".[gpu]"` command.</Note>
+</Accordion>
+</AccordionGroup>
+</Step>
+<Step title="Create Your Configuration File - `cfg.yml`">
+
+MemMachine uses a single configuration file, `cfg.yml`, to define its resources and behavior. This file should be placed in the directory where you run the MemMachine server.
+
+Alternatively, you can use the [Configure Wizard](./configure_wizard) to assist in configuring MemMachine for your environment and to provide the necessary information.
+
+Below are examples for CPU-only and GPU-enabled setups.
+
+<AccordionGroup>
+<Accordion title="CPU-Only Configuration">
+You can download a sample file or copy the content below.
+
+```yaml expandable lines
+logging:
+  path: mem-machine.log
+  level: info #| debug | error
+
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+prompt:
+  session:
+  - profile_prompt
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: <YOUR_PASSWORD_HERE>
+        db_name: postgres
+    my_storage_id:
+      provider: neo4j
+      config:
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
+      provider: openai-chat-completions
+      config:
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
+```
+<Tip> Replace `<YOUR_OPENAI_API_KEY>` and database passwords with your actual credentials.</Tip>
+</Accordion>
+
+<Accordion title="GPU-Enabled Configuration">
+For GPU setups, you might use local models for embeddings or reranking.
+
+```yaml expandable lines
+logging:
+  path: mem-machine.log
+  level: info #| debug | error
+
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+prompt:
+  session:
+  - profile_prompt
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        db_name: postgres
+        password: <YOUR_PASSWORD_HERE>
+    my_storage_id:
+      provider: neo4j
+      config:
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
+      provider: openai-chat-completions
+      config:
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+          - ce_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    ce_ranker_id:
+      provider: "cross-encoder"
+      config:
+        model_name: "cross-encoder/qnli-electra-base"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
+```
+</Accordion>
+</AccordionGroup>
+</Step>
+<Step title="Run MemMachine">
+
+You're ready to go! Run these commands from the directory where you've installed MemMachine.
+
+First, you need to sync the profile schema. This is a **one-time** command that must be run before the very first time you start the server.
+
+```
+memmachine-sync-profile-schema
+```
+
+Now you can start the MemMachine server. If you have run MemMachine before, you can skip the sync step and go straight to this command:
+
+```
+memmachine-server
+```
+
+You should now have the MemMachine server running.
+
+<Note> If you are using Docker to run your databases, ensure they are started and accessible before you try to start MemMachine.</Note>
+</Step>
+</Steps>

@@ -1,0 +1,193 @@
+# Workflow to build and publish CPU and GPU Docker images to Docker Hub
+name: Build and Publish CPU/GPU Docker Images
+
+on:
+  # Trigger when a release is published
+  release:
+    types: [published]
+  # Trigger manually via the Actions tab with a required tag input
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The git tag to build (e.g., v0.1.1)'
+        required: true
+        type: string
+
+env:
+  # Docker image name to publish
+  IMAGE_NAME: memmachine/memmachine
+
+permissions:
+  # Only need read access to repository contents for this workflow
+  contents: read
+
+# Prevents overlapping runs for the same ref; cancels in-progress jobs if a new one starts
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-cpu:
+    name: Build and Push CPU Image
+    # Use the latest Ubuntu runner
+    runs-on: ubuntu-latest
+    steps:
+      # Step 0: Free Disk Space (Manual)
+      - name: Free Disk Space (Manual)
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+
+      # Step 1: Checkout source for Release triggers
+      - name: Checkout source (Release)
+        if: github.event_name == 'release'
+        uses: actions/checkout@v4
+
+      # Step 1: Checkout source for Manual triggers
+      - name: Checkout source (Manual)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      # Step 2: Enable QEMU for multi-platform builds (required for ARM support)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Step 3: Set up Docker Buildx (needed for advanced Docker builds)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 4: Log in to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_API_KEY }}
+
+      # Step 5: Extract Docker metadata for CPU image
+      - name: Extract Docker metadata for CPU image
+        id: meta-cpu
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            # For Manual (workflow_dispatch) runs
+            type=semver,pattern=v{{version}}-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern=latest-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
+            type=semver,pattern=latest,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
+
+            # For Release events
+            type=semver,pattern=v{{version}}-cpu,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern=latest-cpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+
+      # Step 5.5: Prune Docker system
+      - name: Prune Docker system
+        run: docker system prune -af
+
+      # Step 6: Build and push the CPU image
+      - name: Build and push CPU image
+        id: build_cpu
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta-cpu.outputs.tags }}
+          labels: ${{ steps.meta-cpu.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      # Step 7: Show the digest of the built CPU image (useful for traceability)
+      - name: Show CPU image digest
+        run: echo "CPU digest - ${{ steps.build_cpu.outputs.digest }}"
+
+  build-gpu:
+    name: Build and Push GPU Image
+    needs: build-cpu
+    # Use the latest Ubuntu runner
+    runs-on: ubuntu-latest
+    steps:
+      # Step 0: Free Disk Space (Manual)
+      - name: Free Disk Space (Manual)
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+
+      # Step 1: Checkout source for Release triggers
+      - name: Checkout source (Release)
+        if: github.event_name == 'release'
+        uses: actions/checkout@v4
+
+      # Step 1: Checkout source for Manual triggers
+      - name: Checkout source (Manual)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      # Step 2: Enable QEMU for multi-platform builds (required for ARM support)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Step 3: Set up Docker Buildx (needed for advanced Docker builds)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 4: Log in to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_API_KEY }}
+
+      # Step 5: Extract Docker metadata for GPU image
+      - name: Extract Docker metadata for GPU image
+        id: meta-gpu
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            # For Manual (workflow_dispatch) runs
+            type=semver,pattern=v{{version}}-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern=latest-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
+
+            # For Release events
+            type=semver,pattern=v{{version}}-gpu,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern=latest-gpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+
+      # Step 5.5: Prune Docker system
+      - name: Prune Docker system
+        run: docker system prune -af
+
+      # Step 6: Build and push the GPU image
+      - name: Build and push GPU image
+        id: build_gpu
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          build-args: |
+            GPU=true
+          tags: ${{ steps.meta-gpu.outputs.tags }}
+          labels: ${{ steps.meta-gpu.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Step 7: Show the digest of the built GPU image (useful for traceability)
+      - name: Show GPU image digest
+        run: echo "GPU digest - ${{ steps.build_gpu.outputs.digest }}"

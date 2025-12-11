@@ -1,0 +1,106 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# Documentation and markdown files (except README.md which is needed for build)
+docs/
+CONTRIBUTING*.md
+CODE_OF_CONDUCT.md
+GOVERNANCE.md
+SECURITY.md
+STYLE_GUIDE.md
+
+# Docker files (except the main Dockerfile)
+docker-compose*.yml
+Dockerfile.*
+.dockerignore
+
+# Environment and configuration files
+.env*
+env.example
+*.env
+configuration.yml
+src/server/cfg.yml
+src/server/configuration.yml
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv*/
+.venv/
+env/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Testing and evaluation
+test_*.py
+evaluation/
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+src/server/sqlitetest.db
+
+# Sample and example files
+sample/
+examples/
+maintainers/
+
+# Lock files (keep uv.lock for reproducible builds)
+# uv.lock
+
+# Other build artifacts
+*.tar.gz
+*.zip
+*.rar
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

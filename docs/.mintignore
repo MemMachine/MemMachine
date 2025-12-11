@@ -1,0 +1,23 @@
+# Ignore editor and IDE folders
+.vscode/
+.idea/
+*.code-workspace
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore node modules / dependencies
+node_modules/
+
+# Ignore Python virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Ignore Cursor AI rules folder
+.cursor/
+
+# Ignore any other hidden folders you don’t want scanned
+.*

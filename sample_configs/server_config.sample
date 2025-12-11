@@ -1,0 +1,11 @@
+# This configuration file should be named as .env
+# It must be located under the same directory as the app.py
+POSTGRES_HOST="10.0.0.59"
+POSTGRES_PORT="5432"
+POSTGRES_USER="postgres"
+POSTGRES_PASSWORD="YOUR PASSWORD"
+POSTGRES_DB="DBNAME"
+MCP_BASE_URL=http://127.0.0.1:8080
+GATEWAY_URL=http://localhost:8080
+FAST_MCP_LOG_LEVEL=INFO
+MEMORY_CONFIG="Configuration file of memory"

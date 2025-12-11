@@ -1,8 +1,7 @@
-from typing import Optional
 import logging
-from datetime import datetime
-import sys
 import os
+import sys
+from datetime import UTC, datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from base_query_constructor import BaseQueryConstructor
@@ -11,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class HealthAssistantQueryConstructor(BaseQueryConstructor):
-    def __init__(self):
+    def __init__(self) -> None:
         self.prompt_template = """
 You are a helpful health and wellness assistant. Use the provided context and profile information to answer the user's question accurately and helpfully.
 
@@ -59,15 +58,13 @@ Response Format:
 </USER_QUERY>
 """
 
-    def create_query(
-        self, profile: Optional[str], context: Optional[str], query: str
-    ) -> str:
+    def create_query(self, profile: str | None, context: str | None, query: str) -> str:
         """Create a health assistant query using the prompt template"""
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
         profile_str = profile or ""
         context_block = f"{context}\n\n" if context else ""
-        current_date = datetime.now().strftime("%Y-%m-%d")
+        current_date = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
         try:
             return self.prompt_template.format(
@@ -77,6 +74,6 @@ Response Format:
                 query=query,
             )
         except Exception as e:
-            logger.error(f"Error creating health assistant query: {e}")
+            logger.exception("Error creating health assistant query: %s", e)
             # Fallback to simple format
             return f"{profile_str}\n\n{context_block}{query}"

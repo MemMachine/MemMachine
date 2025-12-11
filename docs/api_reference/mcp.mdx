@@ -1,0 +1,71 @@
+---
+title: 'Tools Reference'
+description: 'MemMachine Model Context Protocol (MCP) Tools'
+icon: 'square-binary'
+---
+
+The MemMachine Model Context Protocol (MCP) tools provide a dedicated, simplified interface for Large Language Models (LLMs) to interact with the memory system. These endpoints are designed to be concise and perform the core functions of memory management: adding new context and searching for existing context.
+
+These tools automatically write to both **Episodic Memory** (short-term conversation history) and **Semantic Memory** (long-term user profile and facts).
+
+## 1. `add_memory`
+
+### Summary
+
+Store important new information about the user or conversation into memory.
+
+### Description
+
+Use this automatically whenever the user shares new facts, preferences, plans, emotions, or other details that could be useful for future context.
+
+**Crucially, include the full conversation context in the `content` field — not just a snippet.**
+
+This tool writes to both short-term (episodic) and long-term (profile) memory, so that future interactions can recall relevant background knowledge even across different sessions.
+
+### Parameters
+
+| Name      | Type     | Required | Description                                                  | Default                                |
+| --------- | -------- | -------- | ------------------------------------------------------------ | -------------------------------------- |
+| `content` | `string` | Yes      | The complete context or summary to store in memory.          |                                        |
+| `user_id` | `string` | No       | The unique identifier of the user whose memory is being updated. This ensures the new memory is stored under the correct profile. | `user-{mac_address}`                   |
+| `proj_id` | `string` | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` or `mcp-{mac_address}` |
+| `org_id`  | `string` | No       | Organization ID.                                             | `mcp-universal`                        |
+
+### Responses
+
+| Status Code | Description                                               |
+| ----------- | --------------------------------------------------------- |
+| `200`       | Success                                                   |
+| `422`       | Invalid or unprocessable content (e.g., failed to embed). |
+| `500`       | MemMachine is not initialized or internal error.          |
+
+## 2. `search_memory`
+
+### Summary
+
+Retrieve relevant context, memories, or profile information for a user.
+
+### Description
+
+Use this whenever context is missing or unclear, or when you need to recall what has been previously discussed, even if it was from an earlier conversation or session.
+
+This searches both **Profile Memory** (long-term user traits and facts) and **Episodic Memory** (past conversations and experiences) for the most relevant results.
+
+### Parameters
+
+| Name      | Type      | Required | Description                                                  | Default                                |
+| --------- | --------- | -------- | ------------------------------------------------------------ | -------------------------------------- |
+| `query`   | `string`  | Yes      | The current user message or topic of discussion to search against. |                                        |
+| `top_k`   | `integer` | No       | The maximum number of memory entries to retrieve.            | `20`                                   |
+| `user_id` | `string`  | No       | The unique identifier of the user whose memory is being searched. | `user-{mac_address}`                   |
+| `proj_id` | `string`  | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` or `mcp-{mac_address}` |
+| `org_id`  | `string`  | No       | Organization ID.                                             | `mcp-universal`                        |
+
+### Responses
+
+| Type           | Description                                                  |
+| -------------- | ------------------------------------------------------------ |
+| `SearchResult` | Returns the relevant context, memories, or profile data on success. |
+| `McpResponse`  | Returns an error status/message on failure (e.g., MemMachine not initialized). |
+| `422`          | Invalid or unprocessable content.                            |
+| `500`          | MemMachine is not initialized or internal error.             |

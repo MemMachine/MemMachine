@@ -8,8 +8,8 @@
     "dark": "#a8bacb"
   },
   "integrations": {
-    "ga4": {
-        "measurementId": "G-ED9JCR55CL"
+    "gtm": {
+      "tagId": "GTM-WDX7ZBC7"
     }
   },
   "favicon": "favicon.ico",
@@ -24,9 +24,40 @@
             "pages": [
               "getting_started/introduction",
               "getting_started/quickstart",
+              "getting_started/benchmarks",
               "getting_started/faqs"
             ]
           },
+          {
+            "group": "Install Guides",
+            "icon": "map",
+            "pages": [
+              "install_guide/introduction",
+              "install_guide/install_guide", 
+              {
+                "group": "Cloud Deployments",
+                "pages": [
+                  "install_guide/cloud_deploy/aws_cloudformation"
+                ]
+              },  
+              {
+                "group": "Configurations",
+                "pages": [
+                  "install_guide/config/ollama",
+                  "install_guide/config/aws_bedrock"
+                ]
+              }  
+            ]
+          },
+          {
+            "group": "Integrations",
+            "icon": "puzzle-piece",
+            "pages": [
+              "install_guide/integrate/claude_code_mcp",
+              "install_guide/integrate/GPTStore",
+              "install_guide/integrate/LangGraph"
+            ]
+           },
           {
             "group": "Core Concepts",
             "icon": "brain",
@@ -51,32 +82,48 @@
       {
         "tab": "API Reference",
         "groups": [
-         {
-           "group": "Introduction",
-           "pages": [
-             "api_reference/intro"
-            ]
-          }, 
-        {
-           "group": "PythonSDK",
-           "pages": [
-             "api_reference/python/episodic_memory",
-             "api_reference/python/episodic_memory_manager",
-             "api_reference/python/memory_types",
-             "api_reference/python/profile_memory"
+          {
+            "group": "Introduction",
+            "pages": [
+              "api_reference/intro"
             ]
           },
-        {
-          "group": "API Reference",
-          "openapi": "openapi.json",
-          "playground": {
-            "display": "interactive"
+          {
+            "group": "MCP Tools",
+            "pages": [
+              "api_reference/mcp"
+            ]
           },
-          "examples": {
-          "languages": ["python"],
-          "defaults": "required"
+          {
+            "group": "REST API",
+            "openapi": "openapi.json",
+            "playground": {
+              "display": "interactive"
+            },
+            "examples": {
+              "languages": ["python"],
+              "defaults": "required"
+            }
+          },
+          {
+            "group": "PythonSDK Client",
+            "pages": [
+              "api_reference/python/client",
+              "api_reference/python/client_api",
+              "api_reference/python/project_api",
+              "api_reference/python/memory_api"
+            ]
+          },
+          {
+            "group": "PythonSDK Server",
+            "pages": [
+              "api_reference/python/server",
+              "api_reference/python/episodic_memory",
+              "api_reference/python/episodic_memory_manager",
+              "api_reference/python/memory_types",
+              "api_reference/python/profile_memory"
+            ]
           }
-        }
         ]
       },
       {
@@ -85,7 +132,11 @@
           {
             "group": "Examples",
             "pages": [
-              "examples/introduction"
+              "examples/introduction",
+              "examples/agents",
+              "examples/python",
+              "examples/rest",
+              "examples/mcp"
             ]
           }
         ]
@@ -117,6 +168,10 @@
   },
   "navbar": {
     "links": [
+      {
+        "label": "Playground",
+        "href": "https://huggingface.co/spaces/Memverge/MemMachine-Playground"
+      },
       {
         "label": "Support",
         "href": "mailto:support@memmachine.ai"

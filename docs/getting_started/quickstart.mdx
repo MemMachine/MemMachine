@@ -4,273 +4,104 @@ description: "Start using MemMachine's personalized memory in minutes"
 icon: "circle-play"
 ---
 
+MemMachine uses a client-server architecture. The **Server** manages the storage, retrieval, and processing of memories, while your application uses a **Client** SDK to interact with it.
+
+This guide focuses on getting the **MemMachine Server** up and running.
+
 ## Installation
 
+The fastest method to get started with MemMachine is by using Docker and Docker Compose. This approach bundles all necessary components into containers, simplifying the setup process.
 
 ### Prerequisites
 
 Before installing MemMachine, ensure you have the following prerequisites:
 
-- **Python 3.12+** - MemMachine requires Python 3.12 or higher
-- **Docker & Docker Compose** (optional, for containerized deployment)
-- **Neo4j Database** - For graph storage and vector operations
-- **PostgreSQL** - For session management
-- **OpenAI API Key** - For language models and embeddings
+- **Docker & Docker Compose** - Required to run the server containers.
+- **OpenAI API Key** - For language models and embeddings (configured in the server).
 
-### Method 1: Docker Installation
-#### Step 1: Clone and Setup
+### Download and Start the Server
+
+<Steps>
+  <Step title="Install Docker">
+      Make sure that you have [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed on your machine.
+  </Step>
+  <Step title="Download MemMachine and Run">
+      <Tabs>
+        <Tab title="Linux/MacOS" icon="linux">
+          Open your terminal and run the following commands:
+          ```bash
+          # Download the latest MemMachine release tarball
+          TARBALL_URL=$(curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep '"tarball_url"' \
+            | head -n 1 \
+            | sed -E 's/.*"tarball_url": "(.*)",/\1/')
+
+          curl -L "$TARBALL_URL" -o MemMachine-latest.tar.gz
+
+          # Extract the release archive
+          tar -xzf MemMachine-latest.tar.gz
+
+          # Move into the extracted directory (GitHub adds a commit hash to the folder name)
+          cd MemMachine-MemMachine-*/
+
+          # Start the MemMachine installation
+          ./memmachine-compose.sh
+
+          ```
+        </Tab>
+        <Tab title="Windows" icon="windows">
+          Use PowerShell to download and run the script:
+          ```powershell
+          $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/MemMachine/MemMachine/releases/latest"; `
+          $tarballUrl = $latestRelease.tarball_url; `
+          $destination = "MemMachine"; `
+          if (Test-Path $destination) { Remove-Item $destination -Recurse -Force }; `
+          New-Item -ItemType Directory -Force -Path $destination; `
+          Invoke-WebRequest -Uri $tarballUrl -OutFile "MemMachine-latest.tar.gz"; `
+          tar -xzf "MemMachine-latest.tar.gz" -C $destination --strip-components=1; `
+          Set-Location $destination; `
+          ./memmachine-compose.sh
+          ```
+        </Tab>
+      </Tabs>
+
+      The script will walk you through the setup process, including configuring your OpenAI API key.
+  </Step>
+  <Step title="Verify Installation">
+    Once the script completes, your MemMachine server should be running. You can verify it by checking the health endpoint:
+
+    ```bash
+    curl http://localhost:8080/health
+    ```
+
+    You should receive a response indicating the server status is healthy.
+  </Step>
+</Steps>
+
+## Next Steps: Connect Your App
+
+Now that the server is running, you need to install the Python Client SDK to interact with it from your application.
+
+<CardGroup cols={2}>
+  <Card title="Python Client Guide" icon="python" href="../examples/python">
+    Install the SDK and write your first "Hello World" program.
+  </Card>
+  <Card title="API Reference" icon="code" href="../api_reference/intro">
+    Explore the full REST API documentation.
+  </Card>
+</CardGroup>
+
+## Management Scripts
+
+The `memmachine-compose.sh` script is your main tool for managing the server.
+
 ```bash
-git clone https://github.com/MemMachine/MemMachine.git
-cd MemMachine
+./memmachine-compose.sh --help
 ```
 
-#### Step 2: Create Environment File
-Create a `.env` file in the project root with your database credentials:
-```bash
-cat > .env << 'EOF'
-NEO4J_USERNAME=NEO4J
-NEO4J_PASSWORD=YOUR_NEO4J_PASSWORD
-NEO4J_URI="bolt://localhost:7687"
+Common commands:
+- `./memmachine-compose.sh stop` - Stop the services.
+- `./memmachine-compose.sh restart` - Restart the services.
+- `./memmachine-compose.sh logs` - View server logs.
 
-# Postgres database configuration
-POSTGRES_HOST=YOUR_POSTGRES_HOST
-POSTGRES_PORT=5432
-POSTGRES_USER=YOUR_POSTGRES_USER
-POSTGRES_PASS=YOUR_POSTGRES_PASSWORD
-POSTGRES_PASSWORD=YOUR_POSTGRES_PASSWORD
-POSTGRES_DB=YOUR_POSTGRES_DATABASE
-
-MCP_BASE_URL=http://127.0.0.1:8080
-GATEWAY_URL=http://localhost:8080
-FAST_MCP_LOG_LEVEL=INFO
-MEMORY_CONFIG=/app/configuration.yml
-OPENAI_API_KEY="YOUR_VALID_OPENAI_API_KEY"
-EOF
 ```
-
-**Important**: Replace the following placeholders with your actual values:
-- `YOUR_NEO4J_PASSWORD` - Your Neo4j password
-- `YOUR_POSTGRES_HOST` - Your PostgreSQL host (e.g., AWS RDS endpoint)
-- `YOUR_POSTGRES_USER` - Your PostgreSQL username
-- `YOUR_POSTGRES_PASSWORD` - Your PostgreSQL password
-- `YOUR_POSTGRES_DATABASE` - Your PostgreSQL database name
-- `YOUR_VALID_OPENAI_API_KEY` - Your valid OpenAI API key
-
-#### Step 3: Create Configuration File
-The `configuration.yml` file should contain the following content:
-
-**Important**: Replace the following placeholders with your actual values:
-- `YOUR_VALID_OPENAI_API_KEY` - Your valid OpenAI API key (used in multiple places)
-- `YOUR_NEO4J_PASSWORD` - Your Neo4j password (must match the password in .env and docker-compose.yml)
-
-```yaml
-logging:
-  path: /tmp/memory_log
-  level: info
-
-long_term_memory:
-  derivative_deriver: sentence
-  metadata_prefix: "[$timestamp] $producer_id: "
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
-
-SessionDB:
-  uri: sqlitetest.db
-
-Model:
-  testmodel:
-    model_vendor: openai
-    model_name: "gpt-4o-mini"
-    api_key: "YOUR_VALID_OPENAI_API_KEY"
-    
-storage:
-  my_storage_id:
-    vendor_name: neo4j
-    host: memmachine-neo4j-custom
-    port: 7687
-    user: neo4j
-    password: YOUR_NEO4J_PASSWORD
-
-sessionMemory:
-  model_name: testmodel
-  message_capacity: 500
-  max_message_length: 16000
-  max_token_num: 8000
-
-embedder:
-  my_embedder_id:
-    model_name: "text-embedding-3-small"
-    api_key: "YOUR_VALID_OPENAI_API_KEY"
-
-reranker:
-  my_reranker_id:
-    type: "rrf-hybrid"
-    reranker_ids:
-      - id_ranker_id
-      - bm_ranker_id
-      - ce_ranker_id
-  id_ranker_id:
-    type: "identity"
-  bm_ranker_id:
-    type: "bm25"
-  ce_ranker_id:
-    type: "cross-encoder"
-    model_name: "cross-encoder/qnli-electra-base"
-```
-
-**Important**: Replace all instances of `YOUR_VALID_OPENAI_API_KEY_HERE` with your valid OpenAI API key.
-
-#### Step 4: Create Docker Compose File
-The `docker-compose.yml` file should contain:
-
-```yaml
-services:
-  # Neo4j database for graph storage
-  neo4j:
-    image: neo4j:ubi9
-    container_name: memmachine-neo4j-custom
-    restart: unless-stopped
-    ports:
-      - "7474:7474"  # HTTP
-      - "7473:7473"  # HTTPS
-      - "7687:7687"  # Bolt
-    environment:
-      NEO4J_EDITION: community
-      NEO4J_AUTH: neo4j/YOUR_NEO4J_PASSWORD
-      NEO4J_server_bolt_thread__pool__max__size: 2000
-      NEO4J_server_memory_heap_initial__size: 512m
-      NEO4J_server_memory_heap_max__size: 1G
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-    healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "YOUR_NEO4J_PASSWORD", "RETURN 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-volumes:
-  neo4j_data:
-    driver: local
-  neo4j_logs:
-    driver: local
-
-networks:
-  default:
-    name: memmachine-network
-```
-
-#### Step 5: Build and Start Services
-
-1. Build the MemMachine Docker image:
-```bash
-docker build -t memmachine .
-```
-
-2. Start Neo4j:
-```bash
-docker compose up neo4j -d
-```
-3. PostgreSQL Setup 
-For session management, you can use PostgreSQL:
-
- - **Install PostgreSQL:**
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install postgresql postgresql-contrib
-   
-   # macOS
-   brew install postgresql
-   
-   # Windows
-   # Download from postgresql.org
-   ```
- -  **Create database:**
-   ```sql
-   CREATE DATABASE 'your_database';
-   CREATE USER 'your_user' WITH PASSWORD 'your_password';
-   GRANT ALL PRIVILEGES ON DATABASE 'your_database' TO 'your_user';
-   ```
-
-4. Run MemMachine with custom configuration:
-```bash
-docker run -p 8080:8080 --env-file .env -v $(pwd)/configuration.yml:/app/configuration.yml:ro --network memmachine-network memmachine
-```
-
-#### Step 6: Verify Setup
-
- 1. Check Neo4j is running:
-```bash
-docker ps | grep neo4j
-```
-
-2. Test MemMachine API:
-```bash
-curl http://localhost:8080/docs
-```
-
-### Method 2: Python Package Installation
-
-1. **Install using pip:**
-   ```bash
-   pip install memmachine
-   ```
-
-2. **Or install from source:**
-   ```bash
-   git clone https://github.com/MemMachine/MemMachine.git
-   cd MemMachine
-   pip install -e .
-   ```
-### Method 3: Development Installation
-
-For development and contributing:
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/MemMachine/MemMachine.git
-   cd MemMachine
-   ```
-
-2. **Install using uv (recommended):**
-   ```bash
-   # Install uv if you haven't already
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   
-   # Install dependencies
-   uv sync
-   ```
-
-3. **Run the app:**
-```bash
-   python -m server.app
-   ```
-
-
-
-### Database Configuration Summary
-- **PostgreSQL**: Your PostgreSQL database (configured via POSTGRES_HOST in .env)
-- **Neo4j**: Local Docker container (localhost:7687)
-- **MemMachine API**: http://localhost:8080
-
-### Troubleshooting
-
-#### Common Issues
-
-1. **Neo4j Connection Error**: Ensure the Neo4j host in `configuration.yml` is set to `memmachine-neo4j-custom` (not `localhost`)
-
-2. **OpenAI API Key Error**: Make sure you have a valid OpenAI API key and it's correctly set in both the `.env` file and `configuration.yml`
-
-3. **Port Access Issues**: If you can't access the API, ensure the MemMachine container is running on the `memmachine-network` and port 8080 is accessible
-
-4. **Container Network Issues**: Make sure both containers are on the same Docker network (`memmachine-network`)
-
-#### Useful Commands
-
-- Check container status: `docker ps`
-- View container logs: `docker logs <container_id>`
-- Stop containers: `docker stop <container_id>`
-- Remove containers: `docker rm <container_id>`
-- Check available API endpoints: `curl -s http://localhost:8080/openapi.json | jq '.paths | keys'

@@ -1,8 +1,9 @@
 import os
-import requests
-from datetime import datetime
+from datetime import UTC, datetime
 
-CRM_SERVER_URL = os.getenv("CRM_SERVER_URL", "http://localhost:8000")
+import requests
+
+EXAMPLE_SERVER_PORT = os.getenv("EXAMPLE_SERVER_PORT", "http://localhost:8000")
 
 
 def ingest_and_rewrite(user_id: str, query: str, model_type: str = "openai") -> str:
@@ -10,7 +11,7 @@ def ingest_and_rewrite(user_id: str, query: str, model_type: str = "openai") -> 
     print("entered ingest_and_rewrite")
 
     resp = requests.post(
-        f"{CRM_SERVER_URL}/memory/store-and-search",
+        f"{EXAMPLE_SERVER_PORT}/memory/store-and-search",
         params={"user_id": user_id, "query": query},
         timeout=1000,
     )
@@ -22,18 +23,20 @@ def ingest_and_rewrite(user_id: str, query: str, model_type: str = "openai") -> 
 def add_session_message(user_id: str, msg: str) -> None:
     """Add a raw message into memory via memory server."""
     requests.post(
-        f"{CRM_SERVER_URL}/memory", params={"user_id": user_id, "query": msg}, timeout=5
+        f"{EXAMPLE_SERVER_PORT}/memory",
+        params={"user_id": user_id, "query": msg},
+        timeout=5,
     )
 
 
 def create_persona_query(user_id: str, query: str) -> str:
     """Create a persona-aware query by searching memory context via memory server."""
     resp = requests.get(
-        f"{CRM_SERVER_URL}/memory",
+        f"{EXAMPLE_SERVER_PORT}/memory",
         params={
             "query": query,
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         },
         timeout=1000,
     )
@@ -43,8 +46,7 @@ def create_persona_query(user_id: str, query: str) -> str:
 
     if search_results.get("profile"):
         return f"Based on your profile: {search_results['profile']}\n\nQuery: {query}"
-    else:
-        return f"Query: {query}"
+    return f"Query: {query}"
 
 
 def add_new_session_message(user_id: str, msg: str) -> None:

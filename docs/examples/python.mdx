@@ -1,0 +1,96 @@
+---
+title: "Python SDK"
+description: "Install and use the MemMachine Python Client"
+icon: "python"
+---
+
+The MemMachine Python SDK provides a convenient way to interact with your MemMachine Server. It handles authentication, project management, and memory operations.
+
+## Simple Hello World Example
+```python
+import memmachine
+from memmachine.episodic_memory.episodic_memory_manager import EpisodicMemoryManager
+from memmachine.episodic_memory.data_types import MemoryContext
+from memmachine.common.episode_store import ContentType, Episode
+from datetime import datetime
+import uuid
+
+Install the MemMachine package using pip:
+
+```bash
+pip install memmachine-server
+```
+
+## Hello World Example
+
+This example demonstrates how to connect to the server, create a project, and add/retrieve memories.
+
+<Note>
+  Ensure your MemMachine server is running (see [Quickstart Guide](../getting_started/quickstart)) before running this code.
+</Note>
+
+```python
+from memmachine import MemMachineClient
+
+# 1. Initialize the client
+# Replace 'http://localhost:8080' with your server's URL if different.
+client = MemMachineClient(base_url="http://localhost:8080")
+
+# 2. Create a Project
+# Projects organize memories under an Organization.
+# If the project already exists, this will return the existing one.
+project = client.create_project(
+    org_id="my-org",
+    project_id="hello-world-project",
+    description="My first MemMachine project"
+)
+
+print(f"Working with project: {project.org_id}/{project.project_id}")
+
+# 3. Create a Memory Interface
+# A Memory interface is scoped to a specific user/agent/session context.
+memory = project.memory(
+    user_id="user-alice",
+    agent_id="agent-bob",
+    session_id="session-1"
+)
+
+# 4. Add Memories
+# Add a user message
+memory.add(
+    content="My favorite color is blue.",
+    role="user"
+)
+
+# Add an agent response
+memory.add(
+    content="I'll remember that your favorite color is blue.",
+    role="assistant"
+)
+
+print("Memories added.")
+
+# 5. Search Memories
+# Search for the information we just added.
+results = memory.search("What is my favorite color?")
+
+print("\nSearch Results:")
+print(results)
+```
+
+## Key Concepts
+
+### Client (`MemMachineClient`)
+The entry point for the SDK. It manages the HTTP connection to the MemMachine server.
+
+### Project (`Project`)
+Represents a workspace within MemMachine. All memories are isolated within a project. You can create new projects or retrieve existing ones.
+
+### Memory (`Memory`)
+The interface for adding and retrieving memories. It is context-aware, meaning you initialize it with specific identifiers:
+- **user_id**: The ID of the human user.
+- **agent_id**: The ID of the AI agent.
+- **session_id**: (Optional) A specific conversation session ID.
+- **group_id**: (Optional) For multi-user/multi-agent groups.
+
+When you call `memory.add()` or `memory.search()`, these identifiers are automatically attached to the operations.

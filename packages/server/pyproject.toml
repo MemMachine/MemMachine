@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memmachine-server"
+version = "0.1.0"
+dependencies = [
+    "alembic>=1.17.1",
+    "asyncpg>=0.31.0",
+    "aiosqlite>=0.20.0",
+    "boto3>=1.40.40",
+    "boto3-stubs==1.40.64",
+    "dotenv>=0.9.9",
+    "fastapi>=0.116.1",
+    "fastmcp>=2.12.0",
+    "instructor[bedrock]>=1.12.0",
+    "langchain-aws>=0.2.33",
+    "neo4j>=5.28.2",
+    "nltk>=3.9.1",
+    "openai>=1.104.2",
+    "pgvector>=0.4.1",
+    "prometheus-client>=0.22.1",
+    "pydantic>=2.11.7",
+    "pyyaml>=6.0.2",
+    "rank-bm25>=0.2.2",
+    "sqlalchemy>=2.0.43",
+    "uvicorn>=0.35.0",
+    "greenlet>=3.2.4",
+    "tzdata>=2024.1 ; sys_platform == 'win32'",
+    "psutil>=7.1.0",
+]
+requires-python = ">= 3.12"
+authors = [
+  {name="MemMachine", email="noreply@memmachine.ai"},
+]
+description = "MemMachine Server - The complete MemMachine memory system server with episodic and profile memory"
+readme = "README.md"
+keywords = ["memmachine", "server", "memory", "ai", "agent"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+
+[project.optional-dependencies]
+gpu = [
+    "sentence-transformers>=5.1.0",
+]
+
+[project.scripts]
+memmachine-server = "memmachine.server.app:main"
+memmachine-nltk-setup = "memmachine:setup_nltk"
+memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
+memmachine-mcp-http = "memmachine.server.mcp_http:main"
+memmachine-configure = "memmachine.installation.memmachine_configure:main"
+
+[project.urls]
+Homepage = "https://github.com/MemMachine/MemMachine"
+Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[tool.setuptools]
+packages = [
+    "memmachine",
+    "memmachine.common",
+    "memmachine.common.api",
+    "memmachine.common.configuration",
+    "memmachine.common.embedder",
+    "memmachine.common.episode_store",
+    "memmachine.common.filter",
+    "memmachine.common.language_model",
+    "memmachine.common.metrics_factory",
+    "memmachine.common.reranker",
+    "memmachine.common.resource_manager",
+    "memmachine.common.session_manager",
+    "memmachine.common.vector_graph_store",
+    "memmachine.episodic_memory",
+    "memmachine.episodic_memory.declarative_memory",
+    "memmachine.episodic_memory.long_term_memory",
+    "memmachine.episodic_memory.short_term_memory",
+    "memmachine.installation",
+    "memmachine.rest_client",
+    "memmachine.server",
+    "memmachine.main",
+    "memmachine.server.prompt",
+    "memmachine.server.api_v2",
+    "memmachine.semantic_memory",
+    "memmachine.semantic_memory.util",
+    "memmachine.semantic_memory.storage",
+    "memmachine.semantic_memory.storage.alembic_pg",
+    "memmachine.semantic_memory.storage.alembic_pg.versions",
+]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.yml", "*.yaml", "*.sql"]
+
+[tool.setuptools.package-dir]
+"" = "src"

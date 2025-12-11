@@ -1,240 +1,41 @@
 ---
 title: "Episodic Memory Manager"
-description: "APIs that call Episodic Memory Manager"
-icon: "list-check"
+description: "Manager for Episodic Memory instances"
+icon: "sitemap"
 ---
 
-The `EpisodicMemoryManager` provides methods for managing and querying your episodic memory. It's the central class for performing actions like searching for specific episodes.
+Factory and manager for per-session episodic memory instances.
 
-This module provides the `EpisodicMemoryMemoryManager`, a singleton class that
-acts as a central factory and registry for `EpisodicMemory` objects. It
-is responsible for:
+## Class `EpisodicMemoryManagerParams`
 
-- Loading and merging configurations from files.
-- Creating, retrieving, and managing context-specific memory instances based
- on group, agent, user, and session IDs.
-- Ensuring that each unique conversational context has a dedicated memory
-  instance.
-- Interacting with a `SessionManager` to persist and retrieve session
-  information.
+Parameters for configuring the EpisodicMemoryManager.
 
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager"></a>
-
-## Initialization
-
-You can access the `EpisodicMemoryManager` instance through the `episodic_memory_manager` property of your `MemMachineClient`.
-
-```
-from memmachine import MemMachineClient
-
-# Initialize the client with your API key
-client = MemMachineClient(api_key="your_api_key")
-
-# Access the manager instance
-manager = client.episodic_memory_manager
-```
-
-## Searching for Episodes
-
-To find episodes, use the `search_episodes` method. This method allows you to query episodes based on a natural language prompt, returning a list of relevant results.
-
-```
-# Define your search query
-search_query = "Find all episodes related to a team meeting about the Q3 launch."
-
-try:
-    # Perform the search
-    search_results = manager.search_episodes(query=search_query)
-
-    if search_results:
-        print("Found the following episodes:")
-        for episode in search_results:
-            print(f"- Episode ID: {episode.id}, Title: {episode.title}")
-    else:
-        print("No episodes found matching the query.")
-except Exception as e:
-    print(f"Error during episode search: {e}")
-```
-<a id="memmachine.episodic_memory_manager"></a>
-
-## EpisodicMemoryManager Objects
+Attributes:
+    instance_cache_size (int): The maximum number of instances to cache.
+    max_life_time (int): The maximum idle lifetime of an instance in seconds.
+    resource_manager (ResourceManager): The resource manager.
+    session_data_manager (SessionDataManager): The session data manager.
 
 ```python
-class EpisodicMemoryManager()
+def EpisodicMemoryManagerParams()
 ```
 
-Manages the creation and lifecycle of ContextMemory instances.
+## Class `EpisodicMemoryManager`
 
-This class acts as a factory and a central registry for all
-context-specific memories (EpisodicMemory). It ensures that each
-unique context (defined by group, agent, user, and session IDs) has its
-own dedicated EpisodicMemory.
+Manage the lifecycle and access of episodic memory instances.
 
-It follows a singleton pattern, ensuring only one manager exists. It
-handles loading configurations from environment variables and provides
-a way to safely create, access, and close these memory instances.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.__init__"></a>
-
-### \_\_init\_\_
+This class is responsible for creating, retrieving, and closing
+`SemanticMemory` instances based on a session key. It uses a
+reference counting mechanism to manage the lifecycle of each memory
+instance, ensuring that resources are properly released when no
+longer needed.
 
 ```python
-def __init__(config: dict)
+def EpisodicMemoryManager(params: EpisodicMemoryManagerParams)
 ```
 
-Initializes the MemoryManager.
+**Parameters**
 
-Note: This constructor should not be called directly. Use the factory
-method `create_memory_manager` instead.
-
-**Arguments**:
-
-- `config` - A configuration dictionary containing all necessary
-  settings for models, storage, and memory parameters.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.create_episodic_memory_manager"></a>
-
-### create\_episodic\_memory\_manager
-
-```python
-@classmethod
-def create_episodic_memory_manager(cls, config_path: str)
-```
-
-Factory class method to create a MemoryManager instance from
-environment variables.
-
-This method implements the singleton pattern. It reads all necessary
-configurations for models, storage, and prompts, sets up logging,
-and creates a new instance of MemoryManager if one does not already
-exist.
-
-**Arguments**:
-
-- `config_path` - The path to the configuration file.
-  
-
-**Returns**:
-
-  A new instance of MemoryManager.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_episodic_memory_instance"></a>
-
-### get\_episodic\_memory\_instance
-
-```python
-async def get_episodic_memory_instance(
-        group_id: str | None = None,
-        agent_id: list[str] | None = None,
-        user_id: list[str] | None = None,
-        session_id: str = "",
-        config_path: str | None = None) -> EpisodicMemory | None
-```
-
-Retrieves or creates a EpisodicMemory instance for a specific context.
-
-This method ensures that only one EpisodicMemory object exists for
-each unique combination of group, agent, user, and session IDs. It is
-thread-safe.
-
-**Arguments**:
-
-- `group_id` - The identifier for the group context.
-- `agent_id` - The identifier for the list of agent context.
-- `user_id` - The identifier for the list of user context.
-- `session_id` - The identifier for the session context.
-- `config_path` - Optional path to a session-specific config file to
-  override defaults.
-  
-
-**Returns**:
-
-  The EpisodicMemory instance for the specified context.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.delete_context_memory"></a>
-
-### delete\_context\_memory
-
-```python
-async def delete_context_memory(context: MemoryContext)
-```
-
-Removes a specific EpisodicMemory instance from the manager's registry.
-
-This method should be only called when the EpisodicMemory instance is
-closed and there are no more active references.
-
-**Arguments**:
-
-- `context` - The memory context of the instance to delete.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_all_sessions"></a>
-
-### get\_all\_sessions
-
-```python
-def get_all_sessions() -> list[SessionInfo]
-```
-
-Retrieves all sessions from the session manager.
-
-**Returns**:
-
-  A list of SessionInfo objects for all stored sessions.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_user_sessions"></a>
-
-### get\_user\_sessions
-
-```python
-def get_user_sessions(user_id: str) -> list[SessionInfo]
-```
-
-Retrieves all sessions associated with a specific user ID.
-
-**Arguments**:
-
-- `user_id` - The ID of the user.
-  
-
-**Returns**:
-
-  A list of SessionInfo objects for the given user.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_agent_sessions"></a>
-
-### get\_agent\_sessions
-
-```python
-def get_agent_sessions(agent_id: str) -> list[SessionInfo]
-```
-
-Retrieves all sessions associated with a specific agent ID.
-
-**Arguments**:
-
-- `agent_id` - The ID of the agent.
-  
-
-**Returns**:
-
-  A list of SessionInfo objects for the given agent.
-
-<a id="memmachine.episodic_memory_manager.EpisodicMemoryManager.get_group_sessions"></a>
-
-### get\_group\_sessions
-
-```python
-def get_group_sessions(group_id: str) -> list[SessionInfo]
-```
-
-Retrieves all sessions associated with a specific group ID.
-
-**Arguments**:
-
-- `group_id` - The ID of the group.
-  
-
-**Returns**:
-
-  A list of SessionInfo objects for the given group.
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `params` | `EpisodicMemoryManagerParams` | - |

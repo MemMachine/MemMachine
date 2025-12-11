@@ -1,0 +1,136 @@
+---
+title: "Using Ollama Models"
+description: "Guide to configure MemMachine to use Ollama models."
+icon: "paw"
+---
+
+## Prerequisites
+
+Before you begin the installation and configuration of MemMachine, you must ensure that your local environment is ready by having Ollama installed and the necessary models downloaded.
+
+
+
+### 1. Ollama Service
+
+MemMachine connects directly to **Ollama** using its local API, which must be running in the background.
+
+- **Installation:** If you do not yet have Ollama installed, please follow the official setup guide.
+
+  - **Resource:** [Download Ollama](https://ollama.com/download)
+
+- **Start the Service:** Once installed, start the Ollama service to make the local API available. Open your terminal or command prompt and run:
+
+  ```bash
+  ollama serve
+  ```
+
+- **Verification:** You can confirm the service is running successfully by opening your web browser and navigating to the following address: `http://localhost:11434`
+    You should see the Ollama web interface if the service is active.
+
+### 2. Required Ollama Models
+
+MemMachine requires **two** types of models to function: a Large Language Model (LLM) for generative tasks and an embedding model for converting text into vectors (e.g., for retrieval-augmented generation).
+
+You must download these models to your local Ollama repository **before** starting MemMachine.
+
+- **Download Models:** Use the `ollama pull` command to download the models you want.
+
+| **Model Type**                 | **Example Model ID** | **Command to Run**             |
+| ------------------------------ | -------------------- | ------------------------------ |
+| **Large Language Model (LLM)** | Llama 3              | `ollama pull llama3`           |
+| **Embedding Model**            | Nomic Embed Text     | `ollama pull nomic-embed-text` |
+
+<Note> You can choose any compatible LLM (like `mixtral`, `gemma`, etc.) and embedding model available on Ollama, but the examples above are recommended starting points.</Note>
+
+- **View Downloaded Models:** To see a list of all models currently available in your local Ollama repository, run:
+
+  ```bash
+  ollama list
+  ```
+
+## Installation: QuickStart Configuration
+
+The installation script will automatically guide you through setting up your **Large Language Model (LLM) provider**. When prompted, you **must** select **Ollama** to integrate with **Ollama**.
+
+Your prompt input should match the following example:
+
+```bash
+[PROMPT] Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: Ollama
+[INFO] Selected provider: OLLAMA
+```
+
+Ollama Configuration and Model Choices
+You’ll then be prompted to select:
+
+	•	Ollama base URL (default: http://host.docker.internal:11434/v1)
+
+	•	Choice of LLM (Large Language Model)
+
+            example: llama3
+
+	•	Choice of Embedding Model
+
+            example: nomic-embed-text
+
+<Note> If you are unsure about model selection, simply press **Enter** at the respective prompts to use the recommended default options.</Note>
+
+Congratulations!  You have now successfully deployed MemMachine using Ollama!
+
+## Manually Configuring MemMachine to use Ollama
+
+To manually configure MemMachine to use your local Ollama instance, you need to define your resources in the `resources` section of your `cfg.yml` file, pointing them to your local Ollama API endpoint (usually `http://host.docker.internal:11434/v1` if running MemMachine in Docker).
+
+### 1. Define Ollama Resources
+
+Add or update the `resources` block in your `cfg.yml`. We will use the `openai-chat-completions` provider for the LLM and the `openai` provider for embeddings, as Ollama is API-compatible.
+
+```yaml
+resources:
+  # LLM Configuration
+  language_models:
+    my-ollama-llm:
+      provider: openai-chat-completions
+      config:
+        model: llama3
+        api_key: "EMPTY" # Ollama doesn't require a key
+        base_url: "http://host.docker.internal:11434/v1"
+
+  # Embedder Configuration
+  embedders:
+    my-ollama-embedder:
+      provider: openai
+      config:
+        model: nomic-embed-text
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768 # Ensure this matches your model's output
+  
+  # Reranker Configuration (Optional - using BM25 as fallback)
+  rerankers:
+    my-bm25-reranker:
+      provider: bm25
+```
+
+### 2. Update Memory Configuration
+
+Now, reference these resource IDs in your `episodic_memory` and `semantic_memory` sections.
+
+```yaml
+episodic_memory:
+  enabled: true
+  long_term_memory:
+    vector_graph_store: my-neo4j-db # Assumes you defined this in resources.databases
+    embedder: my-ollama-embedder
+    reranker: my-bm25-reranker
+  short_term_memory:
+    llm_model: my-ollama-llm
+
+semantic_memory:
+  database: my-postgres-db # Assumes you defined this in resources.databases
+  llm_model: my-ollama-llm
+  embedding_model: my-ollama-embedder
+```
+
+<Note>
+Make sure to restart the MemMachine server for these changes to take effect.
+</Note>

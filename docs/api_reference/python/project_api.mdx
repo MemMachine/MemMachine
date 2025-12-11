@@ -1,0 +1,95 @@
+---
+title: "Project API"
+description: "API reference for Project management"
+icon: "folder"
+---
+
+Project management interface for MemMachine.
+
+This module provides the Project class that represents a MemMachine project,
+which serves as the boundary for memory operations.
+
+## Class `Project`
+
+Project interface for MemMachine.
+
+A Project represents a memory boundary in MemMachine. All memory operations
+are scoped to a specific project within an organization.
+
+```python
+def Project(client: MemMachineClient, org_id: str, project_id: str, description: str, configuration: dict[str, Any] | None, metadata: dict[str, Any] | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `client` | `MemMachineClient` | - |
+| `org_id` | `str` | - |
+| `project_id` | `str` | - |
+| `description` | `str` | - |
+| `configuration` | `dict[str, Any] | None` | - |
+| `metadata` | `dict[str, Any] | None` | - |
+
+### `memory`
+
+Create a Memory instance for this project.
+
+```python
+def memory(group_id: str | None, agent_id: str | list[str] | None, user_id: str | list[str] | None, session_id: str | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `group_id` | `str | None` | Group identifier (optional, will be stored in metadata) |
+| `agent_id` | `str | list[str] | None` | Agent identifier(s) (optional, will be stored in metadata) |
+| `user_id` | `str | list[str] | None` | User identifier(s) (optional, will be stored in metadata) |
+| `session_id` | `str | None` | Session identifier (optional, will be stored in metadata) **kwargs: Additional configuration options  |
+
+**Returns**
+
+Memory instance configured for this project
+
+### `delete`
+
+Delete this project.
+
+```python
+def delete(timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Returns**
+
+True if the project was deleted successfully
+
+**Raises**
+
+requests.RequestException: If the request fails
+    RuntimeError: If the client has been closed
+
+### `refresh`
+
+Refresh project information from the server.
+
+```python
+def refresh(timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Raises**
+
+requests.RequestException: If the request fails
+    RuntimeError: If the client has been closed

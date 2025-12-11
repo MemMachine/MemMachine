@@ -1,0 +1,60 @@
+name: Run Python integration tests
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  group: integration-test-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
+
+
+jobs:
+  integration-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each integration test is a separate job to allow for parallel execution
+        test-paths: [
+          # Common tests
+          "tests/memmachine/common/",
+          # Episodic Memory tests
+          "tests/memmachine/episodic_memory/",
+          # Main MemMachine tests
+          "tests/memmachine/main/",
+          # Semantic Memory tests
+          "tests/memmachine/semantic_memory/",
+        ]
+        os: [ ubuntu-latest, ubuntu-24.04-arm ]
+        # Test on the oldest and newest supported Python versions
+        python-version: [ "3.12", "3.14" ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Install the latest version of uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Test ${{ matrix.test-paths }} with python ${{ matrix.python-version }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration
+          else
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --integration
+          fi

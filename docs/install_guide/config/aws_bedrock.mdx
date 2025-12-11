@@ -1,0 +1,115 @@
+---
+title: "Using AWS Bedrock"
+description: "Guide to install and configure MemMachine using AWS Bedrock models."
+icon: "aws"
+---
+
+## Prerequisites
+
+Before beginning, ensure you have the following access and components:
+
+**AWS Credentials**
+  - **AWS Access key ID** and **AWS Secret Access Key**.
+  - *Need help?* Follow this guide: [Create an AWS access key| Amazon Web Services](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html).
+
+**AWS Bedrock Model Access**
+  - Access to the necessary **models on AWS Bedrock**.
+  - *Need help?* Follow this guide: [AWS Foundation Models| Amazon Web Services](https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models-reference.html).
+
+**MemMachine**
+  - You can find the latest release here: [GitHub - MemMachine/MemMachine](https://api.github.com/repos/MemMachine/MemMachine/releases/latest).
+
+**Docker**
+  - The **Docker** containerization platform must be installed and running.
+
+
+## Installation: QuickStart Configuration
+
+The installation script will automatically guide you through setting up your **Large Language Model (LLM) provider**. When prompted, you **must** select **Bedrock** to integrate with **AWS Bedrock**.
+
+Your prompt input should match the following example:
+
+```bash
+[PROMPT] Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: Bedrock
+[INFO] Selected provider: BEDROCK
+```
+
+After selecting **Bedrock**, you will be prompted to enter the necessary **AWS credentials and configuration details**:
+
+- **AWS Access Key ID**
+- **AWS Secret Access Key**
+- **AWS Region** (e.g., `us-east-1` or `eu-central-1`)
+- **Choice of LLM**
+- **Choice of Embedding Model**
+
+<Note> If you are unsure about model selection, simply press **Enter** at the respective prompts to use the recommended default options.</Note>
+
+Congratulations!  You have now successfully deployed MemMachine using AWS Bedrock!
+
+## Manually Configuring MemMachine to use AWS Bedrock
+
+To manually configure MemMachine for AWS Bedrock, you need to define your resources in the `resources` section of your `cfg.yml` file and then reference them in the memory configuration sections.
+
+### 1. Define Bedrock Resources
+
+Add or update the `resources` block in your `cfg.yml` file. You will need to configure a **Language Model**, an **Embedder**, and optionally a **Reranker**.
+
+```yaml
+resources:
+  # LLM Configuration
+  language_models:
+    my-bedrock-llm:
+      provider: amazon-bedrock
+      config:
+        region: us-east-1
+        aws_access_key_id: <YOUR_AWS_ACCESS_KEY>
+        aws_secret_access_key: <YOUR_AWS_SECRET_KEY>
+        model_id: anthropic.claude-3-sonnet-20240229-v1:0
+        inference_config:
+          max_tokens: 2000
+          temperature: 0.7
+
+  # Embedder Configuration
+  embedders:
+    my-bedrock-embedder:
+      provider: amazon-bedrock
+      config:
+        region: us-east-1
+        aws_access_key_id: <YOUR_AWS_ACCESS_KEY>
+        aws_secret_access_key: <YOUR_AWS_SECRET_KEY>
+        model_id: amazon.titan-embed-text-v2:0
+  
+  # Reranker Configuration (Optional)
+  rerankers:
+    my-bedrock-reranker:
+      provider: amazon-bedrock
+      config:
+        region: us-east-1
+        aws_access_key_id: <YOUR_AWS_ACCESS_KEY>
+        aws_secret_access_key: <YOUR_AWS_SECRET_KEY>
+        model_id: amazon.rerank-v1:0
+```
+
+### 2. Update Memory Configuration
+
+Now, reference these resource IDs in your `episodic_memory` and `semantic_memory` sections.
+
+```yaml
+episodic_memory:
+  enabled: true
+  long_term_memory:
+    vector_graph_store: my-neo4j-db # Assumes you defined this in resources.databases
+    embedder: my-bedrock-embedder
+    reranker: my-bedrock-reranker
+  short_term_memory:
+    llm_model: my-bedrock-llm
+
+semantic_memory:
+  database: my-postgres-db # Assumes you defined this in resources.databases
+  llm_model: my-bedrock-llm
+  embedding_model: my-bedrock-embedder
+```
+
+<Note>
+Make sure to restart the MemMachine server for these changes to take effect.
+</Note>

@@ -1,0 +1,220 @@
+---
+title: "Memory API"
+description: "API reference for Memory operations"
+icon: "brain"
+---
+
+Memory management interface for MemMachine.
+
+This module provides the Memory class that handles episodic and profile memory
+operations for a specific context.
+
+## Class `Memory`
+
+Memory interface for managing episodic and profile memory.
+
+This class provides methods for adding, searching, and managing memories
+within a specific context (group, agent, user, session).
+
+```python
+def Memory(client: MemMachineClient, org_id: str, project_id: str, group_id: str | None, agent_id: str | list[str] | None, user_id: str | list[str] | None, session_id: str | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `client` | `MemMachineClient` | - |
+| `org_id` | `str` | - |
+| `project_id` | `str` | - |
+| `group_id` | `str | None` | - |
+| `agent_id` | `str | list[str] | None` | - |
+| `user_id` | `str | list[str] | None` | - |
+| `session_id` | `str | None` | - |
+
+### `org_id`
+
+Get the org_id (read-only).
+
+```python
+def org_id()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+Organization identifier
+
+### `project_id`
+
+Get the project_id (read-only).
+
+```python
+def project_id()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+Project identifier
+
+### `user_id`
+
+Get the user_id list (read-only).
+
+```python
+def user_id()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+List of user identifiers, or None if not set
+
+### `agent_id`
+
+Get the agent_id list (read-only).
+
+```python
+def agent_id()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+List of agent identifiers, or None if not set
+
+### `group_id`
+
+Get the group_id (read-only).
+
+```python
+def group_id()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+Group identifier, or None if not set
+
+### `session_id`
+
+Get the session_id (read-only).
+
+```python
+def session_id()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+Session identifier, or None if not set
+
+### `add`
+
+Add a memory episode.
+
+```python
+def add(content: str, role: str, producer: str | None, produced_for: str | None, episode_type: str, metadata: dict[str, Any] | None, timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `content` | `str` | The content to store in memory |
+| `role` | `str` | Message role - "user", "assistant", or "system" (default: "user") |
+| `producer` | `str | None` | Who produced this content (defaults to first user_id) |
+| `produced_for` | `str | None` | Who this content is for (defaults to first agent_id) |
+| `episode_type` | `str` | Type of episode (default: "text") - stored in metadata |
+| `metadata` | `dict[str, Any] | None` | Additional metadata for the episode |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Returns**
+
+True if the memory was added successfully
+
+**Raises**
+
+requests.RequestException: If the request fails
+    RuntimeError: If the client has been closed
+
+### `search`
+
+Search for memories.
+
+```python
+def search(query: str, limit: int | None, filter_dict: dict[str, Any] | None, timeout: int | None)
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `query` | `str` | Search query string |
+| `limit` | `int | None` | Maximum number of results to return |
+| `filter_dict` | `dict[str, Any] | None` | Additional filters for the search |
+| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+
+**Returns**
+
+Dictionary containing search results from both episodic and profile memory
+
+**Raises**
+
+requests.RequestException: If the request fails
+    RuntimeError: If the client has been closed
+
+### `get_context`
+
+Get the current memory context.
+
+```python
+def get_context()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+**Returns**
+
+Dictionary containing the context information
+
+### `mark_client_closed`
+
+Mark this memory instance as closed by its owning client.
+
+```python
+def mark_client_closed()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |

@@ -1,10 +1,10 @@
 ---
 title: "Episodic Memory"
-description: "The `EpisodicMemory` module and class provides a high-level interface for creating and managing episodic memory."
-icon: "memory"
+description: "Server-side Episodic Memory API"
+icon: "server"
 ---
 
-This module defines the core memory instance for a specific conversational context.
+Defines the core memory instance for a specific conversational context.
 
 This module provides the `EpisodicMemory` class, which acts as the primary
 orchestrator for an individual memory session. It integrates short-term
@@ -17,202 +17,142 @@ Key responsibilities include:
   memory.
 - Retrieving relevant context for a query by searching both memory types.
 - Interacting with a language model for memory-related tasks.
-- Each instance is uniquely identified by a `MemoryContext` and managed by the
-  `EpisodicMemoryManager`.
+- Each instance is managed by the `EpisodicMemoryManager`.
 
-<a id="memmachine.episodic_memory.EpisodicMemory"></a>
+## Class `EpisodicFilter`
 
-
-## Initialization
-
-To get started, you'll need to initialize the `MemMachineClient` with your API key.
-
-```
-from memmachine import MemMachineClient
-
-client = MemMachineClient(api_key="your_api_key")
-```
-
-## Creating an Episode
-
-To create a new episode, use the `create_episode` method.
-
-```
-episode_data = {
-    "title": "My First Episode",
-    "description": "This is a test episode for the documentation."
-}
-
-try:
-    new_episode = client.episodic_memory.create_episode(episode_data)
-    print(f"Created new episode with ID: {new_episode.id}")
-except Exception as e:
-    print(f"Error creating episode: {e}")
-```
-
-## EpisodicMemory Objects
+Callable protocol representing an episode filter predicate.
 
 ```python
-class EpisodicMemory()
+def EpisodicFilter()
 ```
 
-Represents a single, isolated memory instance for a specific context.
+## Class `EpisodicMemoryParams`
+
+Parameters for configuring the EpisodicMemory.
+
+Attributes:
+    session_key (str): The unique identifier for the session.
+    metrics_factory (MetricsFactory): The metrics factory.
+    long_term_memory (LongTermMemory): The long-term memory.
+    short_term_memory (ShortTermMemory): The short-term memory.
+    enabled (bool): Whether the episodic memory is enabled.
+
+```python
+def EpisodicMemoryParams()
+```
+
+### `validate_memory_params`
+
+```python
+def validate_memory_params()
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| :--- | :--- | :--- |
+
+## Class `EpisodicMemory`
+
+Represents a single, isolated memory instance for a specific session.
 
 This class orchestrates the interaction between short-term (session)
 memory and long-term (declarative) memory. It manages the lifecycle of
 the memory, handles adding new information (episodes), and provides
 methods to retrieve contextual information for queries.
 
-Each instance is tied to a unique `MemoryContext` (defined by group, agent,
-user, and session IDs) and is managed by a central
-`EpisodicMemoryManager`.
-
-<a id="memmachine.episodic_memory.EpisodicMemory.__init__"></a>
-
-### \_\_init\_\_
+Each instance is tied to a unique session key
 
 ```python
-def __init__(manager, config: dict, memory_context: MemoryContext)
+def EpisodicMemory(params: EpisodicMemoryParams)
 ```
 
-Initializes a EpisodicMemory instance.
+**Parameters**
 
-**Arguments**:
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `params` | `EpisodicMemoryParams` | - |
 
-- `manager` - The EpisodicMemoryManager that created this instance.
-- `config` - A dictionary containing the configuration for this memory
-  instance.
-- `memory_context` - The unique context for this memory instance.
+### `short_term_memory`
 
-<a id="memmachine.episodic_memory.EpisodicMemory.reference"></a>
-
-### reference
+Get the short-term memory of the episodic memory instance.
 
 ```python
-async def reference() -> bool
+def short_term_memory()
 ```
 
-Increments the reference count for this instance.
+**Parameters**
 
-Used by the manager to track how many clients are actively using this
-memory instance.
+| Name | Type | Description |
+| :--- | :--- | :--- |
 
-**Returns**:
+**Returns**
 
-  True if the reference was successfully added, False if the instance
-  is already closed.
+The short-term memory of the episodic memory instance.
 
-<a id="memmachine.episodic_memory.EpisodicMemory.add_memory_episode"></a>
+### `short_term_memory`
 
-### add\_memory\_episode
+Set the short-term memory of the episodic memory instance.
+
+This makes the short term memory can be injected.
 
 ```python
-async def add_memory_episode(producer: str,
-                             produced_for: str,
-                             episode_content: str | list[float],
-                             episode_type: str,
-                             content_type: ContentType,
-                             timestamp: datetime | None = None,
-                             metadata: dict | None = None) -> bool
+def short_term_memory(value: ShortTermMemory | None)
 ```
 
-Adds a new memory episode to both session and declarative memory.
+**Parameters**
 
-Validates that the producer and recipient of the episode are part of
-the current memory context.
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `value` | `ShortTermMemory | None` | The new short-term memory of the episodic memory instance. |
 
-**Arguments**:
+### `long_term_memory`
 
-- `producer` - The ID of the user or agent that created the episode.
-- `produced_for` - The ID of the intended recipient.
-- `episode_content` - The content of the episode (string or vector).
-- `episode_type` - The type of the episode (e.g., 'message', 'thought').
-- `content_type` - The type of the content (e.g., STRING).
-- `timestamp` - The timestamp of the episode. Defaults to now().
-- `metadata` - Optional dictionary of user-defined metadata.
-  
-
-**Returns**:
-
-  True if the episode was added successfully, False otherwise.
-
-<a id="memmachine.episodic_memory.EpisodicMemory.close"></a>
-
-### close
+Get the long-term memory of the episodic memory instance.
 
 ```python
-async def close()
+def long_term_memory()
 ```
 
-Decrements the reference count and closes the instance if it reaches
-zero.
+**Parameters**
 
-When the reference count is zero, it closes the underlying memory
-stores and notifies the manager to remove this instance from its
-registry.
+| Name | Type | Description |
+| :--- | :--- | :--- |
 
-<a id="memmachine.episodic_memory.EpisodicMemory.delete_data"></a>
+**Returns**
 
-### delete\_data
+The long-term memory of the episodic memory instance.
+
+### `long_term_memory`
+
+Set the long-term memory of the episodic memory instance.
+
+This makes the long term memory can be injected.
 
 ```python
-async def delete_data()
+def long_term_memory(value: LongTermMemory | None)
 ```
 
-Deletes all data from both session and declarative memory for this
-context.
-This is a destructive operation.
+**Parameters**
 
-<a id="memmachine.episodic_memory.EpisodicMemory.query_memory"></a>
+| Name | Type | Description |
+| :--- | :--- | :--- |
+| `value` | `LongTermMemory | None` | The new long-term memory of the episodic memory instance. |
 
-### query\_memory
+### `session_key`
+
+Get the session key of the episodic memory instance.
 
 ```python
-async def query_memory(
-        query: str,
-        limit: int | None = None) -> tuple[list[Episode], list[str]]
+def session_key()
 ```
 
-Retrieves relevant context for a given query from all memory stores.
+**Parameters**
 
-It fetches episodes from both short-term (session) and long-term
-(declarative) memory, deduplicates them, and returns them along with
-any available summary.
+| Name | Type | Description |
+| :--- | :--- | :--- |
 
-**Arguments**:
+**Returns**
 
-- `query` - The query string to find context for.
-- `limit` - The maximum number of episodes to return.
-- `filter` - A dictionary of properties to filter the search in
-  declarative memory.
-  
-
-**Returns**:
-
-  A tuple containing a list of relevant Episode objects and a
-  summary string.
-
-<a id="memmachine.episodic_memory.EpisodicMemory.formalize_query_with_context"></a>
-
-### formalize\_query\_with\_context
-
-```python
-async def formalize_query_with_context(query: str,
-                                       limit: int | None = None) -> str
-```
-
-Constructs a finalized query string that includes context from memory.
-
-The context (summary and recent episodes) is prepended to the original
-query, formatted with XML-like tags for the language model to parse.
-
-**Arguments**:
-
-- `query` - The original query string.
-- `limit` - The maximum number of episodes to include in the context.
-- `filter` - A dictionary of properties to filter the search.
-  
-
-**Returns**:
-
-  A new query string enriched with context.
+The session key of the episodic memory instance.
