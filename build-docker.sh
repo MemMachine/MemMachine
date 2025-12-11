@@ -177,7 +177,7 @@ get_interactive_choices() {
         if [[ -z "$VERSION" ]]; then error "Version tag cannot be empty."; fi
     fi
 
-    msg "A 'latest' tag (e.g., 'latest-gpu') acts as a pointer to the newest stable release."
+    msg "A 'latest' tag (e.g., 'latest-cpu') acts as a pointer to the newest stable release."
     read -p "Apply 'latest' tags for this version? (Y/n): " push_latest_choice
     if [[ ! "$push_latest_choice" =~ ^[nN]$ ]]; then PUSH_LATEST=true; fi
 
