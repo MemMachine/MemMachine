@@ -25,6 +25,10 @@ from memmachine.installation.utilities import (
     LINUX_JDK_URL,
     LINUX_NEO4J_TAR_NAME,
     LINUX_NEO4J_URL,
+    MACOS_JDK_TAR_NAME_ARM64,
+    MACOS_JDK_TAR_NAME_X64,
+    MACOS_JDK_URL_ARM64,
+    MACOS_JDK_URL_X64,
     NEO4J_DIR_NAME,
     NEO4J_WINDOWS_SERVICE_NAME,
     WINDOWS_JDK_URL,
@@ -208,7 +212,7 @@ class LinuxInstaller(Installer):
         neo4j_tar_path = str(Path(self.install_dir, LINUX_NEO4J_TAR_NAME))
         self.environment.download_file(LINUX_NEO4J_URL, neo4j_tar_path)
         self.environment.extract_tar(neo4j_tar_path, self.install_dir)
-        neo4j_dir = str(Path(self.install_dir) / "neo4j-community-2025.09.0")
+        neo4j_dir = str(Path(self.install_dir) / NEO4J_DIR_NAME)
         logger.info("Neo4j Community Edition installed successfully at %s.", neo4j_dir)
 
         # Clean up tar files
@@ -219,35 +223,12 @@ class LinuxInstaller(Installer):
         self.environment.start_neo4j(java_home=java_home, neo4j_dir=neo4j_dir)
 
 
-class MacosEnvironment:
+class MacosEnvironment(LinuxEnvironment):
     """Environment utilities for macOS installation."""
-
-    def install_and_start_neo4j(self) -> None:
-        """Install and start Neo4j service on macOS using Homebrew."""
-        # 1. Install Neo4j via Homebrew
-        subprocess.run(["brew", "install", "neo4j"], check=True)
-
-        # 2. Set the initial password (required for Neo4j 5+)
-        env = {**os.environ.copy(), "NEO4J_AUTH": "neo4j/neo4j"}
-        subprocess.run(
-            ["neo4j-admin", "dbms", "set-initial-password", DEFAULT_NEO4J_PASSWORD],
-            check=True,
-            env=env,
-        )
-
-        # 3. Start Neo4j service
-        subprocess.run(["brew", "services", "start", "neo4j"], check=True)
-
-    def check_neo4j_running(self) -> bool:
-        """Check if Neo4j service is running on macOS using Homebrew."""
-        result = subprocess.run(
-            ["brew", "list", "--versions", "neo4j"], capture_output=True, text=True
-        )
-        return result.returncode == 0 and result.stdout.strip() != ""
 
 
 class MacosInstaller(Installer):
-    """Installer for macOS using Homebrew."""
+    """Installer for macOS using manual download."""
 
     def __init__(self, environment: MacosEnvironment | None = None) -> None:
         """Initialize MacosInstaller with default installation directory."""
@@ -264,7 +245,43 @@ class MacosInstaller(Installer):
 
     def install_and_start_neo4j(self) -> None:
         """Install and start Neo4j Community Edition on macOS."""
-        self.environment.install_and_start_neo4j()
+        logger.info("Installing Neo4j Community Edition on macOS...")
+        self.ask_install_dir()
+
+        # Determine architecture
+        machine = platform.machine().lower()
+        if machine in ("arm64", "aarch64"):
+            jdk_url = MACOS_JDK_URL_ARM64
+            jdk_tar_name = MACOS_JDK_TAR_NAME_ARM64
+        else:
+            jdk_url = MACOS_JDK_URL_X64
+            jdk_tar_name = MACOS_JDK_TAR_NAME_X64
+
+        # Install OpenJDK 21
+        logger.info("Downloading and installing %s...", jdk_tar_name)
+        jdk_tar_path = str(Path(self.install_dir, jdk_tar_name))
+        self.environment.download_file(jdk_url, jdk_tar_path)
+        self.environment.extract_tar(jdk_tar_path, self.install_dir)
+
+        # Find JDK directory
+        jdk_root = LinuxInstaller.find_jdk21_dir(self.install_dir)
+        java_home = str(jdk_root / "Contents" / "Home")
+        logger.info("OpenJDK 21 installed successfully at %s", java_home)
+
+        # Install Neo4j
+        logger.info("Downloading and installing %s...", LINUX_NEO4J_TAR_NAME)
+        neo4j_tar_path = str(Path(self.install_dir, LINUX_NEO4J_TAR_NAME))
+        self.environment.download_file(LINUX_NEO4J_URL, neo4j_tar_path)
+        self.environment.extract_tar(neo4j_tar_path, self.install_dir)
+        neo4j_dir = str(Path(self.install_dir) / NEO4J_DIR_NAME)
+        logger.info("Neo4j Community Edition installed successfully at %s.", neo4j_dir)
+
+        # Clean up tar files
+        Path(jdk_tar_path).unlink(missing_ok=True)
+        Path(neo4j_tar_path).unlink(missing_ok=True)
+
+        # Start Neo4j from command line with proper JAVA_HOME
+        self.environment.start_neo4j(java_home=java_home, neo4j_dir=neo4j_dir)
 
 
 class WindowsEnvironment:

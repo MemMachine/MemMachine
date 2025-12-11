@@ -5,6 +5,9 @@ from unittest.mock import patch
 import pytest
 
 from memmachine.installation.memmachine_configure import (
+    LINUX_NEO4J_URL,
+    MACOS_JDK_URL_ARM64,
+    MACOS_JDK_URL_X64,
     WINDOWS_JDK_URL,
     WINDOWS_JDK_ZIP_NAME,
     WINDOWS_NEO4J_URL,
@@ -152,24 +155,53 @@ def test_install_in_windows_neo4j_preinstalled(mock_wizard):
 class MockMacOSEnvironment(MacosEnvironment):
     def __init__(self):
         super().__init__()
-        self.neo4j_installed = False
+        self.neo4j_started = False
         self.neo4j_preinstalled = False
+        self.downloaded_files = {}
+        self.extracted_files = {}
 
-    def install_and_start_neo4j(self):
-        self.neo4j_installed = True
+    def download_file(self, url: str, dest: str) -> None:
+        self.downloaded_files[url] = dest
+
+    def extract_tar(self, tar_path: str, extract_to: str) -> None:
+        self.extracted_files[tar_path] = extract_to
+
+    def start_neo4j(self, java_home: str, neo4j_dir: str) -> None:
+        self.neo4j_started = True
 
     def check_neo4j_running(self) -> bool:
         return self.neo4j_preinstalled
 
 
 @patch("builtins.input")
-def test_install_in_macos(mock_input, mock_wizard):
+@patch("platform.machine")
+def test_install_in_macos(mock_machine, mock_input, mock_wizard):
     mock_input.side_effect = [
         "y",  # Confirm installation
     ]
-    installer = MacosInstaller(MockMacOSEnvironment())
+    mock_machine.return_value = "arm64"
+    environment = MockMacOSEnvironment()
+    installer = MacosInstaller(environment)
     installer.install()
-    assert installer.environment.neo4j_installed
+    assert environment.neo4j_started
+    assert MACOS_JDK_URL_ARM64 in environment.downloaded_files
+    assert LINUX_NEO4J_URL in environment.downloaded_files
+    assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
+
+
+@patch("builtins.input")
+@patch("platform.machine")
+def test_install_in_macos_x64(mock_machine, mock_input, mock_wizard):
+    mock_input.side_effect = [
+        "y",  # Confirm installation
+    ]
+    mock_machine.return_value = "x86_64"
+    environment = MockMacOSEnvironment()
+    installer = MacosInstaller(environment)
+    installer.install()
+    assert environment.neo4j_started
+    assert MACOS_JDK_URL_X64 in environment.downloaded_files
+    assert LINUX_NEO4J_URL in environment.downloaded_files
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
@@ -178,7 +210,7 @@ def test_install_in_macos_neo4j_preinstalled(mock_wizard):
     environment.neo4j_preinstalled = True
     installer = MacosInstaller(environment)
     installer.install()
-    assert not installer.environment.neo4j_installed
+    assert not installer.environment.neo4j_started
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
@@ -191,8 +223,8 @@ class MockLinuxEnvironment(LinuxEnvironment):
     def download_file(self, url: str, dest: str) -> None:
         self.downloaded_files[url] = dest
 
-    def extract_tar(self, zip_path: str, extract_to: str) -> None:
-        self.extracted_files[zip_path] = extract_to
+    def extract_tar(self, tar_path: str, extract_to: str) -> None:
+        self.extracted_files[tar_path] = extract_to
 
     def start_neo4j(self, java_home: str, neo4j_dir: str) -> None:
         self.neo4j_started = True
