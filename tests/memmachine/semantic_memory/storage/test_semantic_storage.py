@@ -74,6 +74,34 @@ async def test_multiple_features(
 
 
 @pytest.mark.asyncio
+async def test_feature_value_comparison_filters(semantic_storage: SemanticStorage):
+    feature_ids: list[FeatureIdT] = [
+        await semantic_storage.add_feature(
+            set_id="cmp-user",
+            category_name="default",
+            feature="rank",
+            value=str(idx),
+            tag="numeric",
+            embedding=np.array([float(idx)], dtype=float),
+        )
+        for idx in range(1, 4)
+    ]
+
+    try:
+        greater_than_one = await semantic_storage.get_feature_set(
+            filter_expr=_expr("value > '1'"),
+        )
+        assert {f.value for f in greater_than_one} == {"2", "3"}
+
+        up_to_two = await semantic_storage.get_feature_set(
+            filter_expr=_expr("value <= '2'"),
+        )
+        assert {f.value for f in up_to_two} == {"1", "2"}
+    finally:
+        await semantic_storage.delete_features(feature_ids)
+
+
+@pytest.mark.asyncio
 async def test_delete_feature(semantic_storage: SemanticStorage):
     idx_a = await semantic_storage.add_feature(
         set_id="user",
