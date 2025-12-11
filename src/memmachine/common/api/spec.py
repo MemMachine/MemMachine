@@ -13,7 +13,7 @@ try:
     from fastapi import HTTPException as _HTTPError
 except ModuleNotFoundError:
     # Lightweight fallback to avoid pulling FastAPI into the client package.
-    class _HTTPError(Exception):  # type: ignore[too-many-ancestors]
+    class _HTTPError(Exception):
         def __init__(self, status_code: int, detail: object | None = None) -> None:
             super().__init__(detail)
             self.status_code = status_code
@@ -549,7 +549,19 @@ class RestErrorModel(BaseModel):
 
 
 class RestError(_HTTPError):
-    """HTTPException with a structured RestErrorModel as the 'detail'."""
+    """
+    Exception with a structured RestErrorModel as the 'detail'.
+
+    Inherits from _HTTPError, which dynamically resolves to:
+    - FastAPI's HTTPException in server environments (when FastAPI is available)
+    - A lightweight fallback Exception in client-only environments (when FastAPI is not installed)
+
+    This design allows RestError to work in both server and client contexts without
+    requiring FastAPI as a dependency for client packages. In server environments,
+    RestError behaves as a standard FastAPI HTTPException and can be raised in
+    FastAPI route handlers. In client environments, it provides the same interface
+    but without the FastAPI dependency overhead.
+    """
 
     def __init__(
         self,
@@ -557,7 +569,7 @@ class RestError(_HTTPError):
         message: str,
         ex: Exception | None = None,
     ) -> None:
-        """Initialize HTTPException and RestErrorModel."""
+        """Initialize RestError with structured error details."""
         self.payload: RestErrorModel | None = None
         if ex is not None:
             # Extract traceback safely
