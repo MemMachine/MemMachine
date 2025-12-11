@@ -178,7 +178,7 @@ get_interactive_choices() {
     fi
 
     msg "A 'latest' tag (e.g., 'latest-cpu') acts as a pointer to the newest stable release."
-    read -p "Apply 'latest' tags for this version? (Y/n): " push_latest_choice
+    read -p "Apply 'latest' tag for this version? (Y/n): " push_latest_choice
     if [[ ! "$push_latest_choice" =~ ^[nN]$ ]]; then PUSH_LATEST=true; fi
 
     read -p "Select action (1: Build locally, 2: Build and Push, 3: Cancel) [2]: " action_choice
