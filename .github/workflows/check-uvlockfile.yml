@@ -1,4 +1,6 @@
 name: Check uv.lock file
+permissions:
+  contents: read
 
 # Ensures uv.lock is in sync with pyproject.toml and related files.
 # If the lockfile is in sync, the workflow passes.
