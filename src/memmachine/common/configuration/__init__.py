@@ -88,7 +88,7 @@ class PromptConf(YamlSerializableMixin):
     """Prompt configuration for semantic memory contexts."""
 
     profile: list[str] = Field(
-        default=["profile_prompt", "writing_assistant_prompt"],
+        default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
         description="The default prompts to use for semantic user memory",
     )
     role: list[str] = Field(
