@@ -1,15 +1,21 @@
 """API v2 specification models for request and response structures."""
 
+import logging
+import traceback
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 import regex
-from pydantic import AfterValidator, BaseModel, Field
+from fastapi import HTTPException
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+from memmachine.common.api.doc import Examples, SpecDoc
 from memmachine.main.memmachine import MemoryType
-from memmachine.server.api_v2.doc import Examples, SpecDoc
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
+
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidNameError(ValueError):
@@ -17,11 +23,10 @@ class InvalidNameError(ValueError):
 
 
 def _is_valid_name(v: str) -> str:
-    # Allow: Unicode letters, Unicode numbers, underscore, hyphen
-    if not regex.fullmatch(r"^[\p{L}\p{N}_-]+$", v):
+    if not regex.fullmatch(r"^[\p{L}\p{N}_:-]+$", v):
         raise InvalidNameError(
             "ID can only contain letters, numbers, underscore, hyphen, "
-            "or Unicode characters"
+            f"colon, or Unicode characters, found: '{v}'",
         )
     return v
 
@@ -280,6 +285,15 @@ class MemoryMessage(BaseModel):
 class AddMemoriesSpec(_WithOrgAndProj):
     """Specification model for adding memories."""
 
+    types: Annotated[
+        list[MemoryType],
+        Field(
+            default_factory=list,
+            description=SpecDoc.MEMORY_TYPES,
+            examples=Examples.MEMORY_TYPES,
+        ),
+    ]
+
     messages: Annotated[
         list[MemoryMessage],
         Field(
@@ -393,10 +407,34 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
     episodic_id: Annotated[
         SafeId,
         Field(
+            default="",
             description=SpecDoc.EPISODIC_ID,
             examples=Examples.EPISODIC_ID,
         ),
     ]
+    episodic_ids: Annotated[
+        list[SafeId],
+        Field(
+            default=[],
+            description=SpecDoc.EPISODIC_IDS,
+            examples=Examples.EPISODIC_IDS,
+        ),
+    ]
+
+    def get_ids(self) -> list[str]:
+        """Get a list of episodic IDs to delete."""
+        id_set = set(self.episodic_ids)
+        if len(self.episodic_id) > 0:
+            id_set.add(self.episodic_id)
+        id_set = {i.strip() for i in id_set if i and i.strip()}
+        return sorted(id_set)
+
+    @model_validator(mode="after")
+    def validate_ids(self) -> Self:
+        """Ensure at least one ID is provided."""
+        if len(self.get_ids()) == 0:
+            raise ValueError("At least one episodic ID must be provided")
+        return self
 
 
 # ---
@@ -408,10 +446,34 @@ class DeleteSemanticMemorySpec(_WithOrgAndProj):
     semantic_id: Annotated[
         SafeId,
         Field(
+            default="",
             description=SpecDoc.SEMANTIC_ID,
             examples=Examples.SEMANTIC_ID,
         ),
     ]
+    semantic_ids: Annotated[
+        list[SafeId],
+        Field(
+            default=[],
+            description=SpecDoc.SEMANTIC_IDS,
+            examples=Examples.SEMANTIC_IDS,
+        ),
+    ]
+
+    def get_ids(self) -> list[str]:
+        """Get a list of semantic IDs to delete."""
+        id_set = set(self.semantic_ids)
+        if len(self.semantic_id) > 0:
+            id_set.add(self.semantic_id)
+        id_set = {i.strip() for i in id_set if len(i.strip()) > 0}
+        return sorted(id_set)
+
+    @model_validator(mode="after")
+    def validate_ids(self) -> Self:
+        """Ensure at least one ID is provided."""
+        if len(self.get_ids()) == 0:
+            raise ValueError("At least one semantic ID must be provided")
+        return self
 
 
 class SearchResult(BaseModel):
@@ -432,3 +494,87 @@ class SearchResult(BaseModel):
             description=SpecDoc.CONTENT,
         ),
     ]
+
+
+class RestErrorModel(BaseModel):
+    """Model representing an error response."""
+
+    code: Annotated[
+        int,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_CODE,
+            examples=[422, 404],
+        ),
+    ]
+    message: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_MESSAGE,
+        ),
+    ]
+    internal_error: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_INTERNAL,
+        ),
+    ]
+    exception: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_EXCEPTION,
+        ),
+    ]
+    trace: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.ERROR_TRACE,
+        ),
+    ]
+
+
+class RestError(HTTPException):
+    """HTTPException with a structured RestErrorModel as the 'detail'."""
+
+    def __init__(
+        self,
+        code: int,
+        message: str,
+        ex: Exception | None = None,
+    ) -> None:
+        """Initialize HTTPException and RestErrorModel."""
+        self.payload: RestErrorModel | None = None
+        if ex is not None:
+            # Extract traceback safely
+            trace = "".join(
+                traceback.format_exception(
+                    type(ex),
+                    ex,
+                    ex.__traceback__,
+                )
+            ).strip()
+
+            self.payload = RestErrorModel(
+                code=code,
+                message=message,
+                exception=type(ex).__name__,
+                internal_error=str(ex),
+                trace=trace,
+            )
+
+        # Call HTTPException with structured detail
+        if self.payload is not None:
+            logger.warning(
+                "exception handling request, code %d, message: %s, payload: %s",
+                code,
+                message,
+                self.payload,
+            )
+            super().__init__(status_code=code, detail=self.payload.model_dump())
+        else:
+            logger.info("error handling request, code %d, message: %s", code, message)
+            super().__init__(status_code=code, detail=message)

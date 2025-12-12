@@ -96,7 +96,7 @@ class PromptConf(YamlSerializableMixin):
         description="The default prompts to use for semantic role memory",
     )
     session: list[str] = Field(
-        default=[],
+        default=["profile_prompt"],
         description="The default prompts to use for semantic session memory",
     )
     episode_summary_system_prompt_path: str = Field(

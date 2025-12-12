@@ -78,17 +78,14 @@ class Installer(ABC):
         if not self.check_neo4j_running():
             choice = (
                 input(
-                    "Neo4j is not running. Do you want to install and start Neo4j? (y/n): "
+                    "Cannot find Neo4j locally. Do you want to install and start Neo4j? (y/n): "
                 )
                 .strip()
                 .lower()
             )
-            if choice != "y":
-                raise RuntimeError(
-                    "Neo4j installation is required to proceed. Exiting installation."
-                )
-            self.install_and_start_neo4j()
-            neo4j_started_by_installer = True
+            if choice == "y":
+                self.install_and_start_neo4j()
+                neo4j_started_by_installer = True
         else:
             logger.info("Neo4j is already running.")
 
@@ -339,6 +336,7 @@ class WindowsEnvironment:
                     "Neo4j service is installed but not running. "
                     "Please start the service before running MemMachine."
                 )
+                return False
             return True
 
 

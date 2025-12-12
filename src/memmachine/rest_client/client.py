@@ -8,6 +8,12 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from memmachine.common.api.spec import (
+    CreateProjectSpec,
+    GetProjectSpec,
+    ProjectConfig,
+)
+
 from .project import Project
 
 logger = logging.getLogger(__name__)
@@ -187,16 +193,14 @@ class MemMachineClient:
             raise RuntimeError("Cannot create project: client has been closed")
 
         url = f"{self.base_url}/api/v2/projects"
-        # Use user input directly - empty string for server defaults, or specific model name
-        data = {
-            "org_id": org_id,
-            "project_id": project_id,
-            "description": description,
-            "config": {
-                "embedder": embedder,
-                "reranker": reranker,
-            },
-        }
+        # Use shared API Pydantic models
+        spec = CreateProjectSpec(
+            org_id=org_id,
+            project_id=project_id,
+            description=description,
+            config=ProjectConfig(embedder=embedder, reranker=reranker),
+        )
+        data = spec.model_dump(exclude_none=True)
 
         request_timeout = timeout if timeout is not None else self.timeout
         try:
@@ -266,10 +270,8 @@ class MemMachineClient:
             raise ValueError("project_id cannot contain '/'")
 
         url = f"{self.base_url}/api/v2/projects/get"
-        data = {
-            "org_id": org_id,
-            "project_id": project_id,
-        }
+        spec = GetProjectSpec(org_id=org_id, project_id=project_id)
+        data = spec.model_dump(exclude_none=True)
 
         try:
             response = self.request("POST", url, json=data, timeout=timeout)

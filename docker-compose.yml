@@ -84,6 +84,7 @@ services:
       FAST_MCP_LOG_LEVEL: ${FAST_MCP_LOG_LEVEL:-INFO}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
     volumes:
       - ./configuration.yml:/app/configuration.yml:ro,Z
       - memmachine_logs:/tmp/memory_logs

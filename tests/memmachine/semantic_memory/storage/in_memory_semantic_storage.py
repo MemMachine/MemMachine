@@ -593,6 +593,13 @@ class InMemorySemanticStorage(SemanticStorage):
                 return self._compare_equals(value, comparison.value, is_metadata)
             case "in":
                 return self._compare_in(value, comparison.value, is_metadata)
+            case ">" | "<" | ">=" | "<=":
+                return self._compare_order(
+                    value,
+                    comparison.value,
+                    is_metadata,
+                    comparison.op,
+                )
             case "is_null":
                 return value is None
             case "is_not_null":
@@ -621,6 +628,28 @@ class InMemorySemanticStorage(SemanticStorage):
                 value = self._normalize_metadata_value(value)
         return value in candidates
 
+    def _compare_order(
+        self,
+        value: Any,
+        expected: Any,
+        is_metadata: bool,
+        op: str,
+    ) -> bool:
+        if isinstance(expected, list):
+            raise TypeError(f"'{op}' comparison cannot accept list values")
+        if value is None:
+            return False
+        if is_metadata:
+            expected = self._normalize_metadata_value(expected)
+            value = self._normalize_metadata_value(value)
+        operations: dict[str, Callable[[Any, Any], bool]] = {
+            ">": lambda lhs, rhs: lhs > rhs,
+            "<": lambda lhs, rhs: lhs < rhs,
+            ">=": lambda lhs, rhs: lhs >= rhs,
+            "<=": lambda lhs, rhs: lhs <= rhs,
+        }
+        return operations[op](value, expected)
+
     def _resolve_entry_field(
         self,
         entry: _FeatureEntry,
@@ -648,7 +677,7 @@ class InMemorySemanticStorage(SemanticStorage):
             metadata = entry.metadata or {}
             return metadata.get(key), True
 
-        raise ValueError(f"Unsupported feature filter field: {field}")
+        return None, False
 
     @staticmethod
     def _normalize_metadata_value(value: Any) -> str:
