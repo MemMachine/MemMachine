@@ -6,6 +6,7 @@ from pydantic import SecretStr
 from memmachine.common.configuration.reranker_conf import (
     AmazonBedrockRerankerConf,
     BM25RerankerConf,
+    CohereRerankerConf,
     CrossEncoderRerankerConf,
     RerankersConf,
     RRFHybridRerankerConf,
@@ -23,7 +24,13 @@ def mock_conf():
             ),
         },
         identity={"id_ranker_id": {}},
-        bm25={"bm_ranker_id": BM25RerankerConf(tokenize="simple")},
+        bm25={"bm_ranker_id": BM25RerankerConf(tokenizer="simple")},
+        cohere={
+            "cohere_reranker_id": CohereRerankerConf(
+                cohere_key=SecretStr("<COHERE_API_KEY>"),
+                model="rerank-english-v3.0",
+            ),
+        },
         cross_encoder={
             "ce_ranker_id": CrossEncoderRerankerConf(
                 model_name="cross-encoder/qnli-electra-base",
@@ -77,6 +84,15 @@ async def test_reranker_not_found(reranker_manager):
         match=r"Reranker with name unknown_reranker_id not found\.",
     ):
         await reranker_manager.get_reranker("unknown_reranker_id")
+
+
+@pytest.mark.asyncio
+async def test_build_cohere_rerankers(reranker_manager):
+    await reranker_manager.build_all()
+
+    assert "cohere_reranker_id" in reranker_manager.rerankers
+    reranker = reranker_manager.rerankers["cohere_reranker_id"]
+    assert reranker is not None
 
 
 @pytest.mark.asyncio
