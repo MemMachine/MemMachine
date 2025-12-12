@@ -60,8 +60,8 @@ def test_create_project(client, mock_memmachine):
     call_args = mock_memmachine.create_session.call_args[1]
     assert call_args["session_key"] == "test_org/test_proj"
     assert call_args["description"] == "A test project"
-    assert call_args["embedder_name"] == "openai"
-    assert call_args["reranker_name"] == "cohere"
+    assert call_args["user_conf"].long_term_memory.embedder == "openai"
+    assert call_args["user_conf"].long_term_memory.reranker == "cohere"
 
     mock_memmachine.create_session.reset_mock()
     mock_memmachine.create_session.side_effect = InvalidArgumentError(

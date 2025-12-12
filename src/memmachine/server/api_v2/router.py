@@ -23,6 +23,10 @@ from memmachine.common.api.spec import (
     SearchMemoriesSpec,
     SearchResult,
 )
+from memmachine.common.configuration.episodic_config import (
+    EpisodicMemoryConfPartial,
+    LongTermMemoryConfPartial,
+)
 from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
@@ -50,11 +54,16 @@ async def create_project(
         project_id=spec.project_id,
     )
     try:
+        user_conf = EpisodicMemoryConfPartial(
+            long_term_memory=LongTermMemoryConfPartial(
+                embedder=spec.config.embedder if spec.config.embedder else None,
+                reranker=spec.config.reranker if spec.config.reranker else None,
+            )
+        )
         session = await memmachine.create_session(
             session_key=session_data.session_key,
             description=spec.description,
-            embedder_name=spec.config.embedder,
-            reranker_name=spec.config.reranker,
+            user_conf=user_conf,
         )
     except InvalidArgumentError as e:
         raise RestError(code=422, message="invalid argument: " + str(e)) from e
