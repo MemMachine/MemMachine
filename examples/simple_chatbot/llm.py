@@ -52,7 +52,7 @@ load_dotenv()
 # ──────────────────────────────────────────────────────────────
 MODEL_STRING = "gpt-4.1-mini"  # we default on gpt-4.1-mini
 openai_api_key = os.getenv("OPENAI_API_KEY")
-print(openai_api_key)
+# print(openai_api_key)  # Do NOT log secrets!
 client = openai.OpenAI(api_key=openai_api_key)
 
 # Lazy initialization of bedrock client to avoid errors if credentials are missing
