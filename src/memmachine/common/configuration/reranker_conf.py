@@ -50,6 +50,19 @@ class AmazonBedrockRerankerConf(YamlSerializableMixin):
     )
 
 
+class CohereRerankerConf(YamlSerializableMixin):
+    """Parameters for CohereReranker."""
+
+    cohere_key: SecretStr | None = Field(
+        ...,
+        description="Cohere API key for authentication.",
+    )
+    model: str = Field(
+        default="rerank-english-v3.0",
+        description="Cohere rerank model",
+    )
+
+
 class CrossEncoderRerankerConf(YamlSerializableMixin):
     """Parameters for CrossEncoderReranker."""
 
@@ -89,6 +102,7 @@ class RerankersConf(BaseModel):
 
     bm25: dict[str, BM25RerankerConf] = {}
     amazon_bedrock: dict[str, AmazonBedrockRerankerConf] = {}
+    cohere: dict[str, CohereRerankerConf] = {}
     cross_encoder: dict[str, CrossEncoderRerankerConf] = {}
     embedder: dict[str, EmbedderRerankerConf] = {}
     identity: dict[str, IdentityRerankerConf] = {}
@@ -101,6 +115,7 @@ class RerankersConf(BaseModel):
         return reranker_id in self._saved_reranker_ids
 
     BM25: ClassVar[str] = "bm25"
+    COHERE: ClassVar[str] = "cohere"
     CROSS_ENCODER: ClassVar[str] = "cross-encoder"
     EMBEDDER: ClassVar[str] = "embedder"
     IDENTITY: ClassVar[str] = "identity"
@@ -125,6 +140,9 @@ class RerankersConf(BaseModel):
 
         for reranker_id, conf in self.amazon_bedrock.items():
             add_reranker(reranker_id, self.AMAZON_BEDROCK, conf.to_yaml_dict())
+
+        for reranker_id, conf in self.cohere.items():
+            add_reranker(reranker_id, self.COHERE, conf.to_yaml_dict())
 
         for reranker_id, conf in self.cross_encoder.items():
             add_reranker(reranker_id, self.CROSS_ENCODER, conf.to_yaml_dict())
@@ -154,6 +172,7 @@ class RerankersConf(BaseModel):
 
         bm25_dict = {}
         amazon_bedrock_dict = {}
+        cohere_dict = {}
         cross_encoder_dict = {}
         embedder_dict = {}
         identity_dict = {}
@@ -167,6 +186,8 @@ class RerankersConf(BaseModel):
                 bm25_dict[reranker_id] = BM25RerankerConf(**conf)
             elif provider == cls.AMAZON_BEDROCK:
                 amazon_bedrock_dict[reranker_id] = AmazonBedrockRerankerConf(**conf)
+            elif provider == cls.COHERE:
+                cohere_dict[reranker_id] = CohereRerankerConf(**conf)
             elif provider == cls.CROSS_ENCODER:
                 cross_encoder_dict[reranker_id] = CrossEncoderRerankerConf(**conf)
             elif provider == cls.EMBEDDER:
@@ -183,6 +204,7 @@ class RerankersConf(BaseModel):
         ret = cls(
             bm25=bm25_dict,
             amazon_bedrock=amazon_bedrock_dict,
+            cohere=cohere_dict,
             cross_encoder=cross_encoder_dict,
             embedder=embedder_dict,
             identity=identity_dict,

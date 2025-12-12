@@ -18,6 +18,7 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
     "boto3-stubs==1.40.64",
+    "cohere>=5.20.0",
     "coverage>=7.11.0",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
