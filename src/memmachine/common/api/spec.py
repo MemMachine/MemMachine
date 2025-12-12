@@ -6,11 +6,22 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 import regex
-from fastapi import HTTPException
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+try:
+    # Prefer real FastAPI HTTPException when available (server/runtime).
+    from fastapi import HTTPException as _HTTPError
+except ModuleNotFoundError:
+    # Lightweight fallback to avoid pulling FastAPI into the client package.
+    class _HTTPError(Exception):  # type: ignore[too-many-ancestors]
+        def __init__(self, status_code: int, detail: object | None = None) -> None:
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
+
+
+from memmachine.common.api import MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
-from memmachine.main.memmachine import MemoryType
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
@@ -537,8 +548,20 @@ class RestErrorModel(BaseModel):
     ]
 
 
-class RestError(HTTPException):
-    """HTTPException with a structured RestErrorModel as the 'detail'."""
+class RestError(_HTTPError):
+    """
+    Exception with a structured RestErrorModel as the 'detail'.
+
+    Inherits from _HTTPError, which dynamically resolves to:
+    - FastAPI's HTTPException in server environments (when FastAPI is available)
+    - A lightweight fallback Exception in client-only environments (when FastAPI is not installed)
+
+    This design allows RestError to work in both server and client contexts without
+    requiring FastAPI as a dependency for client packages. In server environments,
+    RestError behaves as a standard FastAPI HTTPException and can be raised in
+    FastAPI route handlers. In client environments, it provides the same interface
+    but without the FastAPI dependency overhead.
+    """
 
     def __init__(
         self,
@@ -546,7 +569,7 @@ class RestError(HTTPException):
         message: str,
         ex: Exception | None = None,
     ) -> None:
-        """Initialize HTTPException and RestErrorModel."""
+        """Initialize RestError with structured error details."""
         self.payload: RestErrorModel | None = None
         if ex is not None:
             # Extract traceback safely
