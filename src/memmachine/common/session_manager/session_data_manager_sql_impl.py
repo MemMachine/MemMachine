@@ -19,6 +19,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -117,15 +118,6 @@ class SessionDataManagerSQL(SessionDataManager):
         buffer.seek(0)
         param_data = buffer.getvalue()
         async with self._async_session() as dbsession:
-            # Query for an existing session with the same ID
-            sessions = await dbsession.execute(
-                select(self.SessionConfig).where(
-                    self.SessionConfig.session_key == session_key,
-                ),
-            )
-            session = sessions.first()
-            if session is not None:
-                raise ValueError(f"""Session {session_key} already exists""")
             # create a new entry
             new_session = self.SessionConfig(
                 session_key=session_key,
@@ -136,7 +128,11 @@ class SessionDataManagerSQL(SessionDataManager):
                 user_metadata=metadata,
             )
             dbsession.add(new_session)
-            await dbsession.commit()
+            try:
+                await dbsession.commit()
+            except IntegrityError as exc:
+                await dbsession.rollback()
+                raise ValueError(f"Session {session_key} already exists") from exc
 
     async def delete_session(self, session_key: str) -> None:
         """Delete a session and its related data from the database."""
