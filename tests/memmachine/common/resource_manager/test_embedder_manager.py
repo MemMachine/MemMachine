@@ -5,7 +5,7 @@ from memmachine.common.configuration import EmbeddersConf
 from memmachine.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConf,
     OpenAIEmbedderConf,
-    SentenceTransformerEmbedderConfig,
+    SentenceTransformerEmbedderConf,
 )
 from memmachine.common.embedder import Embedder
 from memmachine.common.resource_manager.embedder_manager import EmbedderManager
@@ -29,7 +29,7 @@ def mock_conf():
             ),
         },
         sentence_transformer={
-            "sentence_transformer_id": SentenceTransformerEmbedderConfig(
+            "sentence_transformer_id": SentenceTransformerEmbedderConf(
                 model="sentence-transformers/all-MiniLM-L6-v2",
             ),
         },

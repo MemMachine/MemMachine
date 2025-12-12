@@ -6,11 +6,13 @@ import time
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 import openai
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
 from memmachine.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine.common.utils import chunk_text_balanced, unflatten_like
 
 from .embedder import Embedder
 
@@ -22,34 +24,39 @@ class OpenAIEmbedderParams(BaseModel):
 
     client: InstanceOf[openai.AsyncOpenAI] = Field(
         ...,
-        description="AsyncOpenAI client to use for making API calls",
+        description="AsyncOpenAI client to use for making API calls.",
     )
     model: str = Field(
         ...,
         description=(
-            "Name of the OpenAI embedding model to use (e.g. 'text-embedding-3-small')"
+            "Name of the OpenAI embedding model to use (e.g. 'text-embedding-3-small')."
         ),
     )
     dimensions: int = Field(
         ...,
         description=(
             "Dimensionality of the embedding vectors "
-            "produced by the OpenAI embedding model"
+            "produced by the OpenAI embedding model."
         ),
         gt=0,
     )
+    max_input_length: int | None = Field(
+        default=None,
+        description="Maximum input length for the model (in Unicode code points).",
+        gt=0,
+    )
     max_retry_interval_seconds: int = Field(
-        120,
-        description="Maximal retry interval in seconds when retrying API calls",
+        default=120,
+        description="Maximal retry interval in seconds when retrying API calls.",
         gt=0,
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
-        None,
-        description="An instance of MetricsFactory for collecting usage metrics",
+        default=None,
+        description="An instance of MetricsFactory for collecting usage metrics.",
     )
     user_metrics_labels: dict[str, str] = Field(
         default_factory=dict,
-        description="Labels to attach to the collected metrics",
+        description="Labels to attach to the collected metrics.",
     )
 
 
@@ -69,6 +76,8 @@ class OpenAIEmbedder(Embedder):
         self._use_dimensions_parameter = True
 
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
+
+        self._max_input_length = params.max_input_length
 
         metrics_factory = params.metrics_factory
 
@@ -121,7 +130,16 @@ class OpenAIEmbedder(Embedder):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        inputs = [item.replace("\n", " ") if item else "\n" for item in inputs]
+        inputs = [input_text or "." for input_text in inputs]
+
+        inputs_chunks = [
+            chunk_text_balanced(input_text, self._max_input_length)
+            if self._max_input_length is not None
+            else [input_text]
+            for input_text in inputs
+        ]
+
+        chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
 
         embed_call_uuid = uuid4()
 
@@ -144,13 +162,13 @@ class OpenAIEmbedder(Embedder):
                 try:
                     response = (
                         await self._client.embeddings.create(
-                            input=inputs,
+                            input=chunks,
                             model=self._model,
                             dimensions=self._dimensions,
                         )
                         if self._use_dimensions_parameter
                         else await self._client.embeddings.create(
-                            input=inputs,
+                            input=chunks,
                             model=self._model,
                         )
                     )
@@ -160,7 +178,7 @@ class OpenAIEmbedder(Embedder):
                         and self._use_dimensions_parameter
                     ):
                         response = await self._client.embeddings.create(
-                            input=inputs,
+                            input=chunks,
                             model=self._model,
                         )
                         self._use_dimensions_parameter = False
@@ -238,7 +256,22 @@ class OpenAIEmbedder(Embedder):
                 labels=self._user_metrics_labels,
             )
 
-        return [datum.embedding for datum in response.data]
+        chunk_embeddings = [datum.embedding for datum in response.data]
+        inputs_chunk_embeddings = unflatten_like(
+            chunk_embeddings,
+            inputs_chunks,
+        )
+
+        # Average chunk embeddings to get input embeddings.
+        return [
+            np.mean(
+                np.array(input_chunk_embeddings),
+                axis=0,
+            )
+            .astype(float)
+            .tolist()
+            for input_chunk_embeddings in inputs_chunk_embeddings
+        ]
 
     @property
     def model_id(self) -> str:
