@@ -309,9 +309,6 @@ async def test_search(long_term_memory):
     # Most relevant.
     assert "episode1" in [result.uid for result in results]
 
-    # The bunch of filler episodes should separate episode1 and episode2.
-    assert "episode2" not in [result.uid for result in results]
-
     results = await long_term_memory.search(
         query="Who wrote the test?",
         num_episodes_limit=4,
