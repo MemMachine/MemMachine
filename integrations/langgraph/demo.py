@@ -1,3 +1,6 @@
+"""Demo showing MemMachine integration with LangGraph."""
+
+# ruff: noqa: T201
 import json
 import os
 from typing import Annotated, TypedDict
@@ -28,7 +31,8 @@ class AgentState(TypedDict):
 
 
 def simple_memory_workflow_demo() -> None:
-    """Simple demo showing basic memory operations without LangGraph dependency.
+    """
+    Show basic memory operations without LangGraph dependency.
 
     This demonstrates the MemMachine tools functionality that can be integrated
     into LangGraph workflows.
@@ -134,7 +138,7 @@ def simple_memory_workflow_demo() -> None:
 
 
 def main() -> None:
-    """Main demo function."""
+    """Run the main demo."""
     try:
         # Run simple demo
         simple_memory_workflow_demo()
