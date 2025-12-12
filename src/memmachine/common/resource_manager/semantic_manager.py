@@ -116,6 +116,8 @@ class SemanticResourceManager:
                 semantic_storage=semantic_storage,
                 episode_storage=episode_store,
                 resource_retriever=resource_retriever,
+                uningested_time_limit=self._conf.ingestion_trigger_age,
+                uningested_message_limit=self._conf.ingestion_trigger_messages,
             ),
         )
         return self._semantic_service

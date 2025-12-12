@@ -1,5 +1,6 @@
 """Metrics configuration mixins."""
 
+from datetime import timedelta
 from enum import Enum
 from typing import ClassVar
 
@@ -65,6 +66,9 @@ class YamlSerializableMixin(BaseModel):
             # Unwrap enums like SimilarityMetric
             if isinstance(obj, Enum):
                 obj = obj.value
+
+            if isinstance(obj, timedelta):
+                obj = obj.total_seconds()
 
             # Dict — recurse & drop empty
             if isinstance(obj, dict):

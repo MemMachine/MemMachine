@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
@@ -71,6 +72,15 @@ class SemanticMemoryConf(YamlSerializableMixin):
     embedding_model: str = Field(
         ...,
         description="The embedding model to use for semantic memory",
+    )
+
+    ingestion_trigger_messages: int = Field(
+        default=5,
+        description="The amount of uningested messages to trigger an ingestion.",
+    )
+    ingestion_trigger_age: timedelta = Field(
+        default=timedelta(minutes=5),
+        description="The amount of time a message is uningested before triggering an ingestion.",
     )
 
 

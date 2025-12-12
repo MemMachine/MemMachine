@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -173,6 +174,7 @@ class SemanticStorage(ABC):
         self,
         *,
         min_uningested_messages: int | None = None,
+        older_than: datetime | None = None,
     ) -> list[SetIdT]:
         """Return all set id's that match the specified filters."""
         raise NotImplementedError

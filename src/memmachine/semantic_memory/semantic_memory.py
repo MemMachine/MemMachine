@@ -10,6 +10,7 @@ information extraction and a vector database for semantic search capabilities.
 import asyncio
 import logging
 from asyncio import Task
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -43,7 +44,8 @@ class SemanticService:
 
         feature_update_interval_sec: float = 2.0
 
-        feature_update_message_limit: int = 5
+        uningested_message_limit: int = 5
+        uningested_time_limit: timedelta = timedelta(minutes=5)
 
         resource_retriever: InstanceOf[ResourceRetriever]
 
@@ -62,7 +64,11 @@ class SemanticService:
 
         self._consolidation_threshold = params.consolidation_threshold
 
-        self._feature_update_message_limit = params.feature_update_message_limit
+        self._feature_update_message_limit = max(
+            params.uningested_message_limit,
+            1,
+        )
+        self._feature_time_limit = params.uningested_time_limit
 
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
@@ -265,6 +271,7 @@ class SemanticService:
         while not self._is_shutting_down:
             dirty_sets = await self._semantic_storage.get_history_set_ids(
                 min_uningested_messages=self._feature_update_message_limit,
+                older_than=datetime.now(tz=UTC) - self._feature_time_limit,
             )
 
             if len(dirty_sets) == 0:

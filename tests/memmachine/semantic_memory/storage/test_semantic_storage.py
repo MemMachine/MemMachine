@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
+
 import numpy as np
 import pytest
 import pytest_asyncio
@@ -930,3 +933,98 @@ async def test_get_set_ids_with_min_uningested(
         min_uningested_messages=2,
     )
     assert set_ids == ["user_c"]
+
+
+@pytest.mark.asyncio
+async def test_get_set_ids_with_older_than(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    early_history_id = await _add_episode(episode_storage, content="early")
+    await semantic_storage.add_history_to_set(
+        set_id="old_user",
+        history_id=early_history_id,
+    )
+
+    await asyncio.sleep(0.01)
+    cutoff = datetime.now(UTC)
+    await asyncio.sleep(0.01)
+
+    recent_history_id = await _add_episode(episode_storage, content="recent")
+    await semantic_storage.add_history_to_set(
+        set_id="recent_user",
+        history_id=recent_history_id,
+    )
+
+    set_ids = set(
+        await semantic_storage.get_history_set_ids(
+            older_than=cutoff,
+        )
+    )
+
+    assert set_ids == {"old_user"}
+
+    await semantic_storage.mark_messages_ingested(
+        set_id="old_user",
+        history_ids=[early_history_id],
+    )
+
+    set_ids_after_ingest = set(
+        await semantic_storage.get_history_set_ids(
+            older_than=cutoff,
+        )
+    )
+
+    assert set_ids_after_ingest == set()
+
+
+@pytest.mark.asyncio
+async def test_get_set_ids_with_older_than_and_min_uningested(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    early_history_id = await _add_episode(episode_storage, content="early")
+    await semantic_storage.add_history_to_set(
+        set_id="old_user",
+        history_id=early_history_id,
+    )
+
+    await asyncio.sleep(0.01)
+    cutoff = datetime.now(UTC)
+    await asyncio.sleep(0.01)
+
+    busy_history_ids = [
+        await _add_episode(episode_storage, content=f"busy-{idx}") for idx in range(2)
+    ]
+    for history_id in busy_history_ids:
+        await semantic_storage.add_history_to_set(
+            set_id="busy_user",
+            history_id=history_id,
+        )
+
+    fresh_history_id = await _add_episode(episode_storage, content="fresh")
+    await semantic_storage.add_history_to_set(
+        set_id="fresh_user",
+        history_id=fresh_history_id,
+    )
+
+    set_ids = set(
+        await semantic_storage.get_history_set_ids(
+            min_uningested_messages=2,
+            older_than=cutoff,
+        )
+    )
+
+    assert set_ids == {"old_user", "busy_user"}
+
+    await semantic_storage.mark_messages_ingested(
+        set_id="old_user",
+        history_ids=[early_history_id],
+    )
+
+    set_ids = await semantic_storage.get_history_set_ids(
+        min_uningested_messages=2,
+        older_than=cutoff,
+    )
+
+    assert set_ids == ["busy_user"]

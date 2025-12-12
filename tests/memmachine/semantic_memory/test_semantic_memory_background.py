@@ -87,7 +87,7 @@ async def semantic_service(
         episode_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
-        feature_update_message_limit=2,
+        uningested_message_limit=2,
     )
     service = SemanticService(params)
     yield service
@@ -154,7 +154,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
         episode_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
-        feature_update_message_limit=0,
+        uningested_message_limit=0,
     )
     service = SemanticService(params)
     await service.start()
@@ -311,7 +311,7 @@ async def test_multiple_sets_processed_independently(
         episode_storage=episode_storage,
         resource_retriever=resource_retriever,
         feature_update_interval_sec=0.05,
-        feature_update_message_limit=0,
+        uningested_message_limit=0,
     )
     service = SemanticService(params)
     await service.start()
