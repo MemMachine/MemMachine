@@ -9,6 +9,7 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConf,
     ShortTermMemoryConf,
 )
+from memmachine.common.errors import SessionAlreadyExistsError, SessionNotFoundError
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.common.session_manager.session_data_manager_sql_impl import (
@@ -135,7 +136,9 @@ async def test_create_existing_session_raises_error(
         {},
     )
 
-    with pytest.raises(ValueError, match=f"Session {session_key} already exists"):
+    with pytest.raises(
+        SessionAlreadyExistsError, match=f"Session '{session_key}' already exists"
+    ):
         await session_manager.create_new_session(
             session_key,
             {},
@@ -178,7 +181,9 @@ async def test_delete_nonexistent_session_raises_error(
 ):
     """Test that deleting a non-existent session raises a ValueError."""
     session_key = "nonexistent_session"
-    with pytest.raises(ValueError, match=f"Session {session_key} does not exist"):
+    with pytest.raises(
+        SessionNotFoundError, match=f"Session '{session_key}' does not exist"
+    ):
         await session_manager.delete_session(session_key)
 
 
@@ -330,7 +335,9 @@ async def test_save_short_term_memory_for_nonexistent_session(
 ):
     """Test that saving STM for a non-existent session raises a ValueError."""
     session_key = "nonexistent_session"
-    with pytest.raises(ValueError, match=f"Session {session_key} does not exist"):
+    with pytest.raises(
+        SessionNotFoundError, match=f"Session '{session_key}' does not exist"
+    ):
         await session_manager.save_short_term_memory(session_key, "summary", 1, 1)
 
 

@@ -27,6 +27,7 @@ from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
     ResourceNotFoundError,
+    SessionAlreadyExistsError,
 )
 from memmachine.main.memmachine import ALL_MEMORY_TYPES
 from memmachine.server.api_v2.service import (
@@ -60,10 +61,12 @@ async def create_project(
         raise RestError(code=422, message="invalid argument: " + str(e)) from e
     except ConfigurationError as e:
         raise RestError(code=500, message="configuration error: " + str(e), ex=e) from e
+    except SessionAlreadyExistsError as e:
+        raise RestError(code=409, message="Project already exists", ex=e) from e
     except ValueError as e:
-        if f"Session {session_data.session_key} already exists" == str(e):
-            raise RestError(code=409, message="Project already exists", ex=e) from e
-        raise
+        raise RestError(
+            code=500, message="server internal error: " + str(e), ex=e
+        ) from e
     long_term = session.episode_memory_conf.long_term_memory
     return ProjectResponse(
         org_id=spec.org_id,
