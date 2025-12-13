@@ -7,9 +7,15 @@ from typing import Annotated, Any, Self
 
 import regex
 from fastapi import HTTPException
+from fastapi.exceptions import RequestValidationError
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from memmachine.common.api.doc import Examples, SpecDoc
+from memmachine.common.errors import (
+    InvalidArgumentError,
+    SessionAlreadyExistsError,
+    SessionNotFoundError,
+)
 from memmachine.main.memmachine import MemoryType
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
@@ -549,14 +555,19 @@ class RestError(HTTPException):
         """Initialize HTTPException and RestErrorModel."""
         self.payload: RestErrorModel | None = None
         if ex is not None:
-            # Extract traceback safely
-            trace = "".join(
-                traceback.format_exception(
-                    type(ex),
-                    ex,
-                    ex.__traceback__,
-                )
-            ).strip()
+            if isinstance(ex, RequestValidationError):
+                trace = ""
+                message = self.format_validation_error_message(ex)
+            elif self.is_known_error(ex):
+                trace = ""
+            else:
+                trace = "".join(
+                    traceback.format_exception(
+                        type(ex),
+                        ex,
+                        ex.__traceback__,
+                    )
+                ).strip()
 
             self.payload = RestErrorModel(
                 code=code,
@@ -578,3 +589,34 @@ class RestError(HTTPException):
         else:
             logger.info("error handling request, code %d, message: %s", code, message)
             super().__init__(status_code=code, detail=message)
+
+    @staticmethod
+    def is_known_error(ex: Exception) -> bool:
+        known_errors = [
+            SessionAlreadyExistsError,
+            SessionNotFoundError,
+            InvalidNameError,
+            InvalidArgumentError,
+        ]
+        return any(isinstance(ex, err) for err in known_errors)
+
+    @staticmethod
+    def format_validation_error_message(exc: RequestValidationError) -> str:
+        parts: list[str] = []
+
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err.get("loc", []) if p != "body")
+            msg = err.get("msg", "Invalid value")
+
+            if loc:
+                parts.append(f"{loc}: {msg}")
+            else:
+                parts.append(msg)
+
+        if not parts:
+            return "Invalid request payload"
+
+        if len(parts) == 1:
+            return f"Invalid request payload: {parts[0]}"
+
+        return "Invalid request payload:\n- " + "\n- ".join(parts)

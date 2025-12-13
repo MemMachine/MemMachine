@@ -1,17 +1,18 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
     ResourceNotFoundError,
+    SessionAlreadyExistsError,
 )
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemoryType
-from memmachine.server.api_v2.router import get_memmachine, load_v2_api_router
+from memmachine.server.api_v2.router import get_memmachine
 from memmachine.server.api_v2.service import _SessionData
+from memmachine.server.app import MemMachineAPI
 
 
 @pytest.fixture
@@ -22,9 +23,7 @@ def mock_memmachine():
 
 @pytest.fixture
 def client(mock_memmachine):
-    app = FastAPI()
-    load_v2_api_router(app)
-
+    app = MemMachineAPI()
     app.dependency_overrides[get_memmachine] = lambda: mock_memmachine
 
     with TestClient(app) as c:
@@ -75,15 +74,35 @@ def test_create_project(client, mock_memmachine):
     mock_memmachine.create_session.side_effect = ConfigurationError("mock config error")
     response = client.post("/api/v2/projects", json=payload)
     assert response.status_code == 500
-    assert "mock config error" in response.json()["detail"]["internal_error"]
+    response_detail = response.json()["detail"]
+    assert "mock config error" in response_detail["internal_error"]
+    assert "Traceback (most recent call last)" in response_detail["trace"]
 
     mock_memmachine.create_session.reset_mock()
-    mock_memmachine.create_session.side_effect = ValueError(
-        "Session test_org/test_proj already exists"
+    mock_memmachine.create_session.side_effect = SessionAlreadyExistsError(
+        "test_org/test_proj"
     )
     response = client.post("/api/v2/projects", json=payload)
     assert response.status_code == 409
-    assert response.json()["detail"]["message"] == "Project already exists"
+    response_detail = response.json()["detail"]
+    assert "already exists" in response_detail["message"]
+    assert response_detail["trace"] == ""
+
+
+def test_create_project_with_invalid_name(client):
+    response = client.post(
+        "/api/v2/projects",
+        json={
+            "org_id": "test_org/abc",
+            "project_id": "test_proj",
+        },
+    )
+    assert response.status_code == 422
+    response_detail = response.json()["detail"]
+    assert response_detail["trace"] == ""
+    error_message = response_detail["message"]
+    assert "Invalid request payload: org_id" in error_message
+    assert "found: 'test_org/abc'" in error_message
 
 
 def test_get_project(client, mock_memmachine):
@@ -353,7 +372,8 @@ def test_delete_episodic_memories_empty(client, mock_memmachine):
     }
     response = client.post("/api/v2/memories/episodic/delete", json=payload)
     assert response.status_code == 422
-    assert "At least one episodic ID" in response.json()["detail"][0]["msg"]
+    response_detail = response.json()["detail"]
+    assert "At least one episodic ID" in response_detail["message"]
 
 
 def test_delete_semantic_memory(client, mock_memmachine):
@@ -413,7 +433,8 @@ def test_delete_semantic_memories_empty(client, mock_memmachine):
     }
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 422
-    assert "At least one semantic ID" in response.json()["detail"][0]["msg"]
+    response_detail = response.json()["detail"]
+    assert "At least one semantic ID" in response_detail["message"]
 
 
 def test_metrics(client):
