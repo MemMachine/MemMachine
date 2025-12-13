@@ -362,23 +362,23 @@ class DeclarativeMemory:
             episode_contexts,
         )
 
-        reranked_anchored_episode_contexts = [
-            (nuclear_episode, episode_context)
-            for _, nuclear_episode, episode_context in sorted(
+        reranked_episode_contexts = [
+            episode_context
+            for _, episode_context in sorted(
                 zip(
                     episode_context_scores,
-                    nuclear_episodes,
                     episode_contexts,
                     strict=True,
                 ),
-                key=lambda triple: triple[0],
+                key=lambda pair: pair[0],
                 reverse=True,
             )
         ]
 
         # Unify episode contexts.
-        unified_episode_context = DeclarativeMemory._unify_anchored_episode_contexts(
-            reranked_anchored_episode_contexts,
+        unified_episode_context = await self._unify_episode_contexts(
+            query,
+            reranked_episode_contexts,
             max_num_episodes=max_num_episodes,
         )
         return unified_episode_context
@@ -553,41 +553,50 @@ class DeclarativeMemory:
 
         await asyncio.gather(*delete_nodes_tasks)
 
-    @staticmethod
-    def _unify_anchored_episode_contexts(
-        anchored_episode_contexts: Iterable[tuple[Episode, Iterable[Episode]]],
+    async def _unify_episode_contexts(
+        self,
+        query: str,
+        episode_contexts: Iterable[Iterable[Episode]],
         max_num_episodes: int,
     ) -> list[Episode]:
-        """Unify anchored episode contexts into a single list within the limit."""
+        """Unify episode contexts into a single list within the limit."""
         episode_set: set[Episode] = set()
 
-        for nuclear_episode, context in anchored_episode_contexts:
-            context = list(context)
+        for episode_context in episode_contexts:
+            episode_context = list(episode_context)
 
             if len(episode_set) >= max_num_episodes:
                 break
-            if (len(episode_set) + len(context)) <= max_num_episodes:
+            if (len(episode_set) + len(episode_context)) <= max_num_episodes:
                 # It is impossible that the context exceeds the limit.
-                episode_set.update(context)
+                episode_set.update(episode_context)
             else:
                 # It is possible that the context exceeds the limit.
-                # Prioritize episodes near the nuclear episode.
-
-                # Sort chronological episodes by weighted index-proximity to the nuclear episode.
-                nuclear_index = context.index(nuclear_episode)
-
-                nuclear_context = sorted(
-                    context,
-                    key=lambda episode: DeclarativeMemory._weighted_index_proximity(
-                        episode=episode,
-                        context=context,
-                        nuclear_index=nuclear_index,
-                    ),
+                # Rank the episodes in the context.
+                episode_scores = await self._reranker.score(
+                    query,
+                    [
+                        DeclarativeMemory.string_from_episode_context([episode])
+                        for episode in episode_context
+                    ],
                 )
+
+                ranked_episode_context = [
+                    episode
+                    for _, episode in sorted(
+                        zip(
+                            episode_scores,
+                            episode_context,
+                            strict=True,
+                        ),
+                        key=lambda pair: pair[0],
+                        reverse=True,
+                    )
+                ]
 
                 # Add episodes to unified context until limit is reached,
                 # or until the context is exhausted.
-                for episode in nuclear_context:
+                for episode in ranked_episode_context:
                     if len(episode_set) >= max_num_episodes:
                         break
                     episode_set.add(episode)
@@ -601,18 +610,6 @@ class DeclarativeMemory:
         )
 
         return unified_episode_context
-
-    @staticmethod
-    def _weighted_index_proximity(
-        episode: Episode,
-        context: list[Episode],
-        nuclear_index: int,
-    ) -> float:
-        proximity = context.index(episode) - nuclear_index
-        if proximity >= 0:
-            # Forward recall is better than backward recall.
-            return (proximity - 0.5) / 2
-        return -proximity
 
     @staticmethod
     def _episode_from_episode_node(episode_node: Node) -> Episode:

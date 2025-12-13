@@ -6,6 +6,7 @@ of a vector graph store using Neo4j as the backend database.
 """
 
 import asyncio
+import datetime
 import logging
 import re
 import time
@@ -933,24 +934,40 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         for index, sanitized_by_property in enumerate(sanitized_by_properties):
             sanitized_equal_properties = sanitized_by_properties[:index]
 
-            relational_requirements = [
-                (
-                    f"({entity_query_alias}.{sanitized_by_property}"
-                    + (" > " if order_ascending[index] else " < ")
-                    + f"${starting_at_query_parameter}[{index}])"
-                )
-                if starting_at[index] is not None
-                else f"({entity_query_alias}.{sanitized_by_property} IS NOT NULL)",
-            ]
+            # The same points in time with different timezones are not equal in Neo4j,
+            # so we use epochSeconds and nanosecond for datetime comparisons.
+            # https://neo4j.com/docs/cypher-manual/current/values-and-types/ordering-equality-comparison/#ordering-spatial-temporal
 
-            relational_requirements += [
-                f"({entity_query_alias}.{sanitized_equal_property} = ${starting_at_query_parameter}[{equal_index}])"
-                if starting_at[equal_index] is not None
-                else f"({entity_query_alias}.{sanitized_equal_property} IS NOT NULL)"
-                for equal_index, sanitized_equal_property in enumerate(
-                    sanitized_equal_properties,
-                )
-            ]
+            if starting_at[index] is None:
+                relational_requirements = [
+                    f"{entity_query_alias}.{sanitized_by_property} IS NOT NULL",
+                ]
+            else:
+                relational_requirements = [
+                    Neo4jVectorGraphStore._render_comparison(
+                        f"{entity_query_alias}.{sanitized_by_property}",
+                        ">" if order_ascending[index] else "<",
+                        f"${starting_at_query_parameter}[{index}]",
+                        starting_at[index],
+                    )
+                ]
+
+            for equal_index, sanitized_equal_property in enumerate(
+                sanitized_equal_properties,
+            ):
+                if starting_at[equal_index] is None:
+                    relational_requirements += [
+                        f"{entity_query_alias}.{sanitized_equal_property} IS NOT NULL"
+                    ]
+                else:
+                    relational_requirements += [
+                        Neo4jVectorGraphStore._render_comparison(
+                            f"{entity_query_alias}.{sanitized_equal_property}",
+                            "=",
+                            f"${starting_at_query_parameter}[{equal_index}]",
+                            starting_at[equal_index],
+                        )
+                    ]
 
             lexicographic_relational_requirement = (
                 f"({' AND '.join(relational_requirements)})"
@@ -1617,12 +1634,11 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 str, FilterablePropertyValue | list[FilterablePropertyValue]
             ] = {}
             if expr.op in (">", "<", ">=", "<=", "="):
-                if isinstance(expr.value, list):
-                    raise ValueError(
-                        f"'{expr.op}' comparison cannot accept list values"
-                    )
-                condition = (
-                    f"{field_ref} {expr.op} ${query_value_parameter}.{param_name}"
+                condition = Neo4jVectorGraphStore._render_comparison(
+                    left=field_ref,
+                    op=expr.op,
+                    right=f"${query_value_parameter}.{param_name}",
+                    value=expr.value,
                 )
                 params[param_name] = expr.value
             elif expr.op == "in":
@@ -1656,3 +1672,57 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             condition = f"({left_cond}) OR ({right_cond})"
             return condition, left_params | right_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+    @staticmethod
+    def _render_comparison(
+        left: str,
+        op: str,
+        right: str,
+        value: FilterablePropertyValue | list[FilterablePropertyValue],
+    ) -> str:
+        if isinstance(value, list):
+            raise TypeError(f"'{op}' comparison cannot accept list values")
+        if isinstance(value, datetime.datetime):
+            if op == "=":
+                return (
+                    "("
+                    f"{left} = {right}"
+                    " OR "
+                    "("
+                    f"{left}.epochSeconds = {right}.epochSeconds"
+                    " AND "
+                    f"{left}.nanosecond = {right}.nanosecond"
+                    ")"
+                    ")"
+                )
+
+            if op in ("!=", "<>"):
+                return (
+                    "("
+                    f"{left} <> {right}"
+                    " AND "
+                    "("
+                    f"{left}.epochSeconds <> {right}.epochSeconds"
+                    " OR "
+                    f"{left}.nanosecond <> {right}.nanosecond"
+                    ")"
+                    ")"
+                )
+
+            return (
+                "("
+                f"{left} {op} {right}"
+                " AND "
+                "("
+                f"{left}.epochSeconds {op} {right}.epochSeconds"
+                " OR "
+                "("
+                f"{left}.epochSeconds = {right}.epochSeconds"
+                " AND "
+                f"{left}.nanosecond {op} {right}.nanosecond"
+                ")"
+                ")"
+                ")"
+            )
+
+        return f"{left} {op} {right}"
