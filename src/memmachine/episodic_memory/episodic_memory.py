@@ -307,6 +307,7 @@ class EpisodicMemory:
         query: str,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
+        contextualize_episodes: bool = True,
     ) -> QueryResponse | None:
         """
         Retrieve relevant context for a given query from all memory stores.
@@ -321,6 +322,7 @@ class EpisodicMemory:
                    applied to both short and long term memories. The default
                    value is 20.
             property_filter: Properties to filter declarative memory searches.
+            contextualize_episodes: Whether to contextualize episodes in long term memory search.
 
         Returns:
             A tuple containing a list of short term memory Episode objects,
@@ -336,10 +338,13 @@ class EpisodicMemory:
         if self._short_term_memory is None:
             short_episode: list[Episode] = []
             short_summary = ""
-            long_episode = await cast("LongTermMemory", self._long_term_memory).search(
+            scored_long_episodes = await cast(
+                "LongTermMemory", self._long_term_memory
+            ).search_scored(
                 query,
                 num_episodes_limit=search_limit,
                 property_filter=property_filter,
+                contextualize_episodes=contextualize_episodes,
             )
         elif self._long_term_memory is None:
             session_result = (
@@ -349,20 +354,21 @@ class EpisodicMemory:
                     filters=property_filter,
                 )
             )
-            long_episode = []
+            scored_long_episodes = []
             short_episode, short_summary = session_result
         else:
             # Concurrently search both memory stores
-            session_result, long_episode = await asyncio.gather(
+            session_result, scored_long_episodes = await asyncio.gather(
                 self._short_term_memory.get_short_term_memory_context(
                     query,
                     limit=search_limit,
                     filters=property_filter,
                 ),
-                self._long_term_memory.search(
+                self._long_term_memory.search_scored(
                     query,
                     num_episodes_limit=search_limit,
                     property_filter=property_filter,
+                    contextualize_episodes=contextualize_episodes,
                 ),
             )
             short_episode, short_summary = session_result
@@ -371,11 +377,11 @@ class EpisodicMemory:
         # short-term memory
         episode_uid_set = {episode.uid for episode in short_episode}
 
-        unique_long_episodes = []
-        for episode in long_episode:
+        unique_scored_long_episodes = []
+        for score, episode in scored_long_episodes:
             if episode.uid not in episode_uid_set:
                 episode_uid_set.add(episode.uid)
-                unique_long_episodes.append(episode)
+                unique_scored_long_episodes.append((score, episode))
 
         end_time = time.monotonic_ns()
         delta = (end_time - start_time) / 1000000
@@ -391,8 +397,8 @@ class EpisodicMemory:
             ),
             long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
                 episodes=[
-                    EpisodeResponse(**episode.model_dump())
-                    for episode in unique_long_episodes
+                    EpisodeResponse(score=score, **episode.model_dump())
+                    for score, episode in unique_scored_long_episodes
                 ],
             ),
         )

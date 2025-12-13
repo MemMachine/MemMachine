@@ -135,17 +135,44 @@ class LongTermMemory:
         *,
         num_episodes_limit: int,
         property_filter: FilterExpr | None = None,
+        contextualize_episodes: bool = True,
     ) -> list[Episode]:
-        declarative_memory_episodes = await self._declarative_memory.search(
+        scored_episodes = await self.search_scored(
             query,
-            max_num_episodes=num_episodes_limit,
-            property_filter=LongTermMemory._sanitize_property_filter(property_filter),
+            num_episodes_limit=num_episodes_limit,
+            property_filter=property_filter,
+            contextualize_episodes=contextualize_episodes,
+        )
+        return [episode for _, episode in scored_episodes]
+
+    async def search_scored(
+        self,
+        query: str,
+        *,
+        num_episodes_limit: int,
+        property_filter: FilterExpr | None = None,
+        contextualize_episodes: bool = True,
+    ) -> list[tuple[float, Episode]]:
+        scored_declarative_memory_episodes = (
+            await self._declarative_memory.search_scored(
+                query,
+                max_num_episodes=num_episodes_limit,
+                property_filter=LongTermMemory._sanitize_property_filter(
+                    property_filter
+                ),
+                contextualize_episodes=contextualize_episodes,
+            )
         )
         return [
-            LongTermMemory._episode_from_declarative_memory_episode(
-                declarative_memory_episode,
+            (
+                score,
+                LongTermMemory._episode_from_declarative_memory_episode(
+                    declarative_memory_episode,
+                ),
             )
-            for declarative_memory_episode in declarative_memory_episodes
+            for score, declarative_memory_episode in (
+                scored_declarative_memory_episodes
+            )
         ]
 
     async def get_episodes(self, uids: Iterable[str]) -> list[Episode]:
