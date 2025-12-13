@@ -1,24 +1,11 @@
 """API v2 specification models for request and response structures."""
 
 import logging
-import traceback
 from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 import regex
 from pydantic import AfterValidator, BaseModel, Field, model_validator
-
-try:
-    # Prefer real FastAPI HTTPException when available (server/runtime).
-    from fastapi import HTTPException as _HTTPError
-except ModuleNotFoundError:
-    # Lightweight fallback to avoid pulling FastAPI into the client package.
-    class _HTTPError(Exception):
-        def __init__(self, status_code: int, detail: object | None = None) -> None:
-            super().__init__(detail)
-            self.status_code = status_code
-            self.detail = detail
-
 
 from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
@@ -553,58 +540,3 @@ class RestErrorModel(BaseModel):
             description=SpecDoc.ERROR_TRACE,
         ),
     ]
-
-
-class RestError(_HTTPError):
-    """
-    Exception with a structured RestErrorModel as the 'detail'.
-
-    Inherits from _HTTPError, which dynamically resolves to:
-    - FastAPI's HTTPException in server environments (when FastAPI is available)
-    - A lightweight fallback Exception in client-only environments (when FastAPI is not installed)
-
-    This design allows RestError to work in both server and client contexts without
-    requiring FastAPI as a dependency for client packages. In server environments,
-    RestError behaves as a standard FastAPI HTTPException and can be raised in
-    FastAPI route handlers. In client environments, it provides the same interface
-    but without the FastAPI dependency overhead.
-    """
-
-    def __init__(
-        self,
-        code: int,
-        message: str,
-        ex: Exception | None = None,
-    ) -> None:
-        """Initialize RestError with structured error details."""
-        self.payload: RestErrorModel | None = None
-        if ex is not None:
-            # Extract traceback safely
-            trace = "".join(
-                traceback.format_exception(
-                    type(ex),
-                    ex,
-                    ex.__traceback__,
-                )
-            ).strip()
-
-            self.payload = RestErrorModel(
-                code=code,
-                message=message,
-                exception=type(ex).__name__,
-                internal_error=str(ex),
-                trace=trace,
-            )
-
-        # Call HTTPException with structured detail
-        if self.payload is not None:
-            logger.warning(
-                "exception handling request, code %d, message: %s, payload: %s",
-                code,
-                message,
-                self.payload,
-            )
-            super().__init__(status_code=code, detail=self.payload.model_dump())
-        else:
-            logger.info("error handling request, code %d, message: %s", code, message)
-            super().__init__(status_code=code, detail=message)
