@@ -30,20 +30,23 @@ Before installing MemMachine, ensure you have the following prerequisites:
         <Tab title="Linux/MacOS" icon="linux">
           Open your terminal and run the following commands:
           ```bash
-          # Download the latest release tarball
-          curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
-            | grep "tarball_url" \
-            | cut -d '"' -f 4 \
-            | xargs curl -L -o MemMachine-latest.tar.gz
+          # Download the latest MemMachine release tarball
+          TARBALL_URL=$(curl -s https://api.github.com/repos/MemMachine/MemMachine/releases/latest \
+            | grep '"tarball_url"' \
+            | head -n 1 \
+            | sed -E 's/.*"tarball_url": "(.*)",/\1/')
 
-          # Extract the release
+          curl -L "$TARBALL_URL" -o MemMachine-latest.tar.gz
+
+          # Extract the release archive
           tar -xzf MemMachine-latest.tar.gz
 
-          # Enter the folder (GitHub adds a hash to the folder name)
-          cd MemMachine-MemMachine-*
+          # Move into the extracted directory (GitHub adds a commit hash to the folder name)
+          cd MemMachine-MemMachine-*/
 
-          # Run the setup script
+          # Start the MemMachine installation
           ./memmachine-compose.sh
+
           ```
         </Tab>
         <Tab title="Windows" icon="windows">

@@ -101,6 +101,11 @@ resources:
       provider: "identity"
     bm_ranker_id:
       provider: "bm25"
+    cohere_reranker_id:
+      provider: "cohere"
+      config:
+        cohere_key: <COHERE_API_KEY>
+        model: "rerank-english-v3.0"
     ce_ranker_id:
       provider: "cross-encoder"
       config:

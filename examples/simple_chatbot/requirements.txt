@@ -1,0 +1,17 @@
+# Simple Chatbot - MemMachine Integration Example
+# Core dependencies for Streamlit chatbot with MemMachine integration
+
+# Web framework
+streamlit>=1.28.0
+
+# HTTP client
+requests>=2.31.0
+
+# LLM providers
+openai>=1.0.0
+boto3>=1.28.0  # For AWS Bedrock (Anthropic, DeepSeek)
+google-generativeai>=0.3.0  # For Google Gemini
+
+# Environment management
+python-dotenv>=1.0.0
+

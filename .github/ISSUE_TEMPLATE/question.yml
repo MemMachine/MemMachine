@@ -1,0 +1,34 @@
+name: Question
+description: Ask a question about MemMachine
+title: "[Question] "
+type: question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your question! Please provide details below so we can assist effectively.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: Clearly state your specific question.
+      placeholder: e.g., Why does X happen when Y?
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Additional details
+      description: Environment, steps, code snippets, logs, or screenshots (optional).
+      placeholder: e.g., OS: Ubuntu 22.04, MemMachine Version: 1.2.3
+    render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Have you searched for similar questions?
+      description: Please confirm before submitting.
+      options:
+        - label: I have searched existing issues and discussions
+          required: true

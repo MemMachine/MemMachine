@@ -1616,10 +1616,14 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             params: dict[
                 str, FilterablePropertyValue | list[FilterablePropertyValue]
             ] = {}
-            if expr.op == "=":
+            if expr.op in (">", "<", ">=", "<=", "="):
                 if isinstance(expr.value, list):
-                    raise ValueError("'=' comparison cannot accept list values")
-                condition = f"{field_ref} = ${query_value_parameter}.{param_name}"
+                    raise ValueError(
+                        f"'{expr.op}' comparison cannot accept list values"
+                    )
+                condition = (
+                    f"{field_ref} {expr.op} ${query_value_parameter}.{param_name}"
+                )
                 params[param_name] = expr.value
             elif expr.op == "in":
                 if not isinstance(expr.value, list):

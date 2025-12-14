@@ -144,3 +144,57 @@ def test_apply_invalid_env_level(monkeypatch):
     c = LogConf()
     with pytest.raises(ValueError, match="Invalid log level: bad"):
         c.apply()
+
+
+@pytest.mark.parametrize(
+    ("level", "expected_present", "expected_absent"),
+    [
+        (
+            LogLevel.DEBUG,
+            ["debug msg", "info msg", "warning msg", "error msg"],
+            [],
+        ),
+        (
+            LogLevel.INFO,
+            ["info msg", "warning msg", "error msg"],
+            ["debug msg"],
+        ),
+        (
+            LogLevel.WARNING,
+            ["warning msg", "error msg"],
+            ["debug msg", "info msg"],
+        ),
+    ],
+)
+def test_apply_log_output_respects_levels(
+    level,
+    expected_present,
+    expected_absent,
+    tmp_path,
+    restore_logging,
+):
+    """Verify messages below the configured level are omitted from output."""
+    logger = logging.getLogger("log-level-check")
+
+    log_file = tmp_path / f"{level.value.lower()}.log"
+    conf = LogConf(
+        level=level,
+        path=str(log_file),
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+    conf.apply()
+
+    logger.debug("debug msg")
+    logger.info("info msg")
+    logger.warning("warning msg")
+    logger.error("error msg")
+
+    for handler in logging.getLogger().handlers:
+        with contextlib.suppress(Exception):
+            handler.flush()
+
+    content = log_file.read_text()
+    for msg in expected_present:
+        assert msg in content
+    for msg in expected_absent:
+        assert msg not in content

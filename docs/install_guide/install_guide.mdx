@@ -41,14 +41,15 @@ source memmachine-env/bin/activate  # On Windows use `source memmachine-env/Scri
 ```
 
 A. Run the following command in your terminal:
+<Note> Choose the package that is correct for your needs.  If you want to install the Client, use `pip install memmachine-client` and if you want to use Server, use `pip install memmachine-server`. Examples below assume server.  Should you wish to install client, use the same command, but replace "server" with "client" </Note>
 
  - If you are using MemMachine in a CPU-only environment, use:
 ```sh
-   pip install memmachine
+   pip install memmachine-server
 ```
  - If you have an NVIDIA GPU and want to leverage it, use:
 ```sh
-pip install memmachine[gpu]
+pip install memmachine-server[gpu]
 ```
 B. Next, install dependencies from NLTK through the following MemMachine command:
 ```sh
