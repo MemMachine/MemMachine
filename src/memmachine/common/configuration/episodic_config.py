@@ -232,8 +232,16 @@ class EpisodicMemoryConfPartial(YamlSerializableMixin):
         # ---- Step 4: update nested configuration in the base result ----
         return EpisodicMemoryConf(
             session_key=merged.session_key,
-            metrics_factory_id=merged.metrics_factory_id,
+            metrics_factory_id=merged.metrics_factory_id
+            if merged.metrics_factory_id is not None
+            else "prometheus",
             short_term_memory=stm_merged,
             long_term_memory=ltm_merged,
-            enabled=merged.enabled,
+            long_term_memory_enabled=True
+            if merged.long_term_memory_enabled is None and ltm_merged is not None
+            else merged.long_term_memory_enabled,
+            short_term_memory_enabled=True
+            if merged.short_term_memory_enabled is None and stm_merged is not None
+            else merged.short_term_memory_enabled,
+            enabled=True if merged.enabled is None else merged.enabled,
         )
