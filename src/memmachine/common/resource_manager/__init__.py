@@ -25,11 +25,11 @@ class CommonResourceManager(Protocol):
         """Release resources and close connections."""
         raise NotImplementedError
 
-    async def get_sql_engine(self, name: str) -> AsyncEngine:
+    async def get_sql_engine(self, name: str, validate: bool = False) -> AsyncEngine:
         """Return the SQL engine by name."""
         raise NotImplementedError
 
-    async def get_neo4j_driver(self, name: str) -> AsyncDriver:
+    async def get_neo4j_driver(self, name: str, validate: bool = False) -> AsyncDriver:
         """Return the Neo4j driver by name."""
         raise NotImplementedError
 
@@ -37,15 +37,17 @@ class CommonResourceManager(Protocol):
         """Return the vector graph store by name."""
         raise NotImplementedError
 
-    async def get_embedder(self, name: str) -> Embedder:
+    async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return the embedder by name."""
         raise NotImplementedError
 
-    async def get_language_model(self, name: str) -> LanguageModel:
+    async def get_language_model(
+        self, name: str, validate: bool = False
+    ) -> LanguageModel:
         """Return the language model by name."""
         raise NotImplementedError
 
-    async def get_reranker(self, name: str) -> Reranker:
+    async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
         """Return the reranker by name."""
         raise NotImplementedError
 

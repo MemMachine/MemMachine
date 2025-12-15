@@ -179,55 +179,54 @@ jobs:
           8080
           EOF
 
+      - name: Wait for Neo4j to be ready
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 12          # 12 × 5s = 60 seconds
+          retry_wait_seconds: 5
+          timeout_seconds: 5
+          shell: bash
+          command: |
+            echo "Checking Neo4j Bolt port on localhost:7687..."
+            curl -sf http://localhost:7474 || exit 1
+
       - name: Start memmachine-server
         shell: bash
         run: |
           set -eo pipefail
           echo "Starting memmachine-server..."
-          memmachine-server >server.log 2>&1 &
+          memmachine-server >server-out.log 2>&1 &
           echo $! > server.pid
           echo "Server PID: $(cat server.pid)"
 
       - name: Wait for server to be ready
-        shell: bash
-        run: |
-          set -eo pipefail
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 30          # 30 × 10s = 5 minutes
+          retry_wait_seconds: 10
+          timeout_seconds: 10
+          shell: bash
+          command: |
+            set -eo pipefail
 
-          SERVER_URL="http://127.0.0.1:8080/api/v2/projects/list"
-          
-          echo "Waiting for server to be ready..."
-          max_attempts=12   # 12 × 10 sec = 120 sec
-          attempt=1
-          
-          while true; do
-            echo "Attempt $attempt/$max_attempts — checking server..."
-          
-            # Capture HTTP body and code separately (portable!)
+            SERVER_URL="http://127.0.0.1:8080/api/v2/projects/list"
+
+            echo "Checking server readiness..."
+
             http_code=$(curl -X POST -s -o curl_body.tmp -w "%{http_code}" "$SERVER_URL" || true)
             body=$( [ -f curl_body.tmp ] && cat curl_body.tmp || echo "empty body" )
             rm -f curl_body.tmp
-          
-            if [ "$http_code" = "200" ]; then
-              echo "Server is ready!"
-              echo "===== Server Response ====="
+
+            if [ "$http_code" != "200" ]; then
+              echo "Server not ready yet (HTTP $http_code)"
+              echo "===== Response Body ====="
               echo "$body"
-              break
+              exit 1   # triggers retry
             fi
-          
-            if [ "$attempt" -ge "$max_attempts" ]; then
-              echo "Server did not become ready after 2 minutes."
-              echo "===== Last HTTP Response ====="
-              echo "HTTP $http_code"
-              echo "$body"
-              echo ""
-              echo "===== Server Logs ====="
-              cat server.log 2>/dev/null || echo "(No server.log found)"
-              exit 1
-            fi
-          
-            attempt=$((attempt+1))
-            sleep 10
-          done
+
+            echo "Server is ready!"
+            echo "===== Server Response ====="
+            echo "$body"
 
       - name: Install uv
         shell: bash
@@ -242,3 +241,18 @@ jobs:
         run: |
           uv pip install pytest
           uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v --integration -m integration
+
+      - name: Stop memmachine-server
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f server.pid ]]; then
+            kill "$(cat server.pid)" || true
+          fi
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memmachine-server-logs-installation-${{ matrix.os }}
+          path: server-out.log

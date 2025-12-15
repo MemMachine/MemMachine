@@ -75,3 +75,23 @@ class SessionNotFoundError(MemMachineError):
 
 class InvalidPasswordError(MemMachineError):
     """Error for invalid password scenarios."""
+
+
+class Neo4JConfigurationError(MemMachineError):
+    """Error related to Neo4J configuration."""
+
+
+class SQLConfigurationError(MemMachineError):
+    """Error related to SQL configuration."""
+
+
+class InvalidLanguageModelError(MemMachineError):
+    """Exception raised for invalid language model."""
+
+
+class InvalidEmbedderError(MemMachineError):
+    """Exception raised for invalid embedder."""
+
+
+class InvalidRerankerError(MemMachineError):
+    """Exception raised for invalid reranker."""

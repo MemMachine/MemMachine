@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine.common.configuration.database_conf import DatabasesConf
+from memmachine.common.errors import Neo4JConfigurationError, SQLConfigurationError
 from memmachine.common.vector_graph_store import VectorGraphStore
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -118,7 +119,7 @@ class DatabaseManager:
             )
             self.neo4j_drivers[name] = driver
             if validate:
-                await self._validate_neo4j_driver(name, driver)
+                await self.validate_neo4j_driver(name, driver)
             params = Neo4jVectorGraphStoreParams(
                 driver=driver,
                 force_exact_similarity_search=conf.force_exact_similarity_search,
@@ -130,38 +131,36 @@ class DatabaseManager:
         """Sync wrapper to get Neo4j driver lazily."""
         return asyncio.run(self.async_get_neo4j_driver(name, validate=True))
 
-    async def async_get_vector_graph_store(self, name: str) -> VectorGraphStore:
+    async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store, initializing driver lazily if needed."""
         await self.async_get_neo4j_driver(name, validate=True)
         return self.graph_stores[name]
 
-    def get_vector_graph_store(self, name: str) -> VectorGraphStore:
-        """Sync wrapper for vector graph store."""
-        return asyncio.run(self.async_get_vector_graph_store(name))
-
     @staticmethod
-    async def _validate_neo4j_driver(name: str, driver: AsyncDriver) -> None:
+    async def validate_neo4j_driver(name: str, driver: AsyncDriver) -> None:
         """Validate connectivity to a Neo4j instance."""
         try:
+            logger.info("Validating Neo4j driver '%s'", name)
             async with driver.session() as session:
                 result = await session.run("RETURN 1 AS ok")
                 record = await result.single()
+            logger.info("Neo4j driver '%s' validated successfully", name)
         except Exception as e:
             await driver.close()
-            raise ConnectionError(
+            raise Neo4JConfigurationError(
                 f"Neo4j config '{name}' failed verification: {e}",
             ) from e
 
         if not record or record["ok"] != 1:
             await driver.close()
-            raise ConnectionError(
+            raise Neo4JConfigurationError(
                 f"Verification failed for Neo4j config '{name}'",
             )
 
     async def _validate_neo4j_drivers(self) -> None:
         """Validate connectivity to each Neo4j instance."""
         for name, driver in self.neo4j_drivers.items():
-            await self._validate_neo4j_driver(name, driver)
+            await self.validate_neo4j_driver(name, driver)
 
     # --- SQL ---
 
@@ -195,7 +194,7 @@ class DatabaseManager:
 
             engine = create_async_engine(conf.uri, echo=False, future=True)
             if validate:
-                await self._validate_sql_engine(name, engine)
+                await self.validate_sql_engine(name, engine)
             self.sql_engines[name] = engine
             return engine
 
@@ -204,23 +203,25 @@ class DatabaseManager:
         return asyncio.run(self.async_get_sql_engine(name, validate=True))
 
     @staticmethod
-    async def _validate_sql_engine(name: str, engine: AsyncEngine) -> None:
+    async def validate_sql_engine(name: str, engine: AsyncEngine) -> None:
         """Validate connectivity for a single SQL engine."""
         try:
+            logger.info("Validating SQL engine '%s'", name)
             async with engine.connect() as conn:
                 result = await conn.execute(text("SELECT 1;"))
                 row = result.fetchone()
+            logger.info("SQL engine '%s' validated successfully", name)
         except Exception as e:
-            raise ConnectionError(
+            raise SQLConfigurationError(
                 f"SQL config '{name}' failed verification: {e}",
             ) from e
 
         if not row or row[0] != 1:
-            raise ConnectionError(
+            raise SQLConfigurationError(
                 f"Verification failed for SQL config '{name}'",
             )
 
     async def _validate_sql_engines(self) -> None:
         """Validate connectivity for each SQL engine."""
         for name, engine in self.sql_engines.items():
-            await self._validate_sql_engine(name, engine)
+            await self.validate_sql_engine(name, engine)

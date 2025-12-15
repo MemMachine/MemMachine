@@ -1,6 +1,7 @@
 """Resource manager wiring together storage, embedders, and models."""
 
 import asyncio
+import logging
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -33,6 +34,8 @@ from memmachine.episodic_memory.episodic_memory_manager import (
 )
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class ResourceManagerImpl:
@@ -85,29 +88,35 @@ class ResourceManagerImpl:
 
         await asyncio.gather(*tasks)
 
-    async def get_sql_engine(self, name: str) -> AsyncEngine:
+    async def get_sql_engine(self, name: str, validate: bool = False) -> AsyncEngine:
         """Return a SQL engine by name."""
-        return await self._database_manager.async_get_sql_engine(name)
+        return await self._database_manager.async_get_sql_engine(
+            name, validate=validate
+        )
 
-    async def get_neo4j_driver(self, name: str) -> AsyncDriver:
+    async def get_neo4j_driver(self, name: str, validate: bool = False) -> AsyncDriver:
         """Return a Neo4j driver by name."""
-        return await self._database_manager.async_get_neo4j_driver(name)
+        return await self._database_manager.async_get_neo4j_driver(
+            name, validate=validate
+        )
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
-        return await self._database_manager.async_get_vector_graph_store(name)
+        return await self._database_manager.get_vector_graph_store(name)
 
-    async def get_embedder(self, name: str) -> Embedder:
+    async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""
-        return await self._embedder_manager.get_embedder(name)
+        return await self._embedder_manager.get_embedder(name, validate=validate)
 
-    async def get_language_model(self, name: str) -> LanguageModel:
+    async def get_language_model(
+        self, name: str, validate: bool = False
+    ) -> LanguageModel:
         """Return a language model by name."""
-        return await self._model_manager.get_language_model(name)
+        return await self._model_manager.get_language_model(name, validate=validate)
 
-    async def get_reranker(self, name: str) -> Reranker:
+    async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
         """Return a reranker by name."""
-        return await self._reranker_manager.get_reranker(name)
+        return await self._reranker_manager.get_reranker(name, validate=validate)
 
     @property
     def config(self) -> Configuration:
@@ -119,7 +128,7 @@ class ResourceManagerImpl:
         if self._session_data_manager is not None:
             return self._session_data_manager
         database = self._conf.session_manager.database
-        engine = await self._database_manager.async_get_sql_engine(database)
+        engine = await self.get_sql_engine(database)
 
         self._session_data_manager = SessionDataManagerSQL(engine)
         await self._session_data_manager.create_tables()

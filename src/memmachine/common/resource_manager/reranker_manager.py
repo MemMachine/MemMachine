@@ -1,6 +1,7 @@
 """Manager for constructing and caching reranker instances."""
 
 import asyncio
+import logging
 import re
 from asyncio import Lock
 from collections import defaultdict
@@ -13,7 +14,10 @@ from typing_extensions import runtime_checkable
 
 from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.embedder import Embedder
+from memmachine.common.errors import InvalidRerankerError
 from memmachine.common.reranker import Reranker
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -35,7 +39,7 @@ class RerankerManager:
     ) -> None:
         """Store configuration and factories, initializing caches."""
         self.conf = conf
-        self.rerankers: dict[str, Reranker] = {}
+        self._rerankers: dict[str, Reranker] = {}
 
         self._embedder_factory: EmbedderFactory = embedder_factory
         self._lock: Lock = Lock()
@@ -58,42 +62,66 @@ class RerankerManager:
         ]
         tasks = [self.get_reranker(name) for name in names]
         await asyncio.gather(*tasks)
-        return self.rerankers
+        return self._rerankers
 
-    async def get_reranker(self, name: str) -> Reranker:
+    @property
+    def num_of_rerankers(self) -> int:
+        """Return the number of cached rerankers."""
+        return len(self._rerankers)
+
+    def has_reranker(self, name: str) -> bool:
+        """Check if a reranker with the given name exists."""
+        return name in self._rerankers
+
+    async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
         """Return a named reranker, building it on first access."""
-        if name in self.rerankers:
-            return self.rerankers[name]
+        if name in self._rerankers:
+            return self._rerankers[name]
 
         if name not in self._rerankers_lock:
             async with self._lock:
                 self._rerankers_lock.setdefault(name, Lock())
 
         async with self._rerankers_lock[name]:
-            if name in self.rerankers:
-                return self.rerankers[name]
+            if name in self._rerankers:
+                return self._rerankers[name]
 
-            reranker = await self._build_reranker(name)
-            self.rerankers[name] = reranker
+            reranker = await self._build_reranker(name, validate=validate)
+            self._rerankers[name] = reranker
             return reranker
 
-    async def _build_reranker(self, name: str) -> Reranker:
+    @staticmethod
+    async def _validate_reranker(name: str, reranker: Reranker) -> None:
+        """Validate that the reranker is working."""
+        try:
+            logger.info("Validating reranker %s is working.", name)
+            _ = await reranker.rerank("a", ["a", "b"])
+            logger.info("Reranker %s is working.", name)
+        except Exception as e:
+            raise InvalidRerankerError(f"reranker '{name}' is invalid. {e}") from e
+
+    async def _build_reranker(self, name: str, validate: bool = False) -> Reranker:
         """Create a reranker based on provider-specific configuration."""
+        ret: Reranker | None = None
         if name in self.conf.bm25:
-            return await self._build_bm25_reranker(name)
+            ret = await self._build_bm25_reranker(name)
         if name in self.conf.cohere:
-            return await self._build_cohere_reranker(name)
+            ret = await self._build_cohere_reranker(name)
         if name in self.conf.cross_encoder:
-            return await self._build_cross_encoder_reranker(name)
+            ret = await self._build_cross_encoder_reranker(name)
         if name in self.conf.amazon_bedrock:
-            return await self._build_amazon_bedrock_reranker(name)
+            ret = await self._build_amazon_bedrock_reranker(name)
         if name in self.conf.embedder:
-            return await self._build_embedder_reranker(name)
+            ret = await self._build_embedder_reranker(name)
         if name in self.conf.identity:
-            return await self._build_identity_reranker(name)
+            ret = await self._build_identity_reranker(name)
         if name in self.conf.rrf_hybrid:
-            return await self._build_rrf_hybrid_reranker(name)
-        raise ValueError(f"Reranker with name {name} not found.")
+            ret = await self._build_rrf_hybrid_reranker(name)
+        if ret is None:
+            raise InvalidRerankerError(f"Reranker with name {name} not found.")
+        if validate:
+            await self._validate_reranker(name, ret)
+        return ret
 
     async def _build_bm25_reranker(self, name: str) -> Reranker:
         from memmachine.common.reranker.bm25_reranker import (
@@ -122,7 +150,7 @@ class RerankerManager:
             raise ValueError(f"Unknown tokenizer: {name}")
 
         conf = self.conf.bm25[name]
-        self.rerankers[name] = BM25Reranker(
+        self._rerankers[name] = BM25Reranker(
             BM25RerankerParams(
                 k1=conf.k1,
                 b=conf.b,
@@ -130,7 +158,7 @@ class RerankerManager:
                 tokenize=get_tokenizer(conf.tokenizer, conf.language),
             ),
         )
-        return self.rerankers[name]
+        return self._rerankers[name]
 
     async def _build_cohere_reranker(self, name: str) -> Reranker:
         from cohere import ClientV2
@@ -148,8 +176,8 @@ class RerankerManager:
             client=client,
             model=conf.model,
         )
-        self.rerankers[name] = CohereReranker(params)
-        return self.rerankers[name]
+        self._rerankers[name] = CohereReranker(params)
+        return self._rerankers[name]
 
     async def _build_cross_encoder_reranker(self, name: str) -> Reranker:
         from sentence_transformers import CrossEncoder
@@ -162,10 +190,10 @@ class RerankerManager:
         conf = self.conf.cross_encoder[name]
 
         cross_encoder = CrossEncoder(conf.model_name)
-        self.rerankers[name] = CrossEncoderReranker(
+        self._rerankers[name] = CrossEncoderReranker(
             CrossEncoderRerankerParams(cross_encoder=cross_encoder),
         )
-        return self.rerankers[name]
+        return self._rerankers[name]
 
     async def _build_amazon_bedrock_reranker(self, name: str) -> Reranker:
         from memmachine.common.reranker.amazon_bedrock_reranker import (
@@ -193,8 +221,8 @@ class RerankerManager:
             model_id=conf.model_id,
             additional_model_request_fields=conf.additional_model_request_fields,
         )
-        self.rerankers[name] = AmazonBedrockReranker(params)
-        return self.rerankers[name]
+        self._rerankers[name] = AmazonBedrockReranker(params)
+        return self._rerankers[name]
 
     async def _build_embedder_reranker(self, name: str) -> Reranker:
         from memmachine.common.reranker.embedder_reranker import (
@@ -205,14 +233,14 @@ class RerankerManager:
         conf = self.conf.embedder[name]
         embedder = await self._embedder_factory.get_embedder(conf.embedder_id)
         params = EmbedderRerankerParams(embedder=embedder)
-        self.rerankers[name] = EmbedderReranker(params)
-        return self.rerankers[name]
+        self._rerankers[name] = EmbedderReranker(params)
+        return self._rerankers[name]
 
     async def _build_identity_reranker(self, name: str) -> Reranker:
         from memmachine.common.reranker.identity_reranker import IdentityReranker
 
-        self.rerankers[name] = IdentityReranker()
-        return self.rerankers[name]
+        self._rerankers[name] = IdentityReranker()
+        return self._rerankers[name]
 
     async def _build_rrf_hybrid_reranker(self, name: str) -> Reranker:
         """Build an RRF hybrid reranker by combining existing rerankers."""
@@ -233,5 +261,5 @@ class RerankerManager:
                     f"RRFHybridReranker {name}: {e}",
                 ) from e
         params = RRFHybridRerankerParams(rerankers=rerankers, k=conf.k)
-        self.rerankers[name] = RRFHybridReranker(params)
-        return self.rerankers[name]
+        self._rerankers[name] = RRFHybridReranker(params)
+        return self._rerankers[name]
