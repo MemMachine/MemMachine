@@ -27,16 +27,6 @@ services:
       start_period: 30s
     network_mode: "service:paused"
 
-  pgweb:
-    image: sosedoff/pgweb  
-    environment:
-      - DATABASE_URL=postgres://memmachine:${POSTGRES_PASSWORD:-memmachine_password}@localhost:5432/memmachine?sslmode=disable
-    restart: unless-stopped
-    mem_limit: 128m
-    depends_on:
-      - postgres
-    network_mode: "service:paused"
-
   # Neo4j database for graph storage
   neo4j:
     image: neo4j:5.23-community
