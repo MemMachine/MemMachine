@@ -1,4 +1,7 @@
+from datetime import UTC, datetime
+
 import pytest
+from dateutil.tz import tzoffset
 from pydantic import ValidationError
 
 from memmachine.common.api.spec import (
@@ -21,6 +24,7 @@ from memmachine.common.api.spec import (
 )
 from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.main.memmachine import MemoryType
+from memmachine.server.api_v2.router import RestError
 
 
 @pytest.mark.parametrize(
@@ -251,3 +255,105 @@ def test_search_result_model():
     result = SearchResult(status=0, content={"key": "value"})
     assert result.status == 0
     assert result.content == {"key": "value"}
+
+
+def test_rest_error():
+    err = RestError(422, "sample", RuntimeError("for test"))
+    assert err.status_code == 422
+    assert isinstance(err.detail, dict)
+    assert err.detail["message"] == "sample"
+    assert err.detail["code"] == 422
+    assert err.payload.exception == "RuntimeError"
+    assert err.payload.internal_error == "for test"
+    assert err.payload.trace == "RuntimeError: for test"
+
+
+def test_rest_error_without_exception():
+    err = RestError(404, "resource not found")
+    assert err.status_code == 404
+    assert err.detail == "resource not found"
+    assert err.payload is None
+
+
+def test_timestamp_default_now():
+    before = datetime.now(UTC)
+    msg = MemoryMessage(content="hello")
+    after = datetime.now(UTC)
+
+    assert before <= msg.timestamp <= after
+    assert msg.timestamp.tzinfo == UTC
+
+
+def test_timestamp_datetime_with_tz():
+    dt = datetime(2025, 5, 23, 10, 30, tzinfo=UTC)
+    msg = MemoryMessage(content="hello", timestamp=dt)
+
+    assert msg.timestamp == dt
+
+
+def test_timestamp_datetime_without_tz():
+    aware = datetime(2025, 5, 23, 10, 30, tzinfo=UTC)
+    dt = aware.replace(tzinfo=None)
+    msg = MemoryMessage(content="hello", timestamp=dt)
+
+    assert msg.timestamp.tzinfo == UTC
+    assert msg.timestamp.replace(tzinfo=None) == dt
+
+
+def test_timestamp_unix_seconds():
+    ts = 1_716_480_000  # unix seconds
+    msg = MemoryMessage(content="hello", timestamp=ts)
+
+    assert msg.timestamp == datetime.fromtimestamp(ts, tz=UTC)
+
+
+def test_timestamp_unix_milliseconds():
+    ts_ms = 1_716_480_000_000  # unix ms
+    msg = MemoryMessage(content="hello", timestamp=ts_ms)
+
+    assert msg.timestamp == datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
+
+
+def test_timestamp_iso_string():
+    ts = "2025-05-23T10:30:00Z"
+    msg = MemoryMessage(content="hello", timestamp=ts)
+
+    assert msg.timestamp == datetime(2025, 5, 23, 10, 30, tzinfo=UTC)
+
+
+def test_timestamp_common_datetime_string():
+    ts = "2023-10-01T08:20:00-04:00"
+    msg = MemoryMessage(content="hello", timestamp=ts)
+
+    tz = tzoffset(None, -14400)
+    assert msg.timestamp == datetime(2023, 10, 1, 8, 20, tzinfo=tz)
+
+
+def test_timestamp_none_uses_now():
+    before = datetime.now(UTC)
+    msg = MemoryMessage(content="hello", timestamp=None)
+    after = datetime.now(UTC)
+
+    assert before <= msg.timestamp <= after
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "05/23/2025T10:30:00Z",
+        "10:30 2025-05-23",
+        "now",
+    ],
+)
+def test_timestamp_invalid_string(timestamp):
+    with pytest.raises(
+        ValidationError,
+        match=r"Unsupported timestamp: " + timestamp,
+    ):
+        MemoryMessage(content="hello", timestamp=timestamp)
+
+
+def test_timestamp_invalid_type():
+    error_msg = "Unsupported timestamp: {'bad': 'value'}"
+    with pytest.raises(ValidationError, match=error_msg):
+        MemoryMessage(content="hello", timestamp={"bad": "value"})
