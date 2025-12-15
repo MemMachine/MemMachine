@@ -10,4 +10,10 @@ class MemoryType(Enum):
     Episodic = "episodic"
 
 
-__all__ = ["MemoryType"]
+class EpisodeType(Enum):
+    """Episode type."""
+
+    MESSAGE = "message"
+
+
+__all__ = ["EpisodeType", "MemoryType"]

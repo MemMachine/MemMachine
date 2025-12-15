@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
@@ -228,6 +229,32 @@ def test_add_memories(client, mock_memmachine):
         assert response.json() == {"results": [{"uid": "123"}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Semantic]
+
+
+def test_add_memories_episode_type_forwarded(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [
+            {"role": "user", "content": "hello", "episode_type": "message"},
+            {"role": "user", "content": "world"},
+        ],
+    }
+
+    mock_memmachine.add_episodes.return_value = ["ep-1", "ep-2"]
+
+    response = client.post("/api/v2/memories", json=payload)
+    assert response.status_code == 200
+    assert response.json() == {"results": [{"uid": "ep-1"}, {"uid": "ep-2"}]}
+
+    mock_memmachine.add_episodes.assert_awaited_once()
+    call_kwargs = mock_memmachine.add_episodes.call_args[1]
+    assert call_kwargs["target_memories"] == ALL_MEMORY_TYPES
+
+    episode_entries = call_kwargs["episode_entries"]
+    assert len(episode_entries) == 2
+    assert episode_entries[0].episode_type == EpisodeType.MESSAGE
+    assert episode_entries[1].episode_type is None
 
 
 def test_search_memories(client, mock_memmachine):

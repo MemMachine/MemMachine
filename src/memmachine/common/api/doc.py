@@ -106,6 +106,10 @@ class SpecDoc:
     Use 'metadata.{key}' to filter based on specific metadata keys.
     """
 
+    MEMORY_EPISODIC_TYPE = """
+    The type of an episode (e.g., 'message').
+    """
+
     MEMORY_MESSAGES = """
     A list of messages to be added (batch input).
     Must contain at least one message.

@@ -20,6 +20,7 @@ from memmachine.common.api.spec import (
     SearchResult,
     _is_valid_name,
 )
+from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.main.memmachine import MemoryType
 
 
@@ -134,6 +135,16 @@ def test_memory_message_required_fields():
     assert message.timestamp
     assert message.role == ""
     assert message.metadata == {}
+    assert message.episode_type is None
+
+
+def test_memory_message_episode_type_validation():
+    message = MemoryMessage(content="hello", episode_type="message")
+    assert message.episode_type == EpisodeType.MESSAGE
+
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryMessage(content="hello", episode_type="not-a-real-type")
+    assert any(e["loc"][-1] == "episode_type" for e in exc_info.value.errors())
 
 
 def test_add_memory_spec():

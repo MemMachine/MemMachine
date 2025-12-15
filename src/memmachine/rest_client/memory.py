@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from memmachine.common.api import MemoryType
+from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.spec import (
     AddMemoriesSpec,
     DeleteEpisodicMemorySpec,
@@ -212,7 +212,8 @@ class Memory:
         role: str = "user",
         producer: str | None = None,
         produced_for: str | None = None,
-        episode_type: str = "text",
+        episode_type: EpisodeType | None = EpisodeType.MESSAGE,
+        memory_types: list[MemoryType] | None = None,
         metadata: dict[str, Any] | None = None,
         timeout: int | None = None,
     ) -> bool:
@@ -224,7 +225,8 @@ class Memory:
             role: Message role - "user", "assistant", or "system" (default: "user")
             producer: Who produced this content (defaults to first user_id)
             produced_for: Who this content is for (defaults to first agent_id)
-            episode_type: Type of episode (default: "text") - stored in metadata
+            episode_type: Type of episode (default: "message") - stored in metadata
+            memory_types: List of MemoryType to store this memory under (default: both episodic and semantic)
             metadata: Additional metadata for the episode
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -236,6 +238,8 @@ class Memory:
             RuntimeError: If the client has been closed
 
         """
+        if memory_types is None:
+            memory_types = []
         if self._client_closed:
             raise RuntimeError("Cannot add memory: client has been closed")
 
@@ -289,15 +293,8 @@ class Memory:
                 timestamp=datetime.now(tz=UTC),
                 role=role,  # "user", "assistant", or "system"
                 metadata=combined_metadata,
+                episode_type=episode_type,
             )
-            # Determine memory types based on episode_type
-            memory_types = []
-            if episode_type:
-                if episode_type.lower() == "episodic":
-                    memory_types = [MemoryType.Episodic]
-                elif episode_type.lower() == "semantic":
-                    memory_types = [MemoryType.Semantic]
-            # If no episode_type specified, empty list means all types (server default)
 
             spec = AddMemoriesSpec(
                 org_id=self.__org_id,

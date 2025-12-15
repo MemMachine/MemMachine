@@ -20,7 +20,7 @@ except ModuleNotFoundError:
             self.detail = detail
 
 
-from memmachine.common.api import MemoryType
+from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
@@ -289,6 +289,13 @@ class MemoryMessage(BaseModel):
         Field(
             default_factory=dict,
             description=SpecDoc.MEMORY_METADATA,
+        ),
+    ]
+    episode_type: Annotated[
+        EpisodeType | None,
+        Field(
+            default=None,
+            description=SpecDoc.MEMORY_EPISODIC_TYPE,
         ),
     ]
 

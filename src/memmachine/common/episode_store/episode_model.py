@@ -4,6 +4,7 @@ from enum import Enum
 
 from pydantic import AwareDatetime, BaseModel, JsonValue
 
+from memmachine.common.api import EpisodeType
 from memmachine.common.data_types import FilterablePropertyValue
 
 EpisodeIdT = str
@@ -14,13 +15,6 @@ class ContentType(Enum):
 
     STRING = "string"
     # Other content types like 'vector', 'image' could be added here.
-
-
-class EpisodeType(Enum):
-    """Enumeration for the type of an Episode."""
-
-    MESSAGE = "message"
-    # Other episode types like 'thought', 'action' could be added here.
 
 
 class EpisodeEntry(BaseModel):

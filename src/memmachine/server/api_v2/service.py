@@ -56,6 +56,7 @@ async def _add_messages_to(
             producer_role=message.role,
             created_at=message.timestamp,
             metadata=message.metadata,
+            episode_type=message.episode_type,
         )
         for message in spec.messages
     ]
