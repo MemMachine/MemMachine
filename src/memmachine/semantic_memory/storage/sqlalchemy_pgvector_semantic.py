@@ -222,6 +222,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(delete(Feature))
             await session.commit()
 
+    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+        pass
+
     async def add_feature(
         self,
         *,

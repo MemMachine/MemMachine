@@ -30,18 +30,6 @@ class _SessionData:
     def session_key(self) -> str:
         return f"{self.org_id}/{self.project_id}"
 
-    @property
-    def user_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return None
-
-    @property
-    def role_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return None
-
-    @property
-    def session_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return self.session_key
-
 
 async def _add_messages_to(
     target_memories: list[MemoryTypeE],

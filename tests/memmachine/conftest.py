@@ -33,6 +33,10 @@ from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
     OpenAIResponsesLanguageModelParams,
 )
+from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
+    BaseSemanticConfigStore,
+    SemanticConfigStorageSqlAlchemy,
+)
 from memmachine.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
@@ -365,6 +369,20 @@ async def neo4j_semantic_storage(neo4j_driver):
 )
 def semantic_storage(request):
     return request.getfixturevalue(request.param)
+
+
+@pytest_asyncio.fixture
+async def semantic_config_storage(sqlalchemy_engine: AsyncEngine):
+    engine = sqlalchemy_engine
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseSemanticConfigStore.metadata.create_all)
+
+    storage = SemanticConfigStorageSqlAlchemy(engine)
+
+    yield storage
+
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseSemanticConfigStore.metadata.drop_all)
 
 
 @pytest_asyncio.fixture

@@ -44,6 +44,46 @@ async def _add_episode(
 
 
 @pytest.mark.asyncio
+async def test_add_features_with_different_embedding_lengths(
+    semantic_storage: SemanticStorage,
+):
+    # Given two embeddings of different lengths
+    embed_a = np.array([0.1], dtype=float)
+    embed_b = np.array([1.0, 0.1], dtype=float)
+
+    # When we add them to the storage
+    id_a = await semantic_storage.add_feature(
+        set_id="user_a",
+        category_name="default",
+        feature="likes",
+        value="pizza",
+        tag="food",
+        embedding=embed_a,
+    )
+    id_b = await semantic_storage.add_feature(
+        set_id="user_b",
+        category_name="default",
+        feature="likes",
+        value="sushi",
+        tag="food",
+        embedding=embed_b,
+    )
+
+    # Expect no error to have occurred
+    assert id_a is not None
+    assert id_b is not None
+
+    # Expect to be able to search the memory without errors
+    res = await semantic_storage.get_feature_set(
+        filter_expr=_expr("set_id IN (user_a)"),
+        vector_search_opts=SemanticStorage.VectorSearchOpts(query_embedding=embed_a),
+    )
+
+    ids = {r.metadata.id for r in res}
+    assert ids == {id_a}
+
+
+@pytest.mark.asyncio
 async def test_empty_storage(semantic_storage: SemanticStorage):
     assert (
         await semantic_storage.get_feature_set(filter_expr=_expr("set_id IN (user)"))

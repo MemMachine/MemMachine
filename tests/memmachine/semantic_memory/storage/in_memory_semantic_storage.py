@@ -103,6 +103,9 @@ class InMemorySemanticStorage(SemanticStorage):
                 return None
             return self._feature_to_model(entry, load_citations=load_citations)
 
+    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+        pass
+
     async def add_feature(
         self,
         *,

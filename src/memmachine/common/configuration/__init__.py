@@ -65,6 +65,10 @@ class SemanticMemoryConf(YamlSerializableMixin):
         ...,
         description="The database to use for semantic memory",
     )
+    config_database: str = Field(
+        ...,
+        description="The config database to use for semantic memory",
+    )
     llm_model: str = Field(
         ...,
         description="The default language model to use for semantic memory",

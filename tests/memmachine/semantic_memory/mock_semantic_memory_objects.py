@@ -199,7 +199,7 @@ class MockResourceRetriever:
         self._resources = resources
         self.seen_ids: list[str] = []
 
-    def get_resources(self, set_id: str) -> Resources:
+    async def get_resources(self, set_id: str) -> Resources:
         self.seen_ids.append(set_id)
         return self._resources
 
