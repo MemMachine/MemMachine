@@ -1,15 +1,19 @@
-You are a helpful assistant responsible for generating a comprehensive summary of the episodes provided below.
-Given one or more entities, and a list of descriptions, all related to the same entity or group of entities.
-Please concatenate all of these into a single, comprehensive description. Make sure to include information collected from all the descriptions.
-If the provided descriptions are contradictory, please resolve the contradictions and provide a single, coherent summary.The episodes is provided
-in a timely order. When resolving the contradictions, the entities and relationships from the newer episode should be used.
-Make sure it is written in third person, and include the entity names so we have the full context.
-<PreviousSummary/>
-{summary}
-</PreviousSummary>
+You are responsible for maintaining a rolling summary that functions as the short-term memory for another LLM to understand the context later without access to any other information.
+You are given an existing rolling summary and new episodes since that summary. Your task is to rewrite the summary from scratch, integrating new information from the episodes.
 
-<Episodes/>
+<instructions>
+1. Maximize information density. Be meticulous in recording details instead of generalized statements.
+2. Extract insights, constraints, preferences, conclusions, corrections, and decision-relevant facts.
+3. Your summary will replace all past context including the previous summary and raw episodes, so include all names, events, places, and dates (including year, month, and day).
+4. Older information that is no longer relevant may be compressed, merged, or removed.
+</instructions>
+
+<summary>
+{summary}
+</summary>
+
+<episodes>
 {episodes}
-</Episodes>
-The episodes are a list of individual episode in the following format:
-[uuid : content]
+</episodes>
+
+Your summary (under {max_length} words):

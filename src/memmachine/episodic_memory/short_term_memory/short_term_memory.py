@@ -10,10 +10,12 @@ are summarized asynchronously to maintain context over a longer conversation.
 
 import asyncio
 import contextlib
+import json
 import logging
 import string
 from collections import deque
-from datetime import datetime
+from collections.abc import Iterable
+from datetime import date, datetime, time
 from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
@@ -22,7 +24,7 @@ from memmachine.common.data_types import (
     ExternalServiceAPIError,
     FilterablePropertyValue,
 )
-from memmachine.common.episode_store import Episode
+from memmachine.common.episode_store import Episode, EpisodeType
 from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr, Or
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
@@ -261,23 +263,17 @@ class ShortTermMemory:
         and prompts to generate the summary.
         """
         try:
-            episode_content = ""
-            for entry in episodes:
-                meta = ""
-                if entry.metadata is None:
-                    pass
-                elif isinstance(entry.metadata, str):
-                    meta = entry.metadata
-                elif isinstance(entry.metadata, dict):
-                    for k, v in entry.metadata.items():
-                        meta += f"[{k}: {v}] "
-                else:
-                    meta = repr(entry.metadata)
-                episode_content += f"[{entry.uid!s} : {meta} : {entry.content}]"
+            approximate_characters_per_word = 8
+            max_summary_length_words = int(
+                self._max_message_len / 2 / approximate_characters_per_word
+            )
+            # round the length to nearest 100
+            max_summary_length_words = (max_summary_length_words + 99) // 100 * 100
+            episode_content = ShortTermMemory._string_from_episode_context(episodes)
             msg = self._summary_user_prompt.format(
                 episodes=episode_content,
                 summary=self._summary,
-                max_length=self._max_message_len / 2,
+                max_length=max_summary_length_words,
             )
             result = await self._model.generate_response(
                 system_prompt=self._summary_system_prompt,
@@ -299,6 +295,46 @@ class ShortTermMemory:
             logger.info("Value error when creating summary")
         except RuntimeError:
             logger.info("Runtime error when creating summary")
+
+    @staticmethod
+    def _string_from_episode_context(
+        episode_context: Iterable[Episode],
+    ) -> str:
+        """Format episode context as a string."""
+        context_string = ""
+
+        for episode in episode_context:
+            match episode.episode_type:
+                case EpisodeType.MESSAGE:
+                    context_date = (
+                        ShortTermMemory._format_date(
+                            episode.created_at.date(),
+                        )
+                        if episode.created_at
+                        else "Unknown Date"
+                    )
+                    context_time = (
+                        ShortTermMemory._format_time(
+                            episode.created_at.time(),
+                        )
+                        if episode.created_at
+                        else "Unknown Time"
+                    )
+                    context_string += f"[{context_date} at {context_time}] {episode.producer_id}: {json.dumps(episode.content)}\n"
+                case _:
+                    context_string += json.dumps(episode.content) + "\n"
+
+        return context_string
+
+    @staticmethod
+    def _format_date(date: date) -> str:
+        """Format the date as a string."""
+        return date.strftime("%A, %B %d, %Y")
+
+    @staticmethod
+    def _format_time(time: time) -> str:
+        """Format the time as a string."""
+        return time.strftime("%I:%M %p")
 
     def _safe_compare(
         self,
