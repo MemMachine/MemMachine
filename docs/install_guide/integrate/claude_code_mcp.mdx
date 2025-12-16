@@ -55,7 +55,7 @@ Choose the method that best fits your workflow.
 
 <Step title="Option A: Configure with Docker">
 
-If you're running MemMachine in Docker, create or edit the `.mcp.json` file in your project root:
+If you're running MemMachine in Docker, create or edit the `claude_desktop_config.json` file in your project root:
 
 ```json
 {
@@ -93,7 +93,7 @@ If you're running MemMachine in Docker, create or edit the `.mcp.json` file in y
 **Reference Implementation**: This method has not been fully tested with Claude Code. It follows the standard MCP stdio pattern and should work, but if you encounter issues, please use Option A (Docker) or report your findings.
 </Note>
 
-If you have MemMachine installed locally, create or edit the `.mcp.json` file in your project root:
+If you have MemMachine installed locally, create or edit the `claude_desktop_config.json` file in your project root:
 
 ```json
 {
@@ -140,7 +140,7 @@ Once configured, start Claude Code in your project directory:
 claude
 ```
 
-Claude Code will automatically detect the `.mcp.json` file and connect to MemMachine.
+Claude Code will automatically detect the `claude_desktop_config.json` file and connect to MemMachine.
 
 **Verify the connection** by checking /mcp or asking Claude to store something in memory:
 

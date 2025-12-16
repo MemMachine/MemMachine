@@ -22,6 +22,7 @@ from memmachine.semantic_memory.semantic_session_manager import (
     IsolationType,
     SemanticSessionManager,
 )
+from memmachine.server.prompt.coding_style_prompt import CodingStyleSemanticCategory
 from memmachine.server.prompt.profile_prompt import UserProfileSemanticCategory
 from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     SimpleSessionResourceRetriever,
@@ -48,6 +49,7 @@ async def storage(pgvector_semantic_storage):
 def session_types():
     return [
         UserProfileSemanticCategory,
+        CodingStyleSemanticCategory,
     ]
 
 

@@ -4,6 +4,21 @@
     "title": "FastAPI",
     "version": "0.1.0"
   },
+  "servers": [
+    {
+      "url": "https://localhost:8080/v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "RESTful APIs",
+      "description": "Standard RESTful API endpoints for managing memories and sessions."
+    },
+    {
+      "name": "MCP Server APIs",
+      "description": "API endpoints exposed as tools and resources for use with an LLM via the MCP server."
+    }
+  ],
   "paths": {
     "/api/v2/projects": {
       "post": {

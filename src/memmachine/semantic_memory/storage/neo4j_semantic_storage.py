@@ -915,28 +915,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     ) -> tuple[str, dict[str, Any]]:
         if isinstance(expr, FilterComparison):
             field_ref = self._resolve_field_reference(alias, expr.field)
-            params: dict[str, Any]
-            if expr.op == "=":
-                if isinstance(expr.value, list):
-                    raise ValueError("'=' comparison cannot accept list values")
-                param_name = self._next_filter_param()
-                condition = f"{field_ref} = ${param_name}"
-                params = {param_name: expr.value}
-            elif expr.op == "in":
-                if not isinstance(expr.value, list):
-                    raise ValueError("IN comparison requires a list of values")
-                param_name = self._next_filter_param()
-                condition = f"{field_ref} IN ${param_name}"
-                params = {param_name: expr.value}
-            elif expr.op == "is_null":
-                condition = f"{field_ref} IS NULL"
-                params = {}
-            elif expr.op == "is_not_null":
-                condition = f"{field_ref} IS NOT NULL"
-                params = {}
-            else:
-                raise ValueError(f"Unsupported operator: {expr.op}")
-            return condition, params
+            return self._render_comparison_condition(field_ref, expr)
         if isinstance(expr, FilterAnd):
             left_cond, left_params = self._render_filter_expr(alias, expr.left)
             right_cond, right_params = self._render_filter_expr(alias, expr.right)
@@ -950,6 +929,32 @@ class Neo4jSemanticStorage(SemanticStorage):
             left_params.update(right_params)
             return condition, left_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+    def _render_comparison_condition(
+        self, field_ref: str, expr: FilterComparison
+    ) -> tuple[str, dict[str, Any]]:
+        op = expr.op
+        params: dict[str, Any] = {}
+
+        if op == "in":
+            if not isinstance(expr.value, list):
+                raise ValueError("IN comparison requires a list of values")
+            param = self._next_filter_param()
+            return f"{field_ref} IN ${param}", {param: expr.value}
+
+        if op in (">", "<", ">=", "<=", "="):
+            if isinstance(expr.value, list):
+                raise ValueError(f"'{op}' comparison cannot accept list values")
+            param = self._next_filter_param()
+            return f"{field_ref} {op} ${param}", {param: expr.value}
+
+        if op == "is_null":
+            return f"{field_ref} IS NULL", params
+
+        if op == "is_not_null":
+            return f"{field_ref} IS NOT NULL", params
+
+        raise ValueError(f"Unsupported operator: {op}")
 
     def _resolve_field_reference(self, alias: str, field: str) -> str:
         if field.startswith(("m.", "metadata.")):
