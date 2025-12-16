@@ -14,7 +14,8 @@ It includes:
 import argparse
 import asyncio
 import logging
-import os
+import sys
+from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
@@ -22,6 +23,7 @@ from fastapi import FastAPI
 
 from memmachine.server.api_v2.mcp import (
     initialize_resource,
+    load_configuration,
     mcp,
     mcp_app,
     mcp_http_lifespan,
@@ -31,32 +33,33 @@ from memmachine.server.api_v2.router import load_v2_api_router
 logger = logging.getLogger(__name__)
 
 
-app = FastAPI(lifespan=mcp_http_lifespan)
+app = FastAPI(
+    title="MemMachine Server",
+    description="REST API server for MemMachine memory system",
+    lifespan=mcp_http_lifespan,
+)
 app.mount("/mcp", mcp_app)
 
 
 async def start() -> None:
     """Run the FastAPI application using uvicorn server."""
-    port_num = os.getenv("PORT", "8080")
-    host_name = os.getenv("HOST", "0.0.0.0")
+    config = load_configuration()
 
     load_v2_api_router(app)
 
     await uvicorn.Server(
-        uvicorn.Config(app, host=host_name, port=int(port_num)),
+        uvicorn.Config(app, host=config.server.host, port=config.server.port),
     ).serve()
 
 
 def main() -> None:
     """Execute the CLI entry point for the application."""
-    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-    log_format = os.getenv("LOG_FORMAT", "%(levelname)-7s %(message)s")
-    logging.basicConfig(
-        level=log_level,
-        format=log_format,
-    )
     # Load environment variables from .env file
-    load_dotenv()
+    conf_env_file = str(Path("~/.config/memmachine/.env").expanduser())
+    if Path(conf_env_file).is_file():
+        load_dotenv(conf_env_file)
+    else:
+        load_dotenv()
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="MemMachine server")
@@ -67,19 +70,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.stdio:
-        # MCP stdio mode
-        config_file = os.getenv("MEMORY_CONFIG", "configuration.yml")
+    try:
+        if args.stdio:
+            # MCP stdio mode
+            async def run_mcp_server() -> None:
+                """Initialize resources and run MCP server in the same event loop."""
+                await initialize_resource()
+                await mcp.run_stdio_async()
 
-        async def run_mcp_server() -> None:
-            """Initialize resources and run MCP server in the same event loop."""
-            await initialize_resource(config_file)
-            await mcp.run_stdio_async()
-
-        asyncio.run(run_mcp_server())
-    else:
-        # HTTP mode for REST API
-        asyncio.run(start())
+            asyncio.run(run_mcp_server())
+        else:
+            # HTTP mode for REST API
+            asyncio.run(start())
+    except KeyboardInterrupt:
+        logger.warning("Application cancelled by user.")
+        sys.exit(130)  # Standard exit code for Ctrl+C
 
 
 if __name__ == "__main__":

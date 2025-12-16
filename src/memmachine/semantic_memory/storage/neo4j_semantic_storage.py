@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from asyncio import Lock
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -111,6 +112,9 @@ class Neo4jSemanticStorage(SemanticStorage):
         self._vector_index_by_set: dict[str, int] = {}
         self._set_embedding_dimensions: dict[str, int] = {}
         self._filter_param_counter = 0
+
+        self._vector_global_lock = Lock()
+        self._vector_index_creation_lock: dict[str, Lock] = {}
 
     async def startup(self) -> None:
         await self._driver.execute_query(
@@ -530,15 +534,13 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         *,
         min_uningested_messages: int | None = None,
+        older_than: datetime | None = None,
     ) -> list[str]:
-        if min_uningested_messages is None or min_uningested_messages <= 0:
-            records, _, _ = await self._driver.execute_query(
-                """
-                MATCH (h:SetHistory)
-                RETURN DISTINCT h.set_id AS set_id
-                """,
-            )
-        else:
+        set_ids: set[str] = set()
+        filters_applied = False
+
+        if min_uningested_messages is not None and min_uningested_messages > 0:
+            filters_applied = True
             records, _, _ = await self._driver.execute_query(
                 """
                 MATCH (h:SetHistory)
@@ -549,21 +551,54 @@ class Neo4jSemanticStorage(SemanticStorage):
                 """,
                 min_uningested_messages=min_uningested_messages,
             )
+            set_ids.update(
+                str(record.get("set_id"))
+                for record in records
+                if record.get("set_id") is not None
+            )
 
-        return [
-            str(record.get("set_id"))
-            for record in records
-            if record.get("set_id") is not None
-        ]
+        if older_than is not None:
+            filters_applied = True
+            records, _, _ = await self._driver.execute_query(
+                """
+                MATCH (h:SetHistory)
+                WHERE coalesce(h.is_ingested, false) = false
+                  AND h.created_at <= $older_than
+                RETURN DISTINCT h.set_id AS set_id
+                """,
+                older_than=older_than,
+            )
+            set_ids.update(
+                str(record.get("set_id"))
+                for record in records
+                if record.get("set_id") is not None
+            )
+
+        if not filters_applied:
+            records, _, _ = await self._driver.execute_query(
+                """
+                MATCH (h:SetHistory)
+                RETURN DISTINCT h.set_id AS set_id
+                """,
+            )
+            set_ids.update(
+                str(record.get("set_id"))
+                for record in records
+                if record.get("set_id") is not None
+            )
+
+        return list(set_ids)
 
     async def add_history_to_set(self, set_id: str, history_id: EpisodeIdT) -> None:
         await self._driver.execute_query(
             """
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
-            ON CREATE SET h.is_ingested = false
+            ON CREATE SET h.is_ingested = false,
+                          h.created_at = $created_at
             """,
             set_id=set_id,
             history_id=str(history_id),
+            created_at=datetime.now(UTC),
         )
 
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
@@ -911,28 +946,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     ) -> tuple[str, dict[str, Any]]:
         if isinstance(expr, FilterComparison):
             field_ref = self._resolve_field_reference(alias, expr.field)
-            params: dict[str, Any]
-            if expr.op == "=":
-                if isinstance(expr.value, list):
-                    raise ValueError("'=' comparison cannot accept list values")
-                param_name = self._next_filter_param()
-                condition = f"{field_ref} = ${param_name}"
-                params = {param_name: expr.value}
-            elif expr.op == "in":
-                if not isinstance(expr.value, list):
-                    raise ValueError("IN comparison requires a list of values")
-                param_name = self._next_filter_param()
-                condition = f"{field_ref} IN ${param_name}"
-                params = {param_name: expr.value}
-            elif expr.op == "is_null":
-                condition = f"{field_ref} IS NULL"
-                params = {}
-            elif expr.op == "is_not_null":
-                condition = f"{field_ref} IS NOT NULL"
-                params = {}
-            else:
-                raise ValueError(f"Unsupported operator: {expr.op}")
-            return condition, params
+            return self._render_comparison_condition(field_ref, expr)
         if isinstance(expr, FilterAnd):
             left_cond, left_params = self._render_filter_expr(alias, expr.left)
             right_cond, right_params = self._render_filter_expr(alias, expr.right)
@@ -946,6 +960,32 @@ class Neo4jSemanticStorage(SemanticStorage):
             left_params.update(right_params)
             return condition, left_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+    def _render_comparison_condition(
+        self, field_ref: str, expr: FilterComparison
+    ) -> tuple[str, dict[str, Any]]:
+        op = expr.op
+        params: dict[str, Any] = {}
+
+        if op == "in":
+            if not isinstance(expr.value, list):
+                raise ValueError("IN comparison requires a list of values")
+            param = self._next_filter_param()
+            return f"{field_ref} IN ${param}", {param: expr.value}
+
+        if op in (">", "<", ">=", "<=", "="):
+            if isinstance(expr.value, list):
+                raise ValueError(f"'{op}' comparison cannot accept list values")
+            param = self._next_filter_param()
+            return f"{field_ref} {op} ${param}", {param: expr.value}
+
+        if op == "is_null":
+            return f"{field_ref} IS NULL", params
+
+        if op == "is_not_null":
+            return f"{field_ref} IS NOT NULL", params
+
+        raise ValueError(f"Unsupported operator: {op}")
 
     def _resolve_field_reference(self, alias: str, field: str) -> str:
         if field.startswith(("m.", "metadata.")):
@@ -1003,35 +1043,71 @@ class Neo4jSemanticStorage(SemanticStorage):
             return int(dimensions)
         return None
 
+    async def _create_vector_index(
+        self, index_name: str, set_id: str, dimensions: int
+    ) -> int:
+        if index_name not in self._vector_index_creation_lock:
+            async with self._vector_global_lock:
+                self._vector_index_creation_lock.setdefault(index_name, Lock())
+
+        async with self._vector_index_creation_lock[index_name]:
+            val = self._vector_index_by_set.get(set_id)
+            if val is not None:
+                return val
+
+            label = self._set_label_for_set(set_id)
+            await self._driver.execute_query(
+                f"""
+                CREATE VECTOR INDEX {index_name}
+                IF NOT EXISTS
+                FOR (f:{label})
+                ON (f.embedding)
+                OPTIONS {{
+                    indexConfig: {{
+                        `vector.dimensions`: $dimensions,
+                        `vector.similarity_function`: 'cosine'
+                    }}
+                }}
+                """,
+                dimensions=dimensions,
+            )
+            await self._driver.execute_query("CALL db.awaitIndexes()")
+
+            records, _, _ = await self._driver.execute_query(
+                """
+                SHOW VECTOR INDEXES
+                YIELD name, type, labelsOrTypes, properties, options
+                WHERE name = $index_name
+                  AND properties = ['embedding']
+                RETURN options
+                """,
+                index_name=index_name,
+            )
+
+            if not records:
+                raise ValueError("Index not found after creation")
+
+            index_config = records[0]["options"].get("indexConfig", {})
+            actual_dim = index_config.get("vector.dimensions")
+
+            if not actual_dim:
+                raise ValueError("Index dim not found after creation")
+
+            self._vector_index_by_set.setdefault(set_id, actual_dim)
+            return self._vector_index_by_set[set_id]
+
     async def _ensure_vector_index(self, set_id: str, dimensions: int) -> str:
         cached = self._vector_index_by_set.get(set_id)
         index_name = self._vector_index_name(set_id)
-        if cached is not None:
-            if cached != dimensions:
-                raise ValueError(
-                    "Embedding dimension mismatch for set_id "
-                    f"{set_id}: expected {cached}, got {dimensions}",
-                )
-            return index_name
 
-        label = self._set_label_for_set(set_id)
-        await self._driver.execute_query(
-            f"""
-            CREATE VECTOR INDEX {index_name}
-            IF NOT EXISTS
-            FOR (f:{label})
-            ON (f.embedding)
-            OPTIONS {{
-                indexConfig: {{
-                    `vector.dimensions`: $dimensions,
-                    `vector.similarity_function`: 'cosine'
-                }}
-            }}
-            """,
-            dimensions=dimensions,
-        )
-        await self._driver.execute_query("CALL db.awaitIndexes()")
-        self._vector_index_by_set[set_id] = dimensions
+        if cached is None:
+            cached = await self._create_vector_index(index_name, set_id, dimensions)
+
+        if cached != dimensions:
+            raise ValueError(
+                "Embedding dimension mismatch for set_id "
+                f"{set_id}: expected {cached}, got {dimensions}",
+            )
         return index_name
 
     def _vector_index_name(self, set_id: str) -> str:

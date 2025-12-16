@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from memmachine.server.api_v2.router import load_v2_api_router
 
 def generate_openapi():
-    app = FastAPI()
+    app = FastAPI(servers=[{"url": "https://localhost:8080"}])
     load_v2_api_router(app)
     
     openapi_schema = app.openapi()

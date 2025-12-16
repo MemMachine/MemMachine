@@ -41,14 +41,15 @@ source memmachine-env/bin/activate  # On Windows use `source memmachine-env/Scri
 ```
 
 A. Run the following command in your terminal:
+<Note> Choose the package that is correct for your needs.  If you want to install the Client, use `pip install memmachine-client` and if you want to use Server, use `pip install memmachine-server`. Examples below assume server.  Should you wish to install client, use the same command, but replace "server" with "client" </Note>
 
  - If you are using MemMachine in a CPU-only environment, use:
 ```sh
-   pip install memmachine
+   pip install memmachine-server
 ```
  - If you have an NVIDIA GPU and want to leverage it, use:
 ```sh
-pip install memmachine[gpu]
+pip install memmachine-server[gpu]
 ```
 B. Next, install dependencies from NLTK through the following MemMachine command:
 ```sh
@@ -86,6 +87,8 @@ uv pip install .
 
 MemMachine uses a single configuration file, `cfg.yml`, to define its resources and behavior. This file should be placed in the directory where you run the MemMachine server.
 
+Alternatively, you can use the [Configure Wizard](./configure_wizard) to assist in configuring MemMachine for your environment and to provide the necessary information.
+
 Below are examples for CPU-only and GPU-enabled setups.
 
 <AccordionGroup>
@@ -94,77 +97,114 @@ You can download a sample file or copy the content below.
 
 ```yaml expandable lines
 logging:
-  level: info
-  path: /tmp/memory_log
+  path: mem-machine.log
+  level: info #| debug | error
 
-# 1. Define Resources (Databases, Models, etc.)
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+prompt:
+  session:
+  - profile_prompt
+
 resources:
   databases:
-    my-postgres-db:
+    profile_storage:
       provider: postgres
       config:
         host: localhost
         port: 5432
         user: postgres
-        password: mypassword
-        db_name: memmachine_db
-    my-neo4j-db:
+        password: <YOUR_PASSWORD_HERE>
+        db_name: postgres
+    my_storage_id:
       provider: neo4j
       config:
-        host: localhost
-        port: 7687
-        user: neo4j
-        password: mypassword
-
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
   embedders:
-    my-openai-embedder:
+    openai_embedder:
       provider: openai
       config:
-        model: text-embedding-3-small
-        api_key: <YOUR_OPENAI_API_KEY>
-
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
   language_models:
-    my-openai-llm:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
       provider: openai-chat-completions
       config:
-        model: gpt-4o-mini
-        api_key: <YOUR_OPENAI_API_KEY>
-
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
   rerankers:
-    my-rrf-reranker:
-      provider: rrf-hybrid
+    my_reranker_id:
+      provider: "rrf-hybrid"
       config:
         reranker_ids:
-          - my-bm25-reranker
-          - my-identity-reranker
-    my-bm25-reranker:
-      provider: bm25
-    my-identity-reranker:
-      provider: identity
-
-# 2. Configure Memory Services
-episodic_memory:
-  enabled: true
-  session_key: "default_session"
-  long_term_memory:
-    vector_graph_store: my-neo4j-db
-    embedder: my-openai-embedder
-    reranker: my-rrf-reranker
-  short_term_memory:
-    llm_model: my-openai-llm
-    message_capacity: 64000
-
-semantic_memory:
-  database: my-postgres-db
-  llm_model: my-openai-llm
-  embedding_model: my-openai-embedder
-
-# 3. Configure Storage Backends
-episode_store:
-  database: my-postgres-db
-
-session_manager:
-  database: my-postgres-db
+          - id_ranker_id
+          - bm_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
 ```
 <Tip> Replace `<YOUR_OPENAI_API_KEY>` and database passwords with your actual credentials.</Tip>
 </Accordion>
@@ -174,75 +214,119 @@ For GPU setups, you might use local models for embeddings or reranking.
 
 ```yaml expandable lines
 logging:
-  level: info
+  path: mem-machine.log
+  level: info #| debug | error
+
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+prompt:
+  session:
+  - profile_prompt
 
 resources:
   databases:
-    # ... (Same database config as above) ...
-    my-postgres-db:
+    profile_storage:
       provider: postgres
       config:
         host: localhost
         port: 5432
         user: postgres
-        password: mypassword
-        db_name: memmachine_db
-    my-neo4j-db:
+        db_name: postgres
+        password: <YOUR_PASSWORD_HERE>
+    my_storage_id:
       provider: neo4j
       config:
-        host: localhost
-        port: 7687
-        user: neo4j
-        password: mypassword
-
-  embedders:
-    # Using a local model via sentence-transformers
-    my-local-embedder:
-      provider: sentence-transformer
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <YOUR_PASSWORD_HERE>
+    sqlite_test:
+      provider: sqlite
       config:
-        model: all-MiniLM-L6-v2
-
+        path: sqlite_test.db
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
   language_models:
-    my-openai-llm:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
       provider: openai-chat-completions
       config:
-        model: gpt-4o-mini
-        api_key: <YOUR_OPENAI_API_KEY>
-
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
   rerankers:
-    my-rrf-reranker:
-      provider: rrf-hybrid
+    my_reranker_id:
+      provider: "rrf-hybrid"
       config:
         reranker_ids:
-          - my-cross-encoder
-          - my-bm25
-    my-cross-encoder:
-      provider: cross-encoder
+          - id_ranker_id
+          - bm_ranker_id
+          - ce_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    ce_ranker_id:
+      provider: "cross-encoder"
       config:
-        model_name: cross-encoder/qnli-electra-base
-    my-bm25:
-      provider: bm25
-
-episodic_memory:
-  enabled: true
-  session_key: "default_session"
-  long_term_memory:
-    vector_graph_store: my-neo4j-db
-    embedder: my-local-embedder
-    reranker: my-rrf-reranker
-  short_term_memory:
-    llm_model: my-openai-llm
-
-semantic_memory:
-  database: my-postgres-db
-  llm_model: my-openai-llm
-  embedding_model: my-local-embedder
-
-episode_store:
-  database: my-postgres-db
-
-session_manager:
-  database: my-postgres-db
+        model_name: "cross-encoder/qnli-electra-base"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
 ```
 </Accordion>
 </AccordionGroup>

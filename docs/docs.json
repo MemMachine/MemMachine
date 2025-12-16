@@ -35,6 +35,12 @@
               "install_guide/introduction",
               "install_guide/install_guide", 
               {
+                "group": "Cloud Deployments",
+                "pages": [
+                  "install_guide/cloud_deploy/aws_cloudformation"
+                ]
+              },  
+              {
                 "group": "Configurations",
                 "pages": [
                   "install_guide/config/ollama",
@@ -111,6 +117,7 @@
           {
             "group": "PythonSDK Server",
             "pages": [
+              "api_reference/python/server",
               "api_reference/python/episodic_memory",
               "api_reference/python/episodic_memory_manager",
               "api_reference/python/memory_types",

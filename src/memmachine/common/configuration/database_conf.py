@@ -1,12 +1,15 @@
 """Storage configuration models."""
 
 from enum import Enum
-from typing import Self
+from typing import ClassVar, Self
 
+import yaml
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
 
-class Neo4jConf(BaseModel):
+
+class Neo4jConf(YamlSerializableMixin):
     """Configuration options for a Neo4j instance."""
 
     uri: str = Field(default="", description="Neo4j database URI")
@@ -39,7 +42,7 @@ class Neo4jConf(BaseModel):
         return f"bolt://{self.host}:{self.port}"
 
 
-class SqlAlchemyConf(BaseModel):
+class SqlAlchemyConf(YamlSerializableMixin):
     """Configuration for SQLAlchemy-backed relational databases."""
 
     dialect: str = Field(..., description="SQL dialect")
@@ -138,11 +141,8 @@ class SupportedDB(str, Enum):
     def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf:
         if self is SupportedDB.NEO4J:
             return self.conf_cls(**conf)
-        return self.conf_cls(
-            dialect=self.dialect,
-            driver=self.driver,
-            **conf,
-        )
+        conf_copy = {**conf, "dialect": self.dialect, "driver": self.driver}
+        return self.conf_cls(**conf_copy)
 
     @property
     def is_neo4j(self) -> bool:
@@ -155,6 +155,46 @@ class DatabasesConf(BaseModel):
     neo4j_confs: dict[str, Neo4jConf] = {}
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
 
+    PROVIDER_KEY: ClassVar[str] = "provider"
+    CONFIG_KEY: ClassVar[str] = "config"
+    NEO4J: ClassVar[str] = "neo4j"
+    RELATIONAL_DB: ClassVar[str] = "relational-db"
+    POSTGRES: ClassVar[str] = "postgres"
+    POSTGRESQL: ClassVar[str] = "postgresql"
+    SQLITE: ClassVar[str] = "sqlite"
+    DIALECT: ClassVar[str] = "dialect"
+
+    def to_yaml_dict(self) -> dict:
+        """Serialize the database configuration to a YAML-compatible dictionary."""
+        databases: dict[str, dict] = {}
+
+        def add_database(db_id: str, db_type: str, config: dict) -> None:
+            provider = self.SQLITE
+            if db_type == self.NEO4J:
+                provider = self.NEO4J
+            elif db_type == self.RELATIONAL_DB:
+                dialect = config.get(self.DIALECT)
+                if dialect == self.POSTGRESQL:
+                    provider = self.POSTGRES
+                elif dialect == self.SQLITE:
+                    provider = self.SQLITE
+            databases[db_id] = {
+                self.PROVIDER_KEY: provider,
+                self.CONFIG_KEY: config,
+            }
+
+        for database_id, conf in self.neo4j_confs.items():
+            add_database(database_id, self.NEO4J, conf.to_yaml_dict())
+
+        for database_id, conf in self.relational_db_confs.items():
+            add_database(database_id, self.RELATIONAL_DB, conf.to_yaml_dict())
+
+        return databases
+
+    def to_yaml(self) -> str:
+        data = {"databases": self.to_yaml_dict()}
+        return yaml.safe_dump(data, sort_keys=True)
+
     @classmethod
     def parse(cls, input_dict: dict) -> Self:
         databases = input_dict.get("databases", {})
@@ -166,8 +206,8 @@ class DatabasesConf(BaseModel):
         relational_db_dict = {}
 
         for database_id, resource_definition in databases.items():
-            provider_str = resource_definition.get("provider")
-            conf = resource_definition.get("config", {})
+            provider_str = resource_definition.get(cls.PROVIDER_KEY)
+            conf = resource_definition.get(cls.CONFIG_KEY, {})
 
             provider = SupportedDB.from_provider(provider_str)
             config_obj = provider.build_config(conf)

@@ -11,6 +11,7 @@ This directory contains essential process documents for MemMachine maintainers. 
 - **[pull-requests.md](pull-requests.md):** Reviewing, testing, and merging pull requests.
 - **[releases.md](releases.md):** Steps for creating and deleting releases on GitHub.
 - **[running-unit-tests.md](running-unit-tests.md):** How to run the PyTest unit tests.
+- **[building-pip-packages.md](building-pip-packages.md):** How to build the pip packages for distribution. 
 
 ## Purpose
 

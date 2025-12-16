@@ -4,6 +4,14 @@ name: Docs Validation Check
 permissions:
   contents: read  # Allows workflow to read repository contents
 
+
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  group: docs-checks-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
+
 on:
   # Trigger workflow on changes to docs/ in main branch, PRs to main, and releases
   push:

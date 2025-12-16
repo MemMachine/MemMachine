@@ -1,14 +1,16 @@
 """Amazon Bedrock-based language model implementation."""
 
 import asyncio
+import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 from uuid import uuid4
 
 import instructor
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine.common.data_types import ExternalServiceAPIError
 from memmachine.common.metrics_factory import MetricsFactory
@@ -273,13 +275,28 @@ class AmazonBedrockLanguageModel(LanguageModel):
 
         start_time = time.monotonic()
 
-        response = await client.chat.completions.create(**converse_kwargs)
+        try:
+            response = await client.chat.completions.create(**converse_kwargs)
+        except instructor.core.exceptions.InstructorRetryException as exc:  # type: ignore[attr-defined]
+            parsed = self._try_parse_bedrock_completion(
+                completion=getattr(exc, "last_completion", None),
+                output_format=output_format,
+            )
+            if parsed is not None:
+                self._collect_metrics({}, start_time, time.monotonic())
+
+                return parsed
+            raise
 
         end_time = time.monotonic()
 
         self._collect_metrics(response, start_time, end_time)
 
-        return response
+        parsed_response = self._try_parse_bedrock_completion(
+            completion=response,
+            output_format=output_format,
+        )
+        return parsed_response if parsed_response is not None else response
 
     async def generate_response(  # noqa: C901
         self,
@@ -405,6 +422,78 @@ class AmazonBedrockLanguageModel(LanguageModel):
             output_text,
             function_calls_arguments,
         )
+
+    @staticmethod
+    def _object_output_content_blocks(
+        completion: Any,  # noqa: ANN401
+    ) -> list[Any]:
+        output = getattr(completion, "output", None)
+        if output is not None:
+            message = (
+                output.get("message")
+                if isinstance(output, dict)
+                else getattr(output, "message", None)
+            )
+            if message is not None:
+                if isinstance(message, dict):
+                    content_blocks = message.get("content", [])
+                else:
+                    content_blocks = getattr(message, "content", []) or []
+
+        return content_blocks
+
+    @staticmethod
+    def _try_parse_bedrock_completion(
+        completion: Any,  # noqa: ANN401
+        output_format: type[T],
+    ) -> T | None:
+        if completion is None:
+            return None
+
+        try:
+            return TypeAdapter(output_format).validate_python(completion)
+        except Exception:
+            pass
+
+        content_blocks: list[Any] = []
+        if isinstance(completion, dict):
+            content_blocks = (
+                completion.get("output", {}).get("message", {}).get("content", [])
+            )
+        else:
+            content_blocks = AmazonBedrockLanguageModel._object_output_content_blocks(
+                completion
+            )
+
+        if not content_blocks:
+            return None
+
+        text_blocks = [
+            block["text"]
+            for block in content_blocks
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        ]
+
+        if not text_blocks:
+            return None
+
+        raw_text = "\n".join(text_blocks)
+        cleaned_text = re.sub(
+            pattern=r"<think>.*?</think>\s*",
+            repl="",
+            string=raw_text,
+            flags=re.DOTALL,
+        ).strip()
+
+        json_match = re.search(r"\{.*\}", cleaned_text, re.DOTALL)
+        if json_match is None:
+            return None
+
+        try:
+            parsed_json = json.loads(json_match.group(0))
+            return TypeAdapter(output_format).validate_python(parsed_json)
+        except Exception:
+            return None
 
     def _collect_metrics(
         self,

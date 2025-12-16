@@ -79,7 +79,7 @@ class AmazonBedrockReranker(Reranker):
         rerank_kwargs = {
             "queries": [
                 {
-                    "textQuery": {"text": query},
+                    "textQuery": {"text": AmazonBedrockReranker._sanitize_query(query)},
                     "type": "TEXT",
                 },
             ],
@@ -93,7 +93,9 @@ class AmazonBedrockReranker(Reranker):
             "sources": [
                 {
                     "inlineDocumentSource": {
-                        "textDocument": {"text": candidate},
+                        "textDocument": {
+                            "text": AmazonBedrockReranker._sanitize_document(candidate)
+                        },
                         "type": "TEXT",
                     },
                     "type": "INLINE",
@@ -177,3 +179,22 @@ class AmazonBedrockReranker(Reranker):
             scores[result["index"]] = result["relevanceScore"]
 
         return scores
+
+    @staticmethod
+    def _sanitize_query(query: str) -> str:
+        # Not documented in AWS documentation, but the query length is limited at 9000 UTF-16 code units.
+        query_length_limit = 9000
+        return (
+            query.encode("utf-16-le")[:query_length_limit].decode(
+                "utf-16-le", errors="ignore"
+            )
+            if query
+            else "."
+        )
+
+    @staticmethod
+    def _sanitize_document(document: str) -> str:
+        # Text must be between 1 and 32000 characters, inclusive.
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_RerankTextDocument.html
+        document_length_limit = 32000
+        return document[:document_length_limit] if document else "."

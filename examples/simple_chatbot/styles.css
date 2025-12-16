@@ -1,0 +1,169 @@
+/* MemMachine Header Styles */
+.memmachine-header-wrapper {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1.2rem;
+}
+
+.memmachine-header-links {
+    display: inline-flex;
+    gap: 14px;
+    align-items: center;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+}
+
+.memmachine-header-links .powered-by {
+    color: #667eea;
+    font-weight: 700;
+    font-size: 16px;
+    margin-right: 6px;
+    white-space: nowrap;
+}
+
+.memmachine-header-links a {
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 0;
+    transition: opacity 0.2s ease;
+}
+
+.memmachine-header-links a:hover {
+    opacity: 0.7;
+}
+
+.memmachine-header-links img,
+.memmachine-header-links svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* Memory Status Indicator */
+.memory-status-indicator {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+    padding: 0.5rem 1rem;
+    background: #f0f2f6;
+    border-radius: 0.5rem;
+    border: 1px solid #e0e0e0;
+}
+
+.memory-status-text {
+    font-size: 0.9rem;
+    color: #666;
+}
+
+/* Comparison Section Styles */
+.comparison-banner {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin: 0.5rem 0;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+}
+
+.comparison-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: white;
+}
+
+.comparison-banner-title {
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.comparison-banner-subtitle {
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+/* Comparison Header */
+.comparison-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem 0.5rem 0 0;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: white;
+    font-weight: 600;
+}
+
+.comparison-header-icon {
+    font-size: 1.2rem;
+}
+
+/* Comparison Panel - MemMachine */
+.comparison-panel-memmachine {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid #667eea;
+    margin-bottom: 1rem;
+}
+
+.comparison-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.comparison-panel-icon {
+    font-size: 1.2rem;
+}
+
+.comparison-panel-title {
+    color: #667eea;
+}
+
+/* Comparison Panel - Control */
+.comparison-panel-control {
+    background: linear-gradient(135deg, rgba(200, 200, 200, 0.1) 0%, rgba(150, 150, 150, 0.1) 100%);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border-left: 4px solid #888;
+    margin-bottom: 1rem;
+}
+
+.comparison-panel-control .comparison-panel-title {
+    color: #666;
+}
+
+/* Vertical Divider */
+.vertical-divider {
+    width: 2px;
+    background: #e0e0e0;
+    margin: 0 0.5rem;
+    height: 100%;
+}
+
+/* Answer Content */
+.answer {
+    word-wrap: break-word;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .memmachine-header-wrapper {
+        justify-content: center;
+        margin-bottom: 0.8rem;
+    }
+    
+    .memmachine-header-links {
+        flex-wrap: wrap;
+        row-gap: 8px;
+        justify-content: center;
+    }
+}
+

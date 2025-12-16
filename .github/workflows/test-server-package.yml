@@ -1,0 +1,136 @@
+name: Test Server Package
+
+permissions:
+  contents: read
+
+# Cancel any preceding run on the pull request after a new commit is pushed.
+concurrency:
+  # Use a stable key across event types (push vs pull_request):
+  # - PRs: key by PR number
+  # - Pushes: key by branch ref (prefer head_ref when present)
+  group: test-server-package-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+
+  # Don't cancel if running on a push to the main branch.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test-server-package:
+    name: Test Server Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv build
+
+      - name: Build server package
+        run: |
+          uv build --project packages/server
+          ls -lh dist/memmachine_server-*
+
+      - name: Install server package
+        shell: bash
+        run: |
+          set -eo pipefail
+          whl_name=$(ls dist/memmachine_server-*.whl | head -1)
+          pip install "$whl_name"
+
+      - name: Test server package imports
+        shell: bash
+        run: |
+          set -eo pipefail
+          python -c "
+          from memmachine.common.api import MemoryType
+          from memmachine.server.app import main
+          from memmachine.main.memmachine import MemMachine, ALL_MEMORY_TYPES
+          
+          print('All imports successful')
+          print(f'MemoryType.Semantic = {MemoryType.Semantic.value}')
+          print(f'MemoryType.Episodic = {MemoryType.Episodic.value}')
+          print(f'ALL_MEMORY_TYPES count: {len(ALL_MEMORY_TYPES)}')
+          print(f'MemMachine class: {MemMachine}')
+          "
+
+      - name: Test server package basic functionality
+        shell: bash
+        run: |
+          set -eo pipefail
+          python -c "
+          from memmachine.common.api import MemoryType
+          from memmachine.main.memmachine import ALL_MEMORY_TYPES
+          
+          # Test MemoryType enum
+          assert MemoryType.Semantic.value == 'semantic'
+          assert MemoryType.Episodic.value == 'episodic'
+          print('MemoryType enum values correct')
+          
+          # Test ALL_MEMORY_TYPES
+          assert len(ALL_MEMORY_TYPES) == 2
+          assert MemoryType.Semantic in ALL_MEMORY_TYPES
+          assert MemoryType.Episodic in ALL_MEMORY_TYPES
+          print('ALL_MEMORY_TYPES correct')
+          "
+
+      - name: Verify package structure
+        shell: bash
+        run: |
+          set -eo pipefail
+          python -c "
+          import memmachine
+          import memmachine.common.api
+          import memmachine.server.app
+          import memmachine.main.memmachine
+          
+          # Check that modules exist
+          assert hasattr(memmachine.common.api, 'MemoryType')
+          assert hasattr(memmachine.server.app, 'main')
+          assert hasattr(memmachine.main.memmachine, 'MemMachine')
+          assert hasattr(memmachine.main.memmachine, 'ALL_MEMORY_TYPES')
+          
+          print('Package structure verified')
+          "
+
+      - name: Test command-line tools modules
+        shell: bash
+        run: |
+          set -eo pipefail
+          python -c "
+          # Test that command-line tool modules can be imported
+          from memmachine.server.app import main as server_main
+          print('memmachine-server module importable')
+          
+          from memmachine.server.mcp_stdio import main as mcp_stdio_main
+          print('memmachine-mcp-stdio module importable')
+          
+          from memmachine.server.mcp_http import main as mcp_http_main
+          print('memmachine-mcp-http module importable')
+          
+          from memmachine.installation.memmachine_configure import main as configure_main
+          print('memmachine-configure module importable')
+          
+          # Check if setup_nltk exists (for memmachine-nltk-setup)
+          import memmachine
+          if hasattr(memmachine, 'setup_nltk'):
+              print('memmachine-nltk-setup function available')
+          else:
+              print('memmachine-nltk-setup function not found (may be optional)')
+          
+          print('All command-line tool modules verified')
+          "
+

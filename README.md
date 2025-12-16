@@ -49,7 +49,7 @@ with better precision and depth.
 
 <div align="center">
 
-![MemMachine Architecture](https://github.com/MemMachine/MemMachine/blob/main/assets/img/MemMachine_Architecture.png)
+![MemMachine Architecture](https://raw.githubusercontent.com/MemMachine/MemMachine/main/assets/img/MemMachine_Architecture.png)
 
 </div>
 

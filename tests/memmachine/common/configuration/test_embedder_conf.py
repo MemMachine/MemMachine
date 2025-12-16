@@ -1,11 +1,12 @@
 from typing import Any
 
 import pytest
-from pydantic import SecretStr, ValidationError
+import yaml
+from pydantic import SecretStr
 
 from memmachine.common.configuration import EmbeddersConf
 from memmachine.common.configuration.embedder_conf import (
-    AmazonBedrockEmbedderConfig,
+    AmazonBedrockEmbedderConf,
     OpenAIEmbedderConf,
 )
 from memmachine.common.data_types import SimilarityMetric
@@ -71,7 +72,7 @@ def test_valid_open_ai_embedder_config(openai_embedder_conf):
 
 
 def test_valid_aws_bedrock_embedder_config(aws_embedder_conf):
-    conf = AmazonBedrockEmbedderConfig(**aws_embedder_conf["config"])
+    conf = AmazonBedrockEmbedderConf(**aws_embedder_conf["config"])
     assert conf.region == "us-west-2"
     assert conf.aws_access_key_id == SecretStr("key-id")
     assert conf.aws_secret_access_key == SecretStr("secret-key")
@@ -96,11 +97,33 @@ def test_full_embedder_conf(embedder_conf):
     assert conf.openai.get("ollama_embedder") is not None
 
 
+def test_get_embedder_name(embedder_conf):
+    conf = EmbeddersConf.parse(embedder_conf)
+    assert conf.get_openai_embedder_name() == "openai_embedder"
+    assert conf.get_amazon_bedrock_embedder_name() == "aws_embedder_id"
+    assert conf.get_sentence_transformer_embedder_name() is None
+
+    assert isinstance(
+        conf.get_openai_embedder_conf("openai_embedder"), OpenAIEmbedderConf
+    )
+    assert isinstance(
+        conf.get_amazon_bedrock_embedder_conf("aws_embedder_id"),
+        AmazonBedrockEmbedderConf,
+    )
+
+
+def test_embedder_to_yaml(embedder_conf):
+    conf = EmbeddersConf.parse(embedder_conf)
+    yaml_str = conf.to_yaml()
+    conf_cp = EmbeddersConf.parse(yaml.safe_load(yaml_str))
+    assert conf_cp == conf
+    assert len(conf_cp.openai) == len(conf.openai)
+    assert len(conf_cp.amazon_bedrock) == len(conf.amazon_bedrock)
+
+
 def test_open_ai_embeder_without_key():
     conf_dict = {
         "model": "text-embedding-ada-002",
     }
-    with pytest.raises(ValidationError) as exc_info:
-        OpenAIEmbedderConf(**conf_dict)
-
-    assert "missing" in str(exc_info.value)
+    conf = OpenAIEmbedderConf(**conf_dict)
+    assert conf.api_key.get_secret_value() == ""

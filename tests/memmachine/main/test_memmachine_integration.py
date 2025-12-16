@@ -89,7 +89,6 @@ class TestMemMachineLongMemEval:
     ) -> None:
         memmachine = MemMachine(memmachine_config)
         await memmachine.start()
-        await memmachine.create_session(session_data.session_key)
 
         try:
             await self._ingest_conversations(

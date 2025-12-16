@@ -331,13 +331,14 @@ class DeclarativeMemory:
             for matched_derivative_node in matched_derivative_nodes
         ]
 
-        source_episode_nodes = [
+        # Use a dict instead of a set to preserve order.
+        source_episode_nodes = dict.fromkeys(
             episode_node
             for episode_nodes in await asyncio.gather(
                 *search_derivatives_source_episode_nodes_tasks,
             )
             for episode_node in episode_nodes
-        ]
+        )
 
         # Use source episodes as nuclei for contextualization.
         nuclear_episodes = [
@@ -436,7 +437,7 @@ class DeclarativeMemory:
         query: str,
         episode_contexts: Iterable[Iterable[Episode]],
     ) -> list[float]:
-        """Score episode node contexts based on their relevance to the query."""
+        """Score episode contexts based on their relevance to the query."""
         context_strings = []
         for episode_context in episode_contexts:
             context_string = DeclarativeMemory.string_from_episode_context(
@@ -462,9 +463,9 @@ class DeclarativeMemory:
                     context_time = DeclarativeMemory._format_time(
                         episode.timestamp.time(),
                     )
-                    context_string += f"[{context_date} at {context_time}] {episode.source}: {episode.content}\n"
+                    context_string += f"[{context_date} at {context_time}] {episode.source}: {json.dumps(episode.content)}\n"
                 case ContentType.TEXT:
-                    context_string += episode.content + "\n"
+                    context_string += json.dumps(episode.content) + "\n"
 
         return context_string
 

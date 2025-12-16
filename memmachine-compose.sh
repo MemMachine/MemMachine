@@ -13,6 +13,15 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+is_first_run=false
+
+# Use docker-compose or docker compose based on what's available
+if command -v docker-compose &> /dev/null; then
+    COMPOSE_CMD="docker-compose"
+else
+    COMPOSE_CMD="docker compose"
+fi
+
 ## Function to run a command with a timeout
 timeout() {
     local duration=$1
@@ -124,19 +133,19 @@ select_llm_model() {
         "OPENAI")
             print_prompt
             read -p "Which OpenAI LLM model would you like to use? [gpt-4o-mini]: " llm_model
-            llm_model=${llm_model:-gpt-4o-mini}
+            llm_model=$(echo "${llm_model:-gpt-4o-mini}" | tr -d '\n\r')
             print_success "Selected OpenAI LLM model: $llm_model" >&2
             ;;
         "BEDROCK")
             print_prompt
             read -p "Which AWS Bedrock LLM model would you like to use? [openai.gpt-oss-20b-1:0]: " llm_model
-            llm_model=${llm_model:-openai.gpt-oss-20b-1:0}
+            llm_model=$(echo "${llm_model:-openai.gpt-oss-20b-1:0}" | tr -d '\n\r')
             print_success "Selected AWS Bedrock LLM model: $llm_model" >&2
             ;;
         "OLLAMA")
             print_prompt
             read -p "Which Ollama LLM model would you like to use? [llama3]: " llm_model
-            llm_model=${llm_model:-llama3}
+            llm_model=$(echo "${llm_model:-llama3}" | tr -d '\n\r')
             print_success "Selected Ollama LLM model: $llm_model" >&2
             ;;
         *)
@@ -157,19 +166,19 @@ select_embedding_model() {
         "OPENAI")
             print_prompt
             read -p "Which OpenAI embedding model would you like to use? [text-embedding-3-small]: " embedding_model
-            embedding_model=${embedding_model:-text-embedding-3-small}
+            embedding_model=$(echo "${embedding_model:-text-embedding-3-small}" | tr -d '\n\r')
             print_success "Selected OpenAI embedding model: $embedding_model" >&2
             ;;
         "BEDROCK")
             print_prompt
             read -p "Which AWS Bedrock embedding model would you like to use? [amazon.titan-embed-text-v2:0]: " embedding_model
-            embedding_model=${embedding_model:-amazon.titan-embed-text-v2:0}
+            embedding_model=$(echo "${embedding_model:-amazon.titan-embed-text-v2:0}" | tr -d '\n\r')
             print_success "Selected AWS Bedrock embedding model: $embedding_model" >&2
             ;;
         "OLLAMA")
             print_prompt
             read -p "Which Ollama embedding model would you like to use? [nomic-embed-text]: " embedding_model
-            embedding_model=${embedding_model:-nomic-embed-text}
+            embedding_model=$(echo "${embedding_model:-nomic-embed-text}" | tr -d '\n\r')
             print_success "Selected Ollama embedding model: $embedding_model" >&2
             ;;
         *)
@@ -232,8 +241,6 @@ generate_config_for_provider() {
         in_embedder_section = 0
         in_current_model = 0
         in_current_embedder = 0
-        skip_model = 0
-        skip_embedder = 0
         current_section = ""
         in_episodic = 0
         in_semantic = 0
@@ -241,18 +248,48 @@ generate_config_for_provider() {
         in_short_term = 0
     }
     
-    # Track current top-level section
-    /^[a-zA-Z]/ && !/^[[:space:]]/ {
-        # If we're leaving language_models or embedders section, add blank line first
+    # Track embedders and language_models sections (2 spaces, under resources:)
+    /^  embedders:$/ {
         if (in_model_section || in_embedder_section) {
             print ""
         }
-        current_section = $1
-        current_section = substr(current_section, 1, length(current_section) - 1)  # Remove trailing :
-        in_model_section = (current_section == "language_models")
-        in_embedder_section = (current_section == "embedders")
-        skip_model = 0
-        skip_embedder = 0
+        in_embedder_section = 1
+        in_model_section = 0
+        in_current_embedder = 0
+        print
+        next
+    }
+    
+    /^  language_models:$/ {
+        if (in_model_section || in_embedder_section) {
+            print ""
+        }
+        in_model_section = 1
+        in_embedder_section = 0
+        in_current_model = 0
+        print
+        next
+    }
+    
+    # Exit embedders/language_models when hitting another 2-space section
+    /^  [a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  (embedders|language_models):$/ && !in_episodic && !in_semantic {
+        if (in_model_section || in_embedder_section) {
+            print ""
+            in_model_section = 0
+            in_embedder_section = 0
+        }
+        print
+        next
+    }
+    
+    # Track current top-level section
+    /^[a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  / {
+        if (in_model_section || in_embedder_section) {
+            print ""
+        }
+        current_section = substr($1, 1, length($1) - 1)
+        in_model_section = 0
+        in_embedder_section = 0
         in_current_model = 0
         in_current_embedder = 0
         
@@ -279,31 +316,20 @@ generate_config_for_provider() {
     
     # Handle language_models section
     in_model_section {
-        # Check if this is a model definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z0-9_]*:$/) {
+        # Check if this is a model definition line (4 spaces)
+        if (/^    [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             model_key = substr($1, 1, length($1) - 1)  # Remove trailing :
-            if (model_key == model_name) {
-                in_current_model = 1
-                skip_model = 0
-                print
-                next
-            } else {
-                in_current_model = 0
-                skip_model = 1
-                next
-            }
-        }
-        # Print lines for current model, skip others
-        if (skip_model) {
+            in_current_model = (model_key == model_name)
+            print
             next
         }
         if (in_current_model) {
             # Replace model field value if this is the model line
-            if (model_field == "model" && /^      model:/) {
-                print "      model: \"" llm_model "\""
+            if (model_field == "model" && /^        model:/) {
+                print "        model: \"" llm_model "\""
                 next
-            } else if (model_field == "model_id" && /^      model_id:/) {
-                print "      model_id: \"" llm_model "\""
+            } else if (model_field == "model_id" && /^        model_id:/) {
+                print "        model_id: \"" llm_model "\""
                 next
             }
         }
@@ -313,31 +339,20 @@ generate_config_for_provider() {
     
     # Handle embedders section
     in_embedder_section {
-        # Check if this is an embedder definition line (2 spaces)
-        if (/^  [a-zA-Z_][a-zA-Z0-9_]*:$/) {
+        # Check if this is an embedder definition line (4 spaces)
+        if (/^    [a-zA-Z_][a-zA-Z0-9_]*:$/) {
             embedder_key = substr($1, 1, length($1) - 1)  # Remove trailing :
-            if (embedder_key == embedder_name) {
-                in_current_embedder = 1
-                skip_embedder = 0
-                print
-                next
-            } else {
-                in_current_embedder = 0
-                skip_embedder = 1
-                next
-            }
-        }
-        # Print lines for current embedder, skip others
-        if (skip_embedder) {
+            in_current_embedder = (embedder_key == embedder_name)
+            print
             next
         }
         if (in_current_embedder) {
             # Replace embedder model field value
-            if (embedder_field == "model" && /^      model:/) {
-                print "      model: \"" embedding_model "\""
+            if (embedder_field == "model" && /^        model:/) {
+                print "        model: \"" embedding_model "\""
                 next
-            } else if (embedder_field == "model_id" && /^      model_id:/) {
-                print "      model_id: \"" embedding_model "\""
+            } else if (embedder_field == "model_id" && /^        model_id:/) {
+                print "        model_id: \"" embedding_model "\""
                 next
             }
         }
@@ -499,6 +514,7 @@ check_config_file() {
         fi
 
         set_config_defaults
+        is_first_run=true
     else
         print_success "configuration.yml file found"
     fi
@@ -507,17 +523,22 @@ check_config_file() {
 select_openai_base_url() {
     local base_url=""
     local reply=""
-    
-    print_prompt
-    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
-    if [[ $reply =~ ^[Yy]$ ]]; then
+
+    if [ "$is_first_run" = true ]; then
         print_prompt
-        read -p "Enter your OpenAI Base URL: " base_url
-        if [ -n "$base_url" ]; then
-            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            print_success "Set OpenAI Base URL to $base_url"
+        read -p "Model base URL is not set. Would you like to configure a custom model base URL? (y/N) " reply
+        if [[ $reply =~ ^[Yy]$ ]]; then
+            print_prompt
+            read -p "Please enter your model base URL [https://api.openai.com/v1]: " base_url
+            base_url=$(echo "${base_url:-https://api.openai.com/v1}" | tr -d '\n\r')
+            if [ -n "$base_url" ]; then
+                safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                print_success "Set model base URL to $base_url"
+            fi
         fi
+    else
+        print_success "Model model base URL appears to be configured"
     fi
 }
 
@@ -673,13 +694,6 @@ start_services() {
 
     print_info "Pulling and starting MemMachine services..."
     
-    # Use docker-compose or docker compose based on what's available
-    if command -v docker-compose &> /dev/null; then
-        COMPOSE_CMD="docker-compose"
-    else
-        COMPOSE_CMD="docker compose"
-    fi
-
     # Unset the memmachine image temporarily; without this, 'docker compose pull' will attempt
     # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
     ENV_MEMMACHINE_IMAGE=""
@@ -698,13 +712,6 @@ start_services() {
 # Wait for services to be healthy
 wait_for_health() {
     print_info "Waiting for services to be healthy..."
-    
-    # Use docker-compose or docker compose based on what's available
-    if command -v docker-compose &> /dev/null; then
-        COMPOSE_CMD="docker-compose"
-    else
-        COMPOSE_CMD="docker compose"
-    fi
     
     # Wait for services to be healthy
     $COMPOSE_CMD ps
@@ -744,10 +751,10 @@ show_service_info() {
     print_success "🎉 MemMachine is now running!"
     echo ""
     echo "Service URLs:"
-    echo "  📊 MemMachine API: http://localhost:${MEMORY_SERVER_PORT:-8080}"
+    echo "  📊 MemMachine API Docs: http://localhost:${MEMORY_SERVER_PORT:-8080}/docs"
     echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
-    echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/health"
-    echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/metrics"
+    echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health"
+    echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/metrics"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"
@@ -764,7 +771,7 @@ show_service_info() {
 build_image() {
     local name=""
     local force="false"
-    local gpu="false"
+    local gpu="false" # default to false
     local reply=""
     local key=""
     local value=""
@@ -814,17 +821,19 @@ build_image() {
 
     if [[ "$force" == "false" ]]; then
         print_prompt
-        read -p "Building $name with '--build-arg GPU=$gpu' (y/N): " -r reply
+        read -p "Building $name with '--build-arg GPU=[true|false]' (default: false): " reply
+        gpu=$(echo "${reply:-false}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$gpu" != "true" && "$gpu" != "false" ]]; then
+            print_error "Invalid value for GPU: $gpu"
+            exit 1
+        fi
     else
         print_info "Building $name with '--build-arg GPU=$gpu'"
     fi
 
-    if [[ $reply =~ ^[Yy]$ || $force == "true" ]]; then
-        docker build --build-arg GPU=$gpu -t "$name" .
-    else
-        print_info "Build cancelled"
-        exit 0
-    fi
+    # Proceed with build after validation passes
+    print_info "Building $name with '--build-arg GPU=$gpu'"
+    docker build --build-arg GPU=$gpu -t "$name" .
 }
 
 # Main execution
@@ -848,29 +857,17 @@ main() {
 case "${1:-}" in
     "stop")
         print_info "Stopping MemMachine services..."
-        if command -v docker-compose &> /dev/null; then
-            docker-compose down
-        else
-            docker compose down
-        fi
+        $COMPOSE_CMD down
         print_success "Services stopped"
         ;;
     "restart")
         print_info "Restarting MemMachine services..."
-        if command -v docker-compose &> /dev/null; then
-            docker-compose restart
-        else
-            docker compose restart
-        fi
+        $COMPOSE_CMD restart
         print_success "Services restarted"
         ;;
     "logs")
         print_info "Showing MemMachine logs..."
-        if command -v docker-compose &> /dev/null; then
-            docker-compose logs -f
-        else
-            docker compose logs -f
-        fi
+        $COMPOSE_CMD logs -f
         ;;
     "clean")
         print_warning "This will remove all data and volumes!"
@@ -879,11 +876,7 @@ case "${1:-}" in
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             print_info "Cleaning up MemMachine services and data..."
-            if command -v docker-compose &> /dev/null; then
-                docker-compose down -v
-            else
-                docker compose down -v
-            fi
+            $COMPOSE_CMD down -v
             print_success "Cleanup completed"
         else
             print_info "Cleanup cancelled"

@@ -10,303 +10,468 @@ MemMachine's configuration is managed through a `cfg.yml` file, which allows for
 
 All configuration items are organized under top-level keys in the `cfg.yml` file. References between components are made using string IDs, promoting reusability and clarity.
 
+To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sample Config File](https://github.com/MemMachine/MemMachine/tree/main/sample_configs/episodic_memory_config.gpu.sample).
+
 ### Configuration Sections
 
 <AccordionGroup>
-  <Accordion title="Episodic Memory">
-    Configuration for the episodic memory service, which handles event-based memories.
-
+  <Accordion title="Logging">
+      Manages the path and level of application logging.
+    <Tabs>
+    <Tab title="Parameters">
+      ```yaml
+        logging:
+          path: mem-machine.log
+          level: info #| debug | error
+      ```
+    </Tab>
+    <Tab title="With Comments">
+      ```yaml
+        logging:
+          path: mem-machine.log # Path to log file (empty logs to stdout only)
+          level: info # Log level: debug, info, warning, error, critical (default: info)   
+        ```
+    </Tab>
+    </Tabs>
+      **Parameters:**
+      | Parameter | Description                            | Default                    |
+      |-----------|----------------------------------------|----------------------------|
+      | `path`    | The file path to write logs to. If empty, logs are sent to stdout. | `MemMachine.log`           |
+      | `level`   | The minimum level of messages to log.  | `info`                     |
+  </Accordion>
+  <Accordion title="Episode Store">
+    Configuration for the database storing raw episode data.
+  <Tabs>
+  <Tab title="Parameter">
     ```yaml
-    episodic_memory:
-      enabled: true # Whether episodic memory is enabled (default: true)
-      metrics_factory_id: prometheus # ID of the metrics factory (default: "prometheus")
-      long_term_memory_enabled: true # Whether long-term memory is enabled within episodic memory (default: true)
-      short_term_memory_enabled: true # Whether short-term memory is enabled within episodic memory (default: true)
-      long_term_memory: # Configuration for long-term memory
-        vector_graph_store: my-neo4j-store # ID of the VectorGraphStore from 'resources.databases'
-        embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
-        reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
-      short_term_memory: # Configuration for short-term memory
-        llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
-        summary_prompt_system: |
-          You are a helpful assistant that summarizes conversational turns.
-          Summarize the following conversation for an AI agent.
-        summary_prompt_user: |
-          Summarize this conversation:
-          {{ conversation_history }}
-        message_capacity: 64000 # Maximum length of short-term memory (default: 64000)
+    episode_store:
+      database: profile_storage
     ```
+  </Tab>
+  <Tab title="With Comment">
+    ```yaml
+    episode_store:
+      database: profile_storage # ID of the database from 'resources.databases'
+    ```
+  </Tab>
+  </Tabs>
 
     **Parameters:**
+    | Parameter | Description                                                                 | Default    |
+    |-----------|-----------------------------------------------------------------------------|------------|
+    | `database`| The ID of a database defined in `resources.databases` for episode storage.  | *Required* |
+  </Accordion>
+  <Accordion title="Episodic Memory">
+    Configuration for the episodic memory service, which handles event-based memories.
+    <Tabs>
+    <Tab title="Parameters">
+    ```yaml
+      episodic_memory:
+        long_term_memory:
+          vector_graph_store: my-neo4j-store
+          embedder: my-openai-embedder
+          reranker: my-rrf-reranker
+        short_term_memory:
+          llm_model: my-summarization-llm
+          message_capacity: 64000
+        ```
+      </Tab>
+      <Tab title="With Comments">
+      ```yaml
+      episodic_memory:
+        long_term_memory: # Configuration for long-term memory
+          vector_graph_store: my-neo4j-store # ID of the VectorGraphStore from 'resources.databases'
+          embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
+          reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
+        short_term_memory: # Configuration for short-term memory
+          llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
+          message_capacity: 64000 # Maximum length of short-term memory (default: 64000)
+      ```
+    </Tab>
+  </Tabs>
+
+    **Parameter Descriptions:**
     | Parameter                       | Description                                                                 | Default      |
     |---------------------------------|-----------------------------------------------------------------------------|--------------|
-    | `enabled`                       | Whether the episodic memory service is enabled.                             | `true`       |
-    | `metrics_factory_id`            | The ID of the metrics factory to use for monitoring.                        | `"prometheus"` |
-    | `long_term_memory_enabled`      | Whether long-term memory is enabled within episodic memory.                 | `true`       |
-    | `short_term_memory_enabled`     | Whether short-term memory is enabled within episodic memory.                | `true`       |
     | `long_term_memory.vector_graph_store` | The ID of a database defined in `resources.databases` for long-term storage. | *Required* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. | *Required* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
-    | `short_term_memory.summary_prompt_system` | The system prompt template for summarizing short-term memories. | (internal default) |
-    | `short_term_memory.summary_prompt_user` | The user prompt template for summarizing short-term memories.   | (internal default) |
     | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
-
   </Accordion>
 
   <Accordion title="Semantic Memory">
     Configuration for the semantic memory service, which handles declarative, knowledge-based memories.
-
-    ```yaml
-    semantic_memory:
-      database: my-postgres-db # ID of the database from 'resources.databases'
-      llm_model: my-semantic-llm # ID of the Language Model from 'resources.language_models'
-      embedding_model: my-openai-embedder # ID of the Embedder from 'resources.embedders'
-    ```
+    <Tabs>
+      <Tab title="Parameters">
+      ```yaml
+      semantic_memory:
+        llm_model: my-semantic-llm
+        embedding_model: my-openai-embedder
+        database: my-postgres-db
+      ```
+      </Tab>
+      <Tab title="With Comments">
+      ```yaml
+      semantic_memory:
+        llm_model: my-semantic-llm # ID of the Language Model from 'resources.language_models'
+        embedding_model: my-openai-embedder # ID of the Embedder from 'resources.embedders'
+        database: my-postgres-db # ID of the database from 'resources.databases'
+      ```
+      </Tab>
+    </Tabs>
 
     **Parameters:**
     | Parameter           | Description                                                                 | Default    |
     |---------------------|-----------------------------------------------------------------------------|------------|
-    | `database`          | The ID of a database defined in `resources.databases` for semantic storage. | *Required* |
     | `llm_model`         | The ID of a language model defined in `resources.language_models` for semantic processing. | *Required* |
     | `embedding_model`   | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
-  </Accordion>
-
-  <Accordion title="Logging">
-    Manages the path and level of application logging.
-
-    ```yaml
-    logging:
-      level: info # Log level: debug, info, warning, error, critical (default: info)
-      format: "%(asctime)s [%(levelname)s] %(name)s - %(message)s" # Log format string
-      path: MemMachine.log # Path to log file (empty logs to stdout only)
-    ```
-
-    **Parameters:**
-    | Parameter | Description                            | Default                    |
-    |-----------|----------------------------------------|----------------------------|
-    | `level`   | The minimum level of messages to log.  | `info`                     |
-    | `format`  | The format string for log messages.    | `%(asctime)s [%(levelname)s] %(name)s - %(message)s` |
-    | `path`    | The file path to write logs to. If empty, logs are sent to stdout. | `MemMachine.log`           |
-  </Accordion>
-
-  <Accordion title="Prompts">
-    Manages the default prompts used for various memory types.
-
-    ```yaml
-    prompt:
-      profile:
-        - profile_prompt
-        - writing_assistant_prompt
-      role: []
-      session: []
-      episode_summary_system_prompt_path: # Path to custom system prompt file
-      episode_summary_user_prompt_path: # Path to custom user prompt file
-    ```
-
-    **Parameters:**
-    | Parameter                           | Description                                                            | Default                      |
-    |-------------------------------------|------------------------------------------------------------------------|------------------------------|
-    | `profile`                           | List of predefined prompt IDs for semantic user profile memory.          | `["profile_prompt", "writing_assistant_prompt"]` |
-    | `role`                              | List of predefined prompt IDs for semantic role memory.                | `[]`                         |
-    | `session`                           | List of predefined prompt IDs for semantic session memory.             | `[]`                         |
-    | `episode_summary_system_prompt_path`| Path to a custom file containing the system prompt for episode summarization. | (internal default)           |
-    | `episode_summary_user_prompt_path`  | Path to a custom file containing the user prompt for episode summarization.   | (internal default)           |
+    | `database`          | The ID of a database defined in `resources.databases` for semantic storage. | *Required* |
   </Accordion>
 
   <Accordion title="Session Manager">
-    Configuration for the session management database.
+      Configuration for the session management database.
+    <Tabs>
+    <Tab title="Parameter">
+      ```yaml
+      session_manager:
+        database: profile_storage
+      ```
+    </Tab>
+    <Tab title="With Comment">
+      ```yaml
+      session_manager:
+        database: profile_storage # ID of the database from 'resources.databases'
+      ```
+    </Tab>
+    </Tabs>
 
+      **Parameters:**
+      | Parameter | Description                                                                 | Default    |
+      |-----------|-----------------------------------------------------------------------------|------------|
+      | `database`| The ID of a database defined in `resources.databases` for session data storage. | *Required* |
+    </Accordion>
+
+  <Accordion title="Prompt">
+    Manages the default prompts used for various memory types.
+    <Tabs>
+    <Tab title="Parameter">
     ```yaml
-    session_manager:
-      database: my-postgres-db # ID of the database from 'resources.databases'
+    prompt:
+      session:
+        - profile_prompt
     ```
-
-    **Parameters:**
-    | Parameter | Description                                                                 | Default    |
-    |-----------|-----------------------------------------------------------------------------|------------|
-    | `database`| The ID of a database defined in `resources.databases` for session data storage. | *Required* |
-  </Accordion>
-
-  <Accordion title="Episode Store">
-    Configuration for the database storing raw episode data.
-
+    </Tab>
+    <Tab title="With Comment">
     ```yaml
-    episode_store:
-      database: my-postgres-db # ID of the database from 'resources.databases'
+    prompt:
+      session:
+        - profile_prompt # List of predefined prompt IDs for semantic user profile memory
     ```
+    </Tab>
+    </Tabs>
 
-    **Parameters:**
-    | Parameter | Description                                                                 | Default    |
-    |-----------|-----------------------------------------------------------------------------|------------|
-    | `database`| The ID of a database defined in `resources.databases` for episode storage. | *Required* |
+    **Parameter Description:**
+    | Parameter                           | Description                                                            | Default                      |
+    |-------------------------------------|------------------------------------------------------------------------|------------------------------|
+    | `profile_prompt`                    | List of predefined prompt IDs for semantic user profile memory.        | `["profile_prompt", "writing_assistant_prompt"]` |
+
   </Accordion>
 
   <Accordion title="Resources">
-    This section centralizes the definitions of various external resources, which can then be referenced by ID in other parts of the configuration.
+    This section centralizes the definitions of various external resources, which can then be referenced by ID in other parts of the configuration. 
 
     ### Databases
     Defines connections to various database backends (Neo4j, PostgreSQL, SQLite).
-
+    <Tabs>
+    <Tab title="Parameters">
+      ```yaml
+      resources:
+        databases:
+          profile_storage:
+            provider: postgres
+            config:
+              host: localhost
+              port: 5432
+              user: postgres
+              db_name: postgres
+              password: <YOUR_PASSWORD_HERE>
+          my_storage_id:
+            provider: neo4j
+            config:
+              uri: 'bolt://localhost:7687'
+              username: neo4j
+              password: <YOUR_PASSWORD_HERE>
+          sqlite_test:
+            provider: sqlite
+            config:
+              path: sqlite_test.db
+      ```
+    </Tab>
+    <Tab title="With Comments">
     ```yaml
     resources:
-      databases:
-        my-neo4j-store:
-          provider: neo4j
-          config:
-            host: localhost
-            port: 7687
-            user: neo4j
-            password: your-neo4j-password
-        my-postgres-db:
-          provider: postgres
-          config:
-            host: localhost
-            port: 5432
-            user: postgres
-            password: your-postgres-password
-            db_name: memmachine_db
-        my-sqlite-db:
-          provider: sqlite
-          config:
-            path: ./data/memmachine.db
-    ```
+        databases:
+          profile_storage:
+            provider: postgres # The database provider type: `neo4j`, `postgres`, or `sqlite`
+            config: # A dictionary containing provider-specific configuration
+              host: localhost # Hostname for the database
+              port: 5432 # Port number for the database connection
+              user: postgres # Username for database authentication
+              db_name: postgres # Database name
+              password: <YOUR_PASSWORD_HERE> # Password for database authentication
+          my_storage_id: # he specific configuration for the system's internal graph store
+            provider: neo4j #The database provider type: `neo4j`, `postgres`, or `sqlite`
+            config: # A dictionary containing provider-specific configuration
+              uri: 'bolt://localhost:7687' # The URI for the given database
+              username: neo4j. # Username for internal graph store authentication
+              password: <YOUR_PASSWORD_HERE> # Password for graph store authentication
+          sqlite_test: # The configuration for the SQLite database used for testing
+            provider: sqlite #The database provider type: `neo4j`, `postgres`, or `sqlite`
+            config: # A dictionary containing provider-specific configuration
+              path: sqlite_test.db. # The path for the given database
+      ```
+    </Tab>
+    </Tabs>
+      **Parameter Descriptions:**
+      | Parameter     | Description                                                          | Default     |
+      |---------------|----------------------------------------------------------------------|-------------|
+      | `provider`    | The database provider type: `neo4j`, `postgres`, or `sqlite`.        | *Required*  |
+      | `config`      | A dictionary containing provider-specific configuration.             | *Required*  |
+      | `config.host` | Hostname for the database (e.g., `localhost`).                       | Depends on provider |
+      | `config.port` | Port number for the database connection.                             | Depends on provider |
+      | `config.user` | Username for database authentication.                                | Depends on provider |
+      | `config.db_name`| Database name (for `postgres`).                                    | Depends on provider |
+      | `config.password`| Password for database authentication.                             | Depends on provider |
+      | `config.uri`  | The URI for the given database.                                      | Depends on provider |
+      | `config.path`  | The path for the given database.                                    | Depends on provider |
+      | `config.username` | Username for internal graph store authentication.                | Depends on provider |
+      | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
+      | `sqlite_test` | The configuration for the SQLite database used for testing.          | *Required*  |
 
-    **Parameters for each database ID (e.g., `my-neo4j-store`):**
-    | Parameter     | Description                                                          | Default     |
-    |---------------|----------------------------------------------------------------------|-------------|
-    | `provider`    | The database provider type: `neo4j`, `postgres`, or `sqlite`.        | *Required*  |
-    | `config`      | A dictionary containing provider-specific configuration.             | *Required*  |
-    | `config.host` | Hostname for the database (e.g., `localhost`).                     | Depends on provider |
-    | `config.port` | Port number for the database connection.                           | Depends on provider |
-    | `config.user` | Username for database authentication.                              | Depends on provider |
-    | `config.password`| Password for database authentication.                            | Depends on provider |
-    | `config.db_name`| Database name (for `postgres`).                                  | `memmachine_db` for postgres |
-    | `config.path` | File path for SQLite database (for `sqlite`).                      | `./data/memmachine.db` |
 
-
-    ### Embedders
-    Defines various embedding models, which can be used to generate vector representations of text.
-
-    ```yaml
-    resources:
-      embedders:
-        my-openai-embedder:
-          provider: openai
-          config:
-            model: text-embedding-3-small
-            api_key: your-openai-api-key
-        my-bedrock-embedder:
-          provider: amazon-bedrock
-          config:
-            region: us-east-1
-            aws_access_key_id: YOUR_AWS_ACCESS_KEY_ID
-            aws_secret_access_key: YOUR_AWS_SECRET_ACCESS_KEY
-            model_id: amazon.titan-embed-text-v2:0
-        my-sentence-transformer-embedder:
-          provider: sentence-transformer
-          config:
-            model: all-MiniLM-L6-v2
-    ```
-
-    **Parameters for each embedder ID (e.g., `my-openai-embedder`):**
+  ### Embedders
+      Defines various embedding models, which can be used to generate vector representations of text.
+      <Tabs>
+      <Tab title="Parameters">
+      ```yaml
+      resources:
+        embedders:
+          openai_embedder: 
+            provider: openai
+            config:
+              model: "text-embedding-3-small"
+              api_key: <YOUR_API_KEY>
+              base_url: "https://api.openai.com/v1"
+              dimensions: 1536
+          aws_embedder_id:
+            provider: 'amazon-bedrock'
+            config:
+              region: "us-west-2"
+              aws_access_key_id: <AWS_ACCESS_KEY_ID>
+              aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+              model_id: "amazon.titan-embed-text-v2:0"
+              similarity_metric: "cosine"
+          ollama_embedder: # The embedder Service ID
+            provider: openai
+            config:
+              model: "nomic-embed-text"
+              api_key: "EMPTY"
+              base_url: "http://host.docker.internal:11434/v1"
+              dimensions: 768
+          ```
+          </Tab>
+          <Tab title="With Comments">
+          ```yaml
+            resources:
+              embedders:
+                openai_embedder: # The embedder ID
+                  provider: openai # The embedder provider type
+                  config: # A dictionary containing provider-specific configuration
+                    model: "text-embedding-3-small" # Model name
+                    api_key: <YOUR_API_KEY> # API key for OpenAI
+                    base_url: "https://api.openai.com/v1" # Base URL for OpenAI
+                    dimensions: 1536 # Defines the length of the vector generated for the input text
+                aws_embedder_id: # The embedder ID
+                  provider: 'amazon-bedrock' # The embedder provider type
+                  config: # A dictionary containing provider-specific configuration
+                    region: "us-west-2" # AWS region for Bedrock
+                    aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
+                    aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
+                    model_id: "amazon.titan-embed-text-v2:0" # Bedrock model ID
+                    similarity_metric: "cosine" # Defines the mathematical method used to compare two vectors for relevance (e.g., cosine).
+                ollama_embedder: # The embedder ID
+                  provider: openai # The embedder provider type
+                  config: # A dictionary containing provider-specific configuration
+                    model: "nomic-embed-text" # Model name
+                    api_key: "EMPTY" # Always "EMPTY" for Ollama
+                    base_url: "http://host.docker.internal:11434/v1" # Base URL for OpenAI
+                    dimensions: 768 # Defines the length of the vector generated for the input text
+         ```
+    </Tab>
+    </Tabs>
+    **Parameter Descriptions:**
     | Parameter         | Description                                                          | Default                  |
     |-------------------|----------------------------------------------------------------------|--------------------------|
-    | `provider`        | The embedder provider type: `openai`, `amazon-bedrock`, `sentence-transformer`. | *Required*               |
+    | `Embedder ID`      | The embedder ID: `openai_embedder`, `aws_embedder_id`, `ollama_embedder`. | *Required*         |
+    | `provider`        | The embedder provider type: `openai`, `amazon-bedrock`.              | *Required*               |
     | `config`          | A dictionary containing provider-specific configuration.             | *Required*               |
-    | `config.model`    | Model name (e.g., `text-embedding-3-small` for OpenAI, `all-MiniLM-L6-v2` for sentence-transformer). | Depends on provider |
+    | `config.model`    | Model name (e.g., `text-embedding-3-small` for OpenAI, `nomic-embed-text` for Ollama). | Depends on provider |
     | `config.api_key`  | API key for OpenAI.                                                  | *Required for OpenAI*    |
+    | `config.base_url` | Base URL for OpenAI.                                                 | *Required for OpenAI*    |
+    | `config.dimensions`| Defines the length of the vector generated for the input text.      | *Required for OpenAI*    |
     | `config.region`   | AWS region for Bedrock.                                              | *Required for Bedrock*   |
-    | `config.aws_access_key_id` | AWS access key ID for Bedrock.                               | *Required for Bedrock*   |
-    | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                       | *Required for Bedrock*   |
-    | `config.model_id` | Bedrock model ID.                                                    | `amazon.titan-embed-text-v2:0` for Bedrock |
+    | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
+    | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
+    | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
+    | `similarity_metric` | Defines the mathematical method used to compare two vectors for relevance (e.g., cosine). | *Required for Bedrock*   |
 
-
-    ### Language Models
+  ### Language Models
     Defines various language models for tasks like summarization and generation.
-
+  <Tabs>
+  <Tab title="Parameters">
     ```yaml
     resources:
       language_models:
-        my-openai-llm:
+        openai_model:
+          provider: openai-responses
+          config:
+            model: "gpt-4o-mini"
+            api_key: <YOUR_API_KEY>
+            base_url: "https://api.openai.com/v1"
+        aws_model:
+          provider: "amazon-bedrock"
+          config:
+            region: "us-west-2"
+            aws_access_key_id: <AWS_ACCESS_KEY_ID>
+            aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+            model_id: "openai.gpt-oss-20b-1:0"
+        ollama_model:
           provider: openai-chat-completions
           config:
-            model: gpt-4o-mini
-            api_key: your-openai-api-key
-        my-bedrock-llm:
-          provider: amazon-bedrock
-          config:
-            region: us-east-1
-            aws_access_key_id: YOUR_AWS_ACCESS_KEY_ID
-            aws_secret_access_key: YOUR_AWS_SECRET_ACCESS_KEY
-            model_id: anthropic.claude-3-sonnet-20240229-v1:0
-            inference_config:
-              max_tokens: 2000
-              temperature: 0.7
+            model: "llama3"
+            api_key: "EMPTY"
+            base_url: "http://host.docker.internal:11434/v1"
     ```
-
-    **Parameters for each language model ID (e.g., `my-openai-llm`):**
+</Tab>
+<Tab title="With Comments">
+```yaml
+    resources:
+      language_models:
+        openai_model: # Language Model ID
+          provider: openai-responses # The language model provider type
+          config: # A dictionary containing provider-specific configuration
+            model: "gpt-4o-mini" # Model name
+            api_key: <YOUR_API_KEY> # API key for OpenAI.
+            base_url: "https://api.openai.com/v1" # The base URL for the model
+        aws_model: # Language Model ID
+          provider: "amazon-bedrock" # The language model provider type
+          config: # A dictionary containing provider-specific configuration
+            region: "us-west-2"
+            aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
+            aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
+            model_id: "openai.gpt-oss-20b-1:0" # Bedrock model ID
+        ollama_model: # Language Model ID
+          provider: openai-chat-completions # The language model provider type
+          config: # A dictionary containing provider-specific configuration
+            model: "llama3" # Model name
+            api_key: "EMPTY" # API key for OpenAI. for Ollama, this is always "EMPTY"
+            base_url: "http://host.docker.internal:11434/v1" # The base URL for the model
+    ```
+</Tab>
+</Tabs>
+    **Parameters for each language model ID (`openai_model`, `aws_model`, `ollama_model`):**
     | Parameter         | Description                                                          | Default                  |
     |-------------------|----------------------------------------------------------------------|--------------------------|
     | `provider`        | The language model provider type: `openai-responses`, `openai-chat-completions`, `amazon-bedrock`. | *Required*               |
     | `config`          | A dictionary containing provider-specific configuration.             | *Required*               |
-    | `config.model`    | Model name (e.g., `gpt-4o-mini` for OpenAI).                         | Depends on provider |
+    | `config.model`    | Model name (e.g., `gpt-4o-mini` for OpenAI).                         | Depends on provider      |
     | `config.api_key`  | API key for OpenAI.                                                  | *Required for OpenAI*    |
+    | `config.base_url`  | The base URL for the model                                          | Depends on provider      |
     | `config.region`   | AWS region for Bedrock.                                              | *Required for Bedrock*   |
-    | `config.aws_access_key_id` | AWS access key ID for Bedrock.                               | *Required for Bedrock*   |
-    | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                       | *Required for Bedrock*   |
-    | `config.model_id` | Bedrock model ID.                                                    | `anthropic.claude-3-sonnet-20240229-v1:0` for Bedrock |
-    | `config.inference_config`| Inference parameters for Bedrock (e.g., `max_tokens`, `temperature`). | (None)                   |
+    | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
+    | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
+    | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
+
 
 
     ### Rerankers
     Defines various reranking strategies used to reorder search results for improved relevance.
-
+  <Tabs>
+  <Tab title="Parameters">
     ```yaml
-    resources:
-      rerankers:
-        my-rrf-reranker:
-          provider: rrf-hybrid
-          config:
-            reranker_ids:
-              - my-bm25-reranker
-              - my-cross-encoder-reranker
-        my-bm25-reranker:
-          provider: bm25
-          config:
-            k1: 1.5
-            b: 0.75
-        my-cross-encoder-reranker:
-          provider: cross-encoder
-          config:
-            model_name: cross-encoder/qnli-electra-base
-        my-identity-reranker:
-          provider: identity
-        my-bedrock-reranker:
-          provider: amazon-bedrock
-          config:
-            region: us-east-1
-            aws_access_key_id: YOUR_AWS_ACCESS_KEY_ID
-            aws_secret_access_key: YOUR_AWS_SECRET_ACCESS_KEY
-            model_id: amazon.rerank-v1:0
+    rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+          - ce_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    ce_ranker_id:
+      provider: "cross-encoder"
+      config:
+        model_name: "cross-encoder/qnli-electra-base"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"
     ```
+    </Tab>
+    <Tab title="With Comments">
+        ```yaml
+        rerankers:
+          my_reranker_id: # The reranker and reranker types you specify
+            provider: "rrf-hybrid" # The reranker provider type
+            config: # A dictionary containing provider-specific configuration
+              reranker_ids: # List of reranker IDs to combine for `rrf-hybrid`
+                - id_ranker_id # Identity Reranker
+                - bm_ranker_id # Best Match Algorithm Reranker
+                - ce_ranker_id # Cross-Encoder Reranker
+          id_ranker_id:
+            provider: "identity" # The reranker provider type
+          bm_ranker_id:
+            provider: "bm25" # The reranker provider type
+          ce_ranker_id:
+            provider: "cross-encoder" # The reranker provider type
+            config: # A dictionary containing provider-specific configuration
+              model_name: "cross-encoder/qnli-electra-base"
+          aws_reranker_id:
+            provider: "amazon-bedrock" # The reranker provider type
+            config: # A dictionary containing provider-specific configuration
+              region: "us-west-2" # AWS region for Bedrock
+              aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
+              aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
+              model_id: "amazon.rerank-v1:0" # Bedrock model ID
+    ```
+    </Tab>
+    </Tabs>
 
-    **Parameters for each reranker ID (e.g., `my-rrf-reranker`):**
+    **Parameter Descriptions:**
+
     | Parameter         | Description                                                          | Default                  |
     |-------------------|----------------------------------------------------------------------|--------------------------|
+    | `my_reranker_id`   | The reranker and reranker types you specify.                         | *Required*               |
     | `provider`        | The reranker provider type: `bm25`, `amazon-bedrock`, `cross-encoder`, `embedder`, `identity`, `rrf-hybrid`. | *Required*               |
     | `config`          | A dictionary containing provider-specific configuration.             | *Required*               |
-    | `config.reranker_ids` | List of reranker IDs to combine for `rrf-hybrid`.              | *Required for rrf-hybrid*|
-    | `config.model_name`| Model name for `cross-encoder`.                                    | Depends on provider |
+    | `config.reranker_ids` | List of reranker IDs to combine for `rrf-hybrid`.                | *Required for rrf-hybrid*|
+    | `config.model_name`| Model name for `cross-encoder`.                                     | Depends on provider |
     | `config.embedder_id`| ID of an embedder for `embedder` reranker.                         | *Required for embedder*  |
     | `config.region`   | AWS region for Bedrock.                                              | *Required for Bedrock*   |
-    | `config.aws_access_key_id` | AWS access key ID for Bedrock.                               | *Required for Bedrock*   |
-    | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                       | *Required for Bedrock*   |
-    | `config.model_id` | Bedrock model ID.                                                    | `amazon.rerank-v1:0` for Bedrock |
+    | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
+    | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
+    | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*.   |
 
   </Accordion>
 </AccordionGroup>
-
+  
 ## Proxy Configuration
 
 If you are deploying MemMachine behind a corporate proxy, you may need to configure it to route traffic through your proxy server and trust custom Certificate Authorities (CAs).

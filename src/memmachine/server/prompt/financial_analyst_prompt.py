@@ -4,13 +4,11 @@ Financial Analyst-specific prompts for Intelligent Memory System.
 Handles financial profiles with direct feature/value pairs (no tags).
 """
 
-import zoneinfo
-from datetime import datetime
-
 from memmachine.semantic_memory.semantic_model import (
     RawSemanticPrompt,
     SemanticCategory,
 )
+from memmachine.server.prompt.prompt_utilities import current_date_dow, enum_list
 
 # --- Canonical enumerations ---
 INVESTMENT_TYPES = [
@@ -89,15 +87,6 @@ def _categories_inline_list() -> str:
     return ", ".join(FINANCIAL_CATEGORIES)
 
 
-def _enum_list(enum_values: list[str]) -> str:
-    return ", ".join(f'"{v}"' for v in enum_values)
-
-
-def _current_date_dow(tz: str = "America/Los_Angeles") -> str:
-    dt = datetime.now(zoneinfo.ZoneInfo(tz))
-    return f"{dt.strftime('%Y-%m-%d')}[{dt.strftime('%a')}]"
-
-
 # -----------------------
 # Financial date handling
 # -----------------------
@@ -120,7 +109,7 @@ def _build_unified_financial_prompt() -> str:
     return f"""You are an AI assistant that manages financial profiles based on user messages about their wealth, investments, and financial planning.
 
 <CURRENT_DATE>
-{_current_date_dow()}
+{current_date_dow()}
 </CURRENT_DATE>
 
 **ROUTING RULES:**
@@ -173,9 +162,9 @@ Field behavior:
 
 Financial data extraction & normalization:
 - Extract financial amounts as numbers only (no $, commas, units)
-- Normalize investment types to standard categories: {_enum_list(INVESTMENT_TYPES)}
-- Risk tolerance levels: {_enum_list(RISK_LEVELS)}
-- Financial goal categories: {_enum_list(FINANCIAL_GOALS)}
+- Normalize investment types to standard categories: {enum_list(INVESTMENT_TYPES)}
+- Risk tolerance levels: {enum_list(RISK_LEVELS)}
+- Financial goal categories: {enum_list(FINANCIAL_GOALS)}
 - Convert percentages to decimal format (e.g., "5%" → "0.05")
 - Time periods: normalize to standard formats (monthly, quarterly, annually)
 
@@ -183,7 +172,7 @@ Field guidance:
 **NON-TIMELINE FIELDS** (no date fields, no EDTF formatting):
 - Income amounts: Numbers only as string (single-valued)
 - Credit scores: Three-digit number as string (single-valued)
-- Risk tolerance: One of {_enum_list(RISK_LEVELS)} (single-valued)
+- Risk tolerance: One of {enum_list(RISK_LEVELS)} (single-valued)
 - Tax brackets: Percentage as decimal string (single-valued)
 - Investment strategies: Investment approach description (multi-valued)
 - Financial literacy: Self-assessed knowledge level (single-valued)
