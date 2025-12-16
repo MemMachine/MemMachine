@@ -1,49 +1,30 @@
-# AGENTS.MD - Guide for AI Assistants
+# Guide for AI Assistants - Using MemMachine
 
-This document provides instructions for AI agents (like Cursor, Codex, etc.) on how to help developers build applications that use MemMachine. Use this guide to understand MemMachine's APIs, memory types, and integration patterns.
+This guide helps AI coding assistants (like Cursor, Claude Code, Codex, etc.) understand how to help developers integrate MemMachine into their applications. MemMachine is an open-source memory layer for AI agents that enables applications to learn, store, and recall data and preferences from past sessions.
 
 ## Project Overview
 
-MemMachine is an open-source memory layer for AI agents. It enables AI-powered applications to learn, store, and recall data and preferences from past sessions. The system provides three types of memory:
+MemMachine provides two types of memory:
 
-- **Short-term (Episodic) Memory**: Recent conversational context stored in a graph database (Neo4j)
-- **Long-term (Episodic) Memory**: Summarized and deduplicated episodes from short-term memory
-- **Profile (Semantic) Memory**: User-specific facts and preferences stored in PostgreSQL with vector embeddings
+- **Episodic Memory**: Stores conversational episodes (messages, interactions) in a graph database (Neo4j). Supports both short-term (recent context) and long-term (summarized) storage.
+- **Semantic Memory**: User-specific facts, preferences, and knowledge extracted from conversations. Uses vector embeddings for semantic search and is stored in PostgreSQL.
 
-## Architecture Overview
+## Installation
 
-### How MemMachine Works
+MemMachine is **not a hosted service**. Users must run their own MemMachine server instance.
 
-1. **Your Application** → Interacts with MemMachine via REST API, Python SDK, or MCP Server
-2. **MemMachine** → Processes interactions and stores them in appropriate memory types
-3. **Storage** → Episodic Memory → Neo4j, Profile Memory → PostgreSQL
+### Quick Installation (Docker - Recommended)
 
-### Memory Types
-
-- **Episodic Memory**: Stores conversational episodes (messages, interactions) in a graph database. Supports both short-term (recent context) and long-term (summarized) storage.
-- **Profile Memory**: Stores user-specific facts, preferences, and knowledge extracted from conversations. Uses vector embeddings for semantic search.
-
-## Getting Started
-
-### Installation
-
-MemMachine is **not a hosted service**. You must run your own MemMachine server instance. 
-
-- **Docker (Recommended)**: Use the `memmachine-compose.sh` script for a complete setup
-- **Python Package**: Install via `pip install memmachine` or `uv`
-- **Configuration**: The compose script will help you set up `configuration.yml` with your database connections and model providers
-- See the [Installation Guide](https://docs.memmachine.ai) for detailed setup instructions
-
-### Running the Server
+The easiest way to get started is using Docker with the provided compose script:
 
 ```bash
-# Using the MemMachine compose script (recommended)
+# Download and run the setup script
 ./memmachine-compose.sh
 
 # The script will:
 # - Check Docker installation
 # - Create .env file if needed
-# - Generate configuration.yml with your provider choice (OpenAI, Bedrock, or Ollama)
+# - Generate cfg.yml (or configuration.yml) with provider choice (OpenAI, Bedrock, or Ollama)
 # - Set up API keys
 # - Start all services (MemMachine, Neo4j, PostgreSQL)
 
@@ -52,276 +33,607 @@ MemMachine is **not a hosted service**. You must run your own MemMachine server 
 ./memmachine-compose.sh restart   # Restart services
 ./memmachine-compose.sh logs      # View logs
 ./memmachine-compose.sh clean     # Remove all data and volumes
+```
 
-# Or using the Python package directly
+### Python Package Installation
+
+Users can install MemMachine via pip:
+
+```bash
+# Install the full suite (client + server)
+pip install memmachine
+
+# Or install components separately:
+pip install memmachine-client    # Just the Python client library
+pip install memmachine-server   # Just the server
+
+# For GPU support (if using local embedding models):
+pip install "memmachine-server[gpu]"
+```
+
+### Running the Server
+
+After installation, users can run the server:
+
+```bash
+# Using the Python package
+# Note: The config file can be named cfg.yml or configuration.yml
+memmachine-server --config cfg.yml
+# or
 memmachine-server --config configuration.yml
+
+# Or if using Docker, the compose script handles this automatically
 ```
 
 ## API Structure
 
-### REST Endpoints
+### REST API v2
 
-The FastAPI server provides these endpoints:
+The v2 API uses a project-based model where all operations are scoped to an organization and project:
 
-- `POST /v1/memories`: Store episodes to both episodic and profile memory
-- `POST /v1/memories/episodic`: Store episodes to episodic memory only
-- `POST /v1/memories/profile`: Store episodes to profile memory only
-- `POST /v1/memories/search`: Search across both episodic and profile memory
-- `POST /v1/memories/episodic/search`: Search episodic memory only
-- `POST /v1/memories/profile/search`: Search profile memory only
-- `DELETE /v1/memories`: Delete memories
-- `GET /v1/sessions`: Get session information
-- `GET /health`: Health check endpoint
-- `GET /metrics`: Prometheus metrics endpoint
+**Base URL**: `http://localhost:8080/api/v2`
 
-### Headers and Session Context
+**Key Endpoints**:
 
-MemMachine uses HTTP headers to manage session context and isolate memories. All endpoints that interact with memory accept these headers:
+- `POST /api/v2/projects` - Create a new project
+- `POST /api/v2/projects/get` - Get project information
+- `POST /api/v2/projects/list` - List all projects
+- `POST /api/v2/projects/delete` - Delete a project
+- `POST /api/v2/memories` - Add memories (episodes)
+- `POST /api/v2/memories/search` - Search memories
+- `POST /api/v2/memories/episodic/delete` - Delete episodic memories
+- `POST /api/v2/memories/semantic/delete` - Delete semantic memories
+- `GET /health` - Health check endpoint
+- `GET /metrics` - Prometheus metrics endpoint
 
-#### Header Names
+## Python SDK Usage
 
-- **`group-id`** (or `group_id`): Unique identifier for a group or shared context
-- **`session-id`** (or `session_id`): Unique identifier for a specific conversation thread
-- **`user-id`** (or `user_id`): Comma-separated list of user identifiers
-- **`agent-id`** (or `agent_id`): Comma-separated list of agent identifiers
+The Python SDK provides a convenient interface for interacting with MemMachine. Here's how users typically use it:
 
-**Note**: Header names are case-insensitive and support both hyphenated (`group-id`) and underscore (`group_id`) formats.
-
-#### Default Values and Logic
-
-**Important**: Always set explicit `user-id` headers in your requests. Using defaults can cause memory isolation issues and data overlap between different users.
-
-The system applies defaults when headers are not provided, but these should only be used for testing:
-
-1. **`user-id`** (Required in production):
-   - **Always set this explicitly** with a unique identifier for each user
-   - Can be a comma-separated list: `"user1,user2,user3"`
-   - Values are automatically sorted and deduplicated
-   - Defaults to `["default"]` only if both `user-id` and `agent-id` are empty (not recommended)
-
-2. **`group-id`**:
-   - Defaults to the first `user-id` if `user-id` is provided
-   - Defaults to `"default"` if not provided and `user-id` is empty
-   - **Recommended**: Set explicitly for group conversations or shared contexts
-
-3. **`session-id`**:
-   - Defaults to the first `user-id` if `user-id` is provided
-   - Defaults to `"default"` if not provided and `user-id` is empty
-   - **Recommended**: Set explicitly with a unique identifier for each conversation thread
-
-4. **`agent-id`**:
-   - Defaults to `[]` (empty list) if not provided
-   - Can be a comma-separated list: `"agent1,agent2"`
-   - Set this to identify which AI agent(s) are participating in the conversation
-
-#### Response Headers
-
-The server echoes session context in response headers:
-- Response includes `group-id`, `session-id`, `user-id`, and `agent-id` headers
-- List values are joined with commas in response headers
-- This allows clients to track the session context used for the request
-
-#### Example Usage
+### Basic Setup
 
 ```python
-import requests
-
-# Single user request (recommended)
-# Always set user-id explicitly for proper memory isolation
-response = requests.post(
-    "http://localhost:8080/v1/memories",
-    headers={"user-id": "alice@example.com"},
-    json={"content": "I prefer dark mode"}
-)
-# Results in: group-id="alice@example.com", session-id="alice@example.com", 
-#             user-id=["alice@example.com"], agent-id=[]
-
-# Single user with explicit session
-response = requests.post(
-    "http://localhost:8080/v1/memories",
-    headers={
-        "user-id": "alice@example.com",
-        "session-id": "chat-2024-01-15"
-    },
-    json={"content": "Hello, I'm Alice"}
-)
-
-# Multi-user group conversation
-response = requests.post(
-    "http://localhost:8080/v1/memories",
-    headers={
-        "group-id": "project-alpha",
-        "session-id": "chat-thread-42",
-        "user-id": "alice@example.com,bob@example.com",
-        "agent-id": "crm-agent"
-    },
-    json={"content": "Let's discuss the project"}
-)
-```
-
-## Python SDK
-
-MemMachine provides a Python SDK for easier integration:
-
-```python
-from memmachine import MemMachineClient, Memory
+from memmachine import MemMachineClient
 
 # Initialize client
 client = MemMachineClient(base_url="http://localhost:8080")
 
-# Create a memory context
-memory = Memory(
-    group_id="project-alpha",
-    session_id="chat-1",
-    user_id=["alice@example.com"]
+# Create or get a project
+# Note: description, embedder, and reranker are optional
+# - description defaults to "" (empty string)
+# - embedder defaults to "" (uses server's configured default)
+# - reranker defaults to "" (uses server's configured default)
+project = client.create_project(
+    org_id="my-org",
+    project_id="my-project",
+    description="My project description"  # Optional, defaults to ""
 )
 
-# Store a memory
-await memory.add_episode(
+# Or get an existing project
+project = client.get_project(org_id="my-org", project_id="my-project")
+```
+
+### Working with Memory
+
+```python
+# Create a memory interface for a specific context
+memory = project.memory(
+    user_id="user123",        # User identifier (stored in metadata)
+    agent_id="agent456",      # Agent identifier (stored in metadata)
+    session_id="session789",  # Session identifier (stored in metadata)
+    group_id="group1"         # Optional: Group identifier (stored in metadata)
+)
+
+# Add memories
+# Note: Default values when not specified:
+# - role defaults to "user"
+# - producer defaults to user_id (if set) or "user"
+# - produced_for defaults to agent_id (if set) or "agent"
+# - episode_type defaults to "text" (stored in metadata)
+# - metadata defaults to {} (empty dict, but context fields like user_id are auto-added)
+# - timestamp is automatically set to current time
+memory.add(
     content="I prefer Python over JavaScript",
-    episode_type="preference"
+    role="user",              # Optional, defaults to "user"
+    metadata={"type": "preference"}  # Optional, defaults to {}
+)
+
+memory.add(
+    content="I understand you prefer Python",
+    role="assistant"  # Optional, defaults to "user"
 )
 
 # Search memories
-results = await memory.search(query="What are Alice's preferences?")
+# Note: Default values when not specified:
+# - limit defaults to 10 (used as top_k)
+# - filter_dict defaults to None (but context filters from user_id/agent_id/session_id are auto-applied)
+# - types defaults to both episodic and semantic memory
+results = memory.search(
+    query="What are the user's preferences?",
+    limit=10  # Optional, defaults to 10
+)
+
+# Results structure:
+# {
+#     "episodic_memory": [...],      # List of episodic memory results
+#     "episode_summary": [...],      # Summaries of episodes
+#     "semantic_memory": [...]       # List of semantic memory results
+# }
 ```
 
-See the [Python SDK documentation](https://docs.memmachine.ai/api_reference/python/client) for more details.
+### Memory Operations
 
-## Data Types
+```python
+# Delete episodic memories
+memory.delete_episodic(episodic_id="episode_123")
+# Or delete multiple
+memory.delete_episodic(episodic_ids=["ep1", "ep2"])
 
-### Episode
+# Delete semantic memories
+memory.delete_semantic(semantic_id="semantic_123")
+# Or delete multiple
+memory.delete_semantic(semantic_ids=["sem1", "sem2"])
 
-An `Episode` represents a single event or piece of data in the memory system:
+# Get current context
+context = memory.get_context()
+# Returns: {"org_id": "...", "project_id": "...", "user_id": "...", ...}
+```
 
-- `uuid`: Unique identifier (UUID)
-- `episode_type`: Type of episode (e.g., "message", "preference", "action")
-- `content_type`: Format of content (currently `ContentType.STRING`)
-- `content`: The actual data/content
-- `timestamp`: When the episode occurred
-- `group_id`: Group identifier
-- `session_id`: Session identifier
-- `producer_id`: Who created this episode
-- `produced_for_id`: Intended recipient (optional)
-- `user_metadata`: Additional JSON-compatible metadata (optional)
+## REST API Usage Examples
 
-### MemoryContext
+The following examples demonstrate how to use the MemMachine REST API v2 with `curl` commands. All examples assume the server is running at `http://localhost:8080`.
 
-A `MemoryContext` isolates memories for different conversations:
+### Project Management
 
-- `group_id`: Group identifier
-- `session_id`: Session identifier
-- `user_id`: Set of user identifiers
-- `agent_id`: Set of agent identifiers
+#### List Projects
 
-## Configuration
+List all projects in an organization:
 
-MemMachine is configured via a YAML file (`configuration.yml`). Key sections:
+```bash
+curl -X POST "http://localhost:8080/api/v2/projects/list" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
 
-- **`model`**: Language model configurations (OpenAI, Ollama, AWS Bedrock, etc.)
-- **`embedder`**: Embedding model configurations
-- **`storage`**: Database connections (Neo4j for episodic, PostgreSQL for profile)
-- **`profile_memory`**: Profile memory settings
-- **`long_term_memory`**: Long-term memory settings
+**Response**: Returns a list of all projects with their configurations.
 
-See `sample_configs/` directory for example configurations.
+#### Create a Project
+
+Create a new project. Required fields: `org_id`, `project_id`. Optional fields: `description` (defaults to `""`), `config.embedder` (defaults to `""`, uses server default), `config.reranker` (defaults to `""`, uses server default).
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/projects" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "description": "My project description",
+    "config": {
+      "embedder": "my-openai-embedder",
+      "reranker": "my-rrf-reranker"
+    }
+  }'
+```
+
+**Response**: Returns the created project with its configuration.
+
+#### Get Project Information
+
+Retrieve information about an existing project:
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/projects/get" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project"
+  }'
+```
+
+**Response**: Returns the project details including description and configuration.
+
+#### Delete a Project
+
+Delete a project and all its associated memories:
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/projects/delete" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project"
+  }'
+```
+
+**Response**: Returns 204 No Content on success.
+
+### Memory Operations
+
+#### Add Memories
+
+```bash
+# Required fields: org_id, project_id, messages[].content
+# Optional message fields:
+# - producer (defaults to "user")
+# - produced_for (defaults to "")
+# - role (defaults to "")
+# - timestamp (defaults to current time in UTC)
+# - metadata (defaults to {})
+# Optional request fields:
+# - types (defaults to [] which means all memory types)
+curl -X POST "http://localhost:8080/api/v2/memories" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "messages": [
+      {
+        "content": "I like pizza",
+        "producer": "user123",
+        "produced_for": "agent456",
+        "role": "user",
+        "timestamp": "2024-01-15T10:00:00Z",
+        "metadata": {
+          "type": "preference",
+          "topic": "food"
+        }
+      }
+    ]
+  }'
+```
+
+#### Search Memories
+
+Search for memories across episodic and semantic memory. Required fields: `org_id`, `project_id`, `query`. Optional fields: `top_k` (defaults to `10`), `filter` (defaults to `""`), `types` (defaults to `[]` which means all memory types).
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/memories/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "query": "What does the user like?",
+    "top_k": 5,
+    "types": ["episodic", "semantic"]
+  }'
+```
+
+**Response**: Returns search results with `episodic_memory` and `semantic_memory` arrays.
+
+**Example with filter**:
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/memories/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "query": "user preferences",
+    "top_k": 10,
+    "filter": "metadata.user_id='user123'",
+    "types": ["semantic"]
+  }'
+```
+
+#### Delete Episodic Memories
+
+Delete specific episodic memories by ID:
+
+```bash
+# Delete a single episodic memory
+curl -X POST "http://localhost:8080/api/v2/memories/episodic/delete" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "episodic_id": "episode_123"
+  }'
+```
+
+**Delete multiple episodic memories**:
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/memories/episodic/delete" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "episodic_ids": ["episode_123", "episode_456", "episode_789"]
+  }'
+```
+
+**Response**: Returns 204 No Content on success.
+
+#### Delete Semantic Memories
+
+Delete specific semantic memories by ID:
+
+```bash
+# Delete a single semantic memory
+curl -X POST "http://localhost:8080/api/v2/memories/semantic/delete" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "semantic_id": "semantic_123"
+  }'
+```
+
+**Delete multiple semantic memories**:
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/memories/semantic/delete" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "semantic_ids": ["semantic_123", "semantic_456"]
+  }'
+```
+
+**Response**: Returns 204 No Content on success.
+
+### Utility Endpoints
+
+#### Health Check
+
+Check if the MemMachine server is running and healthy:
+
+```bash
+curl -X GET "http://localhost:8080/health"
+```
+
+**Response**: Returns server health status.
+
+#### Metrics
+
+Get Prometheus metrics (useful for monitoring):
+
+```bash
+curl -X GET "http://localhost:8080/metrics"
+```
+
+**Response**: Returns Prometheus-formatted metrics.
 
 ## Common Integration Patterns
 
-### Storing User Messages
+### Pattern 1: Chatbot with Memory
 
 ```python
-# Store a user message
-response = requests.post(
-    "http://localhost:8080/v1/memories",
-    headers={"user-id": "user123"},
-    json={
-        "content": "I'm working on a Python project",
-        "episode_type": "message"
-    }
-)
+from memmachine import MemMachineClient
+
+client = MemMachineClient(base_url="http://localhost:8080")
+project = client.get_project(org_id="my-org", project_id="chatbot-project")
+
+def handle_user_message(user_id: str, session_id: str, message: str):
+    # Create memory context for this user/session
+    memory = project.memory(user_id=user_id, session_id=session_id)
+    
+    # Store user message
+    memory.add(content=message, role="user")
+    
+    # Search for relevant context
+    context = memory.search(query=message, limit=5)
+    
+    # Build prompt with context
+    prompt = build_prompt_with_context(message, context)
+    
+    # Get AI response (using your LLM)
+    response = get_llm_response(prompt)
+    
+    # Store assistant response
+    memory.add(content=response, role="assistant")
+    
+    return response
 ```
 
-### Searching for Context
+### Pattern 2: Multi-User Group Chat
 
 ```python
-# Search for relevant context before responding
-response = requests.post(
-    "http://localhost:8080/v1/memories/search",
-    headers={"user-id": "user123"},
-    json={"query": "What projects is the user working on?"}
-)
-
-context = response.json()
-# Use context['episodic'] and context['profile'] in your LLM prompt
+def handle_group_message(group_id: str, user_id: str, message: str):
+    memory = project.memory(
+        group_id=group_id,
+        user_id=user_id,
+        session_id=f"group-{group_id}"
+    )
+    
+    # Store message
+    memory.add(content=message, role="user")
+    
+    # Search for group context
+    context = memory.search(query=message, limit=10)
+    
+    # Process with context...
+    return process_group_message(message, context)
 ```
 
-### Multi-User Conversations
+### Pattern 3: User Preference Learning
 
 ```python
-# Group chat scenario
-response = requests.post(
-    "http://localhost:8080/v1/memories",
-    headers={
-        "group-id": "team-alpha",
-        "session-id": "slack-channel-123",
-        "user-id": "alice,bob,charlie",
-        "agent-id": "team-assistant"
-    },
-    json={"content": "Meeting scheduled for tomorrow"}
-)
+def learn_user_preference(user_id: str, preference: str, category: str):
+    memory = project.memory(user_id=user_id)
+    
+    # Store preference as semantic memory
+    memory.add(
+        content=preference,
+        role="user",
+        episode_type="semantic",  # Store in semantic memory
+        metadata={"category": category, "type": "preference"}
+    )
+
+def get_user_preferences(user_id: str, category: str = None):
+    memory = project.memory(user_id=user_id)
+    
+    query = f"user preferences"
+    if category:
+        query += f" about {category}"
+    
+    results = memory.search(query=query, limit=20)
+    return results["semantic_memory"]
+```
+
+## Data Types and Structures
+
+### Message Structure
+
+```python
+{
+    "content": str,              # Required: The message content
+    "producer": str,             # Optional: Who created this (defaults to "user")
+    "produced_for": str,         # Optional: Who this is for (defaults to "")
+    "role": str,                 # Optional: "user", "assistant", or "system" (defaults to "")
+    "timestamp": str,            # Optional: ISO 8601 timestamp (defaults to current time in UTC)
+    "metadata": dict             # Optional: Additional metadata (defaults to {})
+}
+```
+
+### Search Results Structure
+
+```python
+{
+    "episodic_memory": [         # List of episodic memory results
+        {
+            "content": str,
+            "producer": str,
+            "produced_for": str,
+            "role": str,
+            "timestamp": str,
+            "metadata": dict,
+            # ... other fields
+        }
+    ],
+    "episode_summary": [         # Summaries of episodes
+        {
+            "content": str,
+            # ... other fields
+        }
+    ],
+    "semantic_memory": [         # List of semantic memory results
+        {
+            "content": str,
+            "metadata": dict,
+            # ... other fields
+        }
+    ]
+}
 ```
 
 ## Error Handling
 
+Common HTTP status codes:
+
+- **200 OK**: Request successful
+- **201 Created**: Resource created successfully
 - **400 Bad Request**: Invalid request data or missing required fields
-- **404 Not Found**: Memory instance not found for the given session context
+- **404 Not Found**: Resource not found (e.g., project doesn't exist)
+- **422 Unprocessable Entity**: Validation error
 - **500 Internal Server Error**: Server-side error
 - **503 Service Unavailable**: Service not ready (check `/health` endpoint)
 
-Always check the response status and handle errors appropriately in your application.
+Always check response status and handle errors appropriately:
+
+```python
+import requests
+
+try:
+    response = requests.post(url, json=data)
+    response.raise_for_status()  # Raises exception for 4xx/5xx status codes
+    return response.json()
+except requests.HTTPError as e:
+    if e.response.status_code == 404:
+        # Handle not found
+        pass
+    elif e.response.status_code == 400:
+        # Handle bad request
+        pass
+    else:
+        # Handle other errors
+        pass
+```
+
+## Default Values Summary
+
+### Project Creation
+- `description`: Defaults to `""` (empty string)
+- `config.embedder`: Defaults to `""` (uses server's configured default embedder)
+- `config.reranker`: Defaults to `""` (uses server's configured default reranker)
+
+### Memory.add() (Python SDK)
+- `role`: Defaults to `"user"`
+- `producer`: Defaults to `user_id` (if set on Memory instance) or `"user"`
+- `produced_for`: Defaults to `agent_id` (if set on Memory instance) or `"agent"`
+- `episode_type`: Defaults to `"text"` (stored in metadata)
+- `metadata`: Defaults to `{}` (empty dict, but context fields like `user_id`, `agent_id`, `session_id` are automatically added)
+- `timestamp`: Automatically set to current time (not a parameter)
+
+### Memory.search() (Python SDK)
+- `limit`: Defaults to `10` (used as `top_k` in API)
+- `filter_dict`: Defaults to `None`, but context filters from `user_id`, `agent_id`, and `session_id` are automatically applied
+- `types`: Defaults to both `[MemoryType.Episodic, MemoryType.Semantic]`
+
+### REST API v2 Defaults
+- **Add Memories**: `producer` defaults to `"user"`, `produced_for` defaults to `""`, `role` defaults to `""`, `timestamp` defaults to current time, `metadata` defaults to `{}`, `types` defaults to `[]` (all memory types)
+- **Search Memories**: `top_k` defaults to `10`, `filter` defaults to `""`, `types` defaults to `[]` (all memory types)
 
 ## Best Practices
 
-1. **Always set user-id headers**: **Required** - Always provide explicit `user-id` headers for proper memory isolation. Never rely on defaults in production as this can cause data overlap between different users.
+1. **Always use projects**: The v2 API requires `org_id` and `project_id`. Use projects to isolate different applications or environments.
 
-2. **Use unique session IDs**: Use unique session IDs for different conversations to avoid data overlap
+2. **Set explicit user IDs**: Always provide explicit `user_id` values for proper memory isolation. Never rely on defaults in production.
 
-3. **Set group-id for shared contexts**: Explicitly set `group-id` for group conversations or shared contexts
+3. **Use appropriate roles**: In the Python SDK, `role` defaults to `"user"`. Use `role="user"` for user messages, `role="assistant"` for AI responses, and `role="system"` for system messages. Note: In the REST API, `role` defaults to an empty string, so it's recommended to always specify it.
 
-4. **Search before responding**: Query memory for relevant context before generating responses
+4. **Search before responding**: Query memory for relevant context before generating responses to provide personalized, context-aware answers.
 
-5. **Store important information**: Store user preferences, facts, and important conversation points
+5. **Store important information**: Store user preferences, facts, and important conversation points to build up a knowledge base over time.
 
-6. **Monitor health**: Use the `/health` endpoint to check server status
+6. **Use metadata effectively**: Add relevant metadata to memories for better filtering and organization:
+   ```python
+   memory.add(
+       content="I work at Acme Corp",
+       role="user",
+       metadata={"type": "fact", "category": "employment", "verified": True}
+   )
+   ```
 
-7. **Handle async operations**: Most operations are async - use `async/await` or async HTTP clients
+7. **Monitor health**: Use the `/health` endpoint to check server status before making requests.
 
-## Examples
+8. **Handle timeouts**: Set appropriate timeouts for API calls, especially for search operations which may take longer.
 
-Check the `examples/` directory for complete integration examples:
+## Configuration
 
-- **`examples/crm/`**: CRM agent with memory
-- **`examples/financial_analyst/`**: Financial analysis agent
-- **`examples/health_assistant/`**: Healthcare assistant
-- **`examples/writing_assistant/`**: Writing assistant
-- **`examples/frontend/`**: Web frontend integration
+MemMachine is configured via a YAML file. The file can be named `cfg.yml` (recommended in documentation) or `configuration.yml` (used in Docker setups). Key sections include:
 
-## Getting Help
+- **`resources.databases`**: Database connections (Neo4j for episodic, PostgreSQL for semantic)
+- **`resources.embedders`**: Embedding model configurations (OpenAI, AWS Bedrock, Ollama, etc.)
+- **`resources.language_models`**: LLM configurations for summarization and extraction
+- **`episodic_memory`**: Episodic memory settings (short-term and long-term)
+- **`semantic_memory`**: Semantic memory settings
+
+Users typically configure this file when setting up their server. The Docker compose script can help generate it.
+
+## Examples and Resources
 
 - **Documentation**: [https://docs.memmachine.ai](https://docs.memmachine.ai)
-- **Examples**: See `examples/` directory
 - **API Reference**: [https://docs.memmachine.ai/api_reference](https://docs.memmachine.ai/api_reference)
-- **Community**: Join the [Discord Server](https://discord.gg/usydANvKqD)
+- **Examples Directory**: Check the `examples/` directory in the repository for complete integration examples:
+  - `examples/crm/` - CRM agent with memory
+  - `examples/financial_analyst/` - Financial analysis agent
+  - `examples/health_assistant/` - Healthcare assistant
+  - `examples/writing_assistant/` - Writing assistant
+  - `examples/frontend/` - Web frontend integration
 
 ## Summary
 
-When building applications with MemMachine:
+When helping users integrate MemMachine:
 
-1. **Set up your server**: Run MemMachine locally or in your infrastructure
-2. **Use headers**: Set appropriate session headers (`group-id`, `session-id`, `user-id`, `agent-id`)
-3. **Store memories**: Store important user information and conversation context
-4. **Search context**: Query memory before generating responses to provide personalized, context-aware answers
-5. **Handle errors**: Implement proper error handling for API calls
+1. **Installation**: Guide users to install via `pip install memmachine` or use Docker with `./memmachine-compose.sh`
+2. **Server Setup**: Ensure the MemMachine server is running (default: `http://localhost:8080`)
+3. **Project Creation**: Help users create projects using `client.create_project(org_id, project_id)`
+4. **Memory Operations**: Show how to use `memory.add()` to store and `memory.search()` to retrieve context
+5. **Context Management**: Explain how to use `user_id`, `agent_id`, `session_id` for proper memory isolation
+6. **Error Handling**: Implement proper error handling for API calls
+7. **Best Practices**: Encourage searching before responding and storing important information
 
-MemMachine enables your AI applications to remember past interactions, learn user preferences, and provide personalized, context-aware responses across sessions.
+MemMachine enables AI applications to remember past interactions, learn user preferences, and provide personalized, context-aware responses across sessions.
+
