@@ -1,0 +1,94 @@
+identity:
+  author: "memverge"
+  name: "memmachine-plugin"
+  label:
+    en_US: "memmachine-plugin"
+    zh_Hans: "memmachine-plugin"
+    pt_BR: "memmachine-plugin"
+    ja_JP: "memmachine-plugin"
+  description:
+    en_US: "memmachine plugin"
+    zh_Hans: "memmachine plugin"
+    pt_BR: "memmachine plugin"
+    ja_JP: "memmachine plugin"
+  icon: "icon.png"
+
+credentials_for_provider:
+  memmachine_api_key:
+    type: secret-input
+    required: true
+    label:
+      en_US: MemMachine API key
+      zh_Hans: MemMachine API key
+    placeholder:
+      en_US: Please input your MemMachine API key
+      zh_Hans: 请输入你的 MemMachine API key
+    help:
+      en_US: Get your API key from MemMachine API server platform
+      zh_Hans: 从 MemMachine API server platform 获取你的 API key
+    url: https://console.memmachine.ai/
+
+{% if enable_base_url_credential %}
+  memmachine_base_url:
+    type: text-input
+    required: false
+    label:
+      en_US: MemMachine Base URL
+      zh_Hans: MemMachine Base URL
+    placeholder:
+      en_US: "{{ default_base_url }}"
+      zh_Hans: "{{ default_base_url }}"
+    help:
+      en_US: "Optional. Override the MemMachine API base URL (e.g. self-hosted)."
+      zh_Hans: "可选：覆盖 MemMachine API base URL（例如自托管）。"
+{% endif %}
+
+
+#########################################################################################
+# If you want to support OAuth, you can uncomment the following code.
+#########################################################################################
+# oauth_schema:
+#   client_schema:
+#     - name: "client_id"
+#       type: "secret-input"
+#       required: true
+#       url: https://example.com/oauth/authorize
+#       placeholder:
+#         en_US: "Please input your Client ID"
+#         zh_Hans: "请输入你的 Client ID"
+#         pt_BR: "Insira seu Client ID"
+#       help:
+#         en_US: "Client ID is used to authenticate requests to the example.com API."
+#         zh_Hans: "Client ID 用于认证请求到 example.com API。"
+#         pt_BR: "Client ID é usado para autenticar solicitações à API do example.com."
+#       label:
+#         zh_Hans: "Client ID"
+#         en_US: "Client ID"
+#     - name: "client_secret"
+#       type: "secret-input"
+#       required: true
+#       url: https://example.com/oauth/authorize
+#       placeholder:
+#         en_US: "Please input your Client Secret"
+#         zh_Hans: "请输入你的 Client Secret"
+#         pt_BR: "Insira seu Client Secret"
+#       help:
+#         en_US: "Client Secret is used to authenticate requests to the example.com API."
+#         zh_Hans: "Client Secret 用于认证请求到 example.com API。"
+#         pt_BR: "Client Secret é usado para autenticar solicitações à API do example.com."
+#       label:
+#         zh_Hans: "Client Secret"
+#         en_US: "Client Secret"
+#   credentials_schema:
+#     - name: "access_token"
+#       type: "secret-input"
+#       label:
+#         zh_Hans: "Access Token"
+#         en_US: "Access Token"
+
+tools:
+  - tools/add-memory.yaml
+  - tools/search-memory.yaml
+extra:
+  python:
+    source: provider/memmachine-plugin.py
