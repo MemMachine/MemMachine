@@ -50,38 +50,100 @@ Copy the following:
 ```
 You MUST actively use memory on EVERY message to provide personalized responses.
 
-## CRITICAL: Session Values - MUST USE EXACTLY AS SHOWN
+## CRITICAL: API Configuration - MUST USE EXACTLY AS SHOWN
 
-When calling SearchMemory or AddMemory, you MUST ALWAYS use these EXACT session values:
+**When calling SearchMemory or AddMemory, you MUST ALWAYS use these EXACT values:**
 
+### For AddMemory:
+```json
 {
-  "group_id": "YourName",
-  "user_id": ["YourName"],
-  "session_id": "YourName",
-  "agent_id": ["YourName"]
+  "org_id": "universal",
+  "project_id": "universal",
+  "messages": [
+    {
+      "content": "your content here",
+      "producer": "Charles",
+      "produced_for": "Charles",
+      "role": "user",
+      "metadata": {
+        "user_id": "Charles",
+        "agent_id": "Charles",
+        "session_id": "Charles",
+        "group_id": "Charles"
+      }
+    }
+  ]
 }
+```
 
-Also use these exact values:
-- producer: "YourName"
-- produced_for: "YourName"
+### For SearchMemory:
+```json
+{
+  "org_id": "universal",
+  "project_id": "universal",
+  "query": "your search query",
+  "top_k": 10,
+  "filter": "metadata.user_id='Charles'"
+}
+```
+
 
 ## CRITICAL: Memory Operations on EVERY Message
 
-On EVERY user message, you MUST:
+**On EVERY user message, you MUST:**
 
-1. ALWAYS start by searching memories (SearchMemory):
-   - Search for relevant past information based on the user's new message
-   - Use the results to understand context, preferences, history, long-term facts
+1. **ALWAYS start by searching memories** (SearchMemory):
+   - Search for relevant past information related to the user's current message
+   - Use the query to understand context: user's preferences, past conversations, facts they've shared
+   - This helps you provide personalized, context-aware responses
 
-2. ALWAYS respond naturally using the retrieved memories:
-   - Do NOT mention "searching memory"
-   - Use context naturally in your reply
+2. **ALWAYS respond naturally** using the retrieved memories:
+   - Integrate past context naturally into your answer
+   - Don't mention that you're "searching memories" - just use the information naturally
 
-3. ALWAYS store new information (AddMemory):
-   - Store any new facts, preferences, goals, or plans the user shares
+3. **ALWAYS store new information** (AddMemory) if the user shared anything new:
+   - After responding, store any NEW facts, preferences, plans, or important details
+   - Include full context in the content field
+   - Always include the date in YYYY-MM-DD format at the start of content if you know the timezone
+
+## Example Usage
+
+### Storing a memory:
+```json
+{
+  "org_id": "universal",
+  "project_id": "universal",
+  "messages": [
+    {
+      "content": "2024-11-04: User prefers Python over JavaScript for backend development",
+      "producer": "Charles",
+      "produced_for": "Charles",
+      "role": "user",
+      "metadata": {
+        "user_id": "Charles",
+        "agent_id": "Charles",
+        "session_id": "Charles",
+        "group_id": "Charles",
+        "episode_type": "preference"
+      }
+    }
+  ]
+}
 ```
 
-You can replace `"YourName"` with any test user ID you want.
+### Searching memories:
+```json
+{
+  "org_id": "universal",
+  "project_id": "universal",
+  "query": "user preferences about programming languages",
+  "top_k": 10,
+  "filter": "metadata.user_id='Charles'"
+}
+```
+```
+
+You can replace `"Charles"` with any test user ID you want in the examples above.
 
 ---
 
@@ -113,21 +175,21 @@ In the **Schema** field, paste the following content:
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "MemMachine Memory API",
-    "description": "API for storing and retrieving long-term memories. Use this to remember important information about users across conversations. Automatically stores memories in both episodic memory (conversation history) and profile memory (long-term user traits and facts).",
-    "version": "v1.0.0"
+    "title": "MemMachine Memory API v2",
+    "description": "API for storing and retrieving long-term memories. Use this to remember important information about users across conversations. Automatically stores memories in both episodic memory (conversation history) and semantic memory (long-term user traits and facts).",
+    "version": "v2.0.0"
   },
   "servers": [
     {
-      "url": "A HTTPS URL hosting MemMachine",
+      "url": "https://api.memmachines.com",
       "description": "MemMachine API server"
     }
   ],
   "paths": {
-    "/v1/memories": {
+    "/api/v2/memories": {
       "post": {
-        "description": "CRITICAL: Use this on EVERY message to store new information. Automatically store any new facts, preferences, plans, or details the user shares. Include full context in episode_content. This ensures future conversations have complete context.",
-        "summary": "Store a new memory",
+        "description": "CRITICAL: Use this on EVERY message to store new information. Automatically store any facts, preferences, plans, or details the user shares. Include full context. Stores in both episodic (conversation history) and semantic (long-term traits) memory.",
+        "summary": "Store new memories",
         "operationId": "AddMemory",
         "x-openai-isConsequential": false,
         "requestBody": {
@@ -135,31 +197,70 @@ In the **Schema** field, paste the following content:
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MemoryInput"
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              },
+              "examples": {
+                "user_preference": {
+                  "summary": "Store user preference",
+                  "value": {
+                    "org_id": "universal",
+                    "project_id": "universal",
+                    "messages": [
+                      {
+                        "content": "2024-11-04: User prefers Python over JavaScript for backend development",
+                        "producer": "Charles",
+                        "produced_for": "Charles",
+                        "role": "user",
+                        "metadata": {
+                          "user_id": "Charles",
+                          "agent_id": "Charles",
+                          "session_id": "Charles",
+                          "group_id": "Charles",
+                          "episode_type": "preference"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "conversation_context": {
+                  "summary": "Store conversation context",
+                  "value": {
+                    "org_id": "universal",
+                    "project_id": "universal",
+                    "messages": [
+                      {
+                        "content": "2024-11-04: User mentioned they are working on a new project using React and TypeScript. They prefer functional components over class components.",
+                        "producer": "Charles",
+                        "produced_for": "Charles",
+                        "role": "user",
+                        "metadata": {
+                          "user_id": "Charles",
+                          "agent_id": "Charles",
+                          "session_id": "Charles",
+                          "group_id": "Charles",
+                          "episode_type": "message"
+                        }
+                      }
+                    ]
+                  }
+                }
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Memory successfully stored",
+            "description": "Memories successfully stored",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "integer",
-                      "description": "Status code (0 for success)",
-                      "example": 0
-                    }
-                  }
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request - invalid producer or produced_for ID",
+            "description": "Bad request - invalid org_id or project_id",
             "content": {
               "application/json": {
                 "schema": {
@@ -169,7 +270,7 @@ In the **Schema** field, paste the following content:
             }
           },
           "404": {
-            "description": "No matching episodic memory instance found",
+            "description": "Project does not exist",
             "content": {
               "application/json": {
                 "schema": {
@@ -192,9 +293,9 @@ In the **Schema** field, paste the following content:
         "deprecated": false
       }
     },
-    "/v1/memories/search": {
+    "/api/v2/memories/search": {
       "post": {
-        "description": "CRITICAL: Use this on EVERY message to retrieve context. Always search for relevant past information before responding. This searches both profile memory (long-term user traits) and episodic memory (past conversations) to provide personalized responses.",
+        "description": "CRITICAL: Use this on EVERY message to retrieve context. Always search for relevant past information before responding. This searches both semantic memory (long-term user traits) and episodic memory (past conversations) to provide personalized responses.",
         "summary": "Search memories",
         "operationId": "SearchMemory",
         "x-openai-isConsequential": false,
@@ -203,7 +304,32 @@ In the **Schema** field, paste the following content:
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchInput"
+                "$ref": "#/components/schemas/SearchMemoriesSpec"
+              },
+              "examples": {
+                "search_user_preferences": {
+                  "summary": "Search for user preferences",
+                  "value": {
+                    "org_id": "universal",
+                    "project_id": "universal",
+                    "query": "user preferences about programming languages",
+                    "top_k": 10,
+                    "filter": "metadata.user_id='Charles'",
+                    "types": [
+                      "episodic",
+                      "semantic"
+                    ]
+                  }
+                },
+                "search_all_memories": {
+                  "summary": "Search all memories without filter",
+                  "value": {
+                    "org_id": "universal",
+                    "project_id": "universal",
+                    "query": "What has the user mentioned about their work?",
+                    "top_k": 5
+                  }
+                }
               }
             }
           }
@@ -230,7 +356,17 @@ In the **Schema** field, paste the following content:
             }
           },
           "404": {
-            "description": "No matching episodic memory instance found",
+            "description": "Project does not exist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid argument",
             "content": {
               "application/json": {
                 "schema": {
@@ -256,140 +392,181 @@ In the **Schema** field, paste the following content:
   },
   "components": {
     "schemas": {
-      "MemoryInput": {
+      "AddMemoriesSpec": {
         "type": "object",
-        "description": "Input for storing a new memory",
+        "description": "Input for storing new memories",
         "properties": {
-          "session": {
-            "$ref": "#/components/schemas/SessionData",
-            "description": "Session context. Fixed values are required."
-          },
-          "producer": {
+          "org_id": {
             "type": "string",
-            "default": "patient_001",
-            "description": "The ID of the entity that produced the content (usually the user ID). Must be 'patient_001'.",
-            "example": "patient_001"
+            "default": "universal",
+            "description": "Organization ID. Defaults to 'universal' if not specified. Cannot contain '/'.",
+            "example": "universal"
           },
-          "produced_for": {
+          "project_id": {
             "type": "string",
-            "default": "patient_001",
-            "description": "The ID of the entity the content was produced for (usually 'patient_001' or the agent ID). Must be 'patient_001'.",
-            "example": "patient_001"
+            "default": "universal",
+            "description": "Project ID. Defaults to 'universal' if not specified. Cannot contain '/'.",
+            "example": "universal"
           },
-          "episode_content": {
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Array of messages to store. Each message is stored in both episodic and semantic memory.",
+            "items": {
+              "$ref": "#/components/schemas/MemoryMessage"
+            }
+          }
+        },
+        "required": [
+          "messages"
+        ],
+        "additionalProperties": false
+      },
+      "MemoryMessage": {
+        "type": "object",
+        "description": "A single memory message to store",
+        "properties": {
+          "content": {
             "type": "string",
             "description": "The memory content to store. Include full context - not just a snippet. Always prepend with current date in YYYY-MM-DD format if you know the user's timezone, UTC otherwise.",
             "example": "2024-11-04: User prefers Python over JavaScript for backend development"
           },
-          "episode_type": {
+          "producer": {
             "type": "string",
-            "description": "Type of memory: 'message' (conversation), 'preference' (user preference), 'fact' (factual information), 'goal' (user goal), etc.",
-            "default": "message",
-            "example": "preference"
+            "default": "user",
+            "description": "The ID of the entity that produced the content (usually the user ID).",
+            "example": "Charles"
+          },
+          "produced_for": {
+            "type": "string",
+            "default": "",
+            "description": "The ID of the entity the content was produced for (usually the agent ID or empty for user messages).",
+            "example": "Charles"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp in UTC. Defaults to current time if not provided.",
+            "example": "2024-11-04T10:30:00Z"
+          },
+          "role": {
+            "type": "string",
+            "default": "",
+            "description": "Message role: 'user', 'assistant', or 'system'. Used to distinguish between user messages and assistant responses.",
+            "enum": [
+              "user",
+              "assistant",
+              "system",
+              ""
+            ],
+            "example": "user"
           },
           "metadata": {
             "type": "object",
-            "description": "Optional metadata",
-            "additionalProperties": true,
-            "default": {}
+            "description": "Optional metadata. Common fields include: user_id, agent_id, session_id, group_id, episode_type (e.g., 'preference', 'fact', 'goal', 'message'). All metadata values must be strings.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "example": {
+              "user_id": "Charles",
+              "agent_id": "Charles",
+              "session_id": "Charles",
+              "group_id": "Charles",
+              "episode_type": "preference"
+            }
           }
         },
         "required": [
-          "session",
-          "producer",
-          "produced_for",
-          "episode_content",
-          "episode_type"
+          "content"
         ],
-        "additionalProperties": true
+        "additionalProperties": false
       },
-      "SearchInput": {
+      "SearchMemoriesSpec": {
         "type": "object",
         "description": "Input for searching memories",
         "properties": {
-          "session": {
-            "$ref": "#/components/schemas/SessionData",
-            "description": "Session context. Fixed values are required."
+          "org_id": {
+            "type": "string",
+            "default": "universal",
+            "description": "Organization ID. Defaults to 'universal' if not specified. Cannot contain '/'.",
+            "example": "universal"
+          },
+          "project_id": {
+            "type": "string",
+            "default": "universal",
+            "description": "Project ID. Defaults to 'universal' if not specified. Cannot contain '/'.",
+            "example": "universal"
           },
           "query": {
             "type": "string",
             "description": "Natural language query to search for relevant memories",
             "example": "user preferences about programming languages"
           },
-          "limit": {
+          "top_k": {
             "type": "integer",
-            "description": "Maximum number of results to return. Default is 5.",
-            "default": 5,
+            "description": "Maximum number of results to return per memory type. Default is 10.",
+            "default": 10,
             "minimum": 1,
-            "maximum": 50
+            "maximum": 100
           },
           "filter": {
-            "type": "object",
-            "description": "Optional filters for episodic/profile memory",
-            "additionalProperties": true,
-            "nullable": true
+            "type": "string",
+            "description": "Optional filter string in format: \"key='value' AND key2='value2'\". Used to filter by metadata fields. Example: \"metadata.user_id='Charles' AND metadata.episode_type='preference'\".",
+            "default": "",
+            "example": "metadata.user_id='Charles'"
+          },
+          "types": {
+            "type": "array",
+            "description": "Memory types to search. If not specified, searches both 'episodic' and 'semantic' memory.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "episodic",
+                "semantic"
+              ]
+            },
+            "default": []
           }
         },
         "required": [
-          "session",
           "query"
-        ],
-        "additionalProperties": true
-      },
-      "SessionData": {
-        "type": "object",
-        "description": "Session context (fixed to a single identity). MUST use: group_id='patient_001', user_id=['patient_001'], session_id='patient_001', agent_id=['patient_001'].",
-        "properties": {
-          "group_id": {
-            "type": "string",
-            "const": "patient_001",
-            "default": "patient_001",
-            "description": "Fixed group ID."
-          },
-          "user_id": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 1,
-            "default": [
-              "patient_001"
-            ],
-            "items": {
-              "type": "string",
-              "const": "patient_001"
-            },
-            "description": "Fixed user list with a single value."
-          },
-          "session_id": {
-            "type": "string",
-            "const": "patient_001",
-            "default": "patient_001",
-            "description": "Fixed session ID."
-          },
-          "agent_id": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 1,
-            "default": [
-              "patient_001"
-            ],
-            "items": {
-              "type": "string",
-              "const": "patient_001"
-            },
-            "description": "Fixed agent list with a single value."
-          }
-        },
-        "required": [
-          "group_id",
-          "user_id",
-          "session_id",
-          "agent_id"
         ],
         "additionalProperties": false
       },
+      "AddMemoriesResponse": {
+        "type": "object",
+        "description": "Response after storing memories",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Array of results, one for each message stored",
+            "items": {
+              "$ref": "#/components/schemas/AddMemoryResult"
+            }
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "AddMemoryResult": {
+        "type": "object",
+        "description": "Result for a single stored memory",
+        "properties": {
+          "uid": {
+            "type": "string",
+            "description": "Unique identifier for the stored memory",
+            "example": "episode_12345"
+          }
+        },
+        "required": [
+          "uid"
+        ]
+      },
       "SearchResult": {
         "type": "object",
-        "description": "Search results containing memories from both episodic and profile memory",
+        "description": "Search results containing memories from both episodic and semantic memory",
         "properties": {
           "status": {
             "type": "integer",
@@ -398,7 +575,7 @@ In the **Schema** field, paste the following content:
           },
           "content": {
             "type": "object",
-            "description": "Search results containing episodic_memory and profile_memory arrays",
+            "description": "Search results containing episodic_memory and semantic_memory arrays",
             "properties": {
               "episodic_memory": {
                 "type": "array",
@@ -408,15 +585,19 @@ In the **Schema** field, paste the following content:
                   "additionalProperties": true
                 }
               },
-              "profile_memory": {
+              "semantic_memory": {
                 "type": "array",
-                "description": "Results from profile memory (long-term user traits and facts)",
+                "description": "Results from semantic memory (long-term user traits and facts)",
                 "items": {
                   "type": "object",
                   "additionalProperties": true
                 }
               }
-            }
+            },
+            "required": [
+              "episodic_memory",
+              "semantic_memory"
+            ]
           }
         },
         "required": [
@@ -446,18 +627,18 @@ In the **Schema** field, paste the following content:
 
 ### **Important**
 
-In the schema, update:
+If you're using a custom MemMachine endpoint, update the server URL in the schema:
 
 ```
 "servers": [
   {
-    "url": "A HTTPS URL hosting MemMachine",
+    "url": "https://api.memmachines.com",
     "description": "MemMachine API server"
   }
 ]
 ```
 
-Replace `"A HTTPS URL hosting MemMachine"` with your actual HTTPS MemMachine endpoint URL.
+Replace `"https://api.memmachines.com"` with your actual HTTPS MemMachine endpoint URL if needed.
 
 ---
 
