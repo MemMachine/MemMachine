@@ -29,6 +29,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine.common.errors import SessionAlreadyExistsError, SessionNotFoundError
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 
 
@@ -125,7 +126,7 @@ class SessionDataManagerSQL(SessionDataManager):
             )
             session = sessions.first()
             if session is not None:
-                raise ValueError(f"""Session {session_key} already exists""")
+                raise SessionAlreadyExistsError(session_key)
             # create a new entry
             new_session = self.SessionConfig(
                 session_key=session_key,
@@ -144,7 +145,7 @@ class SessionDataManagerSQL(SessionDataManager):
             # Query for an existing session with the same ID
             row = await dbsession.get(self.SessionConfig, session_key)
             if row is None:
-                raise ValueError(f"""Session {session_key} does not exist""")
+                raise SessionNotFoundError(session_key)
             await dbsession.delete(row)
             await dbsession.commit()
             return
@@ -232,7 +233,7 @@ class SessionDataManagerSQL(SessionDataManager):
             )
             session = sessions.first()
             if session is None:
-                raise ValueError(f"""Session {session_key} does not exist""")
+                raise SessionNotFoundError(session_key)
             short_term_datas = await dbsession.execute(
                 select(self.ShortTermMemoryData).where(
                     self.ShortTermMemoryData.session_key == session_key,

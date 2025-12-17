@@ -1,0 +1,602 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MemMachine Platform API Server",
+    "description": "REST API server for MemMachine memory system",
+    "version": "0.1.0"
+   },
+    "servers": [
+        {
+        "url": "https://api.memmachine.ai/docs"
+        }
+    ],
+  "paths": {
+    "/v2/memories": {
+      "post": {
+        "summary": "Add_Memories",
+        "description": "Add memory messages to a project.\n\n    The `types` field in the request specifies which memory types to add to:\n    - If `types` is empty or not provided, memories are added to all types (Episodic and Semantic)\n    - If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n    - If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n    - If `types` contains both, memories are added to both types\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
+        "operationId": "add_memories_v2_memories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddMemoriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v2/memories/search": {
+      "post": {
+        "summary": "Search_Memories",
+        "description": "Search memories within a project.\n\n    System returns the top K relevant memories matching the natural language query.\n    The result is sorted by timestamp to help with context.\n\n    The filter field allows for filtering based on metadata key-value pairs.\n    The types field allows specifying which memory types to include in the search.",
+        "operationId": "search_memories_v2_memories_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v2/memories/list": {
+      "post": {
+        "summary": "List_Memories",
+        "description": "List memories within a project.\n\n    System returns a paginated list of memories stored in the project.\n    The page_size and page_num fields control pagination.\n\n    The filter field allows for filtering based on metadata key-value pairs.\n    The type field allows specifying which memory type to list.",
+        "operationId": "plat_list_memories_v2_memories_list_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListMemoriesSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v2/memories/episodic/delete": {
+      "post": {
+        "summary": "Delete_Episodic Memory",
+        "description": "Delete episodic memories from a project.\n\n    This operation permanently removes one or more episodic memories from the\n    specified project. You may provide either `episodic_id` to delete a single\n    memory or `episodic_ids` to delete multiple memories in one request.\n    This action cannot be undone.\n\n    If any of the specified episodic memories do not exist, a not-found error\n    is returned for those entries.",
+        "operationId": "plat_delete_episodic_memory_v2_memories_episodic_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteEpisodicMemorySpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v2/memories/semantic/delete": {
+      "post": {
+        "summary": "Delete_Semantic Memory",
+        "description": "Delete semantic memories from a project.\n\n    This operation permanently removes one or more semantic memories from the\n    specified project. You may provide either `semantic_id` to delete a single\n    memory or `semantic_ids` to delete multiple memories in one request.\n    This action cannot be undone.\n\n    If any of the specified semantic memories do not exist, a not-found error\n    is returned for those entries.",
+        "operationId": "plat_delete_semantic_memory_v2_memories_semantic_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteSemanticMemorySpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/v2/health": {
+      "get": {
+        "summary": "Health_Check",
+        "description": "Health check endpoint to verify server is running.",
+        "operationId": "plat_health_check_v2_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Check V2 Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AddMemoriesResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/AddMemoryResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "The list of results for each added memory message."
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "AddMemoriesResponse",
+        "description": "Response model for adding memories."
+      },
+      "AddMemoriesSpec": {
+        "properties": {
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryType"
+            },
+            "type": "array",
+            "title": "Types",
+            "description": "\n    A list of memory types to include in the search (e.g., Episodic, Semantic).\n    If empty, all available types are searched.\n    ",
+            "examples": [
+              [
+                "Episodic",
+                "Semantic"
+              ]
+            ]
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryMessage"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Messages",
+            "description": "\n    A list of messages to be added (batch input).\n    Must contain at least one message.\n    "
+          }
+        },
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "AddMemoriesSpec",
+        "description": "Specification model for adding memories."
+      },
+      "AddMemoryResult": {
+        "properties": {
+          "uid": {
+            "type": "string",
+            "title": "Uid",
+            "description": "The unique identifier of the memory message."
+          }
+        },
+        "type": "object",
+        "required": [
+          "uid"
+        ],
+        "title": "AddMemoryResult",
+        "description": "Response model for adding memories."
+      },
+      "DeleteEpisodicMemorySpec": {
+        "properties": {
+          "episodic_id": {
+            "type": "string",
+            "title": "Episodic Id",
+            "description": "\n    The unique ID of the specific episodic memory.\n    ",
+            "default": "",
+            "examples": [
+              "123",
+              "345"
+            ]
+          },
+          "episodic_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Episodic Ids",
+            "description": "\n    A list of unique IDs of episodic memories.",
+            "default": [],
+            "examples": [
+              [
+                "123",
+                "345"
+              ],
+              [
+                "23"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "title": "DeleteEpisodicMemorySpec",
+        "description": "Specification model for deleting episodic memories."
+      },
+      "DeleteSemanticMemorySpec": {
+        "properties": {
+          "semantic_id": {
+            "type": "string",
+            "title": "Semantic Id",
+            "description": "\n    The unique ID of the specific semantic memory.\n    ",
+            "default": "",
+            "examples": [
+              "12",
+              "23"
+            ]
+          },
+          "semantic_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Semantic Ids",
+            "description": "\n    A list of unique IDs of semantic memories.",
+            "default": [],
+            "examples": [
+              [
+                "123",
+                "345"
+              ],
+              [
+                "23"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "title": "DeleteSemanticMemorySpec",
+        "description": "Specification model for deleting semantic memories."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ListMemoriesSpec": {
+        "properties": {
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size",
+            "description": "\n    The maximum number of memories to return per page. Use this for pagination.\n    ",
+            "default": 100,
+            "examples": [50, 100]
+          },
+          "page_num": {
+            "type": "integer",
+            "title": "Page Num",
+            "description": "\n    The zero-based page number to retrieve. Use this for pagination.\n    ",
+            "default": 0,
+            "examples": [0, 1, 5, 10]
+          },
+          "filter": {
+            "type": "string",
+            "title": "Filter",
+            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    ",
+            "default": "",
+            "examples": [
+              "metadata.user_id=123 AND metadata.session_id=abc"
+            ]
+          },
+          "type": {
+            "$ref": "#/components/schemas/MemoryType",
+            "description": "\n    The specific memory type to list (e.g., Episodic or Semantic).\n    ",
+            "default": "episodic",
+            "examples": [
+              "Episodic",
+              "Semantic"
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ListMemoriesSpec",
+        "description": "Specification model for listing memories."
+      },
+      "MemoryMessage": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The content or text of the message."
+          },
+          "producer": {
+            "type": "string",
+            "title": "Producer",
+            "description": "\n    The sender of the message. This is a user-friendly name for\n    the LLM to understand the message context. Defaults to 'user'.\n    ",
+            "default": "user"
+          },
+          "produced_for": {
+            "type": "string",
+            "title": "Produced For",
+            "description": "\n    The intended recipient of the message. This is a user-friendly name for\n    the LLM to understand the message context. Defaults to an empty string.\n    ",
+            "default": ""
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "\n    The timestamp when the message was created, in ISO 8601 format.\n    If not provided, the server assigns the current time.\n    "
+          },
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "description": "\n    The role of the message in a conversation (e.g., 'user', 'assistant',\n    'system'). Optional; defaults to an empty string.\n    ",
+            "default": ""
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Metadata",
+            "description": "\n    Additional metadata associated with the message, represented as key-value\n    pairs. Optional; defaults to an empty object.\n    Retrieval operations may utilize this metadata for filtering.\n    Use 'metadata.{key}' to filter based on specific metadata keys.\n    "
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryMessage",
+        "description": "Model representing a memory message."
+      },
+      "MemoryType": {
+        "type": "string",
+        "enum": [
+          "semantic",
+          "episodic"
+        ],
+        "title": "MemoryType",
+        "description": "Memory type."
+      },
+      "SearchMemoriesSpec": {
+        "properties": {
+          "top_k": {
+            "type": "integer",
+            "title": "Top K",
+            "description": "\n    The maximum number of memories to return in the search results.\n    ",
+            "default": 10,
+            "examples": [5, 10, 20]
+          },
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "\n    The natural language query used for semantic memory search. This should be\n    a descriptive string of the information you are looking for.\n    ",
+            "examples": [
+              "What was the user's last conversation about finance?"
+            ]
+          },
+          "filter": {
+            "type": "string",
+            "title": "Filter",
+            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    ",
+            "default": "",
+            "examples": [
+              "metadata.user_id=123 AND metadata.session_id=abc"
+            ]
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryType"
+            },
+            "type": "array",
+            "title": "Types",
+            "description": "\n    A list of memory types to include in the search (e.g., Episodic, Semantic).\n    If empty, all available types are searched.\n    ",
+            "examples": [
+              [
+                "Episodic",
+                "Semantic"
+              ]
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchMemoriesSpec",
+        "description": "Specification model for searching memories."
+      },
+      "SearchResult": {
+        "properties": {
+          "status": {
+            "type": "integer",
+            "title": "Status",
+            "description": "\n    The status code of the search operation. 0 typically indicates success.\n    ",
+            "default": 0,
+            "examples": [0]
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content",
+            "description": "\n    The dictionary containing the memory search results (e.g., list of memory\n    objects).\n    "
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "SearchResult",
+        "description": "Response model for memory search results."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

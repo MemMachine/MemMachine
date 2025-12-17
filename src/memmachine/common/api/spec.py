@@ -1,16 +1,14 @@
 """API v2 specification models for request and response structures."""
 
 import logging
-import traceback
 from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 import regex
-from fastapi import HTTPException
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
+from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
-from memmachine.main.memmachine import MemoryType
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
@@ -280,6 +278,13 @@ class MemoryMessage(BaseModel):
             description=SpecDoc.MEMORY_METADATA,
         ),
     ]
+    episode_type: Annotated[
+        EpisodeType | None,
+        Field(
+            default=None,
+            description=SpecDoc.MEMORY_EPISODIC_TYPE,
+        ),
+    ]
 
 
 class AddMemoriesSpec(_WithOrgAndProj):
@@ -535,46 +540,3 @@ class RestErrorModel(BaseModel):
             description=SpecDoc.ERROR_TRACE,
         ),
     ]
-
-
-class RestError(HTTPException):
-    """HTTPException with a structured RestErrorModel as the 'detail'."""
-
-    def __init__(
-        self,
-        code: int,
-        message: str,
-        ex: Exception | None = None,
-    ) -> None:
-        """Initialize HTTPException and RestErrorModel."""
-        self.payload: RestErrorModel | None = None
-        if ex is not None:
-            # Extract traceback safely
-            trace = "".join(
-                traceback.format_exception(
-                    type(ex),
-                    ex,
-                    ex.__traceback__,
-                )
-            ).strip()
-
-            self.payload = RestErrorModel(
-                code=code,
-                message=message,
-                exception=type(ex).__name__,
-                internal_error=str(ex),
-                trace=trace,
-            )
-
-        # Call HTTPException with structured detail
-        if self.payload is not None:
-            logger.warning(
-                "exception handling request, code %d, message: %s, payload: %s",
-                code,
-                message,
-                self.payload,
-            )
-            super().__init__(status_code=code, detail=self.payload.model_dump())
-        else:
-            logger.info("error handling request, code %d, message: %s", code, message)
-            super().__init__(status_code=code, detail=message)

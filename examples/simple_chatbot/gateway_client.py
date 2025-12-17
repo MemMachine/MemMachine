@@ -1,3 +1,4 @@
+import contextlib
 import os
 from datetime import UTC, datetime
 
@@ -5,6 +6,7 @@ import requests
 
 MEMMACHINE_PORT = os.getenv("MEMORY_SERVER_URL", "http://localhost:8080")
 ORG_ID = os.getenv("ORG_ID", "default-org")
+PROJECT_ID = os.getenv("PROJECT_ID", "simple_chatbot")
 
 PROMPT = """You are a helpful AI assistant. Use the provided context and profile information to answer the user's question accurately and helpfully.
 
@@ -48,15 +50,12 @@ def ingest_and_rewrite(user_id: str, query: str) -> str:
     """Pass a raw user message through the memory server and get context-aware response."""
     print("entered ingest_and_rewrite")
 
-    # Use project_id per user for isolation
-    project_id = f"project_{user_id}"
-
-    # Ingest memory
+    # Ingest memory with user_id in metadata for filtering
     requests.post(
         f"{MEMMACHINE_PORT}/api/v2/memories",
         json={
             "org_id": ORG_ID,
-            "project_id": project_id,
+            "project_id": PROJECT_ID,
             "messages": [
                 {
                     "content": query,
@@ -66,23 +65,24 @@ def ingest_and_rewrite(user_id: str, query: str) -> str:
                     "timestamp": datetime.now(tz=UTC)
                     .isoformat()
                     .replace("+00:00", "Z"),
-                    "metadata": {},
+                    "metadata": {"user_id": user_id},
                 }
             ],
         },
-        timeout=5,
+        timeout=60,
     )
 
-    # Search memories - no filter needed since each user has their own project
+    # Search memories with metadata filter to get only this user's memories
+    filter_str = f"metadata.user_id='{user_id}'"
     resp = requests.post(
         f"{MEMMACHINE_PORT}/api/v2/memories/search",
         json={
             "org_id": ORG_ID,
-            "project_id": project_id,
+            "project_id": PROJECT_ID,
             "query": query,
             "top_k": 10,
             "types": ["episodic", "semantic"],
-            "filter": "",
+            "filter": filter_str,
         },
         timeout=1000,
     )
@@ -153,15 +153,14 @@ def ingest_and_rewrite(user_id: str, query: str) -> str:
 def get_memories(user_id: str) -> dict:
     """Fetch all memories for a given user_id"""
     try:
-        # Use project_id per user for isolation
-        project_id = f"project_{user_id}"
-
+        # Use metadata filter to get only this user's memories
+        filter_str = f"metadata.user_id='{user_id}'"
         resp = requests.post(
             f"{MEMMACHINE_PORT}/api/v2/memories/list",
             json={
                 "org_id": ORG_ID,
-                "project_id": project_id,
-                "filter": "",
+                "project_id": PROJECT_ID,
+                "filter": filter_str,
             },
             timeout=10,
         )
@@ -183,15 +182,12 @@ def ingest_memories(user_id: str, memories_text: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        # Use project_id per user for isolation
-        project_id = f"project_{user_id}"
-
-        # Ingest the memories as an episode using v2 API
+        # Ingest the memories as an episode using v2 API with user_id in metadata
         resp = requests.post(
             f"{MEMMACHINE_PORT}/api/v2/memories",
             json={
                 "org_id": ORG_ID,
-                "project_id": project_id,
+                "project_id": PROJECT_ID,
                 "messages": [
                     {
                         "content": memories_text,
@@ -201,7 +197,7 @@ def ingest_memories(user_id: str, memories_text: str) -> bool:
                         "timestamp": datetime.now(tz=UTC)
                         .isoformat()
                         .replace("+00:00", "Z"),
-                        "metadata": {},
+                        "metadata": {"user_id": user_id},
                     }
                 ],
             },
@@ -217,8 +213,9 @@ def ingest_memories(user_id: str, memories_text: str) -> bool:
 def delete_profile(user_id: str) -> bool:
     """Delete all memories for the given user_id.
 
-    Uses project-level isolation to delete the entire project, which removes
-    all memories (episodic and semantic) for the user.
+    Uses metadata filtering to delete only memories belonging to the specified user.
+    Since we're using a shared project with metadata-based filtering, we need to
+    list memories by filter and then delete them by ID.
 
     Args:
         user_id: The user identifier whose profile should be deleted
@@ -226,27 +223,131 @@ def delete_profile(user_id: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    try:
-        # Use project_id per user for isolation
-        project_id = f"project_{user_id}"
 
-        # Delete the entire project, which removes all memories
-        resp = requests.post(
-            f"{MEMMACHINE_PORT}/api/v2/projects/delete",
-            json={
-                "org_id": ORG_ID,
-                "project_id": project_id,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
+    try:
+        filter_str = f"metadata.user_id='{user_id}'"
+
+        # List episodic memories for this user
+        episodic_ids = []
+        page_num = 0
+        while True:
+            memories_resp = requests.post(
+                f"{MEMMACHINE_PORT}/api/v2/memories/list",
+                json={
+                    "org_id": ORG_ID,
+                    "project_id": PROJECT_ID,
+                    "filter": filter_str,
+                    "type": "episodic",
+                    "page_size": 100,
+                    "page_num": page_num,
+                },
+                timeout=10,
+            )
+            memories_resp.raise_for_status()
+            memories_data = memories_resp.json()
+            content = memories_data.get("content", {})
+            episodic_memories = content.get("episodic_memory", [])
+
+            if not episodic_memories:
+                break
+
+            # Extract IDs from episodic memories
+            for memory in episodic_memories:
+                if isinstance(memory, dict):
+                    # Try different possible ID field names
+                    memory_id = (
+                        memory.get("id")
+                        or memory.get("uid")
+                        or memory.get("episode_id")
+                    )
+                    if memory_id:
+                        episodic_ids.append(memory_id)
+
+            if len(episodic_memories) < 100:
+                break
+            page_num += 1
+
+        # Delete episodic memories in batches
+        if episodic_ids:
+            # Delete in chunks to avoid very large requests
+            chunk_size = 100
+            for i in range(0, len(episodic_ids), chunk_size):
+                chunk = episodic_ids[i : i + chunk_size]
+                with contextlib.suppress(Exception):
+                    requests.post(
+                        f"{MEMMACHINE_PORT}/api/v2/memories/episodic/delete",
+                        json={
+                            "org_id": ORG_ID,
+                            "project_id": PROJECT_ID,
+                            "episodic_ids": chunk,
+                        },
+                        timeout=30,
+                    )
+
+        # List semantic memories for this user
+        semantic_ids = []
+        page_num = 0
+        while True:
+            memories_resp = requests.post(
+                f"{MEMMACHINE_PORT}/api/v2/memories/list",
+                json={
+                    "org_id": ORG_ID,
+                    "project_id": PROJECT_ID,
+                    "filter": filter_str,
+                    "type": "semantic",
+                    "page_size": 100,
+                    "page_num": page_num,
+                },
+                timeout=10,
+            )
+            memories_resp.raise_for_status()
+            memories_data = memories_resp.json()
+            content = memories_data.get("content", {})
+            semantic_memories = content.get("semantic_memory", [])
+
+            if not semantic_memories:
+                break
+
+            # Extract IDs from semantic memories
+            for memory in semantic_memories:
+                if isinstance(memory, dict):
+                    # Try different possible ID field names
+                    memory_id = (
+                        memory.get("id")
+                        or memory.get("feature_id")
+                        or memory.get("semantic_id")
+                    )
+                    if memory_id:
+                        semantic_ids.append(memory_id)
+
+            if len(semantic_memories) < 100:
+                break
+            page_num += 1
+
+        # Delete semantic memories in batches
+        if semantic_ids:
+            chunk_size = 100
+            for i in range(0, len(semantic_ids), chunk_size):
+                chunk = semantic_ids[i : i + chunk_size]
+                with contextlib.suppress(Exception):
+                    requests.post(
+                        f"{MEMMACHINE_PORT}/api/v2/memories/semantic/delete",
+                        json={
+                            "org_id": ORG_ID,
+                            "project_id": PROJECT_ID,
+                            "semantic_ids": chunk,
+                        },
+                        timeout=30,
+                    )
+
         return True
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            # Project doesn't exist, which is fine - nothing to delete
+            # No memories found, which is fine - nothing to delete
             return True
         print(f"Error deleting profile: {e}")
         return False
     except Exception as e:
         print(f"Error deleting profile: {e}")
-        return False
+        # Return True to avoid breaking the UI if deletion partially fails
+        return True

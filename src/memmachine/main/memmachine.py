@@ -4,11 +4,11 @@ import asyncio
 import logging
 from asyncio import Task
 from collections.abc import Coroutine
-from enum import Enum
 from typing import Any, Final, Protocol, cast
 
 from pydantic import BaseModel, InstanceOf, ValidationError
 
+from memmachine.common.api import MemoryType
 from memmachine.common.configuration import Configuration
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConf,
@@ -36,13 +36,6 @@ from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeatur
 from memmachine.semantic_memory.semantic_session_manager import IsolationType
 
 logger = logging.getLogger(__name__)
-
-
-class MemoryType(Enum):
-    """Memory type."""
-
-    Semantic = "semantic"
-    Episodic = "episodic"
 
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)

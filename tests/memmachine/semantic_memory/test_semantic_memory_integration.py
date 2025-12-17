@@ -124,7 +124,7 @@ async def semantic_service(
             episode_storage=episode_storage,
             resource_retriever=resource_retriever,
             feature_update_interval_sec=0.05,
-            feature_update_message_limit=0,
+            uningested_message_limit=0,
             debug_fail_loudly=True,
         ),
     )

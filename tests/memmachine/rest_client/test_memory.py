@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
+from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.memory import Memory
 
@@ -217,11 +218,14 @@ class TestMemory:
             user_id="user1",
         )
 
-        memory.add("Content", episode_type="text")
+        memory.add("Content", episode_type=EpisodeType.MESSAGE)
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
-        assert json_data["messages"][0]["metadata"]["episode_type"] == "text"
+        assert (
+            json_data["messages"][0]["metadata"]["episode_type"]
+            == EpisodeType.MESSAGE.value
+        )
 
     def test_add_request_exception(self, mock_client):
         """Test add raises exception on request failure."""

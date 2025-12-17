@@ -8,7 +8,7 @@ import numpy as np
 from alembic import command
 from alembic.config import Config
 from pgvector.sqlalchemy import Vector
-from pydantic import InstanceOf, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
     Boolean,
     Column,
@@ -162,6 +162,10 @@ class SetIngestedHistory(BaseSemanticStorage):
     history_id = mapped_column(
         String,
         primary_key=True,
+    )
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
     )
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
@@ -707,8 +711,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         *,
         min_uningested_messages: int | None = None,
+        older_than: AwareDatetime | None = None,
     ) -> list[SetIdT]:
         stmt = select(SetIngestedHistory.set_id).distinct()
+
+        conditions = []
 
         if min_uningested_messages is not None and min_uningested_messages > 0:
             inner = aliased(SetIngestedHistory)
@@ -722,7 +729,20 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
                 .scalar_subquery()
             )
 
-            stmt = stmt.where(count_uningested >= min_uningested_messages)
+            conditions.append(count_uningested >= min_uningested_messages)
+
+        if older_than is not None:
+            conditions.append(
+                and_(
+                    SetIngestedHistory.created_at <= older_than,
+                    SetIngestedHistory.ingested.is_(False),
+                )
+            )
+
+        if len(conditions) == 1:
+            stmt = stmt.where(conditions[0])
+        elif len(conditions) > 1:
+            stmt = stmt.where(or_(*conditions))
 
         async with self._create_session() as session:
             result = await session.execute(stmt)

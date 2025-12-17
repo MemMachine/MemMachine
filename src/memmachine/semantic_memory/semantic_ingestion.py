@@ -56,6 +56,8 @@ class IngestionService:
         self._debug_fail_loudly = params.debug_fail_loudly
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
+        logger.info("Starting ingestion processing for set ids: %s", set_ids)
+
         results = await asyncio.gather(
             *[self._process_single_set(set_id) for set_id in set_ids],
             return_exceptions=True,
@@ -75,6 +77,11 @@ class IngestionService:
         )
 
         if len(resources.semantic_categories) == 0:
+            logger.info(
+                "No semantic categories configured for set %s, skipping ingestion",
+                set_id,
+            )
+
             await self._semantic_storage.mark_messages_ingested(
                 set_id=set_id,
                 history_ids=history_ids,
@@ -92,11 +99,17 @@ class IngestionService:
 
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
+        logger.info("Processing %d messages for set %s", len(messages), set_id)
+
         async def process_semantic_type(
             semantic_category: InstanceOf[SemanticCategory],
         ) -> None:
             for message in messages:
                 if message.uid is None:
+                    logger.error(
+                        "Message ID is None for message %s", message.model_dump()
+                    )
+
                     raise ValueError(
                         "Message ID is None for message %s",
                         message.model_dump(),
@@ -148,6 +161,13 @@ class IngestionService:
             semantic_category_runners.append(task)
 
         await asyncio.gather(*semantic_category_runners)
+
+        logger.info(
+            "Finished processing %d messages out of %d for set %s",
+            len(mark_messages),
+            len(messages),
+            set_id,
+        )
 
         if len(mark_messages) == 0:
             return

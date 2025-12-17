@@ -200,6 +200,7 @@ class Params(BaseModel):
                     metadata={
                         "user_id": self.user_id,
                     },
+                    episode_type=None,
                 )
             ],
         )
