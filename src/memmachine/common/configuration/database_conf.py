@@ -4,12 +4,15 @@ from enum import Enum
 from typing import ClassVar, Self
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
-from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
+from memmachine.common.configuration.mixin_confs import (
+    PasswordMixin,
+    YamlSerializableMixin,
+)
 
 
-class Neo4jConf(YamlSerializableMixin):
+class Neo4jConf(YamlSerializableMixin, PasswordMixin):
     """Configuration options for a Neo4j instance."""
 
     uri: str = Field(default="", description="Neo4j database URI")
@@ -18,21 +21,17 @@ class Neo4jConf(YamlSerializableMixin):
     user: str = Field(default="neo4j", description="neo4j username")
     password: SecretStr = Field(
         default=SecretStr("neo4j_password"),
-        description="neo4j database password",
+        description=(
+            "Password for the Neo4j database user. "
+            "If not explicitly set, a default placeholder value is used. "
+            "You may reference an environment variable using `$ENV` or `${ENV}` "
+            "syntax (for example, `$NEO4J_PASSWORD`)."
+        ),
     )
     force_exact_similarity_search: bool = Field(
         default=False,
         description="Whether to force exact similarity search",
     )
-
-    @field_validator("password", mode="before")
-    @classmethod
-    def convert_password(cls, v: str | SecretStr) -> SecretStr:
-        if isinstance(v, SecretStr):
-            return v
-        if isinstance(v, str):
-            return SecretStr(v)
-        raise TypeError("password must be a string or SecretStr")
 
     def get_uri(self) -> str:
         if self.uri:
@@ -42,7 +41,7 @@ class Neo4jConf(YamlSerializableMixin):
         return f"bolt://{self.host}:{self.port}"
 
 
-class SqlAlchemyConf(YamlSerializableMixin):
+class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
     """Configuration for SQLAlchemy-backed relational databases."""
 
     dialect: str = Field(..., description="SQL dialect")
@@ -54,7 +53,11 @@ class SqlAlchemyConf(YamlSerializableMixin):
     user: str | None = Field(default=None, description="DB username")
     password: SecretStr | None = Field(
         default=None,
-        description="DB password",
+        description=(
+            "Optional password for the database user. "
+            "You can reference an environment variable using `$ENV` or `${ENV}` syntax "
+            "(for example, `$DB_PASSWORD`)."
+        ),
     )
     db_name: str | None = Field(default=None, description="DB name")
 

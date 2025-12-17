@@ -139,3 +139,33 @@ def test_invalid_base_url_in_openai_chat_completions_model():
     with pytest.raises(ValidationError) as exc_info:
         OpenAIChatCompletionsLanguageModelConf(**conf_dict)
     assert "invalid base url" in str(exc_info.value).lower()
+
+
+@pytest.fixture(autouse=True)
+def clear_env(monkeypatch):
+    for var in [
+        "MY_API_KEY",
+        "MY_KEY_ID",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ]:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_read_api_key_from_env(monkeypatch, openai_model_conf):
+    monkeypatch.setenv("MY_API_KEY", "env-open-ai-key")
+    openai_model_conf["config"]["api_key"] = "${MY_API_KEY}"
+    conf = OpenAIResponsesLanguageModelConf(**openai_model_conf["config"])
+    assert conf.model == "gpt-4o-mini"
+    assert conf.api_key == SecretStr("env-open-ai-key")
+
+
+def test_read_aws_keys_from_env(monkeypatch, aws_model_conf):
+    monkeypatch.setenv("MY_KEY_ID", "my-key-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "access-key")
+    aws_model_conf["config"]["aws_access_key_id"] = "${MY_KEY_ID}"
+    aws_model_conf["config"]["aws_secret_access_key"] = ""
+    conf = AmazonBedrockLanguageModelConf(**aws_model_conf["config"])
+    assert conf.aws_access_key_id.get_secret_value() == "my-key-id"
+    assert conf.aws_secret_access_key.get_secret_value() == "access-key"
+    assert conf.aws_session_token is None

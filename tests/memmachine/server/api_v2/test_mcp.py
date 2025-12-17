@@ -12,8 +12,6 @@ from memmachine.main.memmachine import ALL_MEMORY_TYPES
 from memmachine.server.api_v2.mcp import MCP_SUCCESS, Params
 from memmachine.server.mcp_stdio import mcp
 
-pytestmark = pytest.mark.asyncio
-
 
 @pytest.fixture(autouse=True)
 def clear_env():
@@ -139,6 +137,7 @@ async def mcp_client():
         yield mcp_client
 
 
+@pytest.mark.asyncio
 async def test_list_mcp_tools(mcp_client):
     tools = await mcp_client.list_tools()
     tool_names = [tool.name for tool in tools]
@@ -150,6 +149,7 @@ async def test_list_mcp_tools(mcp_client):
         assert expected_tool in tool_names
 
 
+@pytest.mark.asyncio
 async def test_mcp_tool_description(mcp_client):
     tools = await mcp_client.list_tools()
     for tool in tools:
@@ -168,6 +168,7 @@ def patch_memmachine():
     mcp_module.mem_machine = None  # cleanup
 
 
+@pytest.mark.asyncio
 @patch("memmachine.server.api_v2.mcp._add_messages_to", new_callable=AsyncMock)
 async def test_add_memory_success(mock_add, params, mcp_client):
     result = await mcp_client.call_tool(
@@ -186,6 +187,7 @@ async def test_add_memory_success(mock_add, params, mcp_client):
     assert root.message == "Success"
 
 
+@pytest.mark.asyncio
 @patch("memmachine.server.api_v2.mcp._add_messages_to", new_callable=AsyncMock)
 async def test_add_memory_failure(mock_add, params, mcp_client):
     mock_add.side_effect = HTTPException(status_code=500, detail="DB down")
@@ -204,6 +206,7 @@ async def test_add_memory_failure(mock_add, params, mcp_client):
     assert "DB down" in result.data.message
 
 
+@pytest.mark.asyncio
 @patch("memmachine.server.api_v2.mcp._search_target_memories", new_callable=AsyncMock)
 async def test_search_memory_failure(mock_search, params, mcp_client):
     mock_search.side_effect = HTTPException(status_code=422, detail="Not found")
@@ -224,6 +227,7 @@ async def test_search_memory_failure(mock_search, params, mcp_client):
     assert "Not found" in root["message"]
 
 
+@pytest.mark.asyncio
 @patch("memmachine.server.api_v2.mcp._search_target_memories", new_callable=AsyncMock)
 async def test_search_memory_variants(mock_search, params, mcp_client):
     content = {"ep": "Memory found"}

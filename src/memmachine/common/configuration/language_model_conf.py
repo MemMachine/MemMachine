@@ -7,6 +7,8 @@ import yaml
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from memmachine.common.configuration.mixin_confs import (
+    ApiKeyMixin,
+    AWSCredentialsMixin,
     MetricsFactoryIdMixin,
     YamlSerializableMixin,
 )
@@ -17,7 +19,9 @@ from memmachine.common.language_model.amazon_bedrock_language_model import (
 DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1"
 
 
-class OpenAIResponsesLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMixin):
+class OpenAIResponsesLanguageModelConf(
+    MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
+):
     """Configuration for OpenAI Responses-compatible models."""
 
     model: str = Field(
@@ -26,7 +30,8 @@ class OpenAIResponsesLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMi
     )
     api_key: SecretStr = Field(
         ...,
-        description="OpenAI Responses API key for authentication",
+        description="OpenAI Responses API key for authentication, Can"
+        "reference an environment variable using `$ENV` or `${ENV}` syntax ",
     )
     base_url: str | None = Field(
         default=None,
@@ -50,7 +55,7 @@ class OpenAIResponsesLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMi
 
 
 class OpenAIChatCompletionsLanguageModelConf(
-    MetricsFactoryIdMixin, YamlSerializableMixin
+    MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
 ):
     """Configuration for OpenAI Chat Completions-compatible models."""
 
@@ -58,10 +63,6 @@ class OpenAIChatCompletionsLanguageModelConf(
         default="gpt-5-nano",
         min_length=1,
         description="OpenAI Chat Completions API-compatible model",
-    )
-    api_key: SecretStr = Field(
-        default=SecretStr(""),
-        description="OpenAI Chat Completions API key for authentication",
     )
     base_url: str | None = Field(
         default=None,
@@ -85,7 +86,9 @@ class OpenAIChatCompletionsLanguageModelConf(
         return v
 
 
-class AmazonBedrockLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMixin):
+class AmazonBedrockLanguageModelConf(
+    MetricsFactoryIdMixin, YamlSerializableMixin, AWSCredentialsMixin
+):
     """
     Configuration for AmazonBedrockLanguageModel.
 
@@ -104,18 +107,6 @@ class AmazonBedrockLanguageModelConf(MetricsFactoryIdMixin, YamlSerializableMixi
     region: str = Field(
         ...,
         description="AWS region where Bedrock is hosted.",
-    )
-    aws_access_key_id: SecretStr | None = Field(
-        ...,
-        description="AWS access key ID for authentication.",
-    )
-    aws_secret_access_key: SecretStr | None = Field(
-        ...,
-        description="AWS secret access key for authentication.",
-    )
-    aws_session_token: SecretStr | None = Field(
-        default=None,
-        description="AWS session token for authentication.",
     )
     model_id: str = Field(
         default="amazon.titan-embed-text-v2:0",
