@@ -222,6 +222,28 @@ class TestSessionMemoryPublicAPI:
         episodes, _ = await memory.get_short_term_memory_context(query="test")
         assert episodes == [ep1, ep3]
 
+    async def test_create_delete_episodes(self, memory):
+        """Test creating and deleting multiple episodes."""
+        ep1 = create_test_episode(content="abcdef")
+        ep2 = create_test_episode(content="bcdefg")
+        ep3 = create_test_episode(content="cdefgh")
+        # Add episodes, it should trigger summarization
+        await memory.add_episodes([ep1, ep2, ep3])
+        episodes, summary = await memory.get_short_term_memory_context(query="test")
+        assert episodes == [ep1, ep2, ep3]
+        assert summary == "summary"
+        await memory.delete_episode(ep1.uid)
+        await memory.delete_episode(ep2.uid)
+        await memory.delete_episode(ep3.uid)
+        episodes, summary = await memory.get_short_term_memory_context(query="test")
+        assert episodes == []
+        assert summary == "summary"
+        assert len(episodes) == 0
+        await memory.add_episodes([ep1, ep2, ep3])
+        episodes, _ = await memory.get_short_term_memory_context(query="test")
+        assert episodes == [ep1, ep2, ep3]
+        assert len(episodes) == 3
+
     async def test_close(self, memory):
         """Test closing the memory."""
         await memory.add_episodes([create_test_episode(content="test")])

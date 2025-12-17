@@ -243,11 +243,13 @@ class ShortTermMemory:
     async def delete_episode(self, uid: str) -> bool:
         """Delete one episode by UID."""
         async with self._lock:
-            for e in self._memory:
-                if e.uid == uid:
-                    self._current_episode_count -= 1
-                    self._current_message_len -= len(e.content)
-                    self._memory.remove(e)
+            for index, episode in enumerate(self._memory):
+                if episode.uid == uid:
+                    if index >= len(self._memory) - self._current_episode_count:
+                        # only update the count if it's in the current episode set
+                        self._current_episode_count -= 1
+                    self._current_message_len -= len(episode.content)
+                    self._memory.remove(episode)
                     return True
             return False
 
