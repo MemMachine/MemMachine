@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from memmachine.common.api.spec import DeleteProjectSpec, GetProjectSpec
+from memmachine.common.api.spec import (
+    DeleteProjectSpec,
+    EpisodeCountResponse,
+    GetProjectSpec,
+    ProjectConfig,
+    ProjectResponse,
+)
 
 if TYPE_CHECKING:
     from .client import MemMachineClient
@@ -46,10 +52,12 @@ class Project:
 
         # Create memory instance from project
         memory = project.memory(
-            group_id="my_group",  # Optional: stored in metadata
-            agent_id="my_agent",  # Optional: stored in metadata
-            user_id="user123",    # Optional: stored in metadata
-            session_id="session456"  # Optional: stored in metadata
+            metadata={
+                "user_id": "user123",
+                "agent_id": "my_agent",
+                "group_id": "my_group",
+                "session_id": "session456"
+            }
         )
 
         # Use memory
@@ -65,8 +73,7 @@ class Project:
         org_id: str,
         project_id: str,
         description: str = "",
-        configuration: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
+        config: ProjectConfig | None = None,
     ) -> None:
         """
         Initialize Project instance.
@@ -76,33 +83,29 @@ class Project:
             org_id: Organization identifier
             project_id: Project identifier
             description: Project description
-            configuration: Project configuration (from server)
-            metadata: Project metadata (from server)
+            config: Project configuration (from server)
 
         """
         self.client = client
         self.org_id = org_id
         self.project_id = project_id
         self.description = description
-        self.configuration = configuration or {}
-        self.metadata = metadata or {}
+        self.config = (
+            config if config is not None else ProjectConfig(embedder="", reranker="")
+        )
 
     def memory(
         self,
-        group_id: str | None = None,
-        agent_id: str | None = None,
-        user_id: str | None = None,
-        session_id: str | None = None,
+        metadata: dict[str, str] | None = None,
         **kwargs: dict[str, Any],
     ) -> Memory:
         """
         Create a Memory instance for this project.
 
         Args:
-            group_id: Group identifier (optional, will be stored in metadata)
-            agent_id: Agent identifier (optional, will be stored in metadata)
-            user_id: User identifier (optional, will be stored in metadata)
-            session_id: Session identifier (optional, will be stored in metadata)
+            metadata: Metadata dictionary that will be merged with metadata
+                     in add() and search() operations. Common keys include:
+                     user_id, agent_id, group_id, session_id, etc.
             **kwargs: Additional configuration options
 
         Returns:
@@ -115,10 +118,7 @@ class Project:
             client=self.client,
             org_id=self.org_id,
             project_id=self.project_id,
-            group_id=group_id,
-            agent_id=agent_id,
-            user_id=user_id,
-            session_id=session_id,
+            metadata=metadata,
             **kwargs,
         )
         return memory
@@ -179,19 +179,56 @@ class Project:
         try:
             response = self.client.request("POST", url, json=data, timeout=timeout)
             response.raise_for_status()
-            project_data = response.json()
+            response_data = response.json()
+            # Parse response using Pydantic model for validation
+            project_response = ProjectResponse(**response_data)
 
             # Update project attributes
-            # Server API uses "config" but Project class uses "configuration" for consistency
-            self.description = project_data.get("description", self.description)
-            self.configuration = project_data.get("config", self.configuration)
-            # Server does not return "metadata" in ProjectResponse, so we keep existing value
-            # self.metadata remains unchanged
+            self.description = project_response.description
+            self.config = project_response.config
         except requests.RequestException:
             logger.exception(
                 "Failed to refresh project %s/%s", self.org_id, self.project_id
             )
             raise
+
+    def get_episode_count(self, timeout: int | None = None) -> int:
+        """
+        Get the episode count for this project.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            The number of episodes associated with this project
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        if self.client.closed:
+            raise RuntimeError("Cannot get episode count: client has been closed")
+
+        url = f"{self.client.base_url}/api/v2/projects/episode_count/get"
+        spec = GetProjectSpec(org_id=self.org_id, project_id=self.project_id)
+        data = spec.model_dump(exclude_none=True)
+
+        try:
+            response = self.client.request("POST", url, json=data, timeout=timeout)
+            response.raise_for_status()
+            result_data = response.json()
+            # Parse response using Pydantic model for validation
+            episode_count = EpisodeCountResponse(**result_data)
+        except requests.RequestException:
+            logger.exception(
+                "Failed to get episode count for project %s/%s",
+                self.org_id,
+                self.project_id,
+            )
+            raise
+        else:
+            return episode_count.count
 
     def __repr__(self) -> str:
         """Return a developer-friendly string representation."""

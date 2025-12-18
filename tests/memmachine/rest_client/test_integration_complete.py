@@ -21,6 +21,7 @@ import pytest
 import requests
 from pydantic import ValidationError
 
+from memmachine.common.api.spec import SearchResult
 from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.project import Project
 
@@ -183,9 +184,11 @@ class TestMemMachineIntegration:
         )
 
         # Configuration should be available
-        assert retrieved.configuration is not None
-        # Should have embedder and reranker fields (may be empty strings if using defaults)
-        assert isinstance(retrieved.configuration, dict)
+        assert retrieved.config is not None
+        # Should be a ProjectConfig object with embedder and reranker fields
+        from memmachine.common.api.spec import ProjectConfig
+
+        assert isinstance(retrieved.config, ProjectConfig)
 
     # ==================== Memory Operations Tests ====================
 
@@ -199,10 +202,12 @@ class TestMemMachineIntegration:
         )
 
         return project.memory(
-            group_id=unique_test_ids["group_id"],
-            agent_id=unique_test_ids["agent_id"],
-            user_id=unique_test_ids["user_id"],
-            session_id=unique_test_ids["session_id"],
+            metadata={
+                "group_id": unique_test_ids["group_id"],
+                "agent_id": unique_test_ids["agent_id"],
+                "user_id": unique_test_ids["user_id"],
+                "session_id": unique_test_ids["session_id"],
+            }
         )
 
     def test_add_memory_user_role(self, memory):
@@ -213,7 +218,12 @@ class TestMemMachineIntegration:
             metadata={"preference": "food", "category": "cuisine"},
         )
 
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
+        from memmachine.common.api.spec import AddMemoryResult
+
+        assert isinstance(result[0], AddMemoryResult)
+        assert hasattr(result[0], "uid")
 
     def test_add_memory_assistant_role(self, memory):
         """Test adding an assistant memory."""
@@ -222,7 +232,12 @@ class TestMemMachineIntegration:
             role="assistant",
         )
 
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
+        from memmachine.common.api.spec import AddMemoryResult
+
+        assert isinstance(result[0], AddMemoryResult)
+        assert hasattr(result[0], "uid")
 
     def test_add_memory_system_role(self, memory):
         """Test adding a system memory."""
@@ -231,7 +246,12 @@ class TestMemMachineIntegration:
             role="system",
         )
 
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
+        from memmachine.common.api.spec import AddMemoryResult
+
+        assert isinstance(result[0], AddMemoryResult)
+        assert hasattr(result[0], "uid")
 
     def test_add_memory_with_metadata(self, memory):
         """Test adding memory with custom metadata."""
@@ -245,7 +265,12 @@ class TestMemMachineIntegration:
             },
         )
 
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
+        from memmachine.common.api.spec import AddMemoryResult
+
+        assert isinstance(result[0], AddMemoryResult)
+        assert hasattr(result[0], "uid")
 
     def test_search_memory_basic(self, memory):
         """Test basic memory search functionality."""
@@ -260,16 +285,19 @@ class TestMemMachineIntegration:
         # Search for memories
         results = memory.search("What is my profession?", limit=5)
 
-        assert isinstance(results, dict)
-        assert "episodic_memory" in results
-        assert "semantic_memory" in results
-        assert isinstance(results["episodic_memory"], list)
-        assert isinstance(results["semantic_memory"], list)
+        assert isinstance(results, SearchResult)
+        assert "episodic_memory" in results.content
+        assert "semantic_memory" in results.content
+        # episodic_memory is now a dict with long_term_memory and short_term_memory
+        assert isinstance(results.content["episodic_memory"], dict)
+        assert isinstance(results.content["semantic_memory"], list)
 
         # Should find at least one result
-        assert (
-            len(results["episodic_memory"]) > 0 or len(results["semantic_memory"]) > 0
-        )
+        episodic = results.content["episodic_memory"]
+        episodes = episodic.get("short_term_memory", {}).get(
+            "episodes", []
+        ) + episodic.get("long_term_memory", {}).get("episodes", [])
+        assert len(episodes) > 0 or len(results.content["semantic_memory"]) > 0
 
     def test_search_memory_with_limit(self, memory):
         """Test memory search with limit parameter."""
@@ -285,8 +313,8 @@ class TestMemMachineIntegration:
 
         # Limit applies per memory type, so we may get more than limit total
         # But each type should respect the limit
-        episodic_count = len(results.get("episodic_memory", []))
-        semantic_count = len(results.get("semantic_memory", []))
+        episodic_count = len(results.content.get("episodic_memory", []))
+        semantic_count = len(results.content.get("semantic_memory", []))
 
         # Each type should respect limit (may be less if not enough matches)
         # Note: limit is applied per memory type, so total may exceed limit
@@ -315,8 +343,11 @@ class TestMemMachineIntegration:
 
         # Search without filter first to verify memories exist
         results_no_filter = memory.search("drink", limit=10)
-        assert isinstance(results_no_filter, dict)
-        all_episodes = results_no_filter.get("episodic_memory", [])
+        assert isinstance(results_no_filter, SearchResult)
+        episodic = results_no_filter.content.get("episodic_memory", {})
+        all_episodes = episodic.get("short_term_memory", {}).get(
+            "episodes", []
+        ) + episodic.get("long_term_memory", {}).get("episodes", [])
         assert len(all_episodes) >= 2, (
             "Should find both morning and afternoon memories without filter"
         )
@@ -328,11 +359,14 @@ class TestMemMachineIntegration:
                 filter_dict={"time": "morning"},
                 limit=10,
             )
-            assert isinstance(results, dict)
+            assert isinstance(results, SearchResult)
 
             # Verify filter is working: only memories with time="morning" should be returned
-            filtered_episodes = results.get("episodic_memory", [])
-            filtered_semantic = results.get("semantic_memory", [])
+            episodic = results.content.get("episodic_memory", {})
+            filtered_episodes = episodic.get("short_term_memory", {}).get(
+                "episodes", []
+            ) + episodic.get("long_term_memory", {}).get("episodes", [])
+            filtered_semantic = results.content.get("semantic_memory", [])
 
             # Check all returned episodic memories match the filter
             for episode in filtered_episodes:
@@ -352,7 +386,7 @@ class TestMemMachineIntegration:
             # (should exclude afternoon memories)
             total_filtered = len(filtered_episodes) + len(filtered_semantic)
             total_unfiltered = len(all_episodes) + len(
-                results_no_filter.get("semantic_memory", [])
+                results_no_filter.content.get("semantic_memory", [])
             )
             assert total_filtered <= total_unfiltered, (
                 "Filtered results should not exceed unfiltered results"
@@ -371,12 +405,20 @@ class TestMemMachineIntegration:
 
         # Should contain metadata filters for all non-None context fields
         assert isinstance(default_filters, dict)
-        assert "metadata.user_id" in default_filters
-        assert "metadata.agent_id" in default_filters
-        assert "metadata.session_id" in default_filters
-        assert default_filters["metadata.user_id"] == memory.user_id
-        assert default_filters["metadata.agent_id"] == memory.agent_id
-        assert default_filters["metadata.session_id"] == memory.session_id
+        # Check if metadata fields exist and match
+        user_id = memory.metadata.get("user_id")
+        agent_id = memory.metadata.get("agent_id")
+        session_id = memory.metadata.get("session_id")
+
+        if user_id:
+            assert "metadata.user_id" in default_filters
+            assert default_filters["metadata.user_id"] == user_id
+        if agent_id:
+            assert "metadata.agent_id" in default_filters
+            assert default_filters["metadata.agent_id"] == agent_id
+        if session_id:
+            assert "metadata.session_id" in default_filters
+            assert default_filters["metadata.session_id"] == session_id
 
     def test_get_current_metadata(self, memory):
         """Test get_current_metadata method returns context, filters, and filter string."""
@@ -392,28 +434,40 @@ class TestMemMachineIntegration:
         context = metadata["context"]
         assert context["org_id"] == memory._Memory__org_id
         assert context["project_id"] == memory._Memory__project_id
-        assert context["user_id"] == memory.user_id
-        assert context["agent_id"] == memory.agent_id
-        assert context["session_id"] == memory.session_id
+        context_metadata = context["metadata"]
+        assert context_metadata.get("user_id") == memory.metadata.get("user_id")
+        assert context_metadata.get("agent_id") == memory.metadata.get("agent_id")
+        assert context_metadata.get("session_id") == memory.metadata.get("session_id")
 
         # Check built-in filters
         filters = metadata["built_in_filters"]
         assert isinstance(filters, dict)
-        assert "metadata.user_id" in filters
-        assert "metadata.agent_id" in filters
-        assert "metadata.session_id" in filters
+        user_id = memory.metadata.get("user_id")
+        agent_id = memory.metadata.get("agent_id")
+        session_id = memory.metadata.get("session_id")
+
+        if user_id:
+            assert "metadata.user_id" in filters
+            assert filters["metadata.user_id"] == user_id
+        if agent_id:
+            assert "metadata.agent_id" in filters
+            assert filters["metadata.agent_id"] == agent_id
+        if session_id:
+            assert "metadata.session_id" in filters
+            assert filters["metadata.session_id"] == session_id
 
         # Check filter string
         filter_str = metadata["built_in_filter_string"]
         assert isinstance(filter_str, str)
-        assert "metadata.user_id" in filter_str
-        assert "metadata.agent_id" in filter_str
-        assert "metadata.session_id" in filter_str
-
-        # Verify filter string matches the filters
-        assert f"metadata.user_id='{memory.user_id}'" in filter_str
-        assert f"metadata.agent_id='{memory.agent_id}'" in filter_str
-        assert f"metadata.session_id='{memory.session_id}'" in filter_str
+        if user_id:
+            assert "metadata.user_id" in filter_str
+            assert f"metadata.user_id='{user_id}'" in filter_str
+        if agent_id:
+            assert "metadata.agent_id" in filter_str
+            assert f"metadata.agent_id='{agent_id}'" in filter_str
+        if session_id:
+            assert "metadata.session_id" in filter_str
+            assert f"metadata.session_id='{session_id}'" in filter_str
 
     def test_search_with_default_filter_dict(self, memory):
         """Test search automatically applies built-in filters and merges with custom filters."""
@@ -434,7 +488,10 @@ class TestMemMachineIntegration:
 
         # Search without filter first to verify memories exist
         results_no_filter = memory.search("work", limit=10)
-        all_episodes = results_no_filter.get("episodic_memory", [])
+        episodic = results_no_filter.content.get("episodic_memory", {})
+        all_episodes = episodic.get("short_term_memory", {}).get(
+            "episodes", []
+        ) + episodic.get("long_term_memory", {}).get("episodes", [])
         assert len(all_episodes) >= 2, (
             "Should find both profession and hobby memories without filter"
         )
@@ -447,11 +504,14 @@ class TestMemMachineIntegration:
                 filter_dict=custom_filters,
                 limit=10,
             )
-            assert isinstance(results, dict)
+            assert isinstance(results, SearchResult)
 
             # Verify filter is working: only memories with category="profession" should be returned
-            filtered_episodes = results.get("episodic_memory", [])
-            filtered_semantic = results.get("semantic_memory", [])
+            episodic = results.content.get("episodic_memory", {})
+            filtered_episodes = episodic.get("short_term_memory", {}).get(
+                "episodes", []
+            ) + episodic.get("long_term_memory", {}).get("episodes", [])
+            filtered_semantic = results.content.get("semantic_memory", [])
 
             # Check all returned episodic memories match the filter
             for episode in filtered_episodes:
@@ -471,7 +531,7 @@ class TestMemMachineIntegration:
             # (should exclude hobby memories)
             total_filtered = len(filtered_episodes) + len(filtered_semantic)
             total_unfiltered = len(all_episodes) + len(
-                results_no_filter.get("semantic_memory", [])
+                results_no_filter.content.get("semantic_memory", [])
             )
             assert total_filtered <= total_unfiltered, (
                 "Filtered results should not exceed unfiltered results"
@@ -525,16 +585,20 @@ class TestMemMachineIntegration:
 
         # Memory instance for user1
         memory_user1 = project.memory(
-            user_id=user1_id,
-            agent_id=unique_test_ids["agent_id"],
-            session_id=unique_test_ids["session_id"],
+            metadata={
+                "user_id": user1_id,
+                "agent_id": unique_test_ids["agent_id"],
+                "session_id": unique_test_ids["session_id"],
+            }
         )
 
         # Memory instance for user2
         memory_user2 = project.memory(
-            user_id=user2_id,
-            agent_id=unique_test_ids["agent_id"],
-            session_id=unique_test_ids["session_id"],
+            metadata={
+                "user_id": user2_id,
+                "agent_id": unique_test_ids["agent_id"],
+                "session_id": unique_test_ids["session_id"],
+            }
         )
 
         # Add memories for user1
@@ -566,7 +630,10 @@ class TestMemMachineIntegration:
 
         # Search without filter first - should return memories from both users
         results_no_filter = memory_user1.search("programming", limit=10)
-        all_episodes = results_no_filter.get("episodic_memory", [])
+        episodic = results_no_filter.content.get("episodic_memory", {})
+        all_episodes = episodic.get("short_term_memory", {}).get(
+            "episodes", []
+        ) + episodic.get("long_term_memory", {}).get("episodes", [])
         assert len(all_episodes) >= 2, (
             "Should find memories from both users without filter"
         )
@@ -583,8 +650,8 @@ class TestMemMachineIntegration:
         )
 
         # Verify all returned memories belong to user1
-        filtered_episodes_user1 = results_user1.get("episodic_memory", [])
-        filtered_semantic_user1 = results_user1.get("semantic_memory", [])
+        filtered_episodes_user1 = results_user1.content.get("episodic_memory", [])
+        filtered_semantic_user1 = results_user1.content.get("semantic_memory", [])
 
         for episode in filtered_episodes_user1:
             self._verify_episode_user_id(episode, user1_id)
@@ -601,7 +668,7 @@ class TestMemMachineIntegration:
         )
 
         # Verify all returned memories belong to user2
-        filtered_episodes_user2 = results_user2.get("episodic_memory", [])
+        filtered_episodes_user2 = results_user2.content.get("episodic_memory", [])
 
         for episode in filtered_episodes_user2:
             self._verify_episode_user_id(episode, user2_id)
@@ -617,14 +684,14 @@ class TestMemMachineIntegration:
             filtered_episodes_user1,
             filtered_semantic_user1,
             all_episodes,
-            results_no_filter.get("semantic_memory", []),
+            results_no_filter.content.get("semantic_memory", []),
             "User1",
         )
         self._verify_filtered_results(
             filtered_episodes_user2,
-            results_user2.get("semantic_memory", []),
+            results_user2.content.get("semantic_memory", []),
             all_episodes,
-            results_no_filter.get("semantic_memory", []),
+            results_no_filter.content.get("semantic_memory", []),
             "User2",
         )
 
@@ -632,9 +699,9 @@ class TestMemMachineIntegration:
         """Test search with empty query (should handle gracefully)."""
         results = memory.search("", limit=10)
 
-        assert isinstance(results, dict)
-        assert "episodic_memory" in results
-        assert "semantic_memory" in results
+        assert isinstance(results, SearchResult)
+        assert "episodic_memory" in results.content
+        assert "semantic_memory" in results.content
 
     def test_delete_episodic_memory(self, memory):
         """Test deleting a specific episodic memory."""
@@ -646,7 +713,10 @@ class TestMemMachineIntegration:
 
         # Search to get memory ID
         results = memory.search("deleted", limit=1)
-        episodes = results.get("episodic_memory", [])
+        episodic = results.content.get("episodic_memory", {})
+        episodes = episodic.get("short_term_memory", {}).get(
+            "episodes", []
+        ) + episodic.get("long_term_memory", {}).get("episodes", [])
         if episodes:
             first_episode = episodes[0]
             # Handle both dict and object responses
@@ -670,7 +740,7 @@ class TestMemMachineIntegration:
 
         # Search to get semantic memory ID
         results = memory.search("organic food", limit=10)
-        semantic_features = results.get("semantic_memory", [])
+        semantic_features = results.content.get("semantic_memory", [])
         if semantic_features:
             first_feature = semantic_features[0]
             # Handle both dict and object responses
@@ -693,10 +763,11 @@ class TestMemMachineIntegration:
 
         assert context["org_id"] == memory.org_id
         assert context["project_id"] == memory.project_id
-        assert context["group_id"] == memory.group_id
-        assert context["user_id"] == memory.user_id
-        assert context["agent_id"] == memory.agent_id
-        assert context["session_id"] == memory.session_id
+        context_metadata = context["metadata"]
+        assert context_metadata.get("group_id") == memory.metadata.get("group_id")
+        assert context_metadata.get("user_id") == memory.metadata.get("user_id")
+        assert context_metadata.get("agent_id") == memory.metadata.get("agent_id")
+        assert context_metadata.get("session_id") == memory.metadata.get("session_id")
 
     def test_memory_with_string_ids(self, client, unique_test_ids):
         """Test memory with string-based user_id and agent_id."""
@@ -705,16 +776,13 @@ class TestMemMachineIntegration:
             project_id=unique_test_ids["project_id"],
         )
 
-        memory = project.memory(
-            user_id="user1",
-            agent_id="agent1",
-        )
+        memory = project.memory(metadata={"user_id": "user1", "agent_id": "agent1"})
 
-        assert isinstance(memory.user_id, str)
-        assert memory.user_id == "user1"
+        assert isinstance(memory.metadata.get("user_id"), str)
+        assert memory.metadata.get("user_id") == "user1"
 
-        assert isinstance(memory.agent_id, str)
-        assert memory.agent_id == "agent1"
+        assert isinstance(memory.metadata.get("agent_id"), str)
+        assert memory.metadata.get("agent_id") == "agent1"
 
     # ==================== Error Handling Tests ====================
 
@@ -796,10 +864,10 @@ class TestMemMachineIntegration:
         for content in contents:
             results = memory.search(content[:10], limit=5)
             # Should find the memory (may be in episodic or semantic)
-            for result in results["episodic_memory"]:
+            for result in results.content["episodic_memory"]:
                 if content.lower() in str(result).lower():
                     break
-            for result in results["semantic_memory"]:
+            for result in results.content["semantic_memory"]:
                 if content.lower() in str(result).lower():
                     break
             # Note: May not always find exact match due to semantic processing
@@ -813,18 +881,22 @@ class TestMemMachineIntegration:
         )
 
         # Create first memory instance and add memory
-        memory1 = project.memory(user_id=unique_test_ids["user_id"])
+        memory1 = project.memory(metadata={"user_id": unique_test_ids["user_id"]})
         memory1.add("This is a persistent memory", role="user")
 
         # Wait for indexing
         time.sleep(1)
 
         # Create second memory instance and search
-        memory2 = project.memory(user_id=unique_test_ids["user_id"])
+        memory2 = project.memory(metadata={"user_id": unique_test_ids["user_id"]})
         results = memory2.search("persistent memory", limit=5)
 
         # Should find the memory added via memory1
-        for result in results["episodic_memory"]:
+        episodic = results.content.get("episodic_memory", {})
+        episodes = episodic.get("short_term_memory", {}).get(
+            "episodes", []
+        ) + episodic.get("long_term_memory", {}).get("episodes", [])
+        for result in episodes:
             if "persistent memory" in str(result).lower():
                 break
         # Note: Soft assertion as semantic processing may vary
@@ -873,19 +945,22 @@ class TestMemMachineIntegration:
         """Test adding memory with large content."""
         large_content = "A" * 10000  # 10KB of content
         result = memory.add(large_content, role="user")
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
 
     def test_special_characters_in_memory(self, memory):
         """Test adding memory with special characters."""
         special_content = "Test with special chars: !@#$%^&*()_+-=[]{}|;':\",./<>?"
         result = memory.add(special_content, role="user")
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
 
     def test_unicode_memory_content(self, memory):
         """Test adding memory with unicode characters."""
         unicode_content = "测试中文内容 🚀 émojis and unicode: 日本語"
         result = memory.add(unicode_content, role="user")
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
 
     @pytest.mark.skip(reason="TODO: server may overload")
     def test_rapid_memory_additions(self, memory):
@@ -903,7 +978,8 @@ class TestMemMachineIntegration:
         # Search should find some of them - add timeout to prevent hanging
         results = memory.search("rapid memory", limit=20, timeout=30)
         assert (
-            len(results["episodic_memory"]) > 0 or len(results["semantic_memory"]) > 0
+            len(results.content["episodic_memory"]) > 0
+            or len(results.content["semantic_memory"]) > 0
         )
 
     def test_concurrent_project_operations(self, client, unique_test_ids):
@@ -939,8 +1015,10 @@ class TestMemMachineIntegration:
 
         # Step 2: Create memory instance
         memory = project.memory(
-            user_id=unique_test_ids["user_id"],
-            agent_id=unique_test_ids["agent_id"],
+            metadata={
+                "user_id": unique_test_ids["user_id"],
+                "agent_id": unique_test_ids["agent_id"],
+            }
         )
 
         # Step 3: Add multiple memories
@@ -957,7 +1035,7 @@ class TestMemMachineIntegration:
 
         # Step 5: Search memories
         results = memory.search("software developer", limit=10)
-        assert isinstance(results, dict)
+        assert isinstance(results, SearchResult)
 
         # Step 6: Verify project still exists
         retrieved = client.get_project(

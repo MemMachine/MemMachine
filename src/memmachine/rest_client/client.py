@@ -12,6 +12,7 @@ from memmachine.common.api.spec import (
     CreateProjectSpec,
     GetProjectSpec,
     ProjectConfig,
+    ProjectResponse,
 )
 
 from .project import Project
@@ -47,10 +48,12 @@ class MemMachineClient:
 
         # Create a memory instance from project
         memory = project.memory(
-            group_id="my_group",  # Optional: stored in metadata
-            agent_id="my_agent",  # Optional: stored in metadata
-            user_id="user123",    # Optional: stored in metadata
-            session_id="session456"  # Optional: stored in metadata
+            metadata={
+                "user_id": "user123",
+                "agent_id": "my_agent",
+                "group_id": "my_group",
+                "session_id": "session456"
+            }
         )
 
         # Add memory (role defaults to "user")
@@ -177,17 +180,6 @@ class MemMachineClient:
             requests.RequestException: If the request fails
             RuntimeError: If the client has been closed
 
-        Example:
-            ```python
-            client = MemMachineClient(base_url="http://localhost:8080")
-            project = client.create_project(
-                org_id="my_org",
-                project_id="my_project",
-                description="My new project"
-            )
-            memory = project.memory(user_id="user123")
-            ```
-
         """
         if self._closed:
             raise RuntimeError("Cannot create project: client has been closed")
@@ -206,7 +198,9 @@ class MemMachineClient:
         try:
             response = self._session.post(url, json=data, timeout=request_timeout)
             response.raise_for_status()
-            project_data = response.json()
+            response_data = response.json()
+            # Parse response using Pydantic model for validation
+            project_response = ProjectResponse(**response_data)
         except requests.RequestException:
             logger.exception("Failed to create project %s/%s", org_id, project_id)
             raise
@@ -215,13 +209,10 @@ class MemMachineClient:
             # Use server response data which contains actual config values
             return Project(
                 client=self,
-                org_id=org_id,
-                project_id=project_id,
-                description=project_data.get("description", description),
-                # Server API uses "config" but Project class uses "configuration" for consistency
-                configuration=project_data.get("config"),
-                # Server does not return "metadata" in ProjectResponse, so we pass None
-                metadata=None,
+                org_id=project_response.org_id,
+                project_id=project_response.project_id,
+                description=project_response.description,
+                config=project_response.config,
             )
 
     def get_project(
@@ -245,16 +236,6 @@ class MemMachineClient:
             requests.RequestException: If the request fails
             RuntimeError: If the client has been closed
 
-        Example:
-            ```python
-            client = MemMachineClient(base_url="http://localhost:8080")
-            project = client.get_project(
-                org_id="my_org",
-                project_id="my_project"
-            )
-            memory = project.memory(user_id="user123")
-            ```
-
         """
         if self._closed:
             raise RuntimeError("Cannot get project: client has been closed")
@@ -276,17 +257,16 @@ class MemMachineClient:
         try:
             response = self.request("POST", url, json=data, timeout=timeout)
             response.raise_for_status()
-            project_data = response.json()
+            response_data = response.json()
+            # Parse response using Pydantic model for validation
+            project_response = ProjectResponse(**response_data)
 
             return Project(
                 client=self,
-                org_id=org_id,
-                project_id=project_id,
-                description=project_data.get("description", ""),
-                # Server API uses "config" but Project class uses "configuration" for consistency
-                configuration=project_data.get("config"),
-                # Server does not return "metadata" in ProjectResponse, so we pass None
-                metadata=None,
+                org_id=project_response.org_id,
+                project_id=project_response.project_id,
+                description=project_response.description,
+                config=project_response.config,
             )
         except requests.HTTPError as e:
             if e.response.status_code == 422:
@@ -388,18 +368,6 @@ class MemMachineClient:
             RuntimeError: If the client has been closed
             ValueError: If validation fails
 
-        Example:
-            ```python
-            client = MemMachineClient(base_url="http://localhost:8080")
-            # This will get the project if it exists, or create it if it doesn't
-            project = client.get_or_create_project(
-                org_id="my_org",
-                project_id="my_project",
-                description="My project description"
-            )
-            memory = project.memory(user_id="user123")
-            ```
-
         """
         if self._closed:
             raise RuntimeError("Cannot get or create project: client has been closed")
@@ -419,6 +387,63 @@ class MemMachineClient:
                 )
             # Re-raise other HTTP errors from get
             raise
+
+    def list_projects(self, timeout: int | None = None) -> list[Project]:
+        """
+        List all projects on the server.
+
+        This calls the v2 endpoint: POST /api/v2/projects/list
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            A list of Project instances. Note: These Project objects only contain
+            org_id and project_id from the list endpoint. To get full project details
+            (description, config), call get_project() for each project.
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        if self._closed:
+            raise RuntimeError("Cannot list projects: client has been closed")
+
+        url = f"{self.base_url}/api/v2/projects/list"
+        try:
+            response = self.request("POST", url, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException:
+            logger.exception("Failed to list projects")
+            raise
+
+        # Server returns: list[{"org_id": str, "project_id": str}, ...]
+        if not isinstance(data, list):
+            raise TypeError(
+                f"Unexpected response for list_projects: expected list, got {type(data).__name__}"
+            )
+
+        # Convert to Project objects
+        projects: list[Project] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            org_id = item.get("org_id")
+            project_id = item.get("project_id")
+            if isinstance(org_id, str) and isinstance(project_id, str):
+                # Create Project with minimal info (org_id, project_id only)
+                # Full details can be retrieved via get_project() if needed
+                project = Project(
+                    client=self,
+                    org_id=org_id,
+                    project_id=project_id,
+                    description="",  # Not available from list endpoint
+                    config=None,  # Will default to ProjectConfig()
+                )
+                projects.append(project)
+        return projects
 
     def health_check(self, timeout: int | None = None) -> dict[str, Any]:
         """
@@ -445,6 +470,40 @@ class MemMachineClient:
         except requests.RequestException:
             logger.exception("Health check failed")
             raise
+
+    def get_metrics(self, timeout: int | None = None) -> str:
+        """
+        Get Prometheus metrics from the MemMachine server.
+
+        This endpoint exposes Prometheus-formatted metrics for monitoring
+        and observability purposes.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            Prometheus-formatted metrics as a string
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        if self._closed:
+            raise RuntimeError("Cannot get metrics: client has been closed")
+
+        request_timeout = timeout if timeout is not None else self.timeout
+        try:
+            response = self._session.get(
+                f"{self.base_url}/api/v2/metrics",
+                timeout=request_timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            logger.exception("Failed to get metrics")
+            raise
+        else:
+            return response.text
 
     def close(self) -> None:
         """Close the client and clean up resources."""

@@ -47,6 +47,7 @@ class RerankerManager:
             name
             for keys in [
                 self.conf.bm25.keys(),
+                self.conf.cohere.keys(),
                 self.conf.cross_encoder.keys(),
                 self.conf.amazon_bedrock.keys(),
                 self.conf.embedder.keys(),
@@ -80,6 +81,8 @@ class RerankerManager:
         """Create a reranker based on provider-specific configuration."""
         if name in self.conf.bm25:
             return await self._build_bm25_reranker(name)
+        if name in self.conf.cohere:
+            return await self._build_cohere_reranker(name)
         if name in self.conf.cross_encoder:
             return await self._build_cross_encoder_reranker(name)
         if name in self.conf.amazon_bedrock:
@@ -127,6 +130,25 @@ class RerankerManager:
                 tokenize=get_tokenizer(conf.tokenizer, conf.language),
             ),
         )
+        return self.rerankers[name]
+
+    async def _build_cohere_reranker(self, name: str) -> Reranker:
+        from cohere import ClientV2
+
+        from memmachine.common.reranker.cohere_reranker import (
+            CohereReranker,
+            CohereRerankerParams,
+        )
+
+        conf = self.conf.cohere[name]
+
+        cohere_api_key = conf.cohere_key.get_secret_value() if conf.cohere_key else None
+        client = ClientV2(api_key=cohere_api_key)
+        params = CohereRerankerParams(
+            client=client,
+            model=conf.model,
+        )
+        self.rerankers[name] = CohereReranker(params)
         return self.rerankers[name]
 
     async def _build_cross_encoder_reranker(self, name: str) -> Reranker:

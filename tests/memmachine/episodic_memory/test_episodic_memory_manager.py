@@ -7,6 +7,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine.common.errors import SessionAlreadyExistsError
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.resource_manager import CommonResourceManager
@@ -170,7 +171,9 @@ async def test_create_episodic_memory_already_exists(
         "",
         {},
     ):
-        with pytest.raises(ValueError, match=f"Session {session_key} already exists"):
+        with pytest.raises(
+            SessionAlreadyExistsError, match=f"Session '{session_key}' already exists"
+        ):
             async with manager.create_episodic_memory(
                 session_key,
                 mock_episodic_memory_conf,

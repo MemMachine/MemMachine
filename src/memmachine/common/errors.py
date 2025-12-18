@@ -53,3 +53,21 @@ class DefaultEmbedderNotConfiguredError(ConfigurationError):
     def __init__(self) -> None:
         """Initialize the error."""
         super().__init__("No default embedder is configured.")
+
+
+class SessionAlreadyExistsError(MemMachineError):
+    """Error when trying to create a session that already exists."""
+
+    def __init__(self, session_key: str) -> None:
+        """Initialize with the session key that already exists."""
+        self.session_key = session_key
+        super().__init__(f"Session '{session_key}' already exists.")
+
+
+class SessionNotFoundError(MemMachineError):
+    """Error when trying to retrieve a session."""
+
+    def __init__(self, session_key: str) -> None:
+        """Initialize with the session key that does not exist."""
+        self.session_key = session_key
+        super().__init__(f"Session '{session_key}' does not exist.")

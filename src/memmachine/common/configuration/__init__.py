@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
@@ -73,6 +74,15 @@ class SemanticMemoryConf(YamlSerializableMixin):
         description="The embedding model to use for semantic memory",
     )
 
+    ingestion_trigger_messages: int = Field(
+        default=5,
+        description="The amount of uningested messages to trigger an ingestion.",
+    )
+    ingestion_trigger_age: timedelta = Field(
+        default=timedelta(minutes=5),
+        description="The amount of time a message is uningested before triggering an ingestion.",
+    )
+
 
 def _read_txt(filename: str) -> str:
     """Read a text file into a string, resolving relative paths from CWD."""
@@ -88,7 +98,7 @@ class PromptConf(YamlSerializableMixin):
     """Prompt configuration for semantic memory contexts."""
 
     profile: list[str] = Field(
-        default=["profile_prompt", "writing_assistant_prompt"],
+        default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
         description="The default prompts to use for semantic user memory",
     )
     role: list[str] = Field(

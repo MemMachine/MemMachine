@@ -15,11 +15,11 @@ from memmachine.common.api.spec import (
     MemoryMessage,
     ProjectConfig,
     ProjectResponse,
-    RestError,
     SearchMemoriesSpec,
     SearchResult,
     _is_valid_name,
 )
+from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.main.memmachine import MemoryType
 
 
@@ -134,6 +134,16 @@ def test_memory_message_required_fields():
     assert message.timestamp
     assert message.role == ""
     assert message.metadata == {}
+    assert message.episode_type is None
+
+
+def test_memory_message_episode_type_validation():
+    message = MemoryMessage(content="hello", episode_type="message")
+    assert message.episode_type == EpisodeType.MESSAGE
+
+    with pytest.raises(ValidationError) as exc_info:
+        MemoryMessage(content="hello", episode_type="not-a-real-type")
+    assert any(e["loc"][-1] == "episode_type" for e in exc_info.value.errors())
 
 
 def test_add_memory_spec():
@@ -241,21 +251,3 @@ def test_search_result_model():
     result = SearchResult(status=0, content={"key": "value"})
     assert result.status == 0
     assert result.content == {"key": "value"}
-
-
-def test_rest_error():
-    err = RestError(422, "sample", RuntimeError("for test"))
-    assert err.status_code == 422
-    assert isinstance(err.detail, dict)
-    assert err.detail["message"] == "sample"
-    assert err.detail["code"] == 422
-    assert err.payload.exception == "RuntimeError"
-    assert err.payload.internal_error == "for test"
-    assert err.payload.trace == "RuntimeError: for test"
-
-
-def test_rest_error_without_exception():
-    err = RestError(404, "resource not found")
-    assert err.status_code == 404
-    assert err.detail == "resource not found"
-    assert err.payload is None

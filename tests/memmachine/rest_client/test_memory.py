@@ -5,6 +5,8 @@ from unittest.mock import Mock
 import pytest
 import requests
 
+from memmachine.common.api.spec import AddMemoryResult, SearchResult
+from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.memory import Memory
 
@@ -27,18 +29,20 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            group_id="test_group",
-            agent_id="test_agent",
-            user_id="test_user",
+            metadata={
+                "group_id": "test_group",
+                "agent_id": "test_agent",
+                "user_id": "test_user",
+            },
         )
 
         assert memory.client == mock_client
         assert memory.org_id == "test_org"
         assert memory.project_id == "test_project"
-        assert memory.group_id == "test_group"
-        assert memory.agent_id == "test_agent"
-        assert memory.user_id == "test_user"
-        assert memory.session_id is None  # Not auto-generated in v2
+        assert memory.metadata.get("group_id") == "test_group"
+        assert memory.metadata.get("agent_id") == "test_agent"
+        assert memory.metadata.get("user_id") == "test_user"
+        assert memory.metadata.get("session_id") is None  # Not set
 
     def test_init_with_only_required_params(self, mock_client):
         """Test Memory initialization with only org_id and project_id."""
@@ -50,10 +54,10 @@ class TestMemory:
 
         assert memory.org_id == "test_org"
         assert memory.project_id == "test_project"
-        assert memory.group_id is None
-        assert memory.agent_id is None
-        assert memory.user_id is None
-        assert memory.session_id is None
+        assert memory.metadata.get("group_id") is None
+        assert memory.metadata.get("agent_id") is None
+        assert memory.metadata.get("user_id") is None
+        assert memory.metadata.get("session_id") is None
 
     def test_init_missing_org_id_raises_error(self, mock_client):
         """Test that missing org_id raises TypeError."""
@@ -71,12 +75,11 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
-        assert memory.agent_id == "agent1"
-        assert memory.user_id == "user1"
+        assert memory.metadata.get("agent_id") == "agent1"
+        assert memory.metadata.get("user_id") == "user1"
 
     def test_init_with_custom_session_id(self, mock_client):
         """Test Memory initialization with custom session_id."""
@@ -84,32 +87,42 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
-            session_id="custom_session",
+            metadata={
+                "agent_id": "agent1",
+                "user_id": "user1",
+                "session_id": "custom_session",
+            },
         )
 
-        assert memory.session_id == "custom_session"
+        assert memory.metadata.get("session_id") == "custom_session"
 
     def test_add_success(self, mock_client):
         """Test successful memory addition with v2 API format."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "results": [{"uid": "memory_123"}, {"uid": "memory_456"}]
+        }
         mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            group_id="test_group",
-            agent_id="test_agent",
-            user_id="test_user",
+            metadata={
+                "group_id": "test_group",
+                "agent_id": "test_agent",
+                "user_id": "test_user",
+            },
         )
 
         result = memory.add("Test content")
 
-        assert result is True
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert isinstance(result[0], AddMemoryResult)
+        assert result[0].uid == "memory_123"
         mock_client.request.assert_called_once()
         call_args = mock_client.request.call_args
         assert call_args[0][0] == "POST"
@@ -120,7 +133,9 @@ class TestMemory:
         assert len(json_data["messages"]) == 1
         assert json_data["messages"][0]["content"] == "Test content"
         assert json_data["messages"][0]["role"] == "user"
-        assert json_data["messages"][0]["producer"] == "test_user"
+        # producer and produced_for are None if not explicitly provided, and serialized as empty strings
+        assert json_data["messages"][0]["producer"] == ""
+        assert json_data["messages"][0]["produced_for"] == ""
         assert "timestamp" in json_data["messages"][0]
         assert "metadata" in json_data["messages"][0]
 
@@ -129,18 +144,23 @@ class TestMemory:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "memory_123"}]}
         mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         metadata = {"type": "preference", "category": "food"}
-        memory.add("I like pizza", metadata=metadata)
+        result = memory.add("I like pizza", metadata=metadata)
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert isinstance(result[0], AddMemoryResult)
+        assert result[0].uid == "memory_123"
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
@@ -156,13 +176,14 @@ class TestMemory:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "memory_123"}]}
         mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
+            metadata={"user_id": "user1"},
         )
 
         # Test user role (default)
@@ -185,14 +206,14 @@ class TestMemory:
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "memory_123"}]}
         mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         memory.add("Content", producer="user1", produced_for="agent1")
@@ -203,25 +224,55 @@ class TestMemory:
         # produced_for should be a direct field in the message
         assert json_data["messages"][0]["produced_for"] == "agent1"
 
-    def test_add_with_episode_type(self, mock_client):
-        """Test adding memory with episode_type."""
+    def test_add_with_none_producer_and_produced_for(self, mock_client):
+        """Test adding memory with None producer and produced_for."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "memory_123"}]}
         mock_client.request.return_value = mock_response
 
         memory = Memory(
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
         )
 
-        memory.add("Content", episode_type="text")
+        result = memory.add("Content", producer=None, produced_for=None)
+
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert isinstance(result[0], AddMemoryResult)
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
-        assert json_data["messages"][0]["metadata"]["episode_type"] == "text"
+        # producer and produced_for should be empty strings when None
+        assert json_data["messages"][0]["producer"] == ""
+        assert json_data["messages"][0]["produced_for"] == ""
+
+    def test_add_with_episode_type(self, mock_client):
+        """Test adding memory with episode_type."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "memory_123"}]}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"user_id": "user1"},
+        )
+
+        memory.add("Content", episode_type=EpisodeType.MESSAGE)
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert (
+            json_data["messages"][0]["metadata"]["episode_type"]
+            == EpisodeType.MESSAGE.value
+        )
 
     def test_add_request_exception(self, mock_client):
         """Test add raises exception on request failure."""
@@ -231,8 +282,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         with pytest.raises(requests.RequestException):
@@ -250,8 +300,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         with pytest.raises(requests.RequestException):
@@ -287,13 +336,14 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         results = memory.search("test query")
 
-        assert "episodic_memory" in results
+        assert isinstance(results, SearchResult)
+        assert results.status == 0
+        assert "episodic_memory" in results.content
         mock_client.request.assert_called_once()
         call_args = mock_client.request.call_args
         assert call_args[0][0] == "POST"
@@ -318,8 +368,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         memory.search("query", limit=20)
@@ -340,8 +389,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         filters = {"category": "work", "type": "preference"}
@@ -435,9 +483,11 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            agent_id="agent1",
-            session_id="session1",
+            metadata={
+                "user_id": "user1",
+                "agent_id": "agent1",
+                "session_id": "session1",
+            },
         )
 
         default_filters = memory.get_default_filter_dict()
@@ -453,9 +503,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            agent_id=None,
-            session_id="session1",
+            metadata={"user_id": "user1", "agent_id": None, "session_id": "session1"},
         )
 
         default_filters = memory.get_default_filter_dict()
@@ -488,8 +536,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            agent_id="agent1",
+            metadata={"user_id": "user1", "agent_id": "agent1"},
         )
 
         # Search with user filters only - built-in filters should be automatically merged
@@ -517,9 +564,11 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            agent_id="agent1",
-            session_id="session1",
+            metadata={
+                "user_id": "user1",
+                "agent_id": "agent1",
+                "session_id": "session1",
+            },
         )
 
         # Search without user filters - built-in filters should still be applied
@@ -546,8 +595,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            agent_id="agent1",
+            metadata={"user_id": "user1", "agent_id": "agent1"},
         )
 
         # User provides a filter that conflicts with built-in filter
@@ -570,10 +618,12 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            agent_id="agent1",
-            session_id="session1",
-            group_id="group1",
+            metadata={
+                "user_id": "user1",
+                "agent_id": "agent1",
+                "session_id": "session1",
+                "group_id": "group1",
+            },
         )
 
         metadata = memory.get_current_metadata()
@@ -587,10 +637,10 @@ class TestMemory:
         context = metadata["context"]
         assert context["org_id"] == "test_org"
         assert context["project_id"] == "test_project"
-        assert context["user_id"] == "user1"
-        assert context["agent_id"] == "agent1"
-        assert context["session_id"] == "session1"
-        assert context["group_id"] == "group1"
+        assert context["metadata"]["user_id"] == "user1"
+        assert context["metadata"]["agent_id"] == "agent1"
+        assert context["metadata"]["session_id"] == "session1"
+        assert context["metadata"]["group_id"] == "group1"
 
         # Check built-in filters
         filters = metadata["built_in_filters"]
@@ -610,8 +660,8 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            user_id="user1",
-            # agent_id and session_id are None
+            metadata={"user_id": "user1"},
+            # agent_id and session_id are None in metadata
         )
 
         metadata = memory.get_current_metadata()
@@ -648,20 +698,22 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            group_id="test_group",
-            agent_id="agent1",
-            user_id="user1",
-            session_id="test_session",
+            metadata={
+                "group_id": "test_group",
+                "agent_id": "agent1",
+                "user_id": "user1",
+                "session_id": "test_session",
+            },
         )
 
         context = memory.get_context()
 
         assert context["org_id"] == "test_org"
         assert context["project_id"] == "test_project"
-        assert context["group_id"] == "test_group"
-        assert context["agent_id"] == "agent1"
-        assert context["user_id"] == "user1"
-        assert context["session_id"] == "test_session"
+        assert context["metadata"]["group_id"] == "test_group"
+        assert context["metadata"]["agent_id"] == "agent1"
+        assert context["metadata"]["user_id"] == "user1"
+        assert context["metadata"]["session_id"] == "test_session"
 
     def test_repr(self, mock_client):
         """Test string representation."""
@@ -669,10 +721,12 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            group_id="test_group",
-            agent_id="agent1",
-            user_id="user1",
-            session_id="test_session",
+            metadata={
+                "group_id": "test_group",
+                "agent_id": "agent1",
+                "user_id": "user1",
+                "session_id": "test_session",
+            },
         )
 
         repr_str = repr(memory)
@@ -699,10 +753,12 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            group_id="test_group",
-            agent_id="agent1",
-            user_id="user1",
-            session_id="test_session",
+            metadata={
+                "group_id": "test_group",
+                "agent_id": "agent1",
+                "user_id": "user1",
+                "session_id": "test_session",
+            },
         )
 
         metadata = memory._build_metadata({"custom": "value"})
@@ -719,8 +775,7 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            agent_id="agent1",
-            user_id="user1",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
         metadata = memory._build_metadata({})

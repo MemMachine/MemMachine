@@ -106,6 +106,10 @@ class SpecDoc:
     Use 'metadata.{key}' to filter based on specific metadata keys.
     """
 
+    MEMORY_EPISODIC_TYPE = """
+    The type of an episode (e.g., 'message').
+    """
+
     MEMORY_MESSAGES = """
     A list of messages to be added (batch input).
     Must contain at least one message.
@@ -132,7 +136,7 @@ class SpecDoc:
     """
 
     MEMORY_TYPES = """
-    A list of memory types to include in the search (e.g., Episodic, Semantic).
+    A list of memory types to include in the search (e.g., episodic, semantic).
     If empty, all available types are searched.
     """
 
@@ -145,7 +149,7 @@ class SpecDoc:
     """
 
     MEMORY_TYPE_SINGLE = """
-    The specific memory type to list (e.g., Episodic or Semantic).
+    The specific memory type to list (e.g., episodic or semantic).
     """
 
     EPISODIC_ID = """
@@ -299,7 +303,7 @@ class RouterDoc:
     Add memory messages to a project.
 
     The `types` field in the request specifies which memory types to add to:
-    - If `types` is empty or not provided, memories are added to all types (Episodic and Semantic)
+    - If `types` is empty or not provided, memories are added to all types (episodic and semantic)
     - If `types` only contains `"episodic"`, memories are added only to Episodic memory
     - If `types` only contains `"semantic"`, memories are added only to Semantic memory
     - If `types` contains both, memories are added to both types

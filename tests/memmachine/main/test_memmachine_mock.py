@@ -10,9 +10,9 @@ import pytest
 
 from memmachine.common.configuration import (
     Configuration,
-    EpisodicMemoryConfPartial,
 )
 from memmachine.common.configuration.episodic_config import (
+    EpisodicMemoryConfPartial,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -39,8 +39,9 @@ class DummySessionData:
         return self._session_key
 
 
-@pytest.fixture
-def minimal_conf() -> Configuration:
+def _minimal_conf(
+    short_memory_enabled: bool = True, long_term_memory_enabled: bool = True
+) -> Configuration:
     """Provide the minimal subset of configuration accessed in tests."""
     mock_rerankers = MagicMock()
     mock_rerankers.contains_reranker.return_value = True
@@ -65,10 +66,22 @@ def minimal_conf() -> Configuration:
             embedder="default-embedder",
             reranker="default-reranker",
         ),
+        short_term_memory_enabled=short_memory_enabled,
+        long_term_memory_enabled=long_term_memory_enabled,
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
     return ret
+
+
+@pytest.fixture
+def minimal_conf() -> Configuration:
+    return _minimal_conf()
+
+
+@pytest.fixture
+def minimal_conf_factory():
+    return _minimal_conf
 
 
 @pytest.fixture
@@ -122,6 +135,52 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     )
 
 
+def test_with_default_short_conf_enable_status(
+    minimal_conf_factory, patched_resource_manager
+):
+    min_conf = minimal_conf_factory(
+        short_memory_enabled=False, long_term_memory_enabled=True
+    )
+    memmachine = MemMachine(min_conf, patched_resource_manager)
+    conf = memmachine._with_default_episodic_memory_conf(session_key="session-2")
+    assert min_conf.episodic_memory.short_term_memory_enabled is False
+    assert min_conf.episodic_memory.long_term_memory_enabled is True
+    assert conf.short_term_memory_enabled is False
+    assert conf.long_term_memory_enabled is True
+    user_conf = EpisodicMemoryConfPartial(
+        short_term_memory_enabled=True,
+        long_term_memory_enabled=False,
+    )
+    conf = memmachine._with_default_episodic_memory_conf(
+        session_key="session-2", user_conf=user_conf
+    )
+    assert conf.short_term_memory_enabled is True
+    assert conf.long_term_memory_enabled is False
+
+
+def test_with_default_long_conf_enable_status(
+    minimal_conf_factory, patched_resource_manager
+):
+    min_conf = minimal_conf_factory(
+        short_memory_enabled=True, long_term_memory_enabled=False
+    )
+    memmachine = MemMachine(min_conf, patched_resource_manager)
+    conf = memmachine._with_default_episodic_memory_conf(session_key="session-2")
+    assert min_conf.episodic_memory.short_term_memory_enabled is True
+    assert min_conf.episodic_memory.long_term_memory_enabled is False
+    assert conf.short_term_memory_enabled is True
+    assert conf.long_term_memory_enabled is False
+    user_conf = EpisodicMemoryConfPartial(
+        short_term_memory_enabled=False,
+        long_term_memory_enabled=True,
+    )
+    conf = memmachine._with_default_episodic_memory_conf(
+        session_key="session-2", user_conf=user_conf
+    )
+    assert conf.short_term_memory_enabled is False
+    assert conf.long_term_memory_enabled is True
+
+
 @pytest.mark.asyncio
 async def test_create_session_passes_generated_config(
     minimal_conf, patched_resource_manager
@@ -133,11 +192,16 @@ async def test_create_session_passes_generated_config(
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
+    user_conf = EpisodicMemoryConfPartial(
+        long_term_memory=LongTermMemoryConfPartial(
+            embedder="custom-embed",
+            reranker="custom-reranker",
+        )
+    )
     await memmachine.create_session(
         "alpha",
         description="demo",
-        embedder_name="custom-embed",
-        reranker_name="custom-reranker",
+        user_conf=user_conf,
     )
 
     session_manager.create_new_session.assert_awaited_once()

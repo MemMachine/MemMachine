@@ -13,6 +13,15 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+is_first_run=false
+
+# Use docker-compose or docker compose based on what's available
+if command -v docker-compose &> /dev/null; then
+    COMPOSE_CMD="docker-compose"
+else
+    COMPOSE_CMD="docker compose"
+fi
+
 ## Function to run a command with a timeout
 timeout() {
     local duration=$1
@@ -505,6 +514,7 @@ check_config_file() {
         fi
 
         set_config_defaults
+        is_first_run=true
     else
         print_success "configuration.yml file found"
     fi
@@ -513,17 +523,22 @@ check_config_file() {
 select_openai_base_url() {
     local base_url=""
     local reply=""
-    
-    print_prompt
-    read -p "Would you like to configure a custom OpenAI Base URL? (Default: https://api.openai.com/v1) (y/N) " reply
-    if [[ $reply =~ ^[Yy]$ ]]; then
+
+    if [ "$is_first_run" = true ]; then
         print_prompt
-        read -p "Enter your OpenAI Base URL: " base_url
-        if [ -n "$base_url" ]; then
-            safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-            print_success "Set OpenAI Base URL to $base_url"
+        read -p "Model base URL is not set. Would you like to configure a custom model base URL? (y/N) " reply
+        if [[ $reply =~ ^[Yy]$ ]]; then
+            print_prompt
+            read -p "Please enter your model base URL [https://api.openai.com/v1]: " base_url
+            base_url=$(echo "${base_url:-https://api.openai.com/v1}" | tr -d '\n\r')
+            if [ -n "$base_url" ]; then
+                safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                print_success "Set model base URL to $base_url"
+            fi
         fi
+    else
+        print_success "Model model base URL appears to be configured"
     fi
 }
 
@@ -679,13 +694,6 @@ start_services() {
 
     print_info "Pulling and starting MemMachine services..."
     
-    # Use docker-compose or docker compose based on what's available
-    if command -v docker-compose &> /dev/null; then
-        COMPOSE_CMD="docker-compose"
-    else
-        COMPOSE_CMD="docker compose"
-    fi
-
     # Unset the memmachine image temporarily; without this, 'docker compose pull' will attempt
     # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
     ENV_MEMMACHINE_IMAGE=""
@@ -704,13 +712,6 @@ start_services() {
 # Wait for services to be healthy
 wait_for_health() {
     print_info "Waiting for services to be healthy..."
-    
-    # Use docker-compose or docker compose based on what's available
-    if command -v docker-compose &> /dev/null; then
-        COMPOSE_CMD="docker-compose"
-    else
-        COMPOSE_CMD="docker compose"
-    fi
     
     # Wait for services to be healthy
     $COMPOSE_CMD ps
@@ -750,10 +751,10 @@ show_service_info() {
     print_success "🎉 MemMachine is now running!"
     echo ""
     echo "Service URLs:"
-    echo "  📊 MemMachine API: http://localhost:${MEMORY_SERVER_PORT:-8080}"
+    echo "  📊 MemMachine API Docs: http://localhost:${MEMORY_SERVER_PORT:-8080}/docs"
     echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
-    echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/health"
-    echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/metrics"
+    echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health"
+    echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/metrics"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"
@@ -856,29 +857,17 @@ main() {
 case "${1:-}" in
     "stop")
         print_info "Stopping MemMachine services..."
-        if command -v docker-compose &> /dev/null; then
-            docker-compose down
-        else
-            docker compose down
-        fi
+        $COMPOSE_CMD down
         print_success "Services stopped"
         ;;
     "restart")
         print_info "Restarting MemMachine services..."
-        if command -v docker-compose &> /dev/null; then
-            docker-compose restart
-        else
-            docker compose restart
-        fi
+        $COMPOSE_CMD restart
         print_success "Services restarted"
         ;;
     "logs")
         print_info "Showing MemMachine logs..."
-        if command -v docker-compose &> /dev/null; then
-            docker-compose logs -f
-        else
-            docker compose logs -f
-        fi
+        $COMPOSE_CMD logs -f
         ;;
     "clean")
         print_warning "This will remove all data and volumes!"
@@ -887,11 +876,7 @@ case "${1:-}" in
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             print_info "Cleaning up MemMachine services and data..."
-            if command -v docker-compose &> /dev/null; then
-                docker-compose down -v
-            else
-                docker compose down -v
-            fi
+            $COMPOSE_CMD down -v
             print_success "Cleanup completed"
         else
             print_info "Cleanup cancelled"

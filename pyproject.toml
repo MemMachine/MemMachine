@@ -18,6 +18,7 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
     "boto3-stubs==1.40.64",
+    "cohere>=5.20.0",
     "coverage>=7.11.0",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
@@ -143,7 +144,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
-"examples/**/*.py" = [
+"examples/**" = [
     "ANN",
     "ASYNC210",
     "T201",

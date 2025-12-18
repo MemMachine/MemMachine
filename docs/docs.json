@@ -12,6 +12,7 @@
       "tagId": "GTM-WDX7ZBC7"
     }
   },
+  
   "favicon": "favicon.ico",
   "navigation": {
     "tabs": [
@@ -80,7 +81,7 @@
         ]
       },
       {
-        "tab": "API Reference",
+        "tab": "OpenSource API",
         "groups": [
           {
             "group": "Introduction",
@@ -96,15 +97,8 @@
           },
           {
             "group": "REST API",
-            "openapi": "openapi.json",
-            "playground": {
-              "display": "interactive"
+            "openapi": "openapi.json"
             },
-            "examples": {
-              "languages": ["python"],
-              "defaults": "required"
-            }
-          },
           {
             "group": "PythonSDK Client",
             "pages": [
@@ -140,6 +134,27 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Platform",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": ["platform/introduction"]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "platform/dashboard",
+              "platform/api_key",
+              "platform/login_register"
+            ]
+          },
+          {
+            "group": "Platform API",
+            "openapi": "platform.openapi.json"
+          }
+        ]
       }
     ],
     "global": {
@@ -158,6 +173,11 @@
           "anchor": "Blog",
           "href": "https://memmachine.ai/blog",
           "icon": "newspaper"
+        },
+        {
+          "anchor": "Platform",
+          "href": "https://console.memmachine.ai/",
+          "icon": "box-open"
         }
       ]
     }

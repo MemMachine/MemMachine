@@ -4,11 +4,16 @@
     "title": "FastAPI",
     "version": "0.1.0"
   },
+  "servers": [
+    {
+      "url": "http://localhost:8080"
+    }
+  ],
   "paths": {
     "/api/v2/projects": {
       "post": {
         "summary": "Create Project",
-        "description": "Create a new project.\n\n    This endpoint creates a project under the specified organization using the\n    provided identifiers and configuration. Both `org_id` and `project_id`\n    follow the rules: no slashes; only letters, numbers, underscores,\n    hyphens, and Unicode characters.\n\n    Each project acts as an isolated memory namespace. All memories (episodes)\n    inserted into a project belong exclusively to that project. Queries,\n    listings, and any background operations such as memory summarization or\n    knowledge extraction only access data within the same project. No\n    cross-project memory access is allowed.\n\n    If a project with the same ID already exists within the organization,\n    the request will fail with an error.\n\n    Returns the fully resolved project record, including configuration defaults\n    applied by the system.",
+        "description": "Create a new project.\n\n    This endpoint creates a project under the specified organization using the\n    provided identifiers and configuration. Both `org_id` and `project_id`\n    follow the rules: no slashes; only letters, numbers, underscores,\n    hyphens, colon, and Unicode characters.\n\n    Each project acts as an isolated memory namespace. All memories (episodes)\n    inserted into a project belong exclusively to that project. Queries,\n    listings, and any background operations such as memory summarization or\n    knowledge extraction only access data within the same project. No\n    cross-project memory access is allowed.\n\n    If a project with the same ID already exists within the organization,\n    the request will fail with an error.\n\n    Returns the fully resolved project record, including configuration defaults\n    applied by the system.",
         "operationId": "create_project_api_v2_projects_post",
         "requestBody": {
           "content": {
@@ -125,7 +130,7 @@
     "/api/v2/projects/list": {
       "post": {
         "summary": "List Projects",
-        "description": "List all projects.\n\n    Returns a list of all projects accessible within the system. Each entry\n    contains the project's organization ID and project ID. Identifiers follow\n    the standard rules: no slashes; only letters, numbers, underscores,\n    hyphens, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
+        "description": "List all projects.\n\n    Returns a list of all projects accessible within the system. Each entry\n    contains the project's organization ID and project ID. Identifiers follow\n    the standard rules: no slashes; only letters, numbers, underscores,\n    hyphens, colon, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
         "operationId": "list_projects_api_v2_projects_list_post",
         "responses": {
           "200": {
@@ -183,86 +188,8 @@
     "/api/v2/memories": {
       "post": {
         "summary": "Add Memories",
-        "description": "Add memory messages to a project.  If not specified, the memory will be\n    added to all the sub-types (Episodic, Semantic).\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
+        "description": "Add memory messages to a project.\n\n    The `types` field in the request specifies which memory types to add to:\n    - If `types` is empty or not provided, memories are added to all types (Episodic and Semantic)\n    - If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n    - If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n    - If `types` contains both, memories are added to both types\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
         "operationId": "add_memories_api_v2_memories_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddMemoriesSpec"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AddMemoriesResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/memories/episodic/add": {
-      "post": {
-        "summary": "Add Episodic Memories",
-        "description": "Add episodic memory messages to a project.  Same as Add Memories but only adds\n    to the Episodic memory type.",
-        "operationId": "add_episodic_memories_api_v2_memories_episodic_add_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddMemoriesSpec"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AddMemoriesResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v2/memories/semantic/add": {
-      "post": {
-        "summary": "Add Semantic Memories",
-        "description": "Add semantic memory messages to a project.  Same as Add Memories but only adds\n    to the Semantic memory type.",
-        "operationId": "add_semantic_memories_api_v2_memories_semantic_add_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -378,7 +305,7 @@
     "/api/v2/memories/episodic/delete": {
       "post": {
         "summary": "Delete Episodic Memory",
-        "description": "Delete a specific episodic memory from a project.\n\n    Removes the episodic memory identified by `episodic_id` from the specified\n    project. This operation is permanent and cannot be undone.\n    If the episodic memory does not exist, a not-found error is returned.",
+        "description": "Delete episodic memories from a project.\n\n    This operation permanently removes one or more episodic memories from the\n    specified project. You may provide either `episodic_id` to delete a single\n    memory or `episodic_ids` to delete multiple memories in one request.\n    This action cannot be undone.\n\n    If any of the specified episodic memories do not exist, a not-found error\n    is returned for those entries.",
         "operationId": "delete_episodic_memory_api_v2_memories_episodic_delete_post",
         "requestBody": {
           "content": {
@@ -410,7 +337,7 @@
     "/api/v2/memories/semantic/delete": {
       "post": {
         "summary": "Delete Semantic Memory",
-        "description": "Delete a specific semantic memory from a project.\n\n    Removes the semantic memory identified by `semantic_id` from the specified\n    project. This operation is permanent and cannot be undone.\n    If the semantic memory does not exist, a not-found error is returned.",
+        "description": "Delete semantic memories from a project.\n\n    This operation permanently removes one or more semantic memories from the\n    specified project. You may provide either `semantic_id` to delete a single\n    memory or `semantic_ids` to delete multiple memories in one request.\n    This action cannot be undone.\n\n    If any of the specified semantic memories do not exist, a not-found error\n    is returned for those entries.",
         "operationId": "delete_semantic_memory_api_v2_memories_semantic_delete_post",
         "requestBody": {
           "content": {
@@ -505,7 +432,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -515,12 +442,26 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "default": "universal",
             "examples": [
               "memmachine",
               "research123",
               "qa_pipeline"
+            ]
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryType"
+            },
+            "type": "array",
+            "title": "Types",
+            "description": "\n    A list of memory types to include in the search (e.g., Episodic, Semantic).\n    If empty, all available types are searched.\n    ",
+            "examples": [
+              [
+                "episodic",
+                "semantic"
+              ]
             ]
           },
           "messages": {
@@ -560,7 +501,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -569,7 +510,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "examples": [
               "memmachine",
               "research123",
@@ -604,7 +545,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -614,7 +555,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "default": "universal",
             "examples": [
               "memmachine",
@@ -625,17 +566,33 @@
           "episodic_id": {
             "type": "string",
             "title": "Episodic Id",
-            "description": "\n    The unique ID of the specific episodic memory to be deleted.\n    ",
+            "description": "\n    The unique ID of the specific episodic memory.\n    ",
+            "default": "",
             "examples": [
               "123",
               "345"
             ]
+          },
+          "episodic_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Episodic Ids",
+            "description": "\n    A list of unique IDs of episodic memories.",
+            "default": [],
+            "examples": [
+              [
+                "123",
+                "345"
+              ],
+              [
+                "23"
+              ]
+            ]
           }
         },
         "type": "object",
-        "required": [
-          "episodic_id"
-        ],
         "title": "DeleteEpisodicMemorySpec",
         "description": "Specification model for deleting episodic memories."
       },
@@ -644,7 +601,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -653,7 +610,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "examples": [
               "memmachine",
               "research123",
@@ -674,7 +631,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -684,7 +641,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "default": "universal",
             "examples": [
               "memmachine",
@@ -695,17 +652,33 @@
           "semantic_id": {
             "type": "string",
             "title": "Semantic Id",
-            "description": "\n    The unique ID of the specific semantic memory to be deleted.\n    ",
+            "description": "\n    The unique ID of the specific semantic memory.\n    ",
+            "default": "",
             "examples": [
               "12",
               "23"
             ]
+          },
+          "semantic_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Semantic Ids",
+            "description": "\n    A list of unique IDs of semantic memories.",
+            "default": [],
+            "examples": [
+              [
+                "123",
+                "345"
+              ],
+              [
+                "23"
+              ]
+            ]
           }
         },
         "type": "object",
-        "required": [
-          "semantic_id"
-        ],
         "title": "DeleteSemanticMemorySpec",
         "description": "Specification model for deleting semantic memories."
       },
@@ -730,7 +703,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -739,7 +712,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "examples": [
               "memmachine",
               "research123",
@@ -773,7 +746,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -783,7 +756,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "default": "universal",
             "examples": [
               "memmachine",
@@ -827,8 +800,8 @@
             "description": "\n    The specific memory type to list (e.g., Episodic or Semantic).\n    ",
             "default": "episodic",
             "examples": [
-              "Episodic",
-              "Semantic"
+              "episodic",
+              "semantic"
             ]
           }
         },
@@ -955,7 +928,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -965,7 +938,7 @@
           "project_id": {
             "type": "string",
             "title": "Project Id",
-            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
+            "description": "\n    The identifier of the project.\n\n    - Must be unique within the organization.\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This ID is used in API paths and resource locations.\n    ",
             "default": "universal",
             "examples": [
               "memmachine",
@@ -1010,8 +983,8 @@
             "description": "\n    A list of memory types to include in the search (e.g., Episodic, Semantic).\n    If empty, all available types are searched.\n    ",
             "examples": [
               [
-                "Episodic",
-                "Semantic"
+                "episodic",
+                "semantic"
               ]
             ]
           }

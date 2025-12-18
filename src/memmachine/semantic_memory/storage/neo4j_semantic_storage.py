@@ -534,15 +534,13 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         *,
         min_uningested_messages: int | None = None,
+        older_than: datetime | None = None,
     ) -> list[str]:
-        if min_uningested_messages is None or min_uningested_messages <= 0:
-            records, _, _ = await self._driver.execute_query(
-                """
-                MATCH (h:SetHistory)
-                RETURN DISTINCT h.set_id AS set_id
-                """,
-            )
-        else:
+        set_ids: set[str] = set()
+        filters_applied = False
+
+        if min_uningested_messages is not None and min_uningested_messages > 0:
+            filters_applied = True
             records, _, _ = await self._driver.execute_query(
                 """
                 MATCH (h:SetHistory)
@@ -553,21 +551,54 @@ class Neo4jSemanticStorage(SemanticStorage):
                 """,
                 min_uningested_messages=min_uningested_messages,
             )
+            set_ids.update(
+                str(record.get("set_id"))
+                for record in records
+                if record.get("set_id") is not None
+            )
 
-        return [
-            str(record.get("set_id"))
-            for record in records
-            if record.get("set_id") is not None
-        ]
+        if older_than is not None:
+            filters_applied = True
+            records, _, _ = await self._driver.execute_query(
+                """
+                MATCH (h:SetHistory)
+                WHERE coalesce(h.is_ingested, false) = false
+                  AND h.created_at <= $older_than
+                RETURN DISTINCT h.set_id AS set_id
+                """,
+                older_than=older_than,
+            )
+            set_ids.update(
+                str(record.get("set_id"))
+                for record in records
+                if record.get("set_id") is not None
+            )
+
+        if not filters_applied:
+            records, _, _ = await self._driver.execute_query(
+                """
+                MATCH (h:SetHistory)
+                RETURN DISTINCT h.set_id AS set_id
+                """,
+            )
+            set_ids.update(
+                str(record.get("set_id"))
+                for record in records
+                if record.get("set_id") is not None
+            )
+
+        return list(set_ids)
 
     async def add_history_to_set(self, set_id: str, history_id: EpisodeIdT) -> None:
         await self._driver.execute_query(
             """
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
-            ON CREATE SET h.is_ingested = false
+            ON CREATE SET h.is_ingested = false,
+                          h.created_at = $created_at
             """,
             set_id=set_id,
             history_id=str(history_id),
+            created_at=datetime.now(UTC),
         )
 
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
