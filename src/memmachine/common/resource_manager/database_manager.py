@@ -116,9 +116,9 @@ class DatabaseManager:
                 conf.get_uri(),
                 auth=(conf.user, conf.password.get_secret_value()),
             )
-            self.neo4j_drivers[name] = driver
             if validate:
                 await self._validate_neo4j_driver(name, driver)
+            self.neo4j_drivers[name] = driver
             params = Neo4jVectorGraphStoreParams(
                 driver=driver,
                 force_exact_similarity_search=conf.force_exact_similarity_search,
