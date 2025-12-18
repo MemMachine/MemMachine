@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import logging
+from collections import deque
 from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
@@ -97,6 +98,9 @@ class DeclarativeMemory:
         self._derivative_collection = f"Derivative_{session_id}"
 
         self._derived_from_relation = f"DERIVED_FROM_{session_id}"
+
+        self._episode_context_content_length_quota_factor = 20
+        self._score_single_episodes_threshold = 10
 
     async def add_episodes(
         self,
@@ -271,6 +275,7 @@ class DeclarativeMemory:
         query: str,
         *,
         max_num_episodes: int = 20,
+        max_episode_context_content_length_quota: int = 400,
         property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         """
@@ -282,6 +287,11 @@ class DeclarativeMemory:
             max_num_episodes (int):
                 The maximum number of episodes to return
                 (default: 20).
+            max_episode_context_content_length_quota (int):
+                The maximum episode context content length quota
+                for contextualization of a single episode
+                in characters
+                (default: 400).
             property_filter (FilterExpr | None):
                 Filterable property keys and values
                 to use for filtering episodes
@@ -290,6 +300,46 @@ class DeclarativeMemory:
         Returns:
             list[Episode]:
                 A list of episodes relevant to the query, ordered chronologically.
+
+        """
+        scored_episodes = await self.search_scored(
+            query,
+            max_num_episodes=max_num_episodes,
+            max_episode_context_content_length_quota=max_episode_context_content_length_quota,
+            property_filter=property_filter,
+        )
+        return [episode for _, episode in scored_episodes]
+
+    async def search_scored(
+        self,
+        query: str,
+        *,
+        max_num_episodes: int = 20,
+        max_episode_context_content_length_quota: int = 400,
+        property_filter: FilterExpr | None = None,
+    ) -> list[tuple[float, Episode]]:
+        """
+        Search declarative memory for episodes relevant to the query, returning scored episodes.
+
+        Args:
+            query (str):
+                The search query.
+            max_num_episodes (int):
+                The maximum number of episodes to return
+                (default: 20).
+            max_episode_context_content_length_quota (int):
+                The maximum episode context content length quota
+                for contextualization of a single episode
+                in characters
+                (default: 400).
+            property_filter (FilterExpr | None):
+                Filterable property keys and values
+                to use for filtering episodes
+                (default: None).
+
+        Returns:
+            list[tuple[float, Episode]]:
+                A list of scored episodes relevant to the query, ordered chronologically.
 
         """
         mangled_property_filter = DeclarativeMemory._mangle_property_filter(
@@ -346,15 +396,35 @@ class DeclarativeMemory:
             for source_episode_node in source_episode_nodes
         ]
 
-        contextualize_episode_tasks = [
-            self._contextualize_episode(
-                nuclear_episode,
-                mangled_property_filter=mangled_property_filter,
-            )
-            for nuclear_episode in nuclear_episodes
-        ]
+        if max_episode_context_content_length_quota > 0:
+            contextualize_episode_tasks = [
+                self._contextualize_episode(
+                    nuclear_episode,
+                    episode_context_content_length_quota=min(
+                        max_episode_context_content_length_quota,
+                        self._episode_context_content_length_quota_factor
+                        * max_num_episodes,
+                    ),
+                    mangled_property_filter=mangled_property_filter,
+                )
+                for nuclear_episode in nuclear_episodes
+            ]
 
-        episode_contexts = await asyncio.gather(*contextualize_episode_tasks)
+            episode_contexts = await asyncio.gather(*contextualize_episode_tasks)
+        else:
+            episode_contexts = [
+                [nuclear_episode] for nuclear_episode in nuclear_episodes
+            ]
+
+        if max_num_episodes <= self._score_single_episodes_threshold:
+            nuclear_episodes = [
+                episode
+                for episode_context in episode_contexts
+                for episode in episode_context
+            ]
+            episode_contexts = [
+                [nuclear_episode] for nuclear_episode in nuclear_episodes
+            ]
 
         # Rerank episode contexts.
         episode_context_scores = await self._score_episode_contexts(
@@ -362,9 +432,9 @@ class DeclarativeMemory:
             episode_contexts,
         )
 
-        reranked_anchored_episode_contexts = [
-            (nuclear_episode, episode_context)
-            for _, nuclear_episode, episode_context in sorted(
+        reranked_scored_anchored_episode_contexts = [
+            (episode_context_score, nuclear_episode, episode_context)
+            for episode_context_score, nuclear_episode, episode_context in sorted(
                 zip(
                     episode_context_scores,
                     nuclear_episodes,
@@ -377,19 +447,28 @@ class DeclarativeMemory:
         ]
 
         # Unify episode contexts.
-        unified_episode_context = DeclarativeMemory._unify_anchored_episode_contexts(
-            reranked_anchored_episode_contexts,
-            max_num_episodes=max_num_episodes,
+        unified_scored_episode_context = (
+            DeclarativeMemory._unify_scored_anchored_episode_contexts(
+                reranked_scored_anchored_episode_contexts,
+                max_num_episodes=max_num_episodes,
+            )
         )
-        return unified_episode_context
+        return unified_scored_episode_context
 
     async def _contextualize_episode(
         self,
         nuclear_episode: Episode,
-        max_backward_episodes: int = 1,
-        max_forward_episodes: int = 2,
+        episode_context_content_length_quota: int,
+        max_backward_episodes: int = 4,
+        max_forward_episodes: int = 8,
         mangled_property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
+        episode_context = deque([nuclear_episode])
+        episode_context_content_length = len(nuclear_episode.content)
+
+        if episode_context_content_length >= episode_context_content_length_quota:
+            return list(episode_context)
+
         previous_episode_nodes = (
             await self._vector_graph_store.search_directional_nodes(
                 collection=self._episode_collection,
@@ -418,19 +497,48 @@ class DeclarativeMemory:
             property_filter=mangled_property_filter,
         )
 
-        context = (
-            [
-                DeclarativeMemory._episode_from_episode_node(episode_node)
-                for episode_node in reversed(previous_episode_nodes)
-            ]
-            + [nuclear_episode]
-            + [
-                DeclarativeMemory._episode_from_episode_node(episode_node)
-                for episode_node in next_episode_nodes
-            ]
-        )
+        previous_episodes = [
+            DeclarativeMemory._episode_from_episode_node(episode_node)
+            for episode_node in previous_episode_nodes
+        ]
+        next_episodes = [
+            DeclarativeMemory._episode_from_episode_node(episode_node)
+            for episode_node in next_episode_nodes
+        ]
 
-        return context
+        previous_episode_index = 0
+        next_episode_index = 0
+        while previous_episode_index < len(
+            previous_episodes
+        ) or next_episode_index < len(
+            next_episodes,
+        ):
+            for _ in range(2):
+                if next_episode_index < len(next_episodes):
+                    next_episode = next_episodes[next_episode_index]
+                    next_episode_index += 1
+
+                    episode_context.append(next_episode)
+                    episode_context_content_length += len(next_episode.content)
+                    if (
+                        episode_context_content_length
+                        >= episode_context_content_length_quota
+                    ):
+                        return list(episode_context)
+
+            if previous_episode_index < len(previous_episodes):
+                previous_episode = previous_episodes[previous_episode_index]
+                previous_episode_index += 1
+
+                episode_context.appendleft(previous_episode)
+                episode_context_content_length += len(previous_episode.content)
+                if (
+                    episode_context_content_length
+                    >= episode_context_content_length_quota
+                ):
+                    return list(episode_context)
+
+        return list(episode_context)
 
     async def _score_episode_contexts(
         self,
@@ -554,21 +662,29 @@ class DeclarativeMemory:
         await asyncio.gather(*delete_nodes_tasks)
 
     @staticmethod
-    def _unify_anchored_episode_contexts(
-        anchored_episode_contexts: Iterable[tuple[Episode, Iterable[Episode]]],
+    def _unify_scored_anchored_episode_contexts(
+        scored_anchored_episode_contexts: Iterable[
+            tuple[float, Episode, Iterable[Episode]]
+        ],
         max_num_episodes: int,
-    ) -> list[Episode]:
+    ) -> list[tuple[float, Episode]]:
         """Unify anchored episode contexts into a single list within the limit."""
-        episode_set: set[Episode] = set()
+        episode_scores: dict[Episode, float] = {}
 
-        for nuclear_episode, context in anchored_episode_contexts:
+        for score, nuclear_episode, context in scored_anchored_episode_contexts:
             context = list(context)
 
-            if len(episode_set) >= max_num_episodes:
+            if len(episode_scores) >= max_num_episodes:
                 break
-            if (len(episode_set) + len(context)) <= max_num_episodes:
+            if (len(episode_scores) + len(context)) <= max_num_episodes:
                 # It is impossible that the context exceeds the limit.
-                episode_set.update(context)
+                episode_scores.update(
+                    {
+                        episode: score
+                        for episode in context
+                        if episode not in episode_scores
+                    }
+                )
             else:
                 # It is possible that the context exceeds the limit.
                 # Prioritize episodes near the nuclear episode.
@@ -588,15 +704,15 @@ class DeclarativeMemory:
                 # Add episodes to unified context until limit is reached,
                 # or until the context is exhausted.
                 for episode in nuclear_context:
-                    if len(episode_set) >= max_num_episodes:
+                    if len(episode_scores) >= max_num_episodes:
                         break
-                    episode_set.add(episode)
+                    episode_scores.setdefault(episode, score)
 
         unified_episode_context = sorted(
-            episode_set,
-            key=lambda episode: (
-                episode.timestamp,
-                episode.uid,
+            [(score, episode) for episode, score in episode_scores.items()],
+            key=lambda scored_episode: (
+                scored_episode[1].timestamp,
+                scored_episode[1].uid,
             ),
         )
 
