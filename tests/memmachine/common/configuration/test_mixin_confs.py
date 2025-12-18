@@ -1,8 +1,10 @@
 import pytest
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from memmachine.common.configuration.mixin_confs import (
+    ApiKeyMixin,
+    AWSCredentialsMixin,
     MetricsFactoryIdMixin,
     UnknownMetricsFactoryError,
     YamlSerializableMixin,
@@ -148,3 +150,83 @@ def test_deep_recursive_unwrap():
     assert d["value"]["level1"]["level2"]["secret"] == "deep-secret"
     assert d["value"]["level1"]["level2"]["list"][1] == "abc"
     assert d["value"]["level1"]["level2"]["list"][2]["x"] == "yyy"
+
+
+@pytest.fixture(autouse=True)
+def clear_key_password_env(monkeypatch):
+    for var in ["MY_API_KEY", "MY_PASSWORD"]:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_resolve_api_key_from_env(monkeypatch):
+    monkeypatch.setenv("MY_API_KEY", "my-secret-value")
+    mixin = ApiKeyMixin(api_key=SecretStr("$MY_API_KEY"))
+    assert mixin.api_key.get_secret_value() == "my-secret-value"
+
+
+def test_resolve_api_key_form2_from_env(monkeypatch):
+    monkeypatch.setenv("MY_API_KEY", "another-secret-value")
+    mixin = ApiKeyMixin(api_key=SecretStr("${MY_API_KEY}"))
+    assert mixin.api_key.get_secret_value() == "another-secret-value"
+
+
+def test_api_key_env_not_found(monkeypatch):
+    monkeypatch.setenv("HER_API_KEY", "her-secret-value")
+    mixin = ApiKeyMixin(api_key=SecretStr("$MY_API_KEY"))
+    assert mixin.api_key.get_secret_value() == "$MY_API_KEY"
+
+
+def test_api_key_without_env():
+    mixin = ApiKeyMixin(api_key=SecretStr("plain-secret"))
+    assert mixin.api_key.get_secret_value() == "plain-secret"
+
+
+def test_password_mixin_resolve_from_env(monkeypatch):
+    monkeypatch.setenv("MY_PASSWORD", "my-password-value")
+    mixin = ApiKeyMixin(api_key=SecretStr("$MY_PASSWORD"))
+    assert mixin.api_key.get_secret_value() == "my-password-value"
+
+
+def test_password_mixin_env_not_found(monkeypatch):
+    monkeypatch.setenv("HER_PASSWORD", "her-password-value")
+    mixin = ApiKeyMixin(api_key=SecretStr("$MY_PASSWORD"))
+    assert mixin.api_key.get_secret_value() == "$MY_PASSWORD"
+
+
+def test_password_mixin_without_env():
+    mixin = ApiKeyMixin(api_key=SecretStr("plain-password"))
+    assert mixin.api_key.get_secret_value() == "plain-password"
+
+
+def test_password_mixin_invalid_type():
+    with pytest.raises(ValidationError) as exc:
+        ApiKeyMixin(api_key=12345)  # type: ignore
+    assert "should be a valid string" in str(exc.value)
+
+
+@pytest.fixture(autouse=True)
+def clear_aws_env(monkeypatch):
+    for var in ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_default_to_env_key_and_secret(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-secret-key")
+    mixin = AWSCredentialsMixin()
+    assert mixin.aws_access_key_id.get_secret_value() == "env-access-key"
+    assert mixin.aws_secret_access_key.get_secret_value() == "env-secret-key"
+    assert mixin.aws_session_token is None
+
+
+def test_resolve_aws_credentials_from_env(monkeypatch):
+    monkeypatch.setenv("MY_API_KEY", "my-api-key")
+    monkeypatch.setenv("MY_PASSWORD", "my-password")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "my-token")
+    mixin = AWSCredentialsMixin(
+        aws_access_key_id=SecretStr("$MY_API_KEY"),
+        aws_secret_access_key=SecretStr("${MY_PASSWORD}"),
+    )
+    assert mixin.aws_access_key_id.get_secret_value() == "my-api-key"
+    assert mixin.aws_secret_access_key.get_secret_value() == "my-password"
+    assert mixin.aws_session_token.get_secret_value() == "my-token"

@@ -71,3 +71,7 @@ class SessionNotFoundError(MemMachineError):
         """Initialize with the session key that does not exist."""
         self.session_key = session_key
         super().__init__(f"Session '{session_key}' does not exist.")
+
+
+class InvalidPasswordError(MemMachineError):
+    """Error for invalid password scenarios."""

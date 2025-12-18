@@ -4,33 +4,23 @@ from typing import ClassVar, Self
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from memmachine.common.configuration.mixin_confs import (
+    ApiKeyMixin,
+    AWSCredentialsMixin,
     MetricsFactoryIdMixin,
     YamlSerializableMixin,
 )
 from memmachine.common.data_types import SimilarityMetric
 
 
-class AmazonBedrockEmbedderConf(YamlSerializableMixin):
+class AmazonBedrockEmbedderConf(YamlSerializableMixin, AWSCredentialsMixin):
     """Configuration for AmazonBedrockEmbedder."""
 
     region: str = Field(
         ...,
         description="AWS region where Bedrock is hosted.",
-    )
-    aws_access_key_id: SecretStr | None = Field(
-        ...,
-        description="AWS access key ID for authentication.",
-    )
-    aws_secret_access_key: SecretStr | None = Field(
-        ...,
-        description="AWS secret access key for authentication.",
-    )
-    aws_session_token: SecretStr | None = Field(
-        default=None,
-        description="AWS session token for authentication (if applicable).",
     )
     model_id: str = Field(
         default="amazon.titan-embed-text-v2:0",
@@ -47,17 +37,13 @@ class AmazonBedrockEmbedderConf(YamlSerializableMixin):
     )
 
 
-class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin):
+class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
     """Configuration for OpenAI embedding models."""
 
     model: str = Field(
         default="text-embedding-3-small",
         min_length=1,
         description="OpenAI Embeddings API-compatible model",
-    )
-    api_key: SecretStr = Field(
-        default=SecretStr(""),
-        description="OpenAI Chat Completions API key for authentication",
     )
     dimensions: int | None = Field(
         default=1536,
