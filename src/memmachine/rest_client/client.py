@@ -1,11 +1,14 @@
 """Client utilities for interacting with the MemMachine HTTP API."""
 
 import logging
+from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any
+from typing import Any, TypedDict
 
 import requests
 from requests.adapters import HTTPAdapter
+from requests.auth import AuthBase
+from requests.cookies import RequestsCookieJar
 from urllib3.util.retry import Retry
 
 from memmachine.common.api.spec import (
@@ -68,13 +71,16 @@ class MemMachineClient:
 
     """
 
+    class ExtraOptions(TypedDict, total=False):
+        """Extra options for the MemMachineClient."""
+
     def __init__(
         self,
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: int = 30,
         max_retries: int = 3,
-        **kwargs: dict[str, Any],
+        **kwargs: ExtraOptions,
     ) -> None:
         """
         Initialize the MemMachine client.
@@ -125,12 +131,29 @@ class MemMachineClient:
         if api_key:
             self._session.headers["Authorization"] = f"Bearer {api_key}"
 
+    class RequestExtraOptions(TypedDict, total=False):
+        """Extra options for the HTTP request."""
+
+        params: Mapping[str, str] | Sequence[tuple[str, str]] | None
+        data: object
+        json: object
+        headers: Mapping[str, str]
+        cookies: RequestsCookieJar | Mapping[str, str]
+        files: object
+        auth: tuple[str, str] | AuthBase
+        allow_redirects: bool
+        proxies: Mapping[str, str]
+        hooks: Mapping[str, object]
+        stream: bool | None
+        verify: bool | str | None
+        cert: str | tuple[str, str] | None
+
     def request(
         self,
         method: str,
         url: str,
         timeout: int | None = None,
-        **kwargs: dict[str, Any],
+        **kwargs: RequestExtraOptions,
     ) -> requests.Response:
         """
         Make an HTTP request using the client's session.

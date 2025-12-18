@@ -42,5 +42,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Ensure uv.lock is correct
+        run: uv lock --refresh && git diff --exit-code
+
       - name: Test with python ${{ matrix.python-version }}
         run: uv run --frozen --all-extras ty check src

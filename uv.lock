@@ -461,6 +461,7 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "requests" },
     { name = "tokenizers" },
+    { name = "types-requests" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b5/fe/0e5dcfa9d111b82de4f3c7d83fbc92f478d229c8a004cc63c321fe44bb42/cohere-5.20.0.tar.gz", hash = "sha256:fb5ad5afa47447dd7eb090ad29bdb3a8181b0e758a3b03ba6ed8ca48d68d11a7", size = 168600, upload-time = "2025-10-24T20:24:05.903Z" }
@@ -3524,6 +3525,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bb/68/a580122cf8e8ee1154ee8795241f1b1e097e91050af5e7f5f5c800194f7b/types_awscrt-0.29.1.tar.gz", hash = "sha256:545f100e17d7633aa1791f92a8a4716f8ee1fc7cc9ee98dd31676d6c5e07e733", size = 17787, upload-time = "2025-11-30T07:43:33.014Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a6/0e/69a9ca202a8543146e189962d7069b3ef241d48a544e192856045c0ea792/types_awscrt-0.29.1-py3-none-any.whl", hash = "sha256:f583bef3d42a307b3f3c02ef8d5d49fbec04e02bf3aacd3ada3953213c9150a7", size = 42394, upload-time = "2025-11-30T07:43:31.555Z" },
+]
+
+[[package]]
+name = "types-requests"
+version = "2.32.4.20250913"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/36/27/489922f4505975b11de2b5ad07b4fe1dca0bca9be81a703f26c5f3acfce5/types_requests-2.32.4.20250913.tar.gz", hash = "sha256:abd6d4f9ce3a9383f269775a9835a4c24e5cd6b9f647d64f88aa4613c33def5d", size = 23113, upload-time = "2025-09-13T02:40:02.309Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/20/9a227ea57c1285986c4cf78400d0a91615d25b24e257fd9e2969606bdfae/types_requests-2.32.4.20250913-py3-none-any.whl", hash = "sha256:78c9c1fffebbe0fa487a418e0fa5252017e9c60d1a2da394077f1780f655d7e1", size = 20658, upload-time = "2025-09-13T02:40:01.115Z" },
 ]
 
 [[package]]
