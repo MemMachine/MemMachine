@@ -1,183 +1,124 @@
 ---
 title: "Introduction"
-description: "Introducing the Typescript REST SDK for communicating with the MemMachine Client"
+description: "The Typescript REST SDK for communicating with the MemMachine Client"
 icon: "t"
 ---
 
-The **MemMachine Python Client SDK** provides a robust, type-safe interface for your applications to interact with the MemMachine Server. It handles the complexity of authentication, connection pooling, retries, and object serialization, allowing you to focus on building intelligent agents.
+Welcome to the MemMachine TypeScript SDK. This library provides a seamless, type-safe way to integrate MemMachine's long-term memory capabilities into your Node.js or browser-based applications.
 
-## Architecture
+With this SDK, you can easily store, retrieve, and manage AI memories without worrying about the underlying REST API complexities.
 
-The MemMachine Client SDK acts as a bridge between your application logic (e.g., an AI agent, a chatbot, or a backend service) and the MemMachine Server.
+## Key Capabilities
 
-### Communication Flow
+* **Memory Lifecycle:** Effortlessly add, search, and manage memories with natural language.
+* **Project Isolation:** Organize data into distinct projects and organizations.
+* **Type Safety:** Built-in TypeScript definitions ensure your data structures are always correct.
+* **Resilient Design:** Robust error handling and health checks to keep your integration running smoothly.
 
-The following diagram illustrates how the Client SDK integrates into your system architecture:
+## Quick Start
 
-```mermaid
-graph LR
+<Steps>
+<Step title="Install the Package">
 
-    subgraph "Infra [Your Infrastructure]"
-        App["Your Application / Agent"] -->|Python SDK| Client["MemMachine Client"]
-    end
-
-    subgraph "Net [Network]"
-        Client -->|HTTP/REST| LB["Load Balancer / Ingress"]
-    end
-
-    subgraph "ServerSide [MemMachine Server]"
-        LB --> Server["MemMachine Server API"]
-        Server -->|Read/Write| Episodic["Episodic Memory Store"]
-        Server -->|Read/Write| Semantic["Semantic Memory Store"]
-        Server -->|Query| LLM["LLM Provider (OpenAI/Bedrock)"]
-    end
-```
-
-### Interaction Sequence
-
-The standard workflow involves initializing the client, selecting a project, defining a memory context, and then performing operations.
-
-```mermaid
-sequenceDiagram
-    participant App as Your App
-    participant SDK as MemMachine Client
-    participant API as MemMachine Server
-    participant DB as Database
-
-    Note over App, SDK: Initialization
-    App->>SDK: Init MemMachineClient(base_url)
-    App->>SDK: create_project(org="my-org", project="agent-1")
-    SDK->>API: POST /api/v2/projects
-    API->>DB: Create Project Record
-    API-->>SDK: 200 OK (Project Config)
-
-    Note over App, SDK: Runtime Operation
-    App->>SDK: project.memory(user="alice", agent="bot")
-    App->>SDK: memory.add("I like pizza")
-    SDK->>API: POST /api/v2/memories
-    API->>DB: Store Episode & Update Semantic Profile
-    API-->>SDK: 200 OK
-
-    App->>SDK: memory.search("What does Alice like?")
-    SDK->>API: POST /api/v2/memories/search
-    API->>DB: Vector Search & Retrieval
-    API-->>SDK: 200 OK (Results)
-    SDK-->>App: Return SearchResult Object
-```
-
-## Installation
-
-Install the client package via pip:
+Add MemMachine to your project using your favorite package manager:
 
 ```bash
-pip install memmachine-client
+npm install @memmachine/client
 ```
+</Step>
+<Step title="Initialize and Use">
+The SDK follows a hierarchical structure: Client → Project → Memory. Here is a quick example of how to store your first memory and search it later.
 
-## Hello World Example
+```typescript expandable
+import MemMachineClient, { MemMachineAPIError } from '@memmachine/client'
 
-This complete example demonstrates the core workflow: connecting to the server, initializing a project workspace, and performing memory operations.
+async function run() {
+  const client = new MemMachineClient({ base_url: 'https://your-base-url' })
 
-```python title="MemMachineClient Hello World" Expandable
-import time
-from memmachine import MemMachineClient
+  // Create a MemMachineProject instance
+  const project = client.project({ org_id: 'demo_org', project_id: 'demo_project' })
 
-def main():
-    # 1. Initialize the Client
-    # Ensure your MemMachine server is running at this URL
-    client = MemMachineClient(base_url="http://localhost:8080")
+  // Create the project with config options on the MemMachine server if it does not exist
+  // await project.create({ description: 'Demo Project' })
 
-    # 2. Define a Project Workspace
-    # Projects segregate data within an organization.
-    # 'get_or_create_project' is idempotent; it returns the existing project if it exists.
-    print("Initializing Project...")
-    project = client.get_or_create_project(
-        org_id="acme-corp",
-        project_id="support-bot-v1",
-        description="Memory store for customer support agent"
-    )
-    print(f"Connected to Project: {project.org_id}/{project.project_id}")
+  // Create a MemMachineMemory instance for the project
+  const memory = project.memory()
 
-    # 3. Create a Context-Aware Memory Interface
-    # This interface scopes all operations to a specific user and agent interaction.
-    # - user_id: The end-user (human)
-    # - agent_id: Your AI agent
-    # - session_id: (Optional) A specific conversation thread
-    memory = project.memory(
-        user_id="alice_123",
-        agent_id="support_bot_01",
-        session_id="session_555"
-    )
+  try {
+    // Add a memory
+    await memory.add('I like pizza and pasta')
 
-    # 4. Add Memories (Simulating a conversation)
-    print("Adding memories...")
-    
-    # User states a preference
-    memory.add(
-        content="I am strictly vegetarian and I love spicy food.",
-        role="user",
-        metadata={"topic": "food_preference"}
-    )
-    
-    # Agent acknowledges
-    memory.add(
-        content="Noted, I will recommend vegetarian spicy options.",
-        role="assistant"
-    )
+    // Search memories
+    const result = await memory.search('What do I like to eat?')
+    console.dir(result, { depth: null })
+  } catch (err) {
+    if (err instanceof MemMachineAPIError) {
+      // Handle error
+      console.error(err.message)
+    }
+  }
+}
 
-    # 5. Search Memories
-    # Retrieve relevant context for a new query
-    print("\nSearching for context...")
-    query = "What should I suggest for dinner?"
-    results = memory.search(query)
-
-    print(f"Query: {query}")
-    print("Results found:")
-    for idx, item in enumerate(results.get('episodic_memory', [])):
-        print(f"[{idx+1}] {item['content']} (Role: {item['producer_role']})")
-
-if __name__ == "__main__":
-    main()
+run()
 ```
+</Step>
+</Steps>
 
-The expected output from running the above Hello World script should look like this:
-```bash title="Hello World Expected Output"
-python sample.py 
-Initializing Project...
-Connected to Project: acme-corp/support-bot-v1
-Adding memories...
+## Explore the SDK
 
-Searching for context...
-Query: What should I suggest for dinner?
-Results found:
-[1] I am strictly vegetarian and I love spicy food. (Role: user)
-[2] Noted, I will recommend vegetarian spicy options. (Role: assistant)
-[3] I am strictly vegetarian and I love spicy food. (Role: user)
-[4] Noted, I will recommend vegetarian spicy options. (Role: assistant)
-```
+The MemMachine SDK is organized into three primary classes. Click a class below to view its full technical reference, including parameters and return types.
 
-## Core Concepts
+<CardGroup cols={3}>
+  <Card title="MemMachineClient" icon="terminal" href="/api_reference/typescript/classes/MemMachineClient">
+    The entry point. Use this to connect to the server and manage high-level project lists.
+  </Card>
+  <Card title="MemMachineProject" icon="folders" href="/api_reference/typescript/classes/MemMachineProject">
+    The project manager. Handles project creation, metadata, and memory counts.
+  </Card>
+  <Card title="MemMachineMemory" icon="brain-circuit" href="/api_reference/typescript/classes/MemMachineMemory">
+    The memory engine. Where you add, search, and manage individual memories.
+  </Card>
+</CardGroup>
 
-### `MemMachineClient`
-The entry point for the SDK. It manages the persistent HTTP session, connection pooling, and global configuration (like timeouts and retries).
+## Supporting References
 
-**Key Parameters:**
-- `base_url`: The URL of your MemMachine Server (e.g., `http://localhost:8080`).
-- `api_key`: (Optional) Authentication token if your server requires it.
-- `timeout`: Request timeout in seconds (default: 30).
+### Data Types & Configuration
+Understanding the data structures is key to a smooth integration. These types define how you configure the client and what the API returns.
 
-### `Project`
-A **Project** represents an isolated workspace. All data in MemMachine is siloed by `org_id` and `project_id`.
-- Use `client.create_project()` to initialize or retrieve a project.
-- Use `client.get_project()` to retrieve an existing project (raises error if not found).
+<AccordionGroup>
+  <Accordion title="Configuration Options" icon="gear">
+    - **[ClientOptions](/api_reference/typescript/interfaces/ClientOptions)**: Base URL, API keys, and timeout settings.
+    - **[ProjectContext](/api_reference/typescript/interfaces/ProjectContext)**: Organization and Project ID mappings.
+    - **[Add/Search Options](/api_reference/typescript/interfaces/AddMemoryOptions)**: Fine-grained control over how you interact with the memory engine.
+  </Accordion>
+  
+  <Accordion title="Response Models" icon="database">
+    - **[Project](/api_reference/typescript/interfaces/Project)**: The structure of a MemMachine Project.
+    - **[Episode & Semantic Memory](/api_reference/typescript/interfaces/EpisodeMemory)**: The core data models for stored information.
+    - **[Search Results](/api_reference/typescript/interfaces/SearchMemoryResult)**: The object returned after a semantic search query.
+  </Accordion>
 
-### `Memory`
-The **Memory** object is a transient interface bound to a specific *context*. It does not hold state itself but ensures that every operation (add, search, delete) is tagged with the correct metadata identifiers:
-- `user_id`: The human user.
-- `agent_id`: The AI agent.
-- `group_id`: (Optional) A group identifier for multi-user contexts.
-- `session_id`: (Optional) A specific session identifier.
+  <Accordion title="Constants & Enums" icon="list-check">
+    - **[MemoryType](/api_reference/typescript/type-aliases/MemoryType)**: Toggle between `episodic` and `semantic` memory storage.
+    - **[MemoryProducerRole](/api_reference/typescript/type-aliases/MemoryProducerRole)**: Define if a memory was created by a `user`, `assistant`, or `system`.
+  </Accordion>
+</AccordionGroup>
 
-**Key Methods:**
-- `add(content, role, ...)`: Stores a new memory episode.
-- `search(query, ...)`: Semantically searches for relevant memories.
-- `delete()`: Deletes memories matching specific criteria.
+### Error Handling
+Reliable apps need good error handling. We provide a custom error class to help you catch and debug API-specific issues.
+
+- **[MemMachineAPIError](/api_reference/typescript/classes/MemMachineAPIError)**: Catch this to access specific error messages and status codes returned by the MemMachine server.
+
+---
+
+## Contributing & Development
+
+If you are looking to contribute to the SDK or run local tests, follow these steps:
+
+1. **Install Dependencies:** `npm install`
+2. **Build the Package:** `npm run build`
+3. **Run Unit Tests:** `npm run test`
+4. **Try the Demo:** Execute `npm run example` to see a local script in action.
+
+## License
+MemMachine REST Client is open-source software licensed under the [Apache-2.0 License](https://www.apache.org/licenses/LICENSE-2.0).
