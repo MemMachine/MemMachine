@@ -80,6 +80,8 @@ dev = [
     "ruff>=0.13.2",
     "testcontainers[neo4j,postgres]>=4.13.1",
     "ty>=0.0.1a26",
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.mypy]
