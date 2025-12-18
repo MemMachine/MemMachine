@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
+from memmachine.main.memmachine import MemoryType
 from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.memory import Memory
 from memmachine.rest_client.project import Project
@@ -57,6 +58,12 @@ class TestMemMachineClient:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.raise_for_status = Mock()
+            mock_response.json.return_value = {
+                "org_id": "test_org",
+                "project_id": "test_project",
+                "description": "",
+                "config": {"embedder": "", "reranker": ""},
+            }
             mock_session.post.return_value = mock_response
 
             project = client.create_project(
@@ -65,20 +72,22 @@ class TestMemMachineClient:
             )
 
             memory = project.memory(
-                group_id="test_group",
-                agent_id="test_agent",
-                user_id="test_user",
-                session_id="test_session",
+                metadata={
+                    "group_id": "test_group",
+                    "agent_id": "test_agent",
+                    "user_id": "test_user",
+                    "session_id": "test_session",
+                }
             )
 
             assert isinstance(memory, Memory)
             assert memory.client == client
             assert memory.org_id == "test_org"
             assert memory.project_id == "test_project"
-            assert memory.group_id == "test_group"
-            assert memory.agent_id == "test_agent"
-            assert memory.user_id == "test_user"
-            assert memory.session_id == "test_session"
+            assert memory.metadata.get("group_id") == "test_group"
+            assert memory.metadata.get("agent_id") == "test_agent"
+            assert memory.metadata.get("user_id") == "test_user"
+            assert memory.metadata.get("session_id") == "test_session"
 
     def test_project_memory_creation_with_lists(self):
         """Test creating Memory with list IDs from Project."""
@@ -88,6 +97,12 @@ class TestMemMachineClient:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.raise_for_status = Mock()
+            mock_response.json.return_value = {
+                "org_id": "test_org",
+                "project_id": "test_project",
+                "description": "",
+                "config": {"embedder": "", "reranker": ""},
+            }
             mock_session.post.return_value = mock_response
 
             project = client.create_project(
@@ -96,15 +111,17 @@ class TestMemMachineClient:
             )
 
             memory = project.memory(
-                group_id="test_group",
-                agent_id="agent1",
-                user_id="user1",
+                metadata={
+                    "group_id": "test_group",
+                    "agent_id": "agent1",
+                    "user_id": "user1",
+                }
             )
 
             assert memory.org_id == "test_org"
             assert memory.project_id == "test_project"
-            assert memory.agent_id == "agent1"
-            assert memory.user_id == "user1"
+            assert memory.metadata.get("agent_id") == "agent1"
+            assert memory.metadata.get("user_id") == "user1"
 
     def test_project_memory_creation_without_optional_params(self):
         """Test creating Memory with only required params from Project."""
@@ -114,6 +131,12 @@ class TestMemMachineClient:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.raise_for_status = Mock()
+            mock_response.json.return_value = {
+                "org_id": "test_org",
+                "project_id": "test_project",
+                "description": "",
+                "config": {"embedder": "", "reranker": ""},
+            }
             mock_session.post.return_value = mock_response
 
             project = client.create_project(
@@ -125,9 +148,9 @@ class TestMemMachineClient:
 
             assert memory.org_id == "test_org"
             assert memory.project_id == "test_project"
-            assert memory.group_id is None
-            assert memory.agent_id is None
-            assert memory.user_id is None
+            assert memory.metadata.get("group_id") is None
+            assert memory.metadata.get("agent_id") is None
+            assert memory.metadata.get("user_id") is None
 
     def test_create_project_success(self):
         """Test successful project creation."""
@@ -261,3 +284,146 @@ class TestMemMachineClient:
         client._session.request.assert_called_once_with(
             "GET", "http://example.com", timeout=30, json={"key": "value"}
         )
+
+    def test_list_projects_success(self):
+        """Test listing projects calls the correct endpoint and returns Project objects."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = [
+            {"org_id": "org1", "project_id": "proj1"},
+            {"org_id": "org2", "project_id": "proj2"},
+        ]
+        client.request = Mock(return_value=mock_response)
+
+        result = client.list_projects()
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert all(isinstance(p, Project) for p in result)
+        assert result[0].org_id == "org1"
+        assert result[0].project_id == "proj1"
+        assert result[1].org_id == "org2"
+        assert result[1].project_id == "proj2"
+        client.request.assert_called_once()
+        assert client.request.call_args[0][0] == "POST"
+        assert "/api/v2/projects/list" in client.request.call_args[0][1]
+
+    def test_get_metrics_success(self):
+        """Test successful metrics retrieval."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.text = "# HELP memmachine_requests_total Total requests\n# TYPE memmachine_requests_total counter\nmemmachine_requests_total 100\n"
+        client._session.get = Mock(return_value=mock_response)
+
+        result = client.get_metrics()
+
+        assert isinstance(result, str)
+        assert "memmachine_requests_total" in result
+        client._session.get.assert_called_once()
+        call_args = client._session.get.call_args
+        assert "/api/v2/metrics" in call_args[0][0]
+
+    def test_get_metrics_failure(self):
+        """Test metrics retrieval failure."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        client._session.get = Mock(
+            side_effect=requests.RequestException("Connection failed")
+        )
+
+        with pytest.raises(requests.RequestException):
+            client.get_metrics()
+
+
+class TestMemory:
+    def test_list_memories_calls_list_endpoint_and_parses(self):
+        """Test Memory.list() hits /memories/list and parses SearchResult content."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        memory = Memory(
+            client=client, org_id="org1", project_id="proj1", metadata={"user_id": "u1"}
+        )
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "status": 0,
+            "content": {
+                "episodic_memory": {
+                    "long_term_memory": {"episodes": [{"id": "e1"}]},
+                    "short_term_memory": {"episodes": [], "episode_summary": []},
+                },
+                "semantic_memory": [],
+            },
+        }
+        client.request = Mock(return_value=mock_response)
+
+        result = memory.list(
+            memory_type=MemoryType.Episodic,
+            page_size=10,
+            page_num=0,
+        )
+
+        client.request.assert_called_once()
+        assert client.request.call_args[0][0] == "POST"
+        assert "/api/v2/memories/list" in client.request.call_args[0][1]
+        sent = client.request.call_args[1]["json"]
+        assert sent["org_id"] == "org1"
+        assert sent["project_id"] == "proj1"
+        assert sent["page_size"] == 10
+        assert sent["page_num"] == 0
+        assert sent["type"] in (MemoryType.Episodic.value, "episodic")
+        # Built-in filters should include user_id when present
+        assert "metadata.user_id='u1'" in sent.get("filter", "")
+
+        from memmachine.common.api.spec import SearchResult
+
+        assert isinstance(result, SearchResult)
+        assert result.content["episodic_memory"]["long_term_memory"]["episodes"] == [
+            {"id": "e1"}
+        ]
+        assert result.content["semantic_memory"] == []
+
+
+class TestProject:
+    """Test cases for Project class."""
+
+    def test_get_episode_count_success(self):
+        """Test successful episode count retrieval."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        project = Project(
+            client=client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"count": 42}
+        client.request = Mock(return_value=mock_response)
+
+        result = project.get_episode_count()
+
+        assert result == 42
+        client.request.assert_called_once()
+        call_args = client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/projects/episode_count/get" in call_args[0][1]
+        assert call_args[1]["json"]["org_id"] == "test_org"
+        assert call_args[1]["json"]["project_id"] == "test_project"
+
+    def test_get_episode_count_failure(self):
+        """Test episode count retrieval failure."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        project = Project(
+            client=client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        client.request = Mock(
+            side_effect=requests.RequestException("Connection failed")
+        )
+
+        with pytest.raises(requests.RequestException):
+            project.get_episode_count()
