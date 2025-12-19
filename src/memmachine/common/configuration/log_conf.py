@@ -23,6 +23,10 @@ class LogLevel(Enum):
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
 
+    def __str__(self) -> str:
+        """Return the string representation of the log level."""
+        return self.value
+
 
 def to_log_level(level_str: str) -> LogLevel:
     """Parse a string into a `LogLevel` enum, raising on invalid input."""

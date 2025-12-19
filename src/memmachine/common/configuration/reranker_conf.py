@@ -5,7 +5,10 @@ from typing import ClassVar, Self
 import yaml
 from pydantic import BaseModel, Field, PrivateAttr, SecretStr
 
-from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
+from memmachine.common.configuration.mixin_confs import (
+    MetricsFactoryIdMixin,
+    YamlSerializableMixin,
+)
 
 
 class BM25RerankerConf(YamlSerializableMixin):
@@ -24,7 +27,7 @@ class BM25RerankerConf(YamlSerializableMixin):
     )
 
 
-class AmazonBedrockRerankerConf(YamlSerializableMixin):
+class AmazonBedrockRerankerConf(MetricsFactoryIdMixin, YamlSerializableMixin):
     """Parameters for AmazonBedrockReranker."""
 
     model_id: str = Field(..., description="The Bedrock model ID to use for reranking")

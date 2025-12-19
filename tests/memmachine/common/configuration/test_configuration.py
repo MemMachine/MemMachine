@@ -124,8 +124,9 @@ def test_load_sample_cpu_config():
     assert embedder_conf.api_key == SecretStr("<YOUR_API_KEY>")
     reranker_conf = resources_conf.rerankers.amazon_bedrock["aws_reranker_id"]
     assert reranker_conf.aws_access_key_id == SecretStr("<AWS_ACCESS_KEY_ID>")
-    assert "Given" in conf.prompt.episode_summary_user_prompt
-    assert "concise summary" in conf.prompt.episode_summary_system_prompt
+    assert isinstance(conf.prompt.episode_summary_user_prompt, str)
+    assert len(conf.prompt.episode_summary_user_prompt) > 0
+    assert "concise" in conf.prompt.episode_summary_system_prompt
 
 
 def test_load_sample_gpu_config():

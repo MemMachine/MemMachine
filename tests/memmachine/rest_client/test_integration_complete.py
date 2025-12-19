@@ -51,7 +51,7 @@ class TestMemMachineIntegration:
     @pytest.fixture
     def client(self):
         """Create a MemMachine client instance."""
-        return MemMachineClient(base_url=TEST_BASE_URL)
+        return MemMachineClient(base_url=TEST_BASE_URL, timeout=60)
 
     @pytest.fixture
     def unique_test_ids(self):

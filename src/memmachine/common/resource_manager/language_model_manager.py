@@ -1,12 +1,16 @@
 """Builder for LanguageModel instances."""
 
 import asyncio
+import logging
 from asyncio import Lock
 
 from pydantic import SecretStr
 
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
+from memmachine.common.errors import InvalidLanguageModelError
 from memmachine.common.language_model.language_model import LanguageModel
+
+logger = logging.getLogger(__name__)
 
 
 class LanguageModelManager:
@@ -34,7 +38,9 @@ class LanguageModelManager:
 
         return self._language_models
 
-    async def get_language_model(self, name: str) -> LanguageModel:
+    async def get_language_model(
+        self, name: str, validate: bool = False
+    ) -> LanguageModel:
         """Return a named language model, building it on first access."""
         if name in self._language_models:
             return self._language_models[name]
@@ -47,19 +53,45 @@ class LanguageModelManager:
             if name in self._language_models:
                 return self._language_models[name]
 
-            llm_model = self._build_language_model(name)
+            llm_model = await self._build_language_model(name, validate=validate)
             self._language_models[name] = llm_model
             return llm_model
 
-    def _build_language_model(self, name: str) -> LanguageModel:
+    @staticmethod
+    async def _validate_language_model(
+        name: str, language_model: LanguageModel
+    ) -> None:
+        """Validate that the language model is working."""
+        try:
+            logger.info("Validating language model '%s' ...", name)
+            _ = await language_model.generate_response(
+                system_prompt="a",
+                user_prompt="b",
+            )
+            logger.info("Language model '%s' is valid.", name)
+        except Exception as e:
+            raise InvalidLanguageModelError(
+                f"language model '{name}' is invalid. {e}"
+            ) from e
+
+    async def _build_language_model(
+        self, name: str, validate: bool = False
+    ) -> LanguageModel:
         """Construct a language model based on provider."""
+        ret: LanguageModel | None = None
         if name in self.conf.openai_responses_language_model_confs:
-            return self._build_openai_responses_language_model(name)
+            ret = self._build_openai_responses_language_model(name)
         if name in self.conf.openai_chat_completions_language_model_confs:
-            return self._build_openai_chat_completions_language_model(name)
+            ret = self._build_openai_chat_completions_language_model(name)
         if name in self.conf.amazon_bedrock_language_model_confs:
-            return self._build_amazon_bedrock_language_model(name)
-        raise ValueError(f"Language model with name {name} not found.")
+            ret = self._build_amazon_bedrock_language_model(name)
+        if ret is None:
+            raise InvalidLanguageModelError(
+                f"Language model with name {name} not found."
+            )
+        if validate:
+            await self._validate_language_model(name, ret)
+        return ret
 
     def _build_openai_responses_language_model(self, name: str) -> LanguageModel:
         import openai

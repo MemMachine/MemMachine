@@ -127,3 +127,20 @@ def test_open_ai_embeder_without_key():
     }
     conf = OpenAIEmbedderConf(**conf_dict)
     assert conf.api_key.get_secret_value() == ""
+
+
+@pytest.fixture(autouse=True)
+def clear_env(monkeypatch):
+    for var in ["MY_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_read_aws_keys_from_env(monkeypatch, aws_embedder_conf):
+    monkeypatch.setenv("MY_KEY_ID", "my-key-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "access-key")
+    aws_embedder_conf["config"]["aws_access_key_id"] = "${MY_KEY_ID}"
+    aws_embedder_conf["config"]["aws_secret_access_key"] = ""
+    conf = AmazonBedrockEmbedderConf(**aws_embedder_conf["config"])
+    assert conf.aws_access_key_id.get_secret_value() == "my-key-id"
+    assert conf.aws_secret_access_key.get_secret_value() == "access-key"
+    assert conf.aws_session_token is None

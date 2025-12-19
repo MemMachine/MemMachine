@@ -79,7 +79,7 @@ class MemMachine:
     def _initialize_default_episodic_configuration(self) -> None:
         # initialize the default value for episodic memory configuration
         # Can not put the logic into the data type
-        default_prompt = "Based on the following episodes: {episodes}, and the previous summary: {summary}, please update the summary. Keep it under {max_length} characters."
+
         if self._conf.episodic_memory is None:
             self._conf.episodic_memory = EpisodicMemoryConfPartial()
             self._conf.episodic_memory.enabled = False
@@ -101,11 +101,11 @@ class MemMachine:
             self._conf.episodic_memory.short_term_memory.llm_model = "gpt-4.1"
         if self._conf.episodic_memory.short_term_memory.summary_prompt_system is None:
             self._conf.episodic_memory.short_term_memory.summary_prompt_system = (
-                "You are a helpful assistant."
+                self._conf.prompt.episode_summary_system_prompt
             )
         if self._conf.episodic_memory.short_term_memory.summary_prompt_user is None:
             self._conf.episodic_memory.short_term_memory.summary_prompt_user = (
-                default_prompt
+                self._conf.prompt.episode_summary_user_prompt
             )
         if self._conf.episodic_memory.long_term_memory.vector_graph_store is None:
             self._conf.episodic_memory.long_term_memory.vector_graph_store = (

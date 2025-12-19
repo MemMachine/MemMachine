@@ -33,7 +33,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Test with python ${{ matrix.python-version }}
-        run: uv run --frozen --all-extras coverage run -m pytest
+        run: uv run --frozen --all-extras pytest -n auto --cov=memmachine
 
-      - name: Print coverage report
-        run: uv run --frozen --all-extras coverage report --sort=cover

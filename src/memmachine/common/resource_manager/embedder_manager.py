@@ -1,10 +1,14 @@
 """Manager for building and caching embedder instances."""
 
 import asyncio
+import logging
 from asyncio import Lock
 
 from memmachine.common.configuration.embedder_conf import EmbeddersConf
 from memmachine.common.embedder import Embedder
+from memmachine.common.errors import InvalidEmbedderError
+
+logger = logging.getLogger(__name__)
 
 
 class EmbedderManager:
@@ -31,7 +35,7 @@ class EmbedderManager:
 
         return self._embedders
 
-    async def get_embedder(self, name: str) -> Embedder:
+    async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return a named embedder, building it on first access."""
         # Return cached if already built
         if name in self._embedders:
@@ -48,19 +52,34 @@ class EmbedderManager:
                 return self._embedders[name]
 
             # Lazy build happens here
-            embedder = self._build_embedder(name)
+            embedder = await self._build_embedder(name, validate=validate)
             self._embedders[name] = embedder
             return embedder
 
-    def _build_embedder(self, name: str) -> Embedder:
+    @staticmethod
+    async def _validate_embedder(name: str, embedder: Embedder) -> None:
+        """Validate that the embedder is working."""
+        try:
+            logger.info("Validating embedder '%s' is working.", name)
+            _ = await embedder.search_embed(["a"])
+            logger.info("Embedder '%s' is valid.", name)
+        except Exception as e:
+            raise InvalidEmbedderError(f"embedder '{name}' is invalid. {e}") from e
+
+    async def _build_embedder(self, name: str, validate: bool) -> Embedder:
         """Construct an embedder based on provider."""
+        ret: Embedder | None = None
         if name in self.conf.amazon_bedrock:
-            return self._build_amazon_bedrock_embedders(name)
+            ret = self._build_amazon_bedrock_embedders(name)
         if name in self.conf.openai:
-            return self._build_openai_embedders(name)
+            ret = self._build_openai_embedders(name)
         if name in self.conf.sentence_transformer:
-            return self._build_sentence_transformer_embedders(name)
-        raise ValueError(f"Embedder with name {name} not found.")
+            ret = self._build_sentence_transformer_embedders(name)
+        if ret is None:
+            raise InvalidEmbedderError(f"Embedder with name {name} not found.")
+        if validate:
+            await self._validate_embedder(name, ret)
+        return ret
 
     def _build_amazon_bedrock_embedders(self, name: str) -> Embedder:
         conf = self.conf.amazon_bedrock[name]
