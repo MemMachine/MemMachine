@@ -83,24 +83,24 @@ The MemMachine SDK is organized into three primary classes. Click a class below 
 ## Supporting References
 
 ### Data Types & Configuration
-Understanding the data structures is key to a smooth integration. These types define how you configure the client and what the API returns.
+Understanding the data structures is key to a smooth integration. These references define how you configure your environment and the shape of the data returned by the memory engine.
 
 <AccordionGroup>
-  <Accordion title="Configuration Options" icon="gear">
-    - **[ClientOptions](/api_reference/typescript/interfaces/ClientOptions)**: Base URL, API keys, and timeout settings.
-    - **[ProjectContext](/api_reference/typescript/interfaces/ProjectContext)**: Organization and Project ID mappings.
-    - **[Add/Search Options](/api_reference/typescript/interfaces/AddMemoryOptions)**: Fine-grained control over how you interact with the memory engine.
+  <Accordion title="Setup & Identity" icon="gears">
+    - **[Client Configuration](/api_reference/ts-rest/interfaces/ClientOptions)**: Manage connection settings, authentication, and server health status.
+    - **[Project Context](/api_reference/ts-rest/interfaces/ProjectContext)**: Define organization IDs, project IDs, and project creation settings.
+    - **[The Workspace](/api_reference/ts-rest/interfaces/Project)**: Explore project metadata and manage the active memory scope.
   </Accordion>
   
-  <Accordion title="Response Models" icon="database">
-    - **[Project](/api_reference/typescript/interfaces/Project)**: The structure of a MemMachine Project.
-    - **[Episode & Semantic Memory](/api_reference/typescript/interfaces/EpisodeMemory)**: The core data models for stored information.
-    - **[Search Results](/api_reference/typescript/interfaces/SearchMemoryResult)**: The object returned after a semantic search query.
+  <Accordion title="Memory Operations" icon="brain">
+    - **[Storing Memory](/api_reference/ts-rest/interfaces/AddMemoryOptions)**: Input parameters and result schemas for adding new episodic data.
+    - **[Retrieving Memory](/api_reference/ts-rest/interfaces/SearchMemoryResult)**: Search query configurations and semantic search result models.
+    - **[Memory Structures](/api_reference/ts-rest/interfaces/EpisodeMemory)**: The core data models for Episode and Semantic memory objects.
   </Accordion>
 
-  <Accordion title="Constants & Enums" icon="list-check">
-    - **[MemoryType](/api_reference/typescript/type-aliases/MemoryType)**: Toggle between `episodic` and `semantic` memory storage.
-    - **[MemoryProducerRole](/api_reference/typescript/type-aliases/MemoryProducerRole)**: Define if a memory was created by a `user`, `assistant`, or `system`.
+  <Accordion title="Types & Roles" icon="tags">
+    - **[MemoryType](/api_reference/ts-rest/type-aliases/MemoryType)**: Toggle between `episodic` and `semantic` memory storage.
+    - **[MemoryProducerRole](/api_reference/ts-rest/type-aliases/MemoryProducerRole)**: Define if a memory was created by a `user`, `assistant`, or `system`.
   </Accordion>
 </AccordionGroup>
 

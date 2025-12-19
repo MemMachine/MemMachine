@@ -113,10 +113,21 @@
               ]
             },
             {
-              "group": "Models & Types",
+              "group": "Interfaces",
               "pages": [
                 "api_reference/ts-rest/interfaces/ClientOptions",
-                "api_reference/ts-rest/interfaces/SearchMemoryOptions"
+                "api_reference/ts-rest/interfaces/ProjectContext",
+                "api_reference/ts-rest/interfaces/AddMemoryOptions",
+                "api_reference/ts-rest/interfaces/SearchMemoryResult",
+                "api_reference/ts-rest/interfaces/EpisodeMemory",
+                "api_reference/ts-rest/interfaces/Project"
+              ]
+            },
+            {
+              "group": "Type Aliases",
+              "pages": [
+                "api_reference/ts-rest/type-aliases/MemoryType",
+                "api_reference/ts-rest/type-aliases/MemoryProducerRole"
               ]
             }
           ]
