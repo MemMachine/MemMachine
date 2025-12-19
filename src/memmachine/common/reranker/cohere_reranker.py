@@ -39,6 +39,12 @@ class CohereReranker(Reranker):
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         """Score candidates using Cohere's rerank API."""
+        if len(candidates) == 0:
+            return []
+
+        query = query.strip() or "."
+        if all(not candidate.strip() for candidate in candidates):
+            return [0.0] * len(candidates)
 
         # Build request parameters
         def _call_rerank() -> cohere.RerankResponse:
@@ -61,6 +67,6 @@ class CohereReranker(Reranker):
         # Cohere returns ranked order — map scores back to original positions
         scores = [0.0] * len(candidates)
         for result in response.results:
-            scores[result.index] = result.relevance_score
+            scores[result.index] = float(result.relevance_score)
 
         return scores

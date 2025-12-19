@@ -26,6 +26,11 @@ class AmazonBedrockEmbedderConf(YamlSerializableMixin, AWSCredentialsMixin):
         default="amazon.titan-embed-text-v2:0",
         description="ID of the Bedrock model to use for embedding (e.g. 'amazon.titan-embed-text-v2:0').",
     )
+    max_input_length: int | None = Field(
+        default=None,
+        description="Maximum input length for the model (in Unicode code points).",
+        gt=0,
+    )
     similarity_metric: SimilarityMetric = Field(
         default=SimilarityMetric.COSINE,
         description="Similarity metric to use",
@@ -54,6 +59,11 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
         default=None,
         description="OpenAI Embeddings API base URL",
     )
+    max_input_length: int | None = Field(
+        default=None,
+        description="Maximum input length for the model (in Unicode code points).",
+        gt=0,
+    )
     max_retry_interval_seconds: int = Field(
         default=120,
         description="Maximal retry interval in seconds when retrying API calls",
@@ -71,13 +81,18 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
         return v
 
 
-class SentenceTransformerEmbedderConfig(MetricsFactoryIdMixin, YamlSerializableMixin):
+class SentenceTransformerEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin):
     """Configuration for sentence-transformer based embedders."""
 
     model: str = Field(
         ...,
         min_length=1,
         description="The name of the sentence transformer model.",
+    )
+    max_input_length: int | None = Field(
+        default=None,
+        description="Maximum input length for the model (in Unicode code points).",
+        gt=0,
     )
 
 
@@ -86,7 +101,7 @@ class EmbeddersConf(BaseModel):
 
     amazon_bedrock: dict[str, AmazonBedrockEmbedderConf] = {}
     openai: dict[str, OpenAIEmbedderConf] = {}
-    sentence_transformer: dict[str, SentenceTransformerEmbedderConfig] = {}
+    sentence_transformer: dict[str, SentenceTransformerEmbedderConf] = {}
 
     def get_amazon_bedrock_embedder_name(self) -> str | None:
         """Return the first Amazon Bedrock embedder id, if any."""
@@ -175,7 +190,7 @@ class EmbeddersConf(BaseModel):
                 amazon_bedrock_dict[embedder_id] = AmazonBedrockEmbedderConf(**conf)
             elif provider == cls.SENTENCE_TRANSFORMER_KEY:
                 sentence_transformer_dict[embedder_id] = (
-                    SentenceTransformerEmbedderConfig(**conf)
+                    SentenceTransformerEmbedderConf(**conf)
                 )
             else:
                 raise ValueError(

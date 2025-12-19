@@ -1,20 +1,19 @@
 import pytest
 
-from memmachine.common.reranker.amazon_bedrock_reranker import (
-    AmazonBedrockReranker,
-    AmazonBedrockRerankerParams,
+from memmachine.common.reranker.cohere_reranker import (
+    CohereReranker,
+    CohereRerankerParams,
 )
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def reranker(boto3_bedrock_agent_runtime_client, bedrock_integration_config):
-    return AmazonBedrockReranker(
-        AmazonBedrockRerankerParams(
-            client=boto3_bedrock_agent_runtime_client,
-            region=bedrock_integration_config["aws_region"],
-            model_id="amazon.rerank-v1:0",
+def reranker(cohere_client):
+    return CohereReranker(
+        CohereRerankerParams(
+            client=cohere_client,
+            model="rerank-english-v3.0",
         )
     )
 
