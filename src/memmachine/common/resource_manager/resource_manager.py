@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from asyncio import Lock
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -65,6 +66,11 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
 
+        self._session_data_manager_lock = Lock()
+        self._episodic_memory_manager_lock = Lock()
+        self._episode_storage_lock = Lock()
+        self._semantic_manager_lock = Lock()
+
     async def build(self) -> None:
         """Build all configured resources in parallel."""
         tasks = [
@@ -125,47 +131,51 @@ class ResourceManagerImpl:
 
     async def get_session_data_manager(self) -> SessionDataManager:
         """Lazy-load the session data manager."""
-        if self._session_data_manager is not None:
-            return self._session_data_manager
-        database = self._conf.session_manager.database
-        engine = await self.get_sql_engine(database)
+        if self._session_data_manager is None:
+            async with self._session_data_manager_lock:
+                if self._session_data_manager is None:
+                    database = self._conf.session_manager.database
+                    engine = await self.get_sql_engine(database)
 
-        self._session_data_manager = SessionDataManagerSQL(engine)
-        await self._session_data_manager.create_tables()
-
+                    self._session_data_manager = SessionDataManagerSQL(engine)
+                    await self._session_data_manager.create_tables()
+        assert self._session_data_manager is not None
         return self._session_data_manager
 
     async def get_episodic_memory_manager(self) -> EpisodicMemoryManager:
         """Lazy-load the episodic memory manager."""
-        if self._episodic_memory_manager is not None:
-            return self._episodic_memory_manager
-        session_data_manager = await self.get_session_data_manager()
-        params = EpisodicMemoryManagerParams(
-            resource_manager=self,
-            session_data_manager=session_data_manager,
-        )
-        self._episodic_memory_manager = EpisodicMemoryManager(params)
+        if self._episodic_memory_manager is None:
+            async with self._episodic_memory_manager_lock:
+                if self._episodic_memory_manager is None:
+                    session_data_manager = await self.get_session_data_manager()
+                    params = EpisodicMemoryManagerParams(
+                        resource_manager=self,
+                        session_data_manager=session_data_manager,
+                    )
+                    self._episodic_memory_manager = EpisodicMemoryManager(params)
+        assert self._episodic_memory_manager is not None
         return self._episodic_memory_manager
 
     async def get_episode_storage(self) -> EpisodeStorage:
         """Return the episode storage instance."""
-        if self._episode_storage is not None:
-            return self._episode_storage
+        if self._episode_storage is None:
+            async with self._episode_storage_lock:
+                if self._episode_storage is None:
+                    episode_storage_conf = getattr(self._conf, "episode_storage", None)
+                    if episode_storage_conf is None:
+                        episode_storage_conf = self._conf.episode_store
 
-        episode_storage_conf = getattr(self._conf, "episode_storage", None)
-        if episode_storage_conf is None:
-            episode_storage_conf = self._conf.episode_store
+                    database = episode_storage_conf.database
+                    engine = await self.get_sql_engine(database)
 
-        database = episode_storage_conf.database
-        engine = await self.get_sql_engine(database)
+                    episode_storage = SqlAlchemyEpisodeStore(engine)
+                    await episode_storage.startup()
 
-        episode_storage = SqlAlchemyEpisodeStore(engine)
-        await episode_storage.startup()
+                    if episode_storage_conf.with_count_cache:
+                        episode_storage = CountCachingEpisodeStorage(episode_storage)
 
-        if episode_storage_conf.with_count_cache:
-            episode_storage = CountCachingEpisodeStorage(episode_storage)
-
-        self._episode_storage = episode_storage
+                    self._episode_storage = episode_storage
+        assert self._episode_storage is not None
         return self._episode_storage
 
     async def get_semantic_service(self) -> SemanticService:
@@ -175,16 +185,17 @@ class ResourceManagerImpl:
 
     async def get_semantic_manager(self) -> SemanticResourceManager:
         """Return the semantic resource manager, constructing if needed."""
-        if self._semantic_manager is not None:
-            return self._semantic_manager
-
-        episode_storage = await self.get_episode_storage()
-        self._semantic_manager = SemanticResourceManager(
-            semantic_conf=self._conf.semantic_memory,
-            prompt_conf=self._conf.prompt,
-            resource_manager=self,  # type: ignore[arg-type]
-            episode_storage=episode_storage,
-        )
+        if self._semantic_manager is None:
+            async with self._semantic_manager_lock:
+                if self._semantic_manager is None:
+                    episode_storage = await self.get_episode_storage()
+                    self._semantic_manager = SemanticResourceManager(
+                        semantic_conf=self._conf.semantic_memory,
+                        prompt_conf=self._conf.prompt,
+                        resource_manager=self,  # type: ignore[arg-type]
+                        episode_storage=episode_storage,
+                    )
+        assert self._semantic_manager is not None
         return self._semantic_manager
 
     async def get_semantic_session_manager(self) -> SemanticSessionManager:
