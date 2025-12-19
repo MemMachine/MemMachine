@@ -16,16 +16,15 @@ import asyncio
 import logging
 import os
 import sys
-import time
-from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse
 from starlette.types import AppType, ExceptionHandler, Lifespan
 
 from memmachine.server.api_v2.mcp import (
@@ -36,6 +35,7 @@ from memmachine.server.api_v2.mcp import (
     mcp_http_lifespan,
 )
 from memmachine.server.api_v2.router import RestError, load_v2_api_router
+from memmachine.server.middleware import AccessLogMiddleware, RequestMetricsMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -77,31 +77,9 @@ class MemMachineAPI(FastAPI):
         return handler
 
 
-app = MemMachineAPI(
-    lifespan=mcp_http_lifespan,
-)
-
-
-@app.middleware("http")
-async def access_log_middleware(request: Request, call_next: Callable) -> Response:
-    """Middleware to log access details for each HTTP request."""
-    start_time = time.perf_counter()
-    response = await call_next(request)
-    duration_ms = (time.perf_counter() - start_time) * 1000
-    size = response.headers.get("content-length", "-")
-    client = request.client.host if request.client else "-"
-
-    logger.info(
-        'client=%s method=%s path="%s" status=%d duration_ms=%.2f size=%s',
-        client,
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-        size,
-    )
-
-    return response
+app = MemMachineAPI(lifespan=mcp_http_lifespan)
+app.add_middleware(cast(type, AccessLogMiddleware))
+app.add_middleware(cast(type, RequestMetricsMiddleware))
 
 
 def start_http() -> None:
