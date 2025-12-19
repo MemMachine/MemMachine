@@ -1,0 +1,57 @@
+---
+title: "MemMachineAPIError"
+description: "Custom error class for handling MemMachine SDK and API failures."
+---
+
+## Class `MemMachineAPIError`
+
+The `MemMachineAPIError` is thrown whenever a request to the MemMachine server fails or when the SDK encounters an unexpected state. It extends the standard JavaScript `Error` class.
+
+Integrating this into your code allows you to differentiate between general network issues and specific MemMachine API failures.
+
+```typescript
+new MemMachineAPIError(message: string)
+```
+**Parameters**
+
+| **Name**  | **Type** | **Description**                            |
+| --------- | -------- | ------------------------------------------ |
+| `message` | `string` | A human-readable description of the error. |
+
+------
+
+## Properties
+
+### `message`
+
+The error message string provides details about why the operation failed.
+
+### `name`
+
+Always set to `"MemMachineAPIError"` to allow for easy type checking.
+
+### `stack`
+
+The standard V8 stack trace is useful for debugging the location of the failure in your source code.
+
+------
+
+## Handling Errors
+
+To provide a robust user experience, we recommend wrapping your SDK calls in a `try/catch` block and checking for this specific error type.
+
+```typescript
+import { MemMachineClient, MemMachineAPIError } from '@memmachine/client';
+
+try {
+  const projects = await client.getProjects();
+} catch (error) {
+  if (error instanceof MemMachineAPIError) {
+    // Handle specific API errors (e.g., 401 Unauthorized, 404 Not Found)
+    console.error(`MemMachine failed: ${error.message}`);
+  } else {
+    // Handle unexpected system or network errors
+    console.error('An unexpected error occurred:', error);
+  }
+}
+```
