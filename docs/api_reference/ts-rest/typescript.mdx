@@ -69,13 +69,13 @@ run()
 The MemMachine SDK is organized into three primary classes. Click a class below to view its full technical reference, including parameters and return types.
 
 <CardGroup cols={3}>
-  <Card title="MemMachineClient" icon="terminal" href="/api_reference/typescript/classes/MemMachineClient">
+  <Card title="MemMachineClient" icon="terminal" href="./classes/MemMachineClient">
     The entry point. Use this to connect to the server and manage high-level project lists.
   </Card>
-  <Card title="MemMachineProject" icon="folders" href="/api_reference/typescript/classes/MemMachineProject">
+  <Card title="MemMachineProject" icon="folders" href="./classes/MemMachineProject">
     The project manager. Handles project creation, metadata, and memory counts.
   </Card>
-  <Card title="MemMachineMemory" icon="brain-circuit" href="/api_reference/typescript/classes/MemMachineMemory">
+  <Card title="MemMachineMemory" icon="brain-circuit" href="./classes/MemMachineMemory">
     The memory engine. Where you add, search, and manage individual memories.
   </Card>
 </CardGroup>
@@ -87,27 +87,26 @@ Understanding the data structures is key to a smooth integration. These referenc
 
 <AccordionGroup>
   <Accordion title="Setup & Identity" icon="gears">
-    - **[Client Configuration](/api_reference/ts-rest/interfaces/ClientOptions)**: Manage connection settings, authentication, and server health status.
-    - **[Project Context](/api_reference/ts-rest/interfaces/ProjectContext)**: Define organization IDs, project IDs, and project creation settings.
-    - **[The Workspace](/api_reference/ts-rest/interfaces/Project)**: Explore project metadata and manage the active memory scope.
+    - **[Client Configuration](./interfaces/ClientOptions)**: Manage connection settings, authentication, and server health status.
+    - **[Project Context](./interfaces/ProjectContext)**: Define organization IDs, project IDs, and project creation settings.
+    - **[The Workspace](./interfaces/Project)**: Explore project metadata and manage the active memory scope.
   </Accordion>
   
   <Accordion title="Memory Operations" icon="brain">
-    - **[Storing Memory](/api_reference/ts-rest/interfaces/AddMemoryOptions)**: Input parameters and result schemas for adding new episodic data.
-    - **[Retrieving Memory](/api_reference/ts-rest/interfaces/SearchMemoryResult)**: Search query configurations and semantic search result models.
-    - **[Memory Structures](/api_reference/ts-rest/interfaces/EpisodeMemory)**: The core data models for Episode and Semantic memory objects.
+    - **[Storing Memory](./interfaces/AddMemoryOptions)**: Input parameters and result schemas for adding new episodic data.
+    - **[Retrieving Memory](./interfaces/SearchMemoryResult)**: Search query configurations and semantic search result models.
+    - **[Memory Structures](./interfaces/EpisodeMemory)**: The core data models for Episode and Semantic memory objects.
   </Accordion>
 
-  <Accordion title="Types & Roles" icon="tags">
-    - **[MemoryType](/api_reference/ts-rest/type-aliases/MemoryType)**: Toggle between `episodic` and `semantic` memory storage.
-    - **[MemoryProducerRole](/api_reference/ts-rest/type-aliases/MemoryProducerRole)**: Define if a memory was created by a `user`, `assistant`, or `system`.
+  <Accordion title="Constants & Enums" icon="list-check">
+    - **[Types & Roles](./interfaces/Types)**: Allowed values for `MemoryType` (episodic/semantic) and `MemoryProducerRole` (user/assistant/system).
   </Accordion>
 </AccordionGroup>
 
 ### Error Handling
 Reliable apps need good error handling. We provide a custom error class to help you catch and debug API-specific issues.
 
-- **[MemMachineAPIError](/api_reference/typescript/classes/MemMachineAPIError)**: Catch this to access specific error messages and status codes returned by the MemMachine server.
+- **[MemMachineAPIError](./classes/MemMachineAPIError)**: Catch this to access specific error messages and status codes returned by the MemMachine server.
 
 ---
 

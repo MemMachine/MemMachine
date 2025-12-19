@@ -17,7 +17,7 @@ const memory = project.memory();
 
 | **Name**        | **Type**                                                     | **Description**                                              |
 | --------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `memoryContext` | [`MemoryContext`](../interfaces/MemoryContext) | Optional scope settings to filter or categorize these memories. |
+| `memoryContext` | [`MemoryContext`](../interfaces/Project) | Optional scope settings to filter or categorize these memories. |
 
 ------
 
@@ -57,7 +57,7 @@ await memory.search(query: string, options?: SearchMemoryOptions)
 | **Name**  | **Type**                                                     | **Description**                                |
 | --------- | ------------------------------------------------------------ | ---------------------------------------------- |
 | `query`   | `string`                                                     | The question or phrase to search for.          |
-| `options` | [`SearchMemoryOptions`](../interfaces/SearchMemoryOptions) | Limits, filters, or minimum similarity scores. |
+| `options` | [`SearchMemoryOptions`](../interfaces/SearchMemoryResult) | Limits, filters, or minimum similarity scores. |
 
 **Returns**
 
@@ -78,7 +78,7 @@ await memory.delete(id: string, type: MemoryType)
 | **Name** | **Type**                                                     | **Description**                                              |
 | -------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | `id`     | `string`                                                     | The unique ID of the memory (returned during `add` or `search`). |
-| `type`   | [`MemoryType`](../type-aliases/MemoryType) | Specify either `episodic` or `semantic`.                     |
+| `type`   | [`MemoryType`](../interfaces/Types) | Specify either `episodic` or `semantic`.                     |
 
 ------
 

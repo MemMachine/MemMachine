@@ -35,7 +35,7 @@ await project.create(options?: CreateProjectOptions)
 
 | **Name**  | **Type**                                                     | **Description**                                  |
 | --------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `options` | [`CreateProjectOptions`](../interfaces/CreateProjectOptions) | Optional settings such as a project description. |
+| `options` | [`CreateProjectOptions`](../interfaces/ProjectContext) | Optional settings such as a project description. |
 
 **Returns**
 
@@ -56,7 +56,7 @@ project.memory(memoryContext?: MemoryContext)
 
 | **Name**        | **Type**                                                     | **Description**                              |
 | --------------- | ------------------------------------------------------------ | -------------------------------------------- |
-| `memoryContext` | [`MemoryContext`](../interfaces/MemoryContext) | Optional context to narrow the memory scope. |
+| `memoryContext` | [`MemoryContext`](../interfaces/Project) | Optional context to narrow the memory scope. |
 
 **Returns**
 
@@ -112,7 +112,7 @@ await project.delete()
 ```typescript
 import { MemMachineClient } from '@memmachine/client';
 
-const client = new MemMachineClient({ base_url: '[https://api.memmachine.com](https://api.memmachine.com)' });
+const client = new MemMachineClient({ base_url: 'your-base-url' });
 const project = client.project({ org_id: 'acme_corp', project_id: 'internal_ai' });
 
 // 1. Initialize the project on the server

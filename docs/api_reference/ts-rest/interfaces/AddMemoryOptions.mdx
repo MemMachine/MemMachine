@@ -11,10 +11,10 @@ These options allow you to categorize and add rich context to a memory entry. Th
 | :--- | :--- | :--- |
 | `producer` | `string` | *Optional.* The Entity ID of who created the memory. |
 | `produced_for` | `string` | *Optional.* The Target Entity ID the memory is intended for. |
-| `role` | [`MemoryProducerRole`](/api_reference/ts-rest/type-aliases/MemoryProducerRole) | *Optional.* The role of the creator (`user`, `assistant`, or `system`). |
+| `role` | [`MemoryProducerRole`](./Types) | *Optional.* The role of the creator (`user`, `assistant`, or `system`). |
 | `episode_type` | `string` | *Optional.* A custom category for the entry (e.g., `'conversation'`, `'note'`). |
 | `metadata` | `Record<string, unknown>` | *Optional.* A key-value map for any additional custom data. |
-| `types` | [`MemoryType[]`](/api_reference/ts-rest/type-aliases/MemoryType) | *Optional.* Specify if this should be stored as `episodic`, `semantic`, or both. |
+| `types` | [`MemoryType[]`](./Types) | *Optional.* Specify if this should be stored as `episodic`, `semantic`, or both. |
 
 ---
 
