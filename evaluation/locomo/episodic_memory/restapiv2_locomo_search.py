@@ -1,24 +1,25 @@
+# ruff: noqa: INP001, PTH118, C901, G004, PERF403, RUF059, UP031
 import argparse
 import json
 import os
-import sys
 import re
+import sys
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
 
 import openai
 from dotenv import load_dotenv
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
+from tqdm import tqdm
 
 
 if True:
     # find path to other scripts and modules
     my_dir = os.path.dirname(os.path.abspath(__file__))
-    top_dir = os.path.abspath(os.path.join(my_dir, '..'))
-    utils_dir = os.path.join(top_dir, 'utils')
+    top_dir = os.path.abspath(os.path.join(my_dir, ".."))
+    utils_dir = os.path.join(top_dir, "utils")
     sys.path.insert(1, utils_dir)
     sys.path.insert(1, top_dir)
     from memmachine_helper import MemmachineHelper
@@ -86,15 +87,15 @@ def process_question(
 ):
     # TOM1
     result = {
-        "question": '',
-        "locomo_answer": '',
-        "model_answer": '',
+        "question": "",
+        "locomo_answer": "",
+        "model_answer": "",
         "category": 0,
-        "evidence": '',
-        "adversarial_answer": '',
-        "conversation_memories": '',
+        "evidence": "",
+        "adversarial_answer": "",
+        "conversation_memories": "",
     }
-    ctx_usage = ''
+    ctx_usage = ""
     timeout = 30 + (3 * top_k)
     try:
         types = None
@@ -102,23 +103,23 @@ def process_question(
             mem_type = mem_type.lower()
             types = [mem_type]
         memory_start = time.time()
-        mmai.log.debug(f'search memory conv={conv_num} q={q_num}')
+        mmai.log.debug(f"search memory conv={conv_num} q={q_num}")
         data = mmai.search_memory(question, top_k=top_k, types=types, timeout=timeout)
         num_types, le_len, se_len, ss_len, sm_len = mmai.split_data_count(data)
-        ctx_usage = f'le={le_len} se={se_len} ss={ss_len} sm={sm_len}'
-        if mem_type == 'episodic':
+        ctx_usage = f"le={le_len} se={se_len} ss={ss_len} sm={sm_len}"
+        if mem_type == "episodic":
             ctx = mmai.build_episodic_ctx(data)
             if sm_len:
-                print(f'pc:ERROR: episodic memory search returned {sm_len} semantic memories '
-                      f'conv={conv_num} q={q_num}')
+                print(f"pc:ERROR: episodic memory search returned {sm_len} semantic memories "
+                      f"conv={conv_num} q={q_num}")
         else:
             ctx = mmai.build_ctx(data)
             if not sm_len:
-                print(f'pc:ERROR: semantic memory search returned no semantic memories '
-                      f'conv={conv_num} q={q_num}')
+                print(f"pc:ERROR: semantic memory search returned no semantic memories "
+                      f"conv={conv_num} q={q_num}")
         memory_end = time.time()
     except Exception as ex:
-        print(f'pc:ERROR: memory search failed ex={ex}')
+        print(f"pc:ERROR: memory search failed ex={ex}")
         print(f"pc:{traceback.format_exc()}")
         return result
 
@@ -140,14 +141,14 @@ def process_question(
         try:
             usage = rsp.usage
             run_usage = {
-                'input_tokens': usage.input_tokens,
-                'output_tokens': usage.output_tokens,
-                'total_tokens': usage.total_tokens,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "total_tokens": usage.total_tokens,
             }
         except Exception:
             pass
     except Exception as ex:
-        print(f'pc:ERROR: chat failed conv={conv_num} question={q_num} ex={ex}')
+        print(f"pc:ERROR: chat failed conv={conv_num} question={q_num} ex={ex}")
         print(f"pc:{traceback.format_exc()}")
         return result
 
@@ -203,17 +204,17 @@ def main():
     openai_eval_chat_client = openai.OpenAI(
         api_key=openai_api_key, base_url=openai_api_base,
     )
-    mmai = MemmachineHelper.factory('restapiv2')
+    mmai = MemmachineHelper.factory("restapiv2")
     health = mmai.get_health()
-    print('mmai health:')
+    print("mmai health:")
     for k, v in health.items():
-        print(f'k={k} v={v}')
+        print(f"k={k} v={v}")
 
     metrics_before = mmai.get_metrics()
-    with open(f'search_metrics_before_{os.getpid()}.json', 'w') as fp:
+    with open(f"search_metrics_before_{os.getpid()}.json", "w") as fp:
         json.dump(metrics_before, fp, indent=4)
 
-    print(f'top_k={args.top_k} max_workers={args.max_workers}')
+    print(f"top_k={args.top_k} max_workers={args.max_workers}")
     results = {}
     for idx, item in enumerate(locomo_data):
         # TOM1
@@ -249,8 +250,8 @@ def main():
                 conv_num,
                 q_num,
             )
-            question_response['conv_num'] = conv_num
-            question_response['question_num'] = q_num
+            question_response["conv_num"] = conv_num
+            question_response["question_num"] = q_num
             return (
                 category,
                 question_response,
@@ -286,7 +287,7 @@ def main():
     clean_results = {}
     categories = list(results.keys())
     categories = sorted(categories)
-    print(f'save:TOM1: validate results categories={categories}')
+    print(f"save:TOM1: validate results categories={categories}")
     num_items = 0
     num_errors = 0
     total_i_tokens = 0
@@ -299,78 +300,78 @@ def main():
         for result_item in results_list:
             try:
                 json.dumps(result_item)
-                if not result_item['model_answer']:
+                if not result_item["model_answer"]:
                     cat_num_errors += 1
                 clean_results[category].append(result_item)
-                if 'run_usage' in result_item:
-                    run_usage = result_item['run_usage']
+                if "run_usage" in result_item:
+                    run_usage = result_item["run_usage"]
                     if run_usage:
-                        i_tokens = run_usage['input_tokens']
-                        o_tokens = run_usage['output_tokens']
+                        i_tokens = run_usage["input_tokens"]
+                        o_tokens = run_usage["output_tokens"]
                         total_i_tokens += i_tokens
                         total_o_tokens += o_tokens
             except Exception as ex:
-                print(f'save:ERROR: json dump failed result={result_item} ex={ex}')
+                print(f"save:ERROR: json dump failed result={result_item} ex={ex}")
                 cat_num_errors += 1
             cat_num_items += 1
         num_items += cat_num_items
         num_errors += cat_num_errors
-        print(f'save: category={category} items={cat_num_items} errors={cat_num_errors}')
+        print(f"save: category={category} items={cat_num_items} errors={cat_num_errors}")
 
-    print(f'save: total items={num_items} errors={num_errors} '
-          f'i_tokens={total_i_tokens} o_tokens={total_o_tokens}')
+    print(f"save: total items={num_items} errors={num_errors} "
+          f"i_tokens={total_i_tokens} o_tokens={total_o_tokens}")
 
     with open(target_path, "w") as f:
         json.dump(clean_results, f, indent=4)
 
     metrics_after = mmai.get_metrics()
-    with open(f'search_metrics_after_{os.getpid()}.json', 'w') as fp:
+    with open(f"search_metrics_after_{os.getpid()}.json", "w") as fp:
         json.dump(metrics_after, fp, indent=4)
     metrics_delta = mmai.diff_metrics()
     new_delta = {}
     for k, v in metrics_delta.items():
-        if not k.endswith('_created'):
+        if not k.endswith("_created"):
             new_delta[k] = v  # remove timestamps
-    metrics_filename = f'search_metrics_delta_{os.getpid()}.json'
-    with open(metrics_filename, 'w') as fp:
+    metrics_filename = f"search_metrics_delta_{os.getpid()}.json"
+    with open(metrics_filename, "w") as fp:
         json.dump(new_delta, fp, indent=4)
-    print(f'metrics_filename={metrics_filename}')
+    print(f"metrics_filename={metrics_filename}")
     i_tokens = 0
     o_tokens = 0
     e_tokens = 0
-    if 'language_model_openai_usage_input_tokens_total' in metrics_delta:
-        i_tokens = int(metrics_delta['language_model_openai_usage_input_tokens_total'])
-    if 'language_model_openai_usage_output_tokens_total' in metrics_delta:
-        o_tokens = int(metrics_delta['language_model_openai_usage_output_tokens_total'])
-    if 'embedder_openai_usage_prompt_tokens_total' in metrics_delta:
-        e_tokens = int(metrics_delta['embedder_openai_usage_prompt_tokens_total'])
-    tokens_str = f'chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}'
-    print(f'save: memmachine {tokens_str}')
+    if "language_model_openai_usage_input_tokens_total" in metrics_delta:
+        i_tokens = int(metrics_delta["language_model_openai_usage_input_tokens_total"])
+    if "language_model_openai_usage_output_tokens_total" in metrics_delta:
+        o_tokens = int(metrics_delta["language_model_openai_usage_output_tokens_total"])
+    if "embedder_openai_usage_prompt_tokens_total" in metrics_delta:
+        e_tokens = int(metrics_delta["embedder_openai_usage_prompt_tokens_total"])
+    tokens_str = f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
+    print(f"save: memmachine {tokens_str}")
     vm_before = 0.0
     vm_after = 0.0
     rss_before = 0.0
     rss_after = 0.0
-    if 'process_virtual_memory_bytes' in metrics_before:
-        vm_before = metrics_before['process_virtual_memory_bytes']
-    if 'process_virtual_memory_bytes' in metrics_after:
-        vm_after = metrics_after['process_virtual_memory_bytes']
-    if 'process_resident_memory_bytes' in metrics_before:
-        rss_before = metrics_before['process_resident_memory_bytes']
-    if 'process_resident_memory_bytes' in metrics_after:
-        rss_after = metrics_after['process_resident_memory_bytes']
+    if "process_virtual_memory_bytes" in metrics_before:
+        vm_before = metrics_before["process_virtual_memory_bytes"]
+    if "process_virtual_memory_bytes" in metrics_after:
+        vm_after = metrics_after["process_virtual_memory_bytes"]
+    if "process_resident_memory_bytes" in metrics_before:
+        rss_before = metrics_before["process_resident_memory_bytes"]
+    if "process_resident_memory_bytes" in metrics_after:
+        rss_after = metrics_after["process_resident_memory_bytes"]
     vm_before /= 1073741824.0
     vm_after /= 1073741824.0
     rss_before /= 1073741824.0
     rss_after /= 1073741824.0
-    mem_str = 'VM_before '
-    mem_str += '%8.4f GiB ' % vm_before
-    mem_str += 'VM_after '
-    mem_str += '%8.4f GiB ' % vm_after
-    mem_str += 'RSS_before '
-    mem_str += '%8.4f GiB ' % rss_before
-    mem_str += 'RSS_after '
-    mem_str += '%8.4f GiB ' % rss_after
-    print(f'save: memmachine memory {mem_str}')
+    mem_str = "VM_before "
+    mem_str += "%8.4f GiB " % vm_before
+    mem_str += "VM_after "
+    mem_str += "%8.4f GiB " % vm_after
+    mem_str += "RSS_before "
+    mem_str += "%8.4f GiB " % rss_before
+    mem_str += "RSS_after "
+    mem_str += "%8.4f GiB " % rss_after
+    print(f"save: memmachine memory {mem_str}")
 
 
 if __name__ == "__main__":

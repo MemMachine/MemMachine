@@ -2,20 +2,21 @@
 # There are 2 copies of this file, please keep them both the same
 # 1. memmachine-test/benchmark/mem0_locomo/tests/memmachine
 # 2. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
+# ruff: noqa: PTH118, SIM108, G004, C901, SIM105, SIM102
 
+import copy
 import os
 import sys
-import copy
-import requests
 from urllib.parse import urlparse
 
+import requests
 
 if True:
     # find path to other scripts and modules
     my_dir = os.path.dirname(os.path.abspath(__file__))
-    test_dir = os.path.abspath(os.path.join(my_dir, '..'))
-    top_dir = os.path.abspath(os.path.join(test_dir, '..'))
-    utils_dir = os.path.join(top_dir, 'utils')
+    test_dir = os.path.abspath(os.path.join(my_dir, ".."))
+    top_dir = os.path.abspath(os.path.join(test_dir, ".."))
+    utils_dir = os.path.join(top_dir, "utils")
     sys.path.insert(1, test_dir)
     sys.path.insert(1, top_dir)
     from memmachine_helper_base import MemmachineHelperBase
@@ -31,24 +32,24 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         super().__init__()
         self.url = url
         if not self.url:
-            self.url = 'http://localhost:8080'
+            self.url = "http://localhost:8080"
         urlobj, host, port = self.split_url(self.url)
         self.urlobj = urlobj
         self.host = host
         self.port = port
         self.cookies = {}
-        self.origin = f'{self.urlobj.scheme}://{self.host}'
+        self.origin = f"{self.urlobj.scheme}://{self.host}"
         if self.port:
-            self.origin += f':{self.port}'
-        self.api_v1 = f'{self.origin}/v1'
-        self.metric_url = f'{self.origin}/metrics'
-        self.health_url = f'{self.origin}/health'
-        self.mem_add_url = f'{self.api_v1}/memories'
-        self.mem_add_episodic_url = f'{self.api_v1}/memories/episodic'
-        self.mem_add_semantic_url = f'{self.api_v1}/memories/profile'
-        self.mem_search_url = f'{self.api_v1}/memories/search'
-        self.mem_search_episodic_url = f'{self.api_v1}/memories/episodic/search'
-        self.mem_search_semantic_url = f'{self.api_v1}/memories/profile/search'
+            self.origin += f":{self.port}"
+        self.api_v1 = f"{self.origin}/v1"
+        self.metric_url = f"{self.origin}/metrics"
+        self.health_url = f"{self.origin}/health"
+        self.mem_add_url = f"{self.api_v1}/memories"
+        self.mem_add_episodic_url = f"{self.api_v1}/memories/episodic"
+        self.mem_add_semantic_url = f"{self.api_v1}/memories/profile"
+        self.mem_search_url = f"{self.api_v1}/memories/search"
+        self.mem_search_episodic_url = f"{self.api_v1}/memories/episodic/search"
+        self.mem_search_semantic_url = f"{self.api_v1}/memories/profile/search"
         self.metrics_before = {}
         self.metrics_after = {}
         self.rest_variation = 1
@@ -56,35 +57,35 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
     def split_url(self, url):
         urlobj = urlparse(url)
         hostport = urlobj.netloc
-        fields = hostport.split(':')
+        fields = hostport.split(":")
         host = fields[0]
         if len(fields) > 1:
             port = fields[1]
         else:
-            port = ''
+            port = ""
         return(urlobj, host, port)
 
     def get_headers(self):
         headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/javascript, */*',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Dest': 'empty',
-            'Accept-Encoding': 'gzip, deflate, br'
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/javascript, */*",
+            "X-Requested-With": "XMLHttpRequest",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "Accept-Encoding": "gzip, deflate, br"
         }
         headers = copy.copy(headers)
         self.get_origin_referer(headers)
         return(headers)
 
     def get_origin_referer(self, headers=None):
-        origin = f'{self.urlobj.scheme}://{self.host}'
+        origin = f"{self.urlobj.scheme}://{self.host}"
         if self.port:
-            origin += f':{self.port}'
+            origin += f":{self.port}"
         if headers:
-            headers['Origin'] = origin
-            headers['Referer'] = f'{origin}/'
+            headers["Origin"] = origin
+            headers["Referer"] = f"{origin}/"
         return(origin)
 
     def get_health(self, headers=None, timeout=None):
@@ -98,13 +99,13 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             def_headers.update(headers)
         headers = def_headers
         url = self.health_url
-        self.log.debug(f'GET url={url}')
+        self.log.debug(f"GET url={url}")
         resp = requests.get(url, headers=headers, cookies=self.cookies, timeout=timeout)
         self.cookies = resp.cookies
-        self.log.debug(f'status={resp.status_code} reason={resp.reason}')
-        self.log.debug(f'text={resp.text}')
+        self.log.debug(f"status={resp.status_code} reason={resp.reason}")
+        self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
-            raise AssertionError(f'ERROR: status_code={resp.status_code} reason={resp.reason}')
+            raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
 
         data = resp.json()
         return data
@@ -119,22 +120,22 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             def_headers.update(headers)
         headers = def_headers
         url = self.metric_url
-        self.log.debug(f'GET url={url}')
+        self.log.debug(f"GET url={url}")
         resp = requests.get(url, headers=headers, cookies=self.cookies, timeout=timeout)
         self.cookies = resp.cookies
-        self.log.debug(f'status={resp.status_code} reason={resp.reason}')
-        self.log.debug(f'text={resp.text}')
+        self.log.debug(f"status={resp.status_code} reason={resp.reason}")
+        self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
-            raise AssertionError(f'ERROR: status_code={resp.status_code} reason={resp.reason}')
+            raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
 
         metrics = {}
         for line in resp.text.splitlines():
             line = line.strip()
-            if not line or line.startswith('#'):
+            if not line or line.startswith("#"):
                 continue
-            fields = line.split(' ', 1)
+            fields = line.split(" ", 1)
             if len(fields) != 2:
-                self.log.error(f'ERROR: cannot split into k,v line={line}')
+                self.log.error(f"ERROR: cannot split into k,v line={line}")
             else:
                 k = fields[0].strip()
                 v = fields[1].strip()
@@ -161,8 +162,8 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         keys = list(metrics.keys())
         for key in keys:
             v = metrics[key]
-            if not key.endswith('_created'):
-                self.log.debug(f'key={key} value={v} type={type(v)}')
+            if not key.endswith("_created"):
+                self.log.debug(f"key={key} value={v} type={type(v)}")
         if not self.metrics_before:
             self.metrics_before = metrics
         else:
@@ -181,10 +182,10 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             metrics_after = self.metrics_after
         metrics = {}
         if not metrics_before:
-            raise AssertionError(f'ERROR: before metrics not found')
+            raise AssertionError("ERROR: before metrics not found")
         if not metrics_after:
-            raise AssertionError(f'ERROR: after metrics not found')
-        for key in metrics_after.keys():
+            raise AssertionError("ERROR: after metrics not found")
+        for key in metrics_after:
             diff = None
             before = None
             after = metrics_after[key]
@@ -194,9 +195,8 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
                 diff = after
             else:
                 is_number = False
-                if isinstance(before, int) or isinstance(before, float):
-                    if isinstance(after, int) or isinstance(after, float):
-                        is_number = True
+                if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+                    is_number = True
                 if is_number:
                     diff = after - before
                 elif before == after:
@@ -239,27 +239,27 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             timeout = 30
         if not messages:
             if not content:
-                raise AssertionError(f'ERROR: no content found')
-            messages = [{'content': content}]
+                raise AssertionError("ERROR: no content found")
+            messages = [{"content": content}]
         if mem_type:
             mem_type = mem_type.lower()  # memmachine only accepts lower
-            if mem_type not in ['none', 'episodic', 'semantic']:
-                raise AssertionError(f'ERROR: unknown mem_type={mem_type}')
-            if mem_type == 'none':
+            if mem_type not in ["none", "episodic", "semantic"]:
+                raise AssertionError(f"ERROR: unknown mem_type={mem_type}")
+            if mem_type == "none":
                 mem_type = None
         if not metadata:
             metadata = {}
 
         data = []
         for message in messages:
-            if 'content' not in message or not message['content']:
-                raise AssertionError(f'ERROR: some messages missing content')
-            if 'producer' not in message or not message['producer']:
-                raise AssertionError(f'ERROR: some messages missing producer')
+            if "content" not in message or not message["content"]:
+                raise AssertionError("ERROR: some messages missing content")
+            if "producer" not in message or not message["producer"]:
+                raise AssertionError("ERROR: some messages missing producer")
 
             am_metadata = metadata
-            if message['metadata']:
-                am_metadata = message['metadata']
+            if message["metadata"]:
+                am_metadata = message["metadata"]
             am_payload = {
                 "session": {
                     "group_id": "test_group",
@@ -269,7 +269,7 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
                 },
                 "producer": "test_user",
                 "produced_for": "test_agent",
-                "episode_content": message['content'],
+                "episode_content": message["content"],
                 "episode_type": "message",
                 "metadata": am_metadata,
             }
@@ -277,21 +277,21 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             if headers:
                 def_headers.update(headers)
             headers = def_headers
-            if mem_type and mem_type == 'episodic':
+            if mem_type and mem_type == "episodic":
                 url = self.mem_add_episodic_url
-            elif mem_type and mem_type == 'semantic':
+            elif mem_type and mem_type == "semantic":
                 url = self.mem_add_semantic_url
             else:
                 url = self.mem_add_url
             tmp_payload = copy.copy(am_payload)
-            self.log.debug(f'POST url={url} payload={tmp_payload}')
+            self.log.debug(f"POST url={url} payload={tmp_payload}")
             resp = requests.post(url, headers=headers, json=am_payload,
                                  cookies=self.cookies, timeout=timeout)
             self.cookies = resp.cookies
-            self.log.debug(f'status={resp.status_code} reason={resp.reason}')
-            self.log.debug(f'text={resp.text}')
+            self.log.debug(f"status={resp.status_code} reason={resp.reason}")
+            self.log.debug(f"text={resp.text}")
             if resp.status_code < 200 or resp.status_code > 299:
-                raise AssertionError(f'ERROR: status_code={resp.status_code} reason={resp.reason}')
+                raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
             try:
                 j = resp.json()
             except Exception:
@@ -315,7 +315,7 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         mem_type = None
         if types:
             if len(types) != 1:
-                raise AssertionError(f'ERROR: v1 supports only single type types={types}')
+                raise AssertionError(f"ERROR: v1 supports only single type types={types}")
             mem_type = types[0]
         sm_payload = {
             "session": {
@@ -332,20 +332,20 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         if headers:
             def_headers.update(headers)
         headers = def_headers
-        if mem_type and mem_type == 'episodic':
+        if mem_type and mem_type == "episodic":
             url = self.mem_search_episodic_url
-        elif mem_type and mem_type == 'semantic':
+        elif mem_type and mem_type == "semantic":
             url = self.mem_search_semantic_url
         else:
             url = self.mem_search_url
-        self.log.debug(f'POST url={url} payload={sm_payload}')
+        self.log.debug(f"POST url={url} payload={sm_payload}")
         resp = requests.post(url, headers=headers, json=sm_payload,
                              cookies=self.cookies, timeout=timeout)
         self.cookies = resp.cookies
-        self.log.debug(f'status={resp.status_code} reason={resp.reason}')
-        self.log.debug(f'text={resp.text}')
+        self.log.debug(f"status={resp.status_code} reason={resp.reason}")
+        self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
-            raise AssertionError(f'ERROR: status_code={resp.status_code} reason={resp.reason}')
+            raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
 
         data = resp.json()
         return data

@@ -2,19 +2,19 @@
 # There are 2 copies of this file, please keep them both the same
 # 1. memmachine-test/benchmark/mem0_locomo/tests/memmachine
 # 2. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
+# ruff: noqa: PTH118, C901, RUF059, SIM108
 
+import logging
 import os
 import sys
-import logging
 from datetime import datetime
-
 
 if True:
     # find path to other scripts and modules
     my_dir = os.path.dirname(os.path.abspath(__file__))
-    test_dir = os.path.abspath(os.path.join(my_dir, '..'))
-    top_dir = os.path.abspath(os.path.join(test_dir, '..'))
-    utils_dir = os.path.join(top_dir, 'utils')
+    test_dir = os.path.abspath(os.path.join(my_dir, ".."))
+    top_dir = os.path.abspath(os.path.join(test_dir, ".."))
+    utils_dir = os.path.join(top_dir, "utils")
     sys.path.insert(1, test_dir)
     sys.path.insert(1, top_dir)
     from utils.atf_helper import get_logger
@@ -30,18 +30,18 @@ class MemmachineHelperBase:
         self.log_dir = log_dir
         self.debug = debug
         if not self.log_dir:
-            self.log_dir = '.'
+            self.log_dir = "."
         if not log:
             self.log = get_logger(
-                log_file=f'{self.log_dir}/memmachine_helper.log',  # atf expects full path here
-                log_name='memmachine_helper', log_console=True)
+                log_file=f"{self.log_dir}/memmachine_helper.log",  # atf expects full path here
+                log_name="memmachine_helper", log_console=True)
             # self.log.setLevel(logging.DEBUG)
             # logging.basicConfig(level=logging.DEBUG)
             log_level = logging.INFO
             if self.debug:
                 log_level = logging.DEBUG
             for handler in self.log.handlers:
-                if hasattr(handler, 'baseFilename'):
+                if hasattr(handler, "baseFilename"):
                     handler.setLevel(logging.DEBUG)
                 else:
                     handler.setLevel(log_level)
@@ -50,20 +50,20 @@ class MemmachineHelperBase:
     def check_rest_variation(self, data):
         if self.rest_variation > 0:
             return
-        if 'content' not in data:
-            raise AssertionError(f'ERROR: missing content data={data}')
-        if 'episodic_memory' in data['content']:
-            em = data['content']['episodic_memory']
+        if "content" not in data:
+            raise AssertionError(f"ERROR: missing content data={data}")
+        if "episodic_memory" in data["content"]:
+            em = data["content"]["episodic_memory"]
             if isinstance(em, list):
                 self.rest_variation = 1
             elif isinstance(em, dict):
                 self.rest_variation = 2
-        elif 'profile_memory' in data['content']:
+        elif "profile_memory" in data["content"]:
             self.rest_variation = 1
-        elif 'semantic_memory' in data['content']:
+        elif "semantic_memory" in data["content"]:
             self.rest_variation = 2
         if not self.rest_variation:
-            raise AssertionError(f'ERROR: cannot parse variation from data={data}')
+            raise AssertionError(f"ERROR: cannot parse variation from data={data}")
 
     def edwin_timestamp_format(self, timestamp_str):
         """timestamp format that Edwin used
@@ -75,7 +75,7 @@ class MemmachineHelperBase:
             ts_obj = datetime.fromisoformat(timestamp_str)
             date_str = ts_obj.date().strftime("%A, %B %d, %Y")
             time_str = ts_obj.time().strftime("%I:%M %p")
-            new_str = f'{date_str} at {time_str}'
+            new_str = f"{date_str} at {time_str}"
         except Exception:
             pass
         return new_str
@@ -148,7 +148,7 @@ class MemmachineHelperBase:
             else:
                 use_xml = False  # only 1 type of memory, no need to use xml
 
-        ctx = ''
+        ctx = ""
         if not self.rest_variation:
             self.check_rest_variation(data)
         if self.rest_variation == 1:
@@ -164,25 +164,25 @@ class MemmachineHelperBase:
 
         if ltm_ctx and do_episodic:
             ctx += ltm_ctx
-            ctx += '\n'
+            ctx += "\n"
         if stm_ctx and do_episodic:
             ctx += stm_ctx
-            ctx += '\n'
+            ctx += "\n"
         if stm_sum_ctx and do_summary:
             ctx += stm_sum_ctx
-            ctx += '\n'
+            ctx += "\n"
         if sm_ctx and do_semantic:
             ctx += sm_ctx
-            ctx += '\n'
+            ctx += "\n"
         return ctx
 
     def split_data(self, data):
         if not self.rest_variation:
             self.check_rest_variation(data)
         if self.rest_variation == 1:
-            return self.split_data_v1(data)
-        elif self.rest_variation == 2:
-            return self.split_data_v2(data)
+            self.split_data_v1(data)
+        if self.rest_variation == 2:
+            self.split_data_v2(data)
 
     def split_data_count(self, data):
         le, se, ss, sm = self.split_data(data)
@@ -207,93 +207,93 @@ class MemmachineHelperBase:
     def build_ltm_ctx_v1(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'episodic_memory' not in data['content']:
-            return ''
-        em = data['content']['episodic_memory']
-        ltm_ctx = ''
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        ltm_ctx = ""
         if len(em) < 1:
-            return ''
+            return ""
         ltm_episodes = em[0]
         for episode in ltm_episodes:
-            metadata = episode['user_metadata']
+            metadata = episode["user_metadata"]
             if not metadata:
                 metadata = {}
-            if 'source_timestamp' in metadata:
-                ts = metadata['source_timestamp']
+            if "source_timestamp" in metadata:
+                ts = metadata["source_timestamp"]
             else:
-                ts = episode['timestamp']
+                ts = episode["timestamp"]
             ts = self.edwin_timestamp_format(ts)
-            if 'source_speaker' in metadata:
-                user = metadata['source_speaker']
+            if "source_speaker" in metadata:
+                user = metadata["source_speaker"]
             else:
-                user = episode['producer_id']
-            content = episode['content']
+                user = episode["producer_id"]
+            content = episode["content"]
             if not content:
                 continue
             ctx = f"[{ts}] {user}: {content}"
-            ltm_ctx += f'{ctx}\n'
+            ltm_ctx += f"{ctx}\n"
         if ltm_ctx and use_xml:
-            ltm_ctx = f'<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>'
+            ltm_ctx = f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
         return ltm_ctx
 
     def build_stm_ctx_v1(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'episodic_memory' not in data['content']:
-            return ''
-        em = data['content']['episodic_memory']
-        stm_ctx = ''
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        stm_ctx = ""
         if len(em) < 2:
-            return ''
+            return ""
         stm_episodes = em[1]
         for episode in stm_episodes:
-            metadata = episode['user_metadata']
+            metadata = episode["user_metadata"]
             if not metadata:
                 metadata = {}
-            if 'source_timestamp' in metadata:
-                ts = metadata['source_timestamp']
+            if "source_timestamp" in metadata:
+                ts = metadata["source_timestamp"]
             else:
-                ts = episode['timestamp']
+                ts = episode["timestamp"]
             ts = self.edwin_timestamp_format(ts)
-            if 'source_speaker' in metadata:
-                user = metadata['source_speaker']
+            if "source_speaker" in metadata:
+                user = metadata["source_speaker"]
             else:
-                user = episode['producer_id']
-            content = episode['content']
+                user = episode["producer_id"]
+            content = episode["content"]
             if not content:
                 continue
-            ctx = f'[{ts}] {user}: {content}'
-            stm_ctx += f'{ctx}\n'
+            ctx = f"[{ts}] {user}: {content}"
+            stm_ctx += f"{ctx}\n"
         if stm_ctx and use_xml:
-            stm_ctx = f'<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>'
+            stm_ctx = f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
         return stm_ctx
 
     def build_stm_sum_ctx_v1(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'episodic_memory' not in data['content']:
-            return ''
-        em = data['content']['episodic_memory']
-        stm_sum_ctx = ''
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        stm_sum_ctx = ""
         if len(em) < 3:
-            return ''
+            return ""
         stm_summaries = em[2]
         for stm_summary in stm_summaries:
             if not stm_summary:
                 continue
-            stm_sum_ctx += f'{stm_summary}\n'
+            stm_sum_ctx += f"{stm_summary}\n"
         if stm_sum_ctx and use_xml:
-            stm_sum_ctx = f'<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>'
+            stm_sum_ctx = f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
         return stm_sum_ctx
 
     def build_sm_ctx_v1(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'profile_memory' not in data['content']:
-            return ''
-        sm_list = data['content']['profile_memory']
-        sm_ctx = ''
-        print(f'ERROR: @@@@@ not implemented yet sm_list={sm_list}')
+        if "content" not in data or "profile_memory" not in data["content"]:
+            return ""
+        sm_list = data["content"]["profile_memory"]
+        sm_ctx = ""
+        print(f"ERROR: @@@@@ not implemented yet sm_list={sm_list}")
         return sm_ctx
 
     def split_data_v1(self, data):
@@ -312,13 +312,13 @@ class MemmachineHelperBase:
         ss = []  # short term memory summaries
         sm = []  # semantic memory facts
         try:
-            content = data['content']
+            content = data["content"]
             em = []
             sm = []
-            if 'episodic_memory' in content:
-                em = content['episodic_memory']
-            if 'profile_memory' in content:
-                sm = content['profile_memory']
+            if "episodic_memory" in content:
+                em = content["episodic_memory"]
+            if "profile_memory" in content:
+                sm = content["profile_memory"]
 
             if len(em) > 0:
                 le = em[0]
@@ -326,7 +326,7 @@ class MemmachineHelperBase:
                 se = em[1]
             if len(em) > 2:
                 ss = em[2]
-            if ss == ['']:
+            if ss == [""]:
                 ss = []
         except Exception:
             pass
@@ -338,97 +338,97 @@ class MemmachineHelperBase:
     def build_ltm_ctx_v2(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'episodic_memory' not in data['content']:
-            return ''
-        em = data['content']['episodic_memory']
-        ltm_ctx = ''
-        ltm = em['long_term_memory']
-        ltm_episodes = ltm['episodes']
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        ltm_ctx = ""
+        ltm = em["long_term_memory"]
+        ltm_episodes = ltm["episodes"]
         for episode in ltm_episodes:
-            metadata = episode['metadata']
+            metadata = episode["metadata"]
             if not metadata:
                 metadata = {}
-            if 'source_timestamp' in metadata:
-                ts = metadata['source_timestamp']
+            if "source_timestamp" in metadata:
+                ts = metadata["source_timestamp"]
             else:
-                ts = episode['created_at']
+                ts = episode["created_at"]
             ts = self.edwin_timestamp_format(ts)
-            if 'source_speaker' in metadata:
-                user = metadata['source_speaker']
+            if "source_speaker" in metadata:
+                user = metadata["source_speaker"]
             else:
-                user = episode['producer_id']
-            content = episode['content']
+                user = episode["producer_id"]
+            content = episode["content"]
             if not content:
                 continue
             ctx = f"[{ts}] {user}: {content}"
-            ltm_ctx += f'{ctx}\n'
+            ltm_ctx += f"{ctx}\n"
         if ltm_ctx and use_xml:
-            ltm_ctx = f'<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>'
+            ltm_ctx = f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
         return ltm_ctx
 
     def build_stm_ctx_v2(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'episodic_memory' not in data['content']:
-            return ''
-        em = data['content']['episodic_memory']
-        stm_ctx = ''
-        stm = em['short_term_memory']
-        stm_episodes = stm['episodes']
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        stm_ctx = ""
+        stm = em["short_term_memory"]
+        stm_episodes = stm["episodes"]
         for episode in stm_episodes:
-            metadata = episode['metadata']
+            metadata = episode["metadata"]
             if not metadata:
                 metadata = {}
-            if 'source_timestamp' in metadata:
-                ts = metadata['source_timestamp']
+            if "source_timestamp" in metadata:
+                ts = metadata["source_timestamp"]
             else:
-                ts = episode['created_at']
+                ts = episode["created_at"]
             ts = self.edwin_timestamp_format(ts)
-            if 'source_speaker' in metadata:
-                user = metadata['source_speaker']
+            if "source_speaker" in metadata:
+                user = metadata["source_speaker"]
             else:
-                user = episode['producer_id']
-            content = episode['content']
+                user = episode["producer_id"]
+            content = episode["content"]
             if not content:
                 continue
-            ctx = f'[{ts}] {user}: {content}'
-            stm_ctx += f'{ctx}\n'
+            ctx = f"[{ts}] {user}: {content}"
+            stm_ctx += f"{ctx}\n"
         if stm_ctx and use_xml:
-            stm_ctx = f'<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>'
+            stm_ctx = f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
         return stm_ctx
 
     def build_stm_sum_ctx_v2(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'episodic_memory' not in data['content']:
-            return ''
-        em = data['content']['episodic_memory']
-        stm_sum_ctx = ''
-        stm = em['short_term_memory']
-        stm_summaries = stm['episode_summary']
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        stm_sum_ctx = ""
+        stm = em["short_term_memory"]
+        stm_summaries = stm["episode_summary"]
         for stm_summary in stm_summaries:
             if not stm_summary:
                 continue
-            stm_sum_ctx += f'{stm_summary}\n'
+            stm_sum_ctx += f"{stm_summary}\n"
         if stm_sum_ctx and use_xml:
-            stm_sum_ctx = f'<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>'
+            stm_sum_ctx = f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
         return stm_sum_ctx
 
     def build_sm_ctx_v2(self, data, use_xml=None):
         if use_xml is None:
             use_xml = True
-        if 'content' not in data or 'semantic_memory' not in data['content']:
-            return ''
-        sm_list = data['content']['semantic_memory']
-        sm_ctx = ''
+        if "content" not in data or "semantic_memory" not in data["content"]:
+            return ""
+        sm_list = data["content"]["semantic_memory"]
+        sm_ctx = ""
         for sm_item in sm_list:
-            feature = sm_item['feature_name']
-            value = sm_item['value']
+            feature = sm_item["feature_name"]
+            value = sm_item["value"]
             if not feature or not value:
                 continue
-            sm_ctx += f'- {feature}: {value}\n'
+            sm_ctx += f"- {feature}: {value}\n"
         if sm_ctx and use_xml:
-            sm_ctx = f'<SEMANTIC MEMORY>\n{sm_ctx}\n</SEMANTIC MEMORY>'
+            sm_ctx = f"<SEMANTIC MEMORY>\n{sm_ctx}\n</SEMANTIC MEMORY>"
         return sm_ctx
 
     def split_data_v2(self, data):
@@ -447,15 +447,15 @@ class MemmachineHelperBase:
         ss = []  # short term memory summaries
         sm = []  # semantic memory facts
         try:
-            content = data['content']
-            em = content['episodic_memory']
-            sm = content['semantic_memory']
-            ltm = em['long_term_memory']
-            stm = em['short_term_memory']
-            le = ltm['episodes']
-            se = stm['episodes']
-            ss = stm['episode_summary']
-            if ss == ['']:
+            content = data["content"]
+            em = content["episodic_memory"]
+            sm = content["semantic_memory"]
+            ltm = em["long_term_memory"]
+            stm = em["short_term_memory"]
+            le = ltm["episodes"]
+            se = stm["episodes"]
+            ss = stm["episode_summary"]
+            if ss == [""]:
                 ss = []
         except Exception:
             pass
