@@ -1,4 +1,4 @@
-# ruff: noqa: INP001, PTH118, C901, G004, PERF403, RUF059, UP031
+# ruff: noqa: PTH118, C901, G004, PERF403, RUF059, UP031
 import argparse
 import json
 import os
@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from tqdm import tqdm
-
 
 if True:
     # find path to other scripts and modules

@@ -1,4 +1,4 @@
-# ruff: noqa: INP001, PTH118, DTZ007, C901, DTZ005, G004, PERF403, UP031
+# ruff: noqa: PTH118, DTZ007, C901, DTZ005, G004, PERF403, UP031
 import argparse
 import json
 import os
@@ -7,7 +7,6 @@ import traceback
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-
 
 if True:
     # find path to other scripts and modules
