@@ -6,8 +6,7 @@ import time
 
 # from atf_helper.py
 # ruff: noqa: PTH103, G004, C901
-def get_logger(log_file=None, log_name="atf",
-               log_rotate=False, log_console=False):
+def get_logger(log_file=None, log_name="atf", log_rotate=False, log_console=False):
     """
     logging with multiple files and console handlers
     Args:
@@ -21,8 +20,10 @@ def get_logger(log_file=None, log_name="atf",
     logger = logging.getLogger(log_name)
     logger.propagate = False
     host_ip = socket.gethostbyname(socket.gethostname())
-    log_format = logging.Formatter(f"%(asctime)s [{host_ip}] [%(levelname)s %(filename)s::"
-                                   f"%(funcName)s::%(lineno)s::%(threadName)s] %(message)s")
+    log_format = logging.Formatter(
+        f"%(asctime)s [{host_ip}] [%(levelname)s %(filename)s::"
+        f"%(funcName)s::%(lineno)s::%(threadName)s] %(message)s"
+    )
     if log_file:
         dir_path = os.path.dirname(log_file)
         if not os.path.exists(dir_path):

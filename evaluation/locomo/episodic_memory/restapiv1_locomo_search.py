@@ -109,13 +109,17 @@ def process_question(
         if mem_type == "episodic":
             ctx = mmai.build_episodic_ctx(data, use_xml=False, do_summary=False)
             if sm_len:
-                print(f"pc:ERROR: episodic memory search returned {sm_len} semantic memories "
-                      f"conv={conv_num} q={q_num}")
+                print(
+                    f"pc:ERROR: episodic memory search returned {sm_len} semantic memories "
+                    f"conv={conv_num} q={q_num}"
+                )
         else:
             ctx = mmai.build_ctx(data)
             if not sm_len:
-                print(f"pc:ERROR: semantic memory search returned no semantic memories "
-                      f"conv={conv_num} q={q_num}")
+                print(
+                    f"pc:ERROR: semantic memory search returned no semantic memories "
+                    f"conv={conv_num} q={q_num}"
+                )
         memory_end = time.time()
     except Exception as ex:
         print(f"pc:ERROR: memory search failed ex={ex}")
@@ -186,11 +190,19 @@ def main():
         "--target-path", required=True, help="Path to the target data file"
     )
     # TOM1
-    parser.add_argument("--conv-start", type=int, default=1, help="start at this conversation")
-    parser.add_argument("--conv-stop", type=int, default=1, help="stop at this conversation")
-    parser.add_argument("--top-k", type=int, default=50, help="return this many hints per question")
+    parser.add_argument(
+        "--conv-start", type=int, default=1, help="start at this conversation"
+    )
+    parser.add_argument(
+        "--conv-stop", type=int, default=1, help="stop at this conversation"
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=50, help="return this many hints per question"
+    )
     parser.add_argument("--mem-type", help="<episodic, semantic>, default is both")
-    parser.add_argument("--max-workers", type=int, default=10, help="number of simultaneous queries")
+    parser.add_argument(
+        "--max-workers", type=int, default=10, help="number of simultaneous queries"
+    )
     args = parser.parse_args()
 
     data_path = args.data_path
@@ -201,7 +213,8 @@ def main():
 
     # TOM1
     openai_eval_chat_client = openai.OpenAI(
-        api_key=openai_api_key, base_url=openai_api_base,
+        api_key=openai_api_key,
+        base_url=openai_api_base,
     )
     mmai = MemmachineHelper.factory("restapiv1")
     health = mmai.get_health()
@@ -268,11 +281,12 @@ def main():
                         continue
                 except Exception:
                     continue
-                future = executor.submit(
-                    respond_question, qa, idx + 1, q_idx + 1)
+                future = executor.submit(respond_question, qa, idx + 1, q_idx + 1)
                 futures.append(future)
             # wait for task completion
-            for future in tqdm(as_completed(futures), total=len(futures), desc="Answering Questions"):
+            for future in tqdm(
+                as_completed(futures), total=len(futures), desc="Answering Questions"
+            ):
                 result = future.result()
                 responses.append(result)
 
@@ -315,10 +329,14 @@ def main():
             cat_num_items += 1
         num_items += cat_num_items
         num_errors += cat_num_errors
-        print(f"save: category={category} items={cat_num_items} errors={cat_num_errors}")
+        print(
+            f"save: category={category} items={cat_num_items} errors={cat_num_errors}"
+        )
 
-    print(f"save: total items={num_items} errors={num_errors} "
-          f"i_tokens={total_i_tokens} o_tokens={total_o_tokens}")
+    print(
+        f"save: total items={num_items} errors={num_errors} "
+        f"i_tokens={total_i_tokens} o_tokens={total_o_tokens}"
+    )
 
     with open(target_path, "w") as f:
         json.dump(clean_results, f, indent=4)
@@ -344,7 +362,9 @@ def main():
         o_tokens = int(metrics_delta["language_model_openai_usage_output_tokens_total"])
     if "embedder_openai_usage_prompt_tokens_total" in metrics_delta:
         e_tokens = int(metrics_delta["embedder_openai_usage_prompt_tokens_total"])
-    tokens_str = f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
+    tokens_str = (
+        f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
+    )
     print(f"save: memmachine {tokens_str}")
     vm_before = 0.0
     vm_after = 0.0

@@ -21,10 +21,11 @@ if True:
 
 
 class MemmachineHelperBase:
-    """ MemMachine helper
+    """MemMachine helper
     Utility functions to help use MemMachine memory data
     Make MemMachine calls using various interfaces
     """
+
     def __init__(self, log=None, log_dir=None, debug=None):
         self.log = log
         self.log_dir = log_dir
@@ -34,7 +35,9 @@ class MemmachineHelperBase:
         if not log:
             self.log = get_logger(
                 log_file=f"{self.log_dir}/memmachine_helper.log",  # atf expects full path here
-                log_name="memmachine_helper", log_console=True)
+                log_name="memmachine_helper",
+                log_console=True,
+            )
             # self.log.setLevel(logging.DEBUG)
             # logging.basicConfig(level=logging.DEBUG)
             log_level = logging.INFO
@@ -95,8 +98,13 @@ class MemmachineHelperBase:
         Outputs:
             ctx (str): context string, add question, then feed into LLM
         """
-        return self.build_ctx(data, use_xml=use_xml, do_summary=do_summary,
-                              do_episodic=True, do_semantic=False)
+        return self.build_ctx(
+            data,
+            use_xml=use_xml,
+            do_summary=do_summary,
+            do_episodic=True,
+            do_semantic=False,
+        )
 
     def build_semantic_ctx(self, data, use_xml=None, do_summary=None):
         """combine data returned by search memory into a context text string
@@ -115,10 +123,17 @@ class MemmachineHelperBase:
         """
         if do_summary is None:
             do_summary = False
-        return self.build_ctx(data, use_xml=use_xml, do_summary=do_summary,
-                              do_episodic=False, do_semantic=True)
+        return self.build_ctx(
+            data,
+            use_xml=use_xml,
+            do_summary=do_summary,
+            do_episodic=False,
+            do_semantic=True,
+        )
 
-    def build_ctx(self, data, use_xml=None, do_summary=None, do_episodic=None, do_semantic=None):
+    def build_ctx(
+        self, data, use_xml=None, do_summary=None, do_episodic=None, do_semantic=None
+    ):
         """combine data returned by search memory into a context text string
 
         Both episodic and semanic memory are used.
@@ -233,7 +248,9 @@ class MemmachineHelperBase:
             ctx = f"[{ts}] {user}: {content}"
             ltm_ctx += f"{ctx}\n"
         if ltm_ctx and use_xml:
-            ltm_ctx = f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
+            ltm_ctx = (
+                f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
+            )
         return ltm_ctx
 
     def build_stm_ctx_v1(self, data, use_xml=None):
@@ -265,7 +282,9 @@ class MemmachineHelperBase:
             ctx = f"[{ts}] {user}: {content}"
             stm_ctx += f"{ctx}\n"
         if stm_ctx and use_xml:
-            stm_ctx = f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
+            stm_ctx = (
+                f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
+            )
         return stm_ctx
 
     def build_stm_sum_ctx_v1(self, data, use_xml=None):
@@ -283,7 +302,9 @@ class MemmachineHelperBase:
                 continue
             stm_sum_ctx += f"{stm_summary}\n"
         if stm_sum_ctx and use_xml:
-            stm_sum_ctx = f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
+            stm_sum_ctx = (
+                f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
+            )
         return stm_sum_ctx
 
     def build_sm_ctx_v1(self, data, use_xml=None):
@@ -363,7 +384,9 @@ class MemmachineHelperBase:
             ctx = f"[{ts}] {user}: {content}"
             ltm_ctx += f"{ctx}\n"
         if ltm_ctx and use_xml:
-            ltm_ctx = f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
+            ltm_ctx = (
+                f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
+            )
         return ltm_ctx
 
     def build_stm_ctx_v2(self, data, use_xml=None):
@@ -394,7 +417,9 @@ class MemmachineHelperBase:
             ctx = f"[{ts}] {user}: {content}"
             stm_ctx += f"{ctx}\n"
         if stm_ctx and use_xml:
-            stm_ctx = f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
+            stm_ctx = (
+                f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
+            )
         return stm_ctx
 
     def build_stm_sum_ctx_v2(self, data, use_xml=None):
@@ -411,7 +436,9 @@ class MemmachineHelperBase:
                 continue
             stm_sum_ctx += f"{stm_summary}\n"
         if stm_sum_ctx and use_xml:
-            stm_sum_ctx = f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
+            stm_sum_ctx = (
+                f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
+            )
         return stm_sum_ctx
 
     def build_sm_ctx_v2(self, data, use_xml=None):

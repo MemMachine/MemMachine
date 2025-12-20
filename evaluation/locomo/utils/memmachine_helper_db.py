@@ -9,10 +9,13 @@ from neo4j import GraphDatabase
 
 
 class Neo4jHelper:
-    """ MemMachine Neo4j helper
+    """MemMachine Neo4j helper
     Check if we added any episodic memories
     """
-    def __init__(self, log=None, host=None, port=None, dbname=None, user=None, password=None):
+
+    def __init__(
+        self, log=None, host=None, port=None, dbname=None, user=None, password=None
+    ):
         if log:
             self.printmsg = log.debug
         else:
@@ -83,8 +86,7 @@ class Neo4jHelper:
         if not self.n4_driver:
             self.connect()
         records, summary, keys = self.n4_driver.execute_query(
-            "MATCH (n) RETURN count(n) AS node_count;",
-            database_=self.dbname
+            "MATCH (n) RETURN count(n) AS node_count;", database_=self.dbname
         )
         node_count = 0
         for record in records:
@@ -92,7 +94,7 @@ class Neo4jHelper:
 
         records, summary, keys = self.n4_driver.execute_query(
             "MATCH ()-[r]->() RETURN count(r) AS relationship_count;",
-            database_=self.dbname
+            database_=self.dbname,
         )
         rel_count = 0
         for record in records:
@@ -113,9 +115,10 @@ class Neo4jHelper:
 
 
 class PsqlHelper:
-    """ MemMachine PSQL helper
+    """MemMachine PSQL helper
     Check if we added any semantic memories
     """
+
     def __init__(self, log=None, host=None, dbname=None, user=None, password=None):
         if log:
             self.printmsg = log.debug

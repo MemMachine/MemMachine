@@ -89,12 +89,16 @@ def process_conversation(idx, item, args, mmai):
                 messages.append(msg)
                 if len(messages) >= args.batch_size:
                     mmai.log.debug(f"add memory at index={message_index}")
-                    mmai.add_memory(messages=messages, mem_type=args.mem_type, timeout=timeout)
+                    mmai.add_memory(
+                        messages=messages, mem_type=args.mem_type, timeout=timeout
+                    )
                     messages = []
                     print(".", end="", flush=True)
             if messages:
                 mmai.log.debug(f"add memory at index={message_index}")
-                mmai.add_memory(messages=messages, mem_type=args.mem_type, timeout=timeout)
+                mmai.add_memory(
+                    messages=messages, mem_type=args.mem_type, timeout=timeout
+                )
                 print(".", end="", flush=True)
             print()
         except Exception as ex:
@@ -109,9 +113,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", required=True, help="Path to the data file")
     # TOM1
-    parser.add_argument("--conv-start", type=int, default=1, help="start at this conversation")
-    parser.add_argument("--conv-stop", type=int, default=1, help="stop at this conversation")
-    parser.add_argument("--batch-size", type=int, default=10, help="process this many messages per batch")
+    parser.add_argument(
+        "--conv-start", type=int, default=1, help="start at this conversation"
+    )
+    parser.add_argument(
+        "--conv-stop", type=int, default=1, help="stop at this conversation"
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10,
+        help="process this many messages per batch",
+    )
     parser.add_argument("--mem-type", help="<episodic, semantic>, default is both")
     args = parser.parse_args()
 
@@ -158,7 +171,9 @@ def main():
         o_tokens = int(metrics_delta["language_model_openai_usage_output_tokens_total"])
     if "embedder_openai_usage_prompt_tokens_total" in metrics_delta:
         e_tokens = int(metrics_delta["embedder_openai_usage_prompt_tokens_total"])
-    tokens_str = f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
+    tokens_str = (
+        f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
+    )
     print(f"save: memmachine {tokens_str}")
     vm_before = 0.0
     vm_after = 0.0

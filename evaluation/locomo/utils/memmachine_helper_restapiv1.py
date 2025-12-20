@@ -23,11 +23,12 @@ if True:
 
 
 class MemmachineHelperRestapiv1(MemmachineHelperBase):
-    """ MemMachine REST API v1
+    """MemMachine REST API v1
     Please use factory method to create this object
     Specification is in MemMachine repo:
         cd MemMachine/src/memmachine/server/api.py
     """
+
     def __init__(self, log=None, url=None):
         super().__init__()
         self.url = url
@@ -63,7 +64,7 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             port = fields[1]
         else:
             port = ""
-        return(urlobj, host, port)
+        return (urlobj, host, port)
 
     def get_headers(self):
         headers = {
@@ -73,11 +74,11 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             "Sec-Fetch-Site": "same-origin",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Dest": "empty",
-            "Accept-Encoding": "gzip, deflate, br"
+            "Accept-Encoding": "gzip, deflate, br",
         }
         headers = copy.copy(headers)
         self.get_origin_referer(headers)
-        return(headers)
+        return headers
 
     def get_origin_referer(self, headers=None):
         origin = f"{self.urlobj.scheme}://{self.host}"
@@ -86,11 +87,10 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         if headers:
             headers["Origin"] = origin
             headers["Referer"] = f"{origin}/"
-        return(origin)
+        return origin
 
     def get_health(self, headers=None, timeout=None):
-        """Get memmachine health
-        """
+        """Get memmachine health"""
         return {}
         if not timeout:
             timeout = 30
@@ -105,14 +105,15 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         self.log.debug(f"status={resp.status_code} reason={resp.reason}")
         self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
-            raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
+            raise AssertionError(
+                f"ERROR: status_code={resp.status_code} reason={resp.reason}"
+            )
 
         data = resp.json()
         return data
 
     def get_metrics(self, headers=None, timeout=None):
-        """Get memmachine metrics
-        """
+        """Get memmachine metrics"""
         if not timeout:
             timeout = 30
         def_headers = self.get_headers()
@@ -126,7 +127,9 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         self.log.debug(f"status={resp.status_code} reason={resp.reason}")
         self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
-            raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
+            raise AssertionError(
+                f"ERROR: status_code={resp.status_code} reason={resp.reason}"
+            )
 
         metrics = {}
         for line in resp.text.splitlines():
@@ -206,9 +209,17 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             metrics[key] = diff
         return metrics
 
-    def list_memory(self, org_id=None, project_id=None,
-                    filter_str=None, mem_type=None,
-                    page_size=None, page_num=None, headers=None, timeout=None):
+    def list_memory(
+        self,
+        org_id=None,
+        project_id=None,
+        filter_str=None,
+        mem_type=None,
+        page_size=None,
+        page_num=None,
+        headers=None,
+        timeout=None,
+    ):
         """list memory from memmachine
         See specs in memmachine source code
         Note: if mem_type is None, it defaults to episodic
@@ -218,10 +229,21 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         """
         return {}
 
-    def add_memory(self, org_id=None, project_id=None,
-                   producer=None, produced_for=None,
-                   timestamp=None, role=None, content=None, mem_type=None,
-                   metadata=None, messages=None, headers=None, timeout=None):
+    def add_memory(
+        self,
+        org_id=None,
+        project_id=None,
+        producer=None,
+        produced_for=None,
+        timestamp=None,
+        role=None,
+        content=None,
+        mem_type=None,
+        metadata=None,
+        messages=None,
+        headers=None,
+        timeout=None,
+    ):
         """add memory to memmachine
         See specs in memmachine source code
         Note: if mem_type is None, it defaults to both
@@ -285,13 +307,20 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
                 url = self.mem_add_url
             tmp_payload = copy.copy(am_payload)
             self.log.debug(f"POST url={url} payload={tmp_payload}")
-            resp = requests.post(url, headers=headers, json=am_payload,
-                                 cookies=self.cookies, timeout=timeout)
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=am_payload,
+                cookies=self.cookies,
+                timeout=timeout,
+            )
             self.cookies = resp.cookies
             self.log.debug(f"status={resp.status_code} reason={resp.reason}")
             self.log.debug(f"text={resp.text}")
             if resp.status_code < 200 or resp.status_code > 299:
-                raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
+                raise AssertionError(
+                    f"ERROR: status_code={resp.status_code} reason={resp.reason}"
+                )
             try:
                 j = resp.json()
             except Exception:
@@ -299,8 +328,17 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             data.append(j)
         return data
 
-    def search_memory(self, query, org_id=None, project_id=None, top_k=None,
-                      filter_str=None, types=None, headers=None, timeout=None):
+    def search_memory(
+        self,
+        query,
+        org_id=None,
+        project_id=None,
+        top_k=None,
+        filter_str=None,
+        types=None,
+        headers=None,
+        timeout=None,
+    ):
         """search memory in memmachine
         See specs in memmachine source code
         Note: if types is None, it defaults to all ['episodic', 'semantic']
@@ -315,7 +353,9 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         mem_type = None
         if types:
             if len(types) != 1:
-                raise AssertionError(f"ERROR: v1 supports only single type types={types}")
+                raise AssertionError(
+                    f"ERROR: v1 supports only single type types={types}"
+                )
             mem_type = types[0]
         sm_payload = {
             "session": {
@@ -339,13 +379,16 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         else:
             url = self.mem_search_url
         self.log.debug(f"POST url={url} payload={sm_payload}")
-        resp = requests.post(url, headers=headers, json=sm_payload,
-                             cookies=self.cookies, timeout=timeout)
+        resp = requests.post(
+            url, headers=headers, json=sm_payload, cookies=self.cookies, timeout=timeout
+        )
         self.cookies = resp.cookies
         self.log.debug(f"status={resp.status_code} reason={resp.reason}")
         self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
-            raise AssertionError(f"ERROR: status_code={resp.status_code} reason={resp.reason}")
+            raise AssertionError(
+                f"ERROR: status_code={resp.status_code} reason={resp.reason}"
+            )
 
         data = resp.json()
         return data

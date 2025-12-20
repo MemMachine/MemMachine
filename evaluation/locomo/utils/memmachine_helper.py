@@ -23,6 +23,7 @@ class MemmachineHelper:
     """MemMachine helper factory
     Use this to create MemMachine helper instances
     """
+
     @staticmethod
     def factory(name, log=None, url=None):
         """Create a memmachine object with the specified interface name
