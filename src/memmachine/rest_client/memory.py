@@ -8,7 +8,14 @@ operations for a specific context.
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import timezone
+
+# Python 3.11+ has UTC as a constant, Python 3.10 uses timezone.utc
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
+
 from typing import TYPE_CHECKING, Any
 
 import requests
