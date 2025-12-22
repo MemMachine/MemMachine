@@ -82,6 +82,9 @@ dev = [
     "ty>=0.0.1a26",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
+    # Optional integration deps used during type-checking / dev tasks
+    "google-adk",
+    "google-genai",
 ]
 
 [tool.mypy]
