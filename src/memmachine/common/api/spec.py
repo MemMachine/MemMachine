@@ -1,8 +1,21 @@
 """API v2 specification models for request and response structures."""
 
 import logging
-from datetime import UTC, datetime
-from typing import Annotated, Any, Self
+from datetime import datetime, timezone
+
+# Python 3.11+ has UTC as a constant, Python 3.10 uses timezone.utc
+try:
+    from datetime import UTC
+except ImportError:
+    UTC = timezone.utc
+
+from typing import Annotated, Any
+
+# Python 3.11+ has Self in typing, Python 3.10 uses typing_extensions
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import regex
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
@@ -240,6 +253,7 @@ class DeleteProjectSpec(BaseModel):
     ]
 
 
+# Type alias for timestamp input
 TimestampInput = datetime | int | float | str | None
 
 

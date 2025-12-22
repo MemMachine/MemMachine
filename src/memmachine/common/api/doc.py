@@ -1,5 +1,7 @@
 """API documentation strings for MemMachine server v2."""
 
+from __future__ import annotations
+
 from typing import ClassVar
 
 

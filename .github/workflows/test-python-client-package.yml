@@ -22,9 +22,14 @@ on:
 
 jobs:
   test-python-client-package:
-    name: Test Python Client Package
+    name: Test Python Client Package (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
 
     steps:
       - name: Checkout repository
@@ -32,10 +37,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
@@ -68,6 +73,7 @@ jobs:
           from memmachine.rest_client import MemMachineClient, Memory, Project
 
           print('All imports successful')
+          print(f'Python version: {__import__(\"sys\").version}')
           print(f'MemoryType.Semantic = {MemoryType.Semantic.value}')
           print(f'MemoryType.Episodic = {MemoryType.Episodic.value}')
           print(f'MemMachineClient class: {MemMachineClient}')

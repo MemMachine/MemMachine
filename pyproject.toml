@@ -146,6 +146,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
+"src/memmachine/common/api/spec.py" = ["UP017", "UP035"]
+"src/memmachine/rest_client/client.py" = ["UP035"]
 "examples/**" = [
     "ANN",
     "ASYNC210",
