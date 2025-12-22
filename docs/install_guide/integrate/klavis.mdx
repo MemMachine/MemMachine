@@ -1,0 +1,162 @@
+---
+title: "Klavis (Strata)"
+description: "Setting up MemMachine with Klavis (Strata) HTTP Integration"
+icon: "water"
+---
+
+Hello there! This guide is designed to walk you through the process of connecting your **MemMachine MCP server** to **Strata** (Klavis’ Multi-Component Protocol or MCP router) using a standard **HTTP (StreamableHTTP)** connection.
+
+This setup is perfect for local development and testing, allowing Strata to act as a handy intermediary between your client and MemMachine.
+
+## The Setup at a Glance
+
+When we're done, here's where everything will be running:
+
+* **MemMachine MCP server (HTTP):** `http://127.0.0.1:8080/mcp/`
+* **Strata router (HTTP):** `http://127.0.0.1:8090/mcp/`
+* **Your MCP client (Optional):** You will connect your client to **Strata**, and Strata will intelligently route the requests to MemMachine.
+
+## Prerequisites: Getting Ready
+
+Before we dive into the steps, please ensure you have the following in place:
+
+* **MemMachine:** You should have MemMachine installed, or you can run it directly from the repository root (e.g., by setting `PYTHONPATH=src`).
+* **Databases:** Make sure all databases required by your `configuration.yml` (typically **Postgres** and **Neo4j**) are up and running.
+* **Strata:** Ensure Strata is installed and accessible via your command line (`strata`).
+* **Proxy Check (Important!):** If you are on a system with a default system proxy (common on macOS), you might need to set the `NO_PROXY` environment variable for localhost. We cover this in Step 4!
+
+## Step-by-Step Connection Process
+<Steps>
+<Step title="Step 1: Start Your MemMachine MCP HTTP Server">
+
+Let's get MemMachine running first! Open your terminal from the MemMachine repository root and use the following commands:
+
+```bash
+export PYTHONPATH=src
+export MEMORY_CONFIG="/absolute/path/to/MemMachine/configuration.yml"
+
+python3 -m memmachine.server.mcp_http --host 127.0.0.1 --port 8080
+```
+
+<Note>**A Quick Note on the Endpoint:** The official MCP endpoint requires a **trailing slash**: **`/mcp/`**. While `http://127.0.0.1:8080/mcp` might try to redirect (307), it's best practice to use the trailing slash from the start.</Note>
+<Tip>**Troubleshooting:** If you see `FileNotFoundError: Config file cfg.yml not found`, double-check that your `MEMORY_CONFIG` path is set to the **absolute path** of your configuration file.</Tip>
+
+</Step>
+
+<Step title="Step 2: Connect MemMachine to Strata via HTTP">
+
+Now, we'll tell Strata about the MemMachine server we just started. We recommend using a dedicated configuration file for this setup:
+
+```bash
+export STRATA_CONFIG_PATH="/tmp/strata-memmachine.json"
+
+strata --config-path "$STRATA_CONFIG_PATH" add --type http memmachine \
+  "[http://127.0.0.1:8080/mcp/](http://127.0.0.1:8080/mcp/)" \
+  --header "Accept:application/json, text/event-stream"
+```
+
+This command adds MemMachine as a component named `memmachine` to Strata, specifying its HTTP endpoint and required headers for streaming communication.
+
+</Step>
+
+<Step title="Step 3: Start Your Strata Router">
+
+With MemMachine configured within Strata, let's fire up the router!
+
+```bash
+strata --config-path "$STRATA_CONFIG_PATH" run --port 8090
+```
+
+Your new Strata MCP endpoint is now active at:
+
+- `http://127.0.0.1:8090/mcp/`
+
+This is the address your client will connect to.
+
+</Step>
+
+<Step title="Step 4: Handle Local Proxy Conflicts (macOS Tip!)">
+
+If you encounter issues like Strata failing with a `502 Bad Gateway` when trying to reach `localhost` or `127.0.0.1`, it's likely a system proxy is intercepting the traffic.
+
+To resolve this, set the following environment variables before running Strata (and your client):
+
+```bash
+export NO_PROXY=127.0.0.1,localhost
+export no_proxy=127.0.0.1,localhost
+```
+
+</Step>
+
+<Step title="Step 5: Quick Health Checks">
+
+Let's confirm everything is talking nicely!
+
+**A) Verify Strata Responds (Using `curl`)**
+
+Send a basic `initialize` command to the **Strata** endpoint:
+
+```bash
+curl -i -N "[http://127.0.0.1:8090/mcp/](http://127.0.0.1:8090/mcp/)" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+If successful, you should see an `event: message` containing a standard JSON-RPC result.
+
+**B) Minimal Python MCP Client (The Known Good Pattern)**
+
+This Python snippet demonstrates the reliable way to connect your client to Strata. **The key takeaway:** Always use `ClientSession` as an **async context manager** to prevent potential timeouts during initialization.
+
+```python
+import asyncio
+import httpx
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.session import ClientSession
+
+MCP_URL = "[http://127.0.0.1:8090/mcp/](http://127.0.0.1:8090/mcp/)"  
+
+def no_proxy_httpx_factory(headers=None, timeout=None, auth=None):
+    # Ensure trust_env=False to ignore system proxies if Step 4 failed
+    return httpx.AsyncClient(headers=headers, timeout=timeout, auth=auth, trust_env=False)
+
+async def main():
+    print(f"Attempting to connect to MCP_URL = {MCP_URL}")
+
+    async with streamablehttp_client(
+        MCP_URL,
+        timeout=10,
+        sse_read_timeout=30,
+        httpx_client_factory=no_proxy_httpx_factory,
+    ) as (read_stream, write_stream, get_session_id):
+
+        async with ClientSession(read_stream, write_stream) as session:
+            print("Initialization started...")
+            caps = await session.initialize()
+            print("Session successfully initialized!")
+            print("session_id:", get_session_id())
+            print("capabilities:", caps)
+
+            print("Retrieving available tools...")
+            tools = await session.list_tools()
+            print("Tools available:", [t.name for t in tools.tools])
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</Step>
+
+</Steps>
+
+## Troubleshooting Tips
+
+If you run into any snags, here are the most common solutions:
+
+| **Problem**                                   | **Likely Cause(s)**                                          | **Quick Fix**                                                |
+| --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| **`307 Temporary Redirect`**                  | Missing the trailing slash on the MCP endpoint.              | Always use the **trailing slash** form: **`/mcp/`**          |
+| **`502 Bad Gateway`** (Strata -> MemMachine)  | A system proxy is intercepting localhost traffic.            | Set `NO_PROXY=127.0.0.1,localhost` before running Strata.    |
+| **MemMachine starts, but tools fail to load** | Required databases are offline or configuration path is wrong. | Confirm your databases (Postgres + Neo4j) are running, and check your `MEMORY_CONFIG` path for correctness. |
+
