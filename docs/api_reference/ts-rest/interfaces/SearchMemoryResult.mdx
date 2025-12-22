@@ -28,12 +28,12 @@ The search response provides a structured view of retrieved information, categor
 The search engine returns a tiered memory structure:
 
 **Episodic Memory (`content.episodic_memory`)**
-* `short_term_memory`: Recent interactions as [`EpisodeMemory[]`](./EpisodeMemory).
-* `long_term_memory`: Historical data as [`EpisodeMemory[]`](./EpisodeMemory).
+* `short_term_memory`: Recent interactions as [`EpisodicMemory[]`](./EpisodicMemory).
+* `long_term_memory`: Historical data as [`EpisodicMemory[]`](./EpisodicMemory).
 * `episode_summary`: A list of strings summarizing the found episodes.
 
 **Semantic Memory (`content.semantic_memory`)**
-* Returns an array of [`SemanticMemory[]`](./EpisodeMemory) representing distilled knowledge.
+* Returns an array of [`SemanticMemory[]`](./EpisodicMemory) representing distilled knowledge.
 
 ---
 

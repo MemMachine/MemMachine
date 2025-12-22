@@ -3,7 +3,7 @@ title: "Memory Structures"
 description: "Detailed schemas for Episodic and Semantic memory entries."
 ---
 
-## Interface `EpisodeMemory`
+## Interface `EpisodicMemory`
 
 Episodic memories represent specific events or interactions in a chronological sequence. Think of these as the individual "moments" the AI remembers.
 
@@ -44,7 +44,7 @@ Understanding which model you are receiving helps you format your UI or AI promp
 
 ```typescript
 // Example of handling both types in a search result
-results.content.episodic_memory.long_term_memory.forEach((ep: EpisodeMemory) => {
+results.content.episodic_memory.long_term_memory.forEach((ep: EpisodicMemory) => {
   console.log(`[${ep.created_at}] Event: ${ep.content}`);
 });
 
