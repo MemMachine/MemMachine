@@ -8,7 +8,7 @@ operations for a specific context.
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -168,15 +168,61 @@ class Memory:
 
         return merged_metadata
 
+    def _validate_role(self, role: str) -> None:
+        """Validate the role provided."""
+        valid_roles = {"user", "assistant", "system"}
+        if role and role not in valid_roles:
+            logger.warning(
+                "Role '%s' is not a standard role. Expected one of %s. Using as-is.",
+                role,
+                valid_roles,
+            )
+
+    def _build_memory_message(
+        self,
+        content: str,
+        role: str,
+        producer: str | None,
+        produced_for: str | None,
+        episode_type: EpisodeType | None,
+        metadata: dict[str, str] | None,
+        timestamp: datetime | None,
+    ) -> MemoryMessage:
+        """Build a MemoryMessage object from parameters."""
+        # Build metadata including old context fields and episode_type
+        combined_metadata = self._build_metadata(metadata)
+        if episode_type is not None:
+            combined_metadata["episode_type"] = episode_type.value
+
+        # Use shared API Pydantic models
+        message = MemoryMessage(  # type: ignore[call-arg,arg-type]
+            content=content,
+            role=role,
+            metadata=combined_metadata,
+        )
+
+        # Only set fields if explicitly provided (let server defaults work for None)
+        if producer is not None:
+            message.producer = producer
+        if produced_for is not None:
+            message.produced_for = produced_for
+        if timestamp is not None:
+            message.timestamp = timestamp
+        if episode_type is not None:
+            message.episode_type = episode_type
+
+        return message
+
     def add(
         self,
         content: str,
-        role: str = "user",
+        role: str = "",
         producer: str | None = None,
         produced_for: str | None = None,
-        episode_type: EpisodeType | None = EpisodeType.MESSAGE,
+        episode_type: EpisodeType | None = None,
         memory_types: list[MemoryType] | None = None,
         metadata: dict[str, str] | None = None,
+        timestamp: datetime | None = None,
         timeout: int | None = None,
     ) -> list[AddMemoryResult]:
         """
@@ -184,12 +230,13 @@ class Memory:
 
         Args:
             content: The content to store in memory
-            role: Message role - "user", "assistant", or "system" (default: "user")
-            producer: Who produced this content (defaults to first user_id)
-            produced_for: Who this content is for (defaults to first agent_id)
-            episode_type: Type of episode (default: "message") - stored in metadata
+            role: Message role - "user", "assistant", or "system" (default: "")
+            producer: Who produced this content (default: "user" if not provided, set by server)
+            produced_for: Who this content is for (default: "" if not provided)
+            episode_type: Type of episode (default: None, server will use "message")
             memory_types: List of MemoryType to store this memory under (default: both episodic and semantic)
             metadata: Additional metadata for the episode
+            timestamp: Optional timestamp for the memory. If not provided, server will use current UTC time.
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -219,37 +266,18 @@ class Memory:
         )
 
         try:
-            # Use v2 API: convert to v2 format
-            from datetime import datetime
-
             # Validate role
-            valid_roles = {"user", "assistant", "system"}
-            if role not in valid_roles:
-                logger.warning(
-                    "Role '%s' is not a standard role. Expected one of %s. Using as-is.",
-                    role,
-                    valid_roles,
-                )
+            self._validate_role(role)
 
             # Build metadata including old context fields and episode_type
-            combined_metadata = self._build_metadata(metadata)
-            if episode_type:
-                combined_metadata["episode_type"] = episode_type.value
-
-            # Convert None to empty string for producer and produced_for
-            # (MemoryMessage requires str, not None)
-            producer_str = producer if producer is not None else ""
-            produced_for_str = produced_for if produced_for is not None else ""
-
-            # Use shared API Pydantic models
-            message = MemoryMessage(
+            message = self._build_memory_message(
                 content=content,
-                producer=producer_str,
-                produced_for=produced_for_str,
-                timestamp=datetime.now(tz=UTC),
-                role=role,  # "user", "assistant", or "system"
-                metadata=combined_metadata,
+                role=role,
+                producer=producer,
+                produced_for=produced_for,
                 episode_type=episode_type,
+                metadata=metadata,
+                timestamp=timestamp,
             )
 
             spec = AddMemoriesSpec(
@@ -258,7 +286,7 @@ class Memory:
                 messages=[message],
                 types=memory_types,
             )
-            v2_data = spec.model_dump(mode="json", exclude_none=True)
+            v2_data = spec.model_dump(mode="json", exclude_unset=True)
 
             response = self.client.request(
                 "POST",
