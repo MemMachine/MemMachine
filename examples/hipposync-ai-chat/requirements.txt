@@ -1,0 +1,53 @@
+# ============================================================================
+# HippoSync Requirements
+# AI Chat Application with Persistent Memory & Email Verification
+# ============================================================================
+
+# Core Framework
+fastapi
+uvicorn
+python-multipart
+
+# Database
+sqlalchemy
+alembic
+
+# Authentication & Security
+python-jose
+passlib
+pyjwt
+cryptography
+bcrypt
+
+# Email
+python-dotenv
+aiosmtplib
+
+# HTTP & API Clients
+httpx
+requests
+aiohttp
+
+# Data Validation
+pydantic
+pydantic-settings
+
+# AI Providers
+openai
+anthropic
+google-generativeai
+
+# Memory System
+memmachine
+
+# Web Search
+tavily-python
+
+# CORS & Middleware
+starlette
+
+# Date & Time
+python-dateutil
+
+# Utilities
+typing-extensions
