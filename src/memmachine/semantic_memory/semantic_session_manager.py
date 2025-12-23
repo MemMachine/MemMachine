@@ -1,34 +1,31 @@
 """Manage semantic memory sessions and associated lifecycle hooks."""
 
 import asyncio
-from enum import Enum
-from typing import Final, Protocol, runtime_checkable
+from hashlib import sha256
+from typing import Protocol, runtime_checkable
 
-from pydantic import InstanceOf
+from pydantic import InstanceOf, JsonValue
 
-from memmachine.common.episode_store import EpisodeIdT
-from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr
+from memmachine.common.episode_store import Episode, EpisodeIdT
+from memmachine.common.filter.filter_parser import FilterExpr
+from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
     FeatureIdT,
+    OrgSetIdEntry,
     SemanticFeature,
     SetIdT,
 )
 
-_SESSION_ID_PREFIX: Final[str] = "mem_session_"
-_USER_ID_PREFIX: Final[str] = "mem_user_"
-_ROLE_ID_PREFIX: Final[str] = "mem_role_"
 
+def _hash_tag_list(strings: list[str]) -> str:
+    strings = sorted(strings)
 
-class IsolationType(Enum):
-    """Isolation scopes supported when mapping activity to semantic-memory set_ids."""
-
-    USER = "user_profile"
-    ROLE = "role_profile"
-    SESSION = "session"
-
-
-ALL_MEMORY_TYPES: Final[list[IsolationType]] = list(IsolationType)
+    h = sha256()
+    for s in strings:
+        h.update(s.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
 
 
 class SemanticSessionManager:
@@ -44,116 +41,45 @@ class SemanticSessionManager:
         """Protocol exposing the identifiers used to derive set_ids."""
 
         @property
-        def user_profile_id(self) -> SetIdT | None:
-            raise NotImplementedError
+        def org_id(self) -> str: ...
 
         @property
-        def session_id(self) -> SetIdT | None:
-            raise NotImplementedError
-
-        @property
-        def role_profile_id(self) -> SetIdT | None:
-            raise NotImplementedError
-
-    def _generate_session_data(
-        self,
-        *,
-        session_data: SessionData,
-    ) -> SessionData:
-        class _SessionDataImpl:
-            """Lightweight `SessionData` implementation backed by generated set_ids."""
-
-            def __init__(
-                self,
-                *,
-                _user_profile_id: str | None,
-                _role_profile_id: str | None,
-                _session_id: str | None,
-            ) -> None:
-                """Capture the identifiers used to scope memory resources."""
-                self._user_id: str | None = _user_profile_id
-                self._role_id: str | None = _role_profile_id
-                self._session_id: str | None = _session_id
-
-            @property
-            def user_profile_id(self) -> str | None:
-                return self._user_id
-
-            @property
-            def role_profile_id(self) -> str | None:
-                return self._role_id
-
-            @property
-            def session_id(self) -> str | None:
-                return self._session_id
-
-        user_id = session_data.user_profile_id
-        role_id = session_data.role_profile_id
-        session_id = session_data.session_id
-
-        return _SessionDataImpl(
-            _user_profile_id=_USER_ID_PREFIX + user_id if user_id else None,
-            _session_id=_SESSION_ID_PREFIX + session_id if session_id else None,
-            _role_profile_id=_ROLE_ID_PREFIX + role_id if role_id else None,
-        )
-
-    @classmethod
-    def set_id_isolation_type(cls, set_id: SetIdT) -> IsolationType:
-        if cls.is_session_id(set_id):
-            return IsolationType.SESSION
-        if cls.is_producer_id(set_id):
-            return IsolationType.USER
-        if cls.is_role_id(set_id):
-            return IsolationType.ROLE
-        raise ValueError(f"Invalid id: {set_id}")
-
-    @staticmethod
-    def is_session_id(_id: str) -> bool:
-        return _id.startswith(_SESSION_ID_PREFIX)
-
-    @staticmethod
-    def is_producer_id(_id: str) -> bool:
-        return _id.startswith(_USER_ID_PREFIX)
-
-    @staticmethod
-    def is_role_id(_id: str) -> bool:
-        return _id.startswith(_ROLE_ID_PREFIX)
+        def project_id(self) -> str: ...
 
     def __init__(
         self,
         semantic_service: SemanticService,
+        semantic_config_storage: SemanticConfigStorage,
     ) -> None:
         """Initialize the manager with the underlying semantic service."""
         self._semantic_service: SemanticService = semantic_service
+        self._semantic_config: SemanticConfigStorage = semantic_config_storage
+
+    async def _add_single_episode(
+        self, episode: Episode, session_data: SessionData
+    ) -> None:
+        set_ids = await self._get_set_ids_from_metadata(
+            session_data=session_data, metadata=episode.metadata
+        )
+        await self._semantic_service.add_message_to_sets(episode.id, set_ids)
 
     async def add_message(
         self,
-        episode_ids: list[EpisodeIdT],
+        episodes: list[Episode],
         session_data: InstanceOf[SessionData],
-        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
     ) -> None:
-        if len(episode_ids) == 0:
+        if len(episodes) == 0:
             return
 
-        set_ids = self._get_set_ids(session_data, memory_type)
+        async with asyncio.TaskGroup() as tg:
+            for e in episodes:
+                tg.create_task(self._add_single_episode(e, session_data))
 
-        if len(episode_ids) == 1:
-            await self._semantic_service.add_message_to_sets(episode_ids[0], set_ids)
-            return
-
-        tasks = [
-            self._semantic_service.add_messages(s_id, episode_ids) for s_id in set_ids
-        ]
-
-        await asyncio.gather(*tasks)
-
-    async def delete_messages(
+    async def delete_all_messages(
         self,
         session_data: SessionData,
-        *,
-        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
     ) -> None:
-        set_ids = self._get_set_ids(session_data, memory_type)
+        set_ids = await self._get_all_set_ids(session_data=session_data)
 
         await self._semantic_service.delete_messages(set_ids=set_ids)
 
@@ -162,14 +88,15 @@ class SemanticSessionManager:
         message: str,
         session_data: SessionData,
         *,
-        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
+        metadata: dict[str, JsonValue] | None = None,
         min_distance: float | None = None,
         limit: int | None = None,
         load_citations: bool = False,
         search_filter: FilterExpr | None = None,
     ) -> list[SemanticFeature]:
-        set_ids = self._get_set_ids(session_data, memory_type)
-        filter_expr = self._merge_filters(set_ids, search_filter)
+        set_ids = await self._get_set_ids_from_metadata(
+            session_data=session_data, metadata=metadata
+        )
 
         return await self._semantic_service.search(
             set_ids=set_ids,
@@ -177,16 +104,18 @@ class SemanticSessionManager:
             min_distance=min_distance,
             limit=limit,
             load_citations=load_citations,
-            filter_expr=filter_expr,
+            filter_expr=search_filter,
         )
 
     async def number_of_uningested_messages(
         self,
         session_data: SessionData,
         *,
-        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
+        metadata: dict[str, JsonValue] | None = None,
     ) -> int:
-        set_ids = self._get_set_ids(session_data, memory_type)
+        set_ids = await self._get_set_ids_from_metadata(
+            session_data=session_data, metadata=metadata
+        )
 
         return await self._semantic_service.number_of_uningested(
             set_ids=set_ids,
@@ -196,15 +125,16 @@ class SemanticSessionManager:
         self,
         session_data: SessionData,
         *,
-        memory_type: IsolationType,
+        feature_metadata: dict[str, JsonValue] | None = None,
+        session_metadata: dict[str, JsonValue] | None = None,
         category_name: str,
         feature: str,
         value: str,
         tag: str,
-        metadata: dict[str, str] | None = None,
         citations: list[EpisodeIdT] | None = None,
     ) -> FeatureIdT:
-        set_ids = self._get_set_ids(session_data, [memory_type])
+        set_ids = await self._get_set_ids_from_metadata(session_data=session_data, metadata=session_metadata)
+
         if len(set_ids) != 1:
             raise ValueError("Invalid set_ids", set_ids)
         set_id = set_ids[0]
@@ -215,7 +145,7 @@ class SemanticSessionManager:
             feature=feature,
             value=value,
             tag=tag,
-            metadata=metadata,
+            metadata=feature_metadata,
             citations=citations,
         )
 
@@ -255,17 +185,20 @@ class SemanticSessionManager:
         self,
         session_data: SessionData,
         *,
-        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
         search_filter: FilterExpr | None = None,
+        metadata: dict[str, JsonValue] | None = None,
         page_size: int | None = None,
         page_num: int | None = None,
         load_citations: bool = False,
     ) -> list[SemanticFeature]:
-        set_ids = self._get_set_ids(session_data, memory_type)
-        filter_expr = self._merge_filters(set_ids, search_filter)
+        set_ids = await self._get_set_ids_from_metadata(
+            session_data=session_data,
+            metadata=metadata,
+        )
 
         return await self._semantic_service.get_set_features(
-            filter_expr=filter_expr,
+            set_ids=set_ids,
+            filter_expr=search_filter,
             page_size=page_size,
             page_num=page_num,
             with_citations=load_citations,
@@ -275,48 +208,56 @@ class SemanticSessionManager:
         self,
         session_data: SessionData,
         *,
-        memory_type: list[IsolationType] = ALL_MEMORY_TYPES,
+        metadata: dict[str, JsonValue] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> None:
-        set_ids = self._get_set_ids(session_data, memory_type)
-        filter_expr = self._merge_filters(set_ids, property_filter)
-
-        await self._semantic_service.delete_feature_set(
-            filter_expr=filter_expr,
+        set_ids = await self._get_set_ids_from_metadata(
+            session_data=session_data,
+            metadata=metadata,
         )
 
-    def _get_set_ids(
+        await self._semantic_service.delete_feature_set(
+            set_ids=set_ids,
+            filter_expr=property_filter,
+        )
+
+    async def _get_all_set_ids(
         self,
+        *,
         session_data: SessionData,
-        isolation_level: list[IsolationType],
-    ) -> list[str]:
-        session_data = self._generate_session_data(session_data=session_data)
+    ) -> list[SetIdT]:
+        org_set_ids = await self._semantic_config.list_org_set_ids(
+            org_id=session_data.org_id
+        )
 
-        s: list[str] = []
-        if IsolationType.SESSION in isolation_level:
-            session_id = session_data.session_id
-            if session_id is not None:
-                s.append(session_id)
+        return self._get_set_ids(session_data, org_set_ids)
 
-        if IsolationType.USER in isolation_level:
-            user_id = session_data.user_profile_id
-            if user_id is not None:
-                s.append(user_id)
+    async def _get_set_ids_from_metadata(
+        self,
+        *,
+        session_data: SessionData,
+        metadata: dict[str, JsonValue] | None,
+    ) -> list[SetIdT]:
+        org_set_ids = await self._semantic_config.list_org_set_ids(
+            org_id=session_data.org_id
+        )
 
-        if IsolationType.ROLE in isolation_level:
-            role_id = session_data.role_profile_id
-            if role_id is not None:
-                s.append(role_id)
+        metadata_tags = set(metadata.keys() if metadata else [])
+        relevant_set_ids = [
+            sid for sid in org_set_ids if metadata_tags.issuperset(set(sid.tags))
+        ]
 
-        return s
+        return self._get_set_ids(session_data, relevant_set_ids)
 
-    @staticmethod
-    def _merge_filters(
-        set_ids: list[str],
-        property_filter: FilterExpr | None,
-    ) -> FilterExpr | None:
-        expr = property_filter
-        if set_ids:
-            set_expr = Comparison(field="set_id", op="in", value=list(set_ids))
-            expr = set_expr if expr is None else And(left=set_expr, right=expr)
-        return expr
+    def _get_set_ids(
+        self, session_data: SessionData, org_set_entries: list[OrgSetIdEntry]
+    ) -> list[SetIdT]:
+        org_base = f"org_{session_data.org_id}"
+        org_project = f"{org_base}_project_{session_data.project_id}"
+
+        set_ids = [
+            f"mem_{(org_base if sid.is_org_level else org_project)}_{_hash_tag_list(sid.tags)}_{'_'.join(sorted(sid.tags))}"
+            for sid in org_set_entries
+        ]
+
+        return set_ids

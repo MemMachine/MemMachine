@@ -48,21 +48,13 @@ class MemMachine:
         """Protocol describing session-scoped metadata used by memories."""
 
         @property
-        def session_key(self) -> str:
-            """Unique session identifier."""
-            raise NotImplementedError
+        def org_id(self) -> str: ...
 
         @property
-        def user_profile_id(self) -> str | None:
-            raise NotImplementedError
+        def project_id(self) -> str: ...
 
         @property
-        def role_profile_id(self) -> str | None:
-            raise NotImplementedError
-
-        @property
-        def session_id(self) -> str | None:
-            raise NotImplementedError
+        def session_key(self) -> str: ...
 
     def __init__(
         self, conf: Configuration, resources: ResourceManagerImpl | None = None
@@ -216,9 +208,8 @@ class MemMachine:
             await asyncio.gather(
                 semantic_memory_manager.delete_feature_set(
                     session_data=session_data,
-                    memory_type=[IsolationType.SESSION],
                 ),
-                semantic_memory_manager.delete_messages(session_data=session_data),
+                semantic_memory_manager.delete_all_messages(session_data=session_data),
             )
 
         tasks = [
