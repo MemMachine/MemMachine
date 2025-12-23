@@ -87,14 +87,12 @@ async def _search_target_memories(
         search_filter=spec.filter,
         limit=spec.top_k,
     )
+    content = {}
+    if results.episodic_memory:
+        content["episodic_memory"] = results.episodic_memory.model_dump()
+    if results.semantic_memory is not None:
+        content["semantic_memory"] = results.semantic_memory
     return SearchResult(
         status=0,
-        content={
-            "episodic_memory": results.episodic_memory.model_dump()
-            if results.episodic_memory
-            else [],
-            "semantic_memory": results.semantic_memory
-            if results.semantic_memory
-            else [],
-        },
+        content=content,
     )

@@ -319,16 +319,15 @@ async def _list_target_memories(
         page_num=spec.page_num,
     )
 
+    content = {}
+    if results.episodic_memory is not None:
+        content["episodic_memory"] = results.episodic_memory
+    if results.semantic_memory is not None:
+        content["semantic_memory"] = results.semantic_memory
+
     return SearchResult(
         status=0,
-        content={
-            "episodic_memory": results.episodic_memory
-            if results.episodic_memory
-            else [],
-            "semantic_memory": results.semantic_memory
-            if results.semantic_memory
-            else [],
-        },
+        content=content,
     )
 
 
