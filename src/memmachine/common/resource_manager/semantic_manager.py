@@ -66,9 +66,11 @@ class SemanticResourceManager:
 
         default_embedder = await self._resource_manager.get_embedder(
             self._conf.embedding_model,
+            validate=True,
         )
         default_model = await self._resource_manager.get_language_model(
             self._conf.llm_model,
+            validate=True,
         )
 
         class SemanticResourceRetriever:
@@ -92,11 +94,15 @@ class SemanticResourceManager:
         # TODO: validate/choose based on database provider
         storage: SemanticStorage
         try:
-            sql_engine = await self._resource_manager.get_sql_engine(database)
+            sql_engine = await self._resource_manager.get_sql_engine(
+                database, validate=True
+            )
             storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
         except ValueError:
             # try graph store
-            neo4j_engine = await self._resource_manager.get_neo4j_driver(database)
+            neo4j_engine = await self._resource_manager.get_neo4j_driver(
+                database, validate=True
+            )
             storage = Neo4jSemanticStorage(neo4j_engine)
 
         await storage.startup()

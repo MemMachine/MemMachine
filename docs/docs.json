@@ -194,14 +194,13 @@
       },
       {
         "label": "Support",
-        "href": "mailto:support@memmachine.ai"
+        "href": "https://discord.gg/usydANvKqD"
+      },
+      {
+        "label": "Platform Console",
+        "href": "https://console.memmachine.ai"
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
+    ]
   },
   "contextual": {
     "options": [
@@ -217,8 +216,8 @@
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/memmachine",
-      "github": "https://github.com/memmachine"
+      "github": "https://github.com/MemMachine/MemMachine",
+      "discord": "https://discord.gg/usydANvKqD"
     }
   }
 }

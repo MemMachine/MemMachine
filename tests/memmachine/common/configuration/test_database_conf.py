@@ -84,6 +84,12 @@ def db_conf_dict() -> dict:
     }
 
 
+@pytest.fixture(autouse=True)
+def clear_env(monkeypatch):
+    for var in ["MY_NEO4J_PASSWORD", "MY_DB_PASSWORD"]:
+        monkeypatch.delenv(var, raising=False)
+
+
 def test_parse_valid_storage_dict(db_conf_dict):
     storage_conf = DatabasesConf.parse(db_conf_dict)
 
@@ -115,6 +121,26 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert sqlite_conf.path == "local.db"
     assert isinstance(sqlite_conf, SqlAlchemyConf)
     assert sqlite_conf.uri == "sqlite+aiosqlite:///local.db"
+
+
+def test_read_db_password_from_env(monkeypatch, db_conf_dict):
+    monkeypatch.setenv("MY_DB_PASSWORD", "env-db-password")
+    db_conf_dict["databases"]["main_postgres"]["config"]["password"] = (
+        "${MY_DB_PASSWORD}"
+    )
+    storage_conf = DatabasesConf.parse(db_conf_dict)
+
+    pg_conf = storage_conf.relational_db_confs["main_postgres"]
+    assert pg_conf.password == SecretStr("env-db-password")
+
+
+def test_read_neo4j_password_from_env(monkeypatch, db_conf_dict):
+    monkeypatch.setenv("MY_NEO4J_PASSWORD", "env-neo4j-password")
+    db_conf_dict["databases"]["my_neo4j"]["config"]["password"] = "${MY_NEO4J_PASSWORD}"
+    storage_conf = DatabasesConf.parse(db_conf_dict)
+
+    neo_conf = storage_conf.neo4j_confs["my_neo4j"]
+    assert neo_conf.password == SecretStr("env-neo4j-password")
 
 
 def test_parse_unknown_provider_raises():

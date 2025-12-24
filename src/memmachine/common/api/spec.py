@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 import regex
-from pydantic import AfterValidator, BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 class InvalidNameError(ValueError):
     """Custom error for invalid names."""
+
+
+class InvalidTimestampError(ValueError):
+    """Custom error for invalid timestamps."""
 
 
 def _is_valid_name(v: str) -> str:
@@ -236,6 +240,9 @@ class DeleteProjectSpec(BaseModel):
     ]
 
 
+TimestampInput = datetime | int | float | str | None
+
+
 class MemoryMessage(BaseModel):
     """Model representing a memory message."""
 
@@ -285,6 +292,32 @@ class MemoryMessage(BaseModel):
             description=SpecDoc.MEMORY_EPISODIC_TYPE,
         ),
     ]
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def parse_timestamp(cls, v: TimestampInput) -> datetime:
+        if v is None:
+            return datetime.now(UTC)
+
+        # Already a datetime
+        if isinstance(v, datetime):
+            return v if v.tzinfo else v.replace(tzinfo=UTC)
+
+        # Unix timestamp (seconds or milliseconds)
+        if isinstance(v, (int, float)):
+            # Heuristic: > 10^12 is probably milliseconds
+            if v > 1_000_000_000_000:
+                v = v / 1000
+            return datetime.fromtimestamp(v, tz=UTC)
+
+        # String date
+        if isinstance(v, str):
+            try:
+                return datetime.fromisoformat(v)
+            except ValueError:
+                pass
+
+        raise InvalidTimestampError(f"Unsupported timestamp: {v}")
 
 
 class AddMemoriesSpec(_WithOrgAndProj):

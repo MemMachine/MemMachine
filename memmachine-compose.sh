@@ -148,6 +148,12 @@ select_llm_model() {
             llm_model=$(echo "${llm_model:-llama3}" | tr -d '\n\r')
             print_success "Selected Ollama LLM model: $llm_model" >&2
             ;;
+        "OPENAI_COMPATIBLE")
+            print_prompt
+            read -p "Which OpenAI-compatible LLM model would you like to use? [qwen-flash]: " llm_model
+            llm_model=$(echo "${llm_model:-qwen-flash}" | tr -d '\n\r')
+            print_success "Selected OpenAI-compatible LLM model: $llm_model" >&2
+            ;;
         *)
             print_warning "Unknown provider: $provider. Using default LLM model." >&2
             llm_model="gpt-4o-mini"
@@ -180,6 +186,12 @@ select_embedding_model() {
             read -p "Which Ollama embedding model would you like to use? [nomic-embed-text]: " embedding_model
             embedding_model=$(echo "${embedding_model:-nomic-embed-text}" | tr -d '\n\r')
             print_success "Selected Ollama embedding model: $embedding_model" >&2
+            ;;
+        "OPENAI_COMPATIBLE")
+            print_prompt
+            read -p "Which OpenAI-compatible embedding model would you like to use? [text-embedding-v4]: " embedding_model
+            embedding_model=$(echo "${embedding_model:-text-embedding-v4}" | tr -d '\n\r')
+            print_success "Selected OpenAI-compatible embedding model: $embedding_model" >&2
             ;;
         *)
             print_warning "Unknown provider: $provider. Using default embedding model." >&2
@@ -218,6 +230,14 @@ generate_config_for_provider() {
         "OLLAMA")
             local model_name="ollama_model"
             local embedder_name="ollama_embedder"
+            local model_field="model"
+            local embedder_field="model"
+            ;;
+        "OPENAI_COMPATIBLE")
+            # OpenAI-compatible providers (e.g. self-hosted / compatible APIs)
+            # Uses sample config entries: openai_compatible_model / openai_compatible_embedder
+            local model_name="openai_compatible_model"
+            local embedder_name="openai_compatible_embedder"
             local model_field="model"
             local embedder_field="model"
             ;;
@@ -476,15 +496,15 @@ check_config_file() {
             MEMMACHINE_IMAGE="memmachine/memmachine:latest-cpu"
         fi
 
-        # Ask user for provider path (OpenAI, Bedrock, or Ollama)
+        # Ask user for provider path (OpenAI, Bedrock, Ollama or OpenAI-compatible)
         print_prompt
-        read -p "Which provider would you like to use? (OpenAI/Bedrock/Ollama) [OpenAI]: " provider_input
+        read -p "Which provider would you like to use? (OpenAI/Bedrock/Ollama/OpenAI-compatible) [OpenAI]: " provider_input
         # Clean the input and set default
-        provider_input=$(echo "${provider_input:-OpenAI}" | tr -d '\n\r' | tr '[:lower:]' '[:upper:]')
+        provider_input=$(echo "${provider_input:-OpenAI}" | tr -d '\n\r' | tr '[:lower:]' '[:upper:]' | tr '-' '_')
         local provider="$provider_input"
         
         # Validate provider selection
-        if [[ "$provider" != "OPENAI" && "$provider" != "BEDROCK" && "$provider" != "OLLAMA" ]]; then
+        if [[ "$provider" != "OPENAI" && "$provider" != "BEDROCK" && "$provider" != "OLLAMA" && "$provider" != "OPENAI_COMPATIBLE" ]]; then
             print_warning "Invalid provider selection: '$provider'. Defaulting to OpenAI."
             provider="OPENAI"
         fi
@@ -520,7 +540,7 @@ check_config_file() {
     fi
 }
 
-select_openai_base_url() {
+select_openai_compatible_base_url() {
     local base_url=""
     local reply=""
 
@@ -529,16 +549,18 @@ select_openai_base_url() {
         read -p "Model base URL is not set. Would you like to configure a custom model base URL? (y/N) " reply
         if [[ $reply =~ ^[Yy]$ ]]; then
             print_prompt
-            read -p "Please enter your model base URL [https://api.openai.com/v1]: " base_url
+            read -p "OpenAI-compatible base URL [https://api.openai.com/v1]: " base_url
             base_url=$(echo "${base_url:-https://api.openai.com/v1}" | tr -d '\n\r')
             if [ -n "$base_url" ]; then
-                safe_sed_inplace "/openai_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-                safe_sed_inplace "/openai_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-                print_success "Set model base URL to $base_url"
+                # Update base_url under openai_compatible_model / openai_compatible_embedder.
+                # Note: these entries exist in sample_configs/* and are included when provider=OPENAI_COMPATIBLE.
+                safe_sed_inplace "/openai_compatible_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                safe_sed_inplace "/openai_compatible_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
+                print_success "Set OpenAI-compatible base URL to $base_url"
             fi
         fi
     else
-        print_success "Model model base URL appears to be configured"
+        print_success "Model base URL appears to be configured"
     fi
 }
 
@@ -576,8 +598,27 @@ set_provider_api_keys() {
             else
                 print_success "OpenAI API key appears to be configured"
             fi
-            
-            select_openai_base_url
+        fi
+
+        # Configure OpenAI-compatible provider (OPENAI_COMPATIBLE)
+        if [[ "$llm_model" == "openai_compatible_model" ]] || [[ "$embedder_model" == "openai_compatible_embedder" ]]; then
+            if grep -q "<YOUR_API_KEY>" configuration.yml; then
+                print_prompt
+                read -p "API key is not set. Would you like to set your API key for the OpenAI-compatible provider? (y/N) " reply
+                if [[ $reply =~ ^[Yy]$ ]]; then
+                    print_prompt
+                    read -sp "Enter your API key: " api_key
+                    echo
+                    safe_sed_inplace "s|OPENAI_API_KEY=.*|OPENAI_API_KEY=$api_key|" .env
+                    safe_sed_inplace "s|api_key: <YOUR_API_KEY>|api_key: $api_key|g" configuration.yml
+                    print_success "Set OPENAI_API_KEY in .env and configuration.yml"
+                fi
+            else
+                print_success "API key for OpenAI-compatible provider appears to be configured"
+            fi
+
+            # Base URL is configured only for OPENAI_COMPATIBLE.
+            select_openai_compatible_base_url
         fi
         
         # Configure Bedrock if selected
@@ -637,6 +678,26 @@ check_required_env() {
                 read -p "Press Enter to continue anyway (some features may not work)..."
             else
                 print_success "OPENAI_API_KEY is configured"
+            fi
+        fi
+
+        # Check OpenAI-compatible provider API key if configured
+        if [[ "$llm_model" == "openai_compatible_model" ]] || [[ "$embedder_model" == "openai_compatible_embedder" ]]; then
+            if [ -z "$OPENAI_API_KEY" ] || [ "$OPENAI_API_KEY" = "your_openai_api_key_here" ]; then
+                print_warning "OPENAI_API_KEY is not set or is using placeholder value"
+                print_warning "Please set your API key in the .env file for the OpenAI-compatible provider"
+                print_prompt
+                read -p "Press Enter to continue anyway (some features may not work)..."
+            else
+                print_success "OPENAI_API_KEY is configured (OpenAI-compatible provider)"
+            fi
+
+            if grep -q "openai_compatible_model:" configuration.yml && grep -q "base_url:" configuration.yml; then
+                print_success "OpenAI-compatible base URL appears to be configured"
+            else
+                print_warning "OpenAI-compatible base URL may be missing in configuration.yml"
+                print_prompt
+                read -p "Press Enter to continue anyway (some features may not work)..."
             fi
         fi
         
@@ -913,6 +974,10 @@ case "${1:-}" in
         echo "             Default LLM: llama3"
         echo "             Default embedding: nomic-embed-text"
         echo "             Requires: Base URL (default: http://host.docker.internal:11434/v1)"
+        echo "  OpenAI-compatible - Uses an OpenAI-compatible endpoint (custom base URL)"
+        echo "             Default LLM: qwen-flash"
+        echo "             Default embedding: text-embedding-v4"
+        echo "             Requires: API key (OPENAI_API_KEY) and base URL"
         echo ""
         echo "Features:"
         echo "  ProfileMemory - Intelligent user profiling and memory management"

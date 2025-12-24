@@ -3,12 +3,13 @@
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
+from memmachine.common.metrics_factory import MetricsFactory
 
 from .reranker import Reranker
 
@@ -42,6 +43,14 @@ class AmazonBedrockRerankerParams(BaseModel):
             "and values are values for those fields"
         ),
     )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
+    user_metrics_labels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Labels to attach to the collected metrics",
+    )
 
 
 class AmazonBedrockReranker(Reranker):
@@ -73,6 +82,27 @@ class AmazonBedrockReranker(Reranker):
             "additionalModelRequestFields": additional_model_request_fields,
             "modelArn": model_arn,
         }
+
+        metrics_factory = params.metrics_factory
+
+        self._score_call_counter = None
+        self._score_latency_summary = None
+
+        self._should_collect_metrics = False
+        if metrics_factory is not None:
+            self._should_collect_metrics = True
+            self._user_metrics_labels = params.user_metrics_labels
+            label_names = self._user_metrics_labels.keys()
+
+            self._score_call_counter = metrics_factory.get_counter(
+                name="amazon_bedrock_reranker_score_calls",
+                description="Number of calls to score in AmazonBedrockReranker",
+                label_names=label_names,
+            )
+            self._score_latency_summary = metrics_factory.get_summary(
+                name="amazon_bedrock_reranker_score_latency_seconds",
+                description="Latency in seconds for score in AmazonBedrockReranker",
+            )
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         """Score candidates for a query using the Bedrock reranker."""
@@ -177,6 +207,14 @@ class AmazonBedrockReranker(Reranker):
         scores = [0.0] * len(candidates)
         for result in results:
             scores[result["index"]] = result["relevanceScore"]
+
+        if self._should_collect_metrics:
+            cast(MetricsFactory.Counter, self._score_call_counter).increment(
+                labels=self._user_metrics_labels
+            )
+            cast(MetricsFactory.Summary, self._score_latency_summary).observe(
+                end_time - start_time, labels=self._user_metrics_labels
+            )
 
         return scores
 

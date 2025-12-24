@@ -71,6 +71,13 @@ def _minimal_conf(
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    prompt_conf = MagicMock()
+    prompt_conf.episode_summary_system_prompt = "You are a helpful assistant."
+    prompt_conf.episode_summary_user_prompt = (
+        "Based on the following episodes: {episodes}, and the previous summary: {summary}, "
+        "please update the summary. Keep it under {max_length} characters."
+    )
+    ret.prompt = prompt_conf
     return ret
 
 

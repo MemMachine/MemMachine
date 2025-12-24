@@ -91,7 +91,12 @@ class SpecDoc:
 
     MEMORY_TIMESTAMP = """
     The timestamp when the message was created, in ISO 8601 format.
+    The formats supported are:
+    - ISO 8601 string (e.g., '2023-10-01T12:00:00Z' or '2023-10-01T08:00:00-04:00')
+    - Unix epoch time in seconds (e.g., 1633072800)
+    - Unix epoch time in milliseconds (e.g., 1633072800000)
     If not provided, the server assigns the current time.
+    If the format is unrecognized, an error is returned.
     """
 
     MEMORY_ROLE = """

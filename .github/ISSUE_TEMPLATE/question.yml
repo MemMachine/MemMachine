@@ -20,7 +20,7 @@ body:
     attributes:
       label: Additional details
       description: Environment, steps, code snippets, logs, or screenshots (optional).
-      placeholder: e.g., OS: Ubuntu 22.04, MemMachine Version: 1.2.3
+      placeholder: "e.g., OS: Ubuntu 22.04, MemMachine Version: 1.2.3"
     render: shell
     validations:
       required: true

@@ -1,12 +1,15 @@
 """Metrics configuration mixins."""
 
+import os
+import re
 from datetime import timedelta
 from enum import Enum
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from memmachine.common.errors import InvalidPasswordError
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
@@ -46,6 +49,144 @@ class MetricsFactoryIdMixin(BaseModel):
                         f"Unknown MetricsFactory name: {factory_id}"
                     )
         return self._factories[factory_id]
+
+
+class WithValueFromEnv:
+    """Mixin that adds support for resolving environment variable references."""
+
+    # Matches $ENV or ${ENV}
+    _ENV_RE: ClassVar[re.Pattern] = re.compile(r"\$(\w+)|\$\{(\w+)}")
+
+    @classmethod
+    def _resolve_env(cls, value: SecretStr | str) -> str:
+        """Resolve environment variable references in the form $ENV or ${ENV}."""
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+
+        if not isinstance(value, str):
+            return value
+
+        def _repl(match: re.Match) -> str:
+            # One of the groups will be None
+            name = match.group(1) or match.group(2)
+            return os.environ.get(name, match.group(0))
+
+        return cls._ENV_RE.sub(_repl, value)
+
+
+class PasswordMixin(BaseModel, WithValueFromEnv):
+    """
+    Mixin for configurations that include a password.
+
+    It reads the password from environment variables if user
+    specifies a pattern like $ENV_NAME in the value.
+    """
+
+    password: SecretStr = Field(
+        ...,
+        description="Password for authentication.  Can reference an environment variable using $ENV_NAME syntax.",
+    )
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def resolve_password(cls, v: str | SecretStr) -> SecretStr | str | None:
+        """Resolve environment variable references in the password."""
+        v = cls._resolve_env(v)
+        if not isinstance(v, str):
+            raise InvalidPasswordError("password must be a string or SecretStr")
+        return SecretStr(v) if isinstance(v, str) else v
+
+
+class AWSCredentialsMixin(BaseModel, WithValueFromEnv):
+    """
+    Mixin for configurations that include AWS credentials.
+
+    It reads the credentials from environment variables if user
+    specifies a pattern like $ENV_NAME in the value.
+    """
+
+    aws_access_key_id: SecretStr | None = Field(
+        default=None,
+        description="AWS Access Key ID. It default to environment variable "
+        "AWS_ACCESS_KEY_ID if not provided. Can reference an "
+        "environment variable using $ENV_NAME syntax.",
+    )
+    aws_secret_access_key: SecretStr | None = Field(
+        default=None,
+        description="AWS Secret Access Key. It defaults to environment variable "
+        "AWS_SECRET_ACCESS_KEY if not provided. Can reference an "
+        "environment variable using $ENV_NAME syntax.",
+    )
+    aws_session_token: SecretStr | None = Field(
+        default=None,
+        description="AWS session token for authentication. It defaults to environment variable "
+        "AWS_SESSION_TOKEN if not provided. Can reference an "
+        "environment variable using $ENV_NAME syntax.",
+    )
+
+    @field_validator("aws_access_key_id", mode="before")
+    @classmethod
+    def resolve_aws_access_key_id(cls, v: SecretStr | str) -> SecretStr | str | None:
+        """Resolve environment variable references in the AWS Access Key ID."""
+        v = cls._resolve_env(v)
+        return SecretStr(v) if isinstance(v, str) else v
+
+    @field_validator("aws_secret_access_key", mode="before")
+    @classmethod
+    def resolve_aws_secret_access_key(
+        cls, v: SecretStr | str
+    ) -> SecretStr | str | None:
+        """Resolve environment variable references in the AWS Secret Access Key."""
+        v = cls._resolve_env(v)
+        return SecretStr(v) if isinstance(v, str) else v
+
+    @field_validator("aws_session_token", mode="before")
+    @classmethod
+    def resolve_aws_session_token(cls, v: SecretStr | str) -> SecretStr | str | None:
+        """Resolve environment variable references in the AWS Session Token."""
+        v = cls._resolve_env(v)
+        return SecretStr(v) if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def resolve_aws_env_defaults(self) -> Self:
+        """Fill in AWS credentials from environment variables if not provided."""
+        if not self.aws_access_key_id:
+            v = os.getenv("AWS_ACCESS_KEY_ID", None)
+            if v:
+                self.aws_access_key_id = SecretStr(v)
+
+        if not self.aws_secret_access_key:
+            v = os.getenv("AWS_SECRET_ACCESS_KEY", None)
+            if v:
+                self.aws_secret_access_key = SecretStr(v)
+
+        if not self.aws_session_token:
+            v = os.getenv("AWS_SESSION_TOKEN", None)
+            if v:
+                self.aws_session_token = SecretStr(v)
+
+        return self
+
+
+class ApiKeyMixin(BaseModel, WithValueFromEnv):
+    """
+    Mixin for configurations that include an API key.
+
+    It reads the API key from environment variables if user
+    specifies a pattern like $ENV_NAME in the value.
+    """
+
+    api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="API key for authentication.  Can reference an environment variable using $ENV_NAME syntax.",
+    )
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def resolve_api_key(cls, v: SecretStr | str) -> SecretStr | str | None:
+        """Resolve environment variable references in the API key."""
+        v = cls._resolve_env(v)
+        return SecretStr(v) if isinstance(v, str) else v
 
 
 class YamlSerializableMixin(BaseModel):

@@ -212,7 +212,7 @@ class Params(BaseModel):
             project_id=self.proj_id,
             query=query,
             top_k=top_k,
-            filter=f"metadata.user_id='{self.user_id}'",
+            filter="",
             types=ALL_MEMORY_TYPES,
         )
 
@@ -305,6 +305,7 @@ def load_configuration() -> Configuration:
     if config_file is None or not Path(config_file).exists():
         raise FileNotFoundError(f"Configuration file '{config_file}' not found.")
     ret = Configuration.load_yml_file(config_file)
+    ret.logging.apply()
     logger.info("Configuration file '%s' loaded.", config_file)
     return ret
 

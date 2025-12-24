@@ -69,6 +69,13 @@ resources:
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
         dimensions: 768
+    openai_compatible_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-v4"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
   language_models:
     openai_model:
       provider: openai-responses
@@ -89,6 +96,12 @@ resources:
         model: "llama3"
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
+    openai_compatible_model:
+      provider: openai-chat-completions
+      config:
+        model: "qwen-flash"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
   rerankers:
     my_reranker_id:
       provider: "rrf-hybrid"

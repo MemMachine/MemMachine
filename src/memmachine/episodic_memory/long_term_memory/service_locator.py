@@ -16,8 +16,8 @@ async def long_term_memory_params_from_config(
     vector_graph_store = await resource_manager.get_vector_graph_store(
         config.vector_graph_store,
     )
-    embedder = await resource_manager.get_embedder(config.embedder)
-    reranker = await resource_manager.get_reranker(config.reranker)
+    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
+    reranker = await resource_manager.get_reranker(config.reranker, validate=True)
     return LongTermMemoryParams(
         session_id=config.session_id,
         vector_graph_store=vector_graph_store,
