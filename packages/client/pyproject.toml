@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "memmachine-client"
-version = "0.1.0"
+dynamic = ["version"]
 dependencies = [
     "pydantic>=2.0.0",
     "regex>=2023.0.0",
@@ -27,6 +27,9 @@ license = "Apache-2.0"
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[tool.setuptools_scm]
+root = "../.."
 
 [tool.setuptools]
 packages = ["memmachine", "memmachine.common.api", "memmachine.rest_client"]
