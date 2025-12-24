@@ -1536,7 +1536,7 @@ wheels = [
 
 [[package]]
 name = "memmachine"
-version = "0.1.0"
+version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -1634,7 +1634,6 @@ dev = [
 
 [[package]]
 name = "memmachine-client"
-version = "0.1.0"
 source = { editable = "packages/client" }
 dependencies = [
     { name = "pydantic" },
@@ -1653,7 +1652,6 @@ requires-dist = [
 
 [[package]]
 name = "memmachine-server"
-version = "0.1.0"
 source = { editable = "packages/server" }
 dependencies = [
     { name = "aiosqlite" },

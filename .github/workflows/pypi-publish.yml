@@ -15,7 +15,6 @@ jobs:
     uses: ./.github/workflows/build-python.yml
     with:
       python-version: "3.x"
-      patch-version: "${{ github.event.release.tag_name }}"
 
   publish:
     runs-on: ubuntu-latest

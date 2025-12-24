@@ -13,10 +13,6 @@ on:
         required: false
         type: string
         default: '3.x'
-      patch-version:
-        description: 'Version to patch into pyproject.toml'
-        required: false
-        type: string
 
 jobs:
   build:
@@ -24,23 +20,13 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full Git history for SCM versioning
 
       - name: Set up Python ${{ inputs.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
-
-      - name: Patch version in pyproject.toml
-        if: inputs.patch-version != ''
-        run: |
-          VERSION="${{ inputs.patch-version }}"
-          echo "Updating pyproject.toml version to $VERSION"
-          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
-          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/client/pyproject.toml
-          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/server/pyproject.toml
-          sed -i -E "s/^version = \".*\"/version = \"$VERSION\"/" packages/meta/pyproject.toml
-          sed -i -E "s/\"memmachine-client==.*\"/\"memmachine-client==$VERSION\"/" packages/meta/pyproject.toml
-          sed -i -E "s/\"memmachine-server==.*\"/\"memmachine-server==$VERSION\"/" packages/meta/pyproject.toml
 
       - name: Install dependencies and uv
         run: |

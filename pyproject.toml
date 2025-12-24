@@ -11,7 +11,7 @@ memmachine-client = { workspace = true }
 
 [project]
 name = "memmachine"
-version = "0.1.0"
+version = "0.0.0"  # Placeholder version for workspace root
 dependencies = [
     "alembic>=1.17.1",
     "asyncpg>=0.31.0",
