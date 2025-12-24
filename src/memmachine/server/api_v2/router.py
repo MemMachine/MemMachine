@@ -308,12 +308,13 @@ async def _list_target_memories(
     spec: ListMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
+    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
     results = await memmachine.list_search(
         session_data=_SessionData(
             org_id=spec.org_id,
             project_id=spec.project_id,
         ),
-        target_memories=[spec.type],
+        target_memories=target_memories,
         search_filter=spec.filter,
         page_size=spec.page_size,
         page_num=spec.page_num,

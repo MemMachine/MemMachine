@@ -430,9 +430,9 @@ class ListMemoriesSpec(_WithOrgAndProj):
         ),
     ]
     type: Annotated[
-        MemoryType,
+        MemoryType | None,
         Field(
-            default=MemoryType.Episodic,
+            default=None,
             description=SpecDoc.MEMORY_TYPE_SINGLE,
             examples=Examples.MEMORY_TYPE_SINGLE,
         ),
