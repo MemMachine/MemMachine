@@ -17,6 +17,7 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry
+from memmachine.common.errors import SessionNotFoundError
 from memmachine.common.filter.filter_parser import And as FilterAnd
 from memmachine.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine.episodic_memory import EpisodicMemory
@@ -37,6 +38,24 @@ class DummySessionData:
     @property
     def session_key(self) -> str:  # pragma: no cover - trivial accessor
         return self._session_key
+
+
+@pytest.mark.asyncio
+async def test_delete_session_raises_session_not_found(
+    minimal_conf, patched_resource_manager
+):
+    session_manager = AsyncMock()
+    session_manager.get_session_info = AsyncMock(return_value=None)
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    with pytest.raises(
+        SessionNotFoundError, match=r"Session 'missing-session' does not exist"
+    ):
+        await memmachine.delete_session(DummySessionData("missing-session"))
 
 
 def _minimal_conf(

@@ -263,10 +263,8 @@ async def delete_project(
     )
     try:
         await memmachine.delete_session(session_data)
-    except ValueError as e:
-        if f"Session {session_data.session_key} does not exist" == str(e):
-            raise RestError(code=404, message="Project does not exist", ex=e) from e
-        raise
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project does not exist", ex=e) from e
     except Exception as e:
         raise RestError(code=500, message="Unable to delete project", ex=e) from e
 

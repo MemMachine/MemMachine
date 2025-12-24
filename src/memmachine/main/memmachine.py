@@ -17,7 +17,7 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
-from memmachine.common.errors import ConfigurationError
+from memmachine.common.errors import ConfigurationError, SessionNotFoundError
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -189,6 +189,10 @@ class MemMachine:
         return await session_data_manager.get_session_info(session_key)
 
     async def delete_session(self, session_data: SessionData) -> None:
+        session = await self.get_session(session_data.session_key)
+        if session is None:
+            raise SessionNotFoundError(session_data.session_key)
+
         async def _delete_episode_store() -> None:
             episode_store = await self._resources.get_episode_storage()
             session_filter = FilterComparison(
