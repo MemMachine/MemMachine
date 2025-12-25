@@ -1,5 +1,6 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
+import socket
 from datetime import UTC
 from typing import Any, TypeVar, overload
 
@@ -25,6 +26,7 @@ from sqlalchemy import (
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
@@ -33,7 +35,11 @@ from sqlalchemy.sql.elements import ColumnElement
 from memmachine.common.episode_store.episode_model import Episode as EpisodeE
 from memmachine.common.episode_store.episode_model import EpisodeEntry, EpisodeType
 from memmachine.common.episode_store.episode_storage import EpisodeIdT, EpisodeStorage
-from memmachine.common.errors import InvalidArgumentError, ResourceNotFoundError
+from memmachine.common.errors import (
+    ConfigurationError,
+    InvalidArgumentError,
+    ResourceNotFoundError,
+)
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -134,8 +140,13 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         return self._session_factory()
 
     async def startup(self) -> None:
-        async with self._engine.begin() as conn:
-            await conn.run_sync(BaseEpisodeStore.metadata.create_all)
+        try:
+            async with self._engine.begin() as conn:
+                await conn.run_sync(BaseEpisodeStore.metadata.create_all)
+        except (OperationalError, socket.gaierror) as err:
+            raise ConfigurationError(
+                "Failed to connect to the database during startup, please check your configuration."
+            ) from err
 
     @validate_call
     async def add_episodes(
