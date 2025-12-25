@@ -70,7 +70,9 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Download NLTK data and models
-RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords')"
+RUN python -c "import nltk, sys; \
+       passed = nltk.download('punkt_tab') and nltk.download('stopwords'); \
+       sys.exit(0 if passed else 1)"
 
 # Set host to 0.0.0.0 to allow external access
 ENV HOST=0.0.0.0
