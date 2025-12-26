@@ -24,12 +24,25 @@ classifiers = [
 ]
 license = "Apache-2.0"
 
+[project.optional-dependencies]
+# Google ADK integration (installs Google ADK + GenAI types used by the adapter)
+google-adk = [
+  "google-adk",
+  "google-genai",
+]
+
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
 
 [tool.setuptools]
-packages = ["memmachine", "memmachine.common.api", "memmachine.rest_client"]
+packages = [
+  "memmachine",
+  "memmachine.common.api",
+  "memmachine.integrations",
+  "memmachine.integrations.google_adk",
+  "memmachine.rest_client",
+]
 
 [tool.setuptools.package-data]
 "*" = ["*.md", "*.txt", "*.yml", "*.yaml"]
