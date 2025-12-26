@@ -1,0 +1,58 @@
+---
+title: "Client Configuration"
+description: "Settings for initializing the MemMachine Client and verifying server health."
+---
+
+## Interface `ClientOptions`
+
+The `ClientOptions` object is passed to the `MemMachineClient` constructor to configure connection, authentication, and request behavior.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `base_url` | `string` | **Required.** The root URL of your MemMachine server instance. |
+| `api_key` | `string` | *Optional.* Your secret API key used for authenticating requests. |
+| `timeout` | `number` | *Optional.* Request timeout in milliseconds (Default: `60000`). |
+| `max_retries` | `number` | *Optional.* Number of retry attempts for failed requests (Default: `3`). |
+
+---
+
+## Interface `HealthStatus`
+
+Returned by the `client.healthCheck()` method. This object provides a snapshot of the server's availability and the status of internal memory managers.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `status` | `string` | Overall health status (e.g., `'healthy'`). |
+| `service` | `string` | The service identifier or name. |
+| `version` | `string` | The current server version string. |
+| `memory_managers` | `object` | Status of internal managers: `episodic_memory` (boolean) and `profile_memory` (boolean). |
+
+---
+
+## Usage Example
+
+Use `ClientOptions` to connect, then use `HealthStatus` to verify your environment is ready.
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const client = new MemMachineClient({ 
+  base_url: 'your-base-url',
+  api_key: 'your_secret_key'
+});
+
+async function checkConnection() {
+  try {
+    const health = await client.healthCheck();
+    
+    if (health.status === 'healthy') {
+      console.log(`Connected to ${health.service} v${health.version}`);
+      console.log(`Episodic Manager: ${health.memory_managers.episodic_memory ? 'UP' : 'DOWN'}`);
+    }
+  } catch (error) {
+    console.error("Connection failed:", error.message);
+  }
+}
+
+checkConnection();
+```

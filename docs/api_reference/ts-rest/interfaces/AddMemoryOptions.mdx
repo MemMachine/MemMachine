@@ -1,0 +1,52 @@
+---
+title: "Storing Memory"
+description: "Input configurations and result schemas for adding new episodic data."
+---
+
+## Interface `AddMemoryOptions`
+
+These options allow you to categorize and add rich context to a memory entry. This metadata is crucial for later filtering and semantic retrieval.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `producer` | `string` | *Optional.* The Entity ID of who created the memory. |
+| `produced_for` | `string` | *Optional.* The Target Entity ID the memory is intended for. |
+| `role` | [`MemoryProducerRole`](./Types) | *Optional.* The role of the creator (`user`, `assistant`, or `system`). |
+| `episode_type` | `string` | *Optional.* A custom category for the entry (e.g., `'conversation'`, `'note'`). |
+| `metadata` | `Record<string, unknown>` | *Optional.* A key-value map for any additional custom data. |
+| `types` | [`MemoryType[]`](./Types) | *Optional.* Specify if this should be stored as `episodic`, `semantic`, or both. |
+
+---
+
+## Interface `AddMemoryResult`
+
+This is the confirmation object returned by the server after successfully adding a memory.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `results` | `object[]` | An array of objects, each containing a `uid` (string) for the newly created entry. |
+
+---
+
+## Usage Example
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const memory = client.project({ org_id: 'org_1', project_id: 'proj_1' }).memory();
+
+// Adding a memory with full context
+const response = await memory.add("The user prefers dark mode for the UI.", {
+  producer: "user_123",
+  role: "user",
+  episode_type: "preference",
+  metadata: {
+    platform: "mobile",
+    timestamp: Date.now()
+  }
+});
+
+// Accessing the new memory ID
+const newId = response.results[0].uid;
+console.log(`Memory stored with ID: ${newId}`);
+```

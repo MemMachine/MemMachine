@@ -1,0 +1,95 @@
+---
+title: "MemMachineClient"
+description: "The primary entry point for the MemMachine TypeScript SDK."
+---
+
+## Class `MemMachineClient`
+
+Main API client for interacting with the MemMachine RESTful service.
+
+This client provides a unified interface for memory management, project operations, and server health checks. It handles configuration and serves as the gateway to your organizations and projects.
+
+```typescript
+new MemMachineClient(options: ClientOptions)
+```
+**Parameters**
+
+| **Name**  | **Type**                                                     | **Description**                                              |
+| --------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `options` | [`ClientOptions`](../interfaces/ClientOptions) | Configuration for the client, including base URL and optional API key. |
+
+------
+
+## Methods
+
+### `project()`
+
+Creates a `MemMachineProject` instance for managing a specific project and its memories.
+
+```typescript
+client.project(projectContext: ProjectContext)
+```
+
+**Parameters**
+
+| **Name**         | **Type**                                                     | **Description**                              |
+| ---------------- | ------------------------------------------------------------ | -------------------------------------------- |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | Object containing `org_id` and `project_id`. |
+
+**Returns**
+
+- [`MemMachineProject`](./MemMachineProject)
+
+------
+
+### `getProjects()`
+
+Retrieves a list of all projects accessible to the client on the MemMachine server.
+
+```typescript
+await client.getProjects()
+```
+
+**Returns**
+
+- `Promise<Project[]>` — A list of [Project](../interfaces/Project) entities.
+
+**Throws**
+
+- [`MemMachineAPIError`](./MemMachineAPIError) if the server request fails.
+
+------
+
+### `healthCheck()`
+
+Checks the connection and health status of the MemMachine server.
+
+```typescript
+await client.healthCheck()
+```
+
+**Returns**
+
+- `Promise<HealthStatus>` — The [HealthStatus](../interfaces/ClientOptions) object containing server uptime and version.
+
+------
+
+## Usage Example
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const client = new MemMachineClient({ 
+  base_url: 'https://your-base-url'
+});
+
+// Access a specific project
+const project = client.project({ 
+  org_id: 'demo_org', 
+  project_id: 'main_project' 
+});
+
+// Check server status
+const status = await client.healthCheck();
+console.log(`Server status: ${status.status}`);
+```

@@ -1,0 +1,54 @@
+---
+title: "Memory Structures"
+description: "Detailed schemas for Episodic and Semantic memory entries."
+---
+
+## Interface `EpisodicMemory`
+
+Episodic memories represent specific events or interactions in a chronological sequence. Think of these as the individual "moments" the AI remembers.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `uid` | `string` | The unique identifier for this specific memory entry. |
+| `content` | `string` | The actual text or data of the memory. |
+| `created_at` | `string` | ISO timestamp of when the memory was stored. |
+| `session_key` | `string` | Identifier for the specific session or conversation. |
+| `producer_id` | `string` | The ID of the entity (user/system) that created the memory. |
+| `producer_role` | `string` | The role of the creator (e.g., `'user'`, `'assistant'`). |
+| `episode_type` | `string` | The category of the episode (e.g., `'chat_message'`). |
+| `sequence_num` | `number` | The order of this memory within its session. |
+| `metadata` | `Record<string, unknown>` | Additional custom data stored with the memory. |
+
+---
+
+## Interface `SemanticMemory`
+
+Semantic memories represent distilled knowledge, facts, or "truths" extracted from episodes. These are used for high-level reasoning and background context.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `set_id` | `string` | Identifier for the collection this memory belongs to. |
+| `category` | `string` | The high-level classification (e.g., `'user_preference'`). |
+| `tag` | `string` | A specific tag for quick lookups. |
+| `feature_name` | `string` | The specific trait or feature being described. |
+| `value` | `string` | The factual value of the memory (e.g., `'prefers_dark_mode'`). |
+| `metadata` | `object` | Contains `id`, `citations` (sources), and `other` custom fields. |
+
+---
+
+## Comparison: Episodes vs. Semantics
+
+
+
+Understanding which model you are receiving helps you format your UI or AI prompts correctly:
+
+```typescript
+// Example of handling both types in a search result
+results.content.episodic_memory.long_term_memory.forEach((ep: EpisodicMemory) => {
+  console.log(`[${ep.created_at}] Event: ${ep.content}`);
+});
+
+results.content.semantic_memory.forEach((sem: SemanticMemory) => {
+  console.log(`Fact: ${sem.feature_name} is ${sem.value}`);
+});
+```

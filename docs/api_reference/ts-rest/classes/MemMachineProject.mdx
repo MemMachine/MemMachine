@@ -1,0 +1,127 @@
+---
+title: "MemMachineProject"
+description: "Manage project-level configurations and access associated memory."
+---
+
+## Class `MemMachineProject`
+
+The `MemMachineProject` class provides methods to manage and interact with specific projects in MemMachine. It acts as the bridge between your high-level client and the specific memory engine for a project.
+
+While you can instantiate this class directly, the recommended way is to use the `client.project()` method.
+
+```typescript
+const project = client.project({ org_id: 'your_org', project_id: 'your_project' });
+```
+
+**Parameters**
+
+| **Name**         | **Type**                                                     | **Description**                           |
+| ---------------- | ------------------------------------------------------------ | ----------------------------------------- |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | The organization and project identifiers. |
+
+------
+
+## Methods
+
+### `create()`
+
+Creates a new project on the MemMachine server if it does not already exist.
+
+```typescript
+await project.create(options?: CreateProjectOptions)
+```
+
+**Parameters**
+
+| **Name**  | **Type**                                                     | **Description**                                  |
+| --------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `options` | [`CreateProjectOptions`](../interfaces/ProjectContext) | Optional settings such as a project description. |
+
+**Returns**
+
+- `Promise<Project>` — The newly created [Project](../interfaces/Project) entity.
+
+------
+
+### `memory()`
+
+Creates a `MemMachineMemory` instance for managing and searching memories within this specific project.
+
+
+```typescript
+project.memory(memoryContext?: MemoryContext)
+```
+
+**Parameters**
+
+| **Name**        | **Type**                                                     | **Description**                              |
+| --------------- | ------------------------------------------------------------ | -------------------------------------------- |
+| `memoryContext` | [`MemoryContext`](../interfaces/Project) | Optional context to narrow the memory scope. |
+
+**Returns**
+
+- [`MemMachineMemory`](./MemMachineMemory)
+
+------
+
+### `get()`
+
+Fetches the current project details from the MemMachine server.
+
+
+```typescript
+await project.get()
+```
+
+**Returns**
+
+- `Promise<Project>` — The [Project](../interfaces/Project) entity containing metadata and configuration.
+
+------
+
+### `getEpisodicCount()`
+
+Retrieves the total count of episodic memories currently stored within this project.
+
+```typescript
+await project.getEpisodicCount()
+```
+
+**Returns**
+
+- `Promise<number>` — The total count of memories.
+
+------
+
+### `delete()`
+
+Permanently removes the project and all of its associated episodic and semantic memories from the server.
+
+```typescript
+await project.delete()
+```
+
+**Throws**
+
+- [`MemMachineAPIError`](./MemMachineAPIError) if the project cannot be deleted.
+
+------
+
+## Usage Example
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const client = new MemMachineClient({ base_url: 'your-base-url' });
+const project = client.project({ org_id: 'acme_corp', project_id: 'internal_ai' });
+
+// 1. Initialize the project on the server
+await project.create({ description: 'AI assistant memory storage' });
+
+// 2. Check how much memory we have stored
+const count = await project.getEpisodicCount();
+console.log(`Current memory count: ${count}`);
+
+// 3. Access the memory engine
+const memory = project.memory();
+```

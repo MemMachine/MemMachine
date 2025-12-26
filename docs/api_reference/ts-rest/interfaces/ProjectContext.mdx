@@ -1,0 +1,50 @@
+---
+title: "Project Context"
+description: "Defining project identifiers and configuration for new projects."
+---
+
+## Interface `ProjectContext`
+
+The `ProjectContext` is used to target a specific workspace within MemMachine. It is required when initializing a project via the client.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `org_id` | `string` | **Required.** The unique identifier for your organization. |
+| `project_id` | `string` | **Required.** The unique identifier for the specific project. |
+
+---
+
+## Interface `CreateProjectOptions`
+
+These options are used when calling `project.create()` to initialize a new project on the server.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `description` | `string` | *Optional.* A brief summary or name for the project. |
+| `embedder` | `string` | *Optional.* Specify the embedding model for semantic vectorization. |
+| `reranker` | `string` | *Optional.* Specify the reranker model for optimizing search results. |
+
+---
+
+## Usage Example
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const client = new MemMachineClient({ base_url: 'your-base-url' });
+
+// 1. Define the Context
+const context = {
+  org_id: 'acme_corp',
+  project_id: 'customer_support_bot'
+};
+
+const project = client.project(context);
+
+// 2. Create the project with specific AI models
+await project.create({
+  description: 'Main support bot memory',
+  embedder: 'openai:text-embedding-3-small',
+  reranker: 'cohere:rerank-english-v3.0'
+});
+```

@@ -1,0 +1,117 @@
+---
+title: "MemMachineMemory"
+description: "The core engine for adding, searching, and managing AI memories."
+---
+
+## Class `MemMachineMemory`
+
+The `MemMachineMemory` class is the primary interface for interacting with the MemMachine memory engine. It allows you to store natural language "episodes" and retrieve them later using semantic search.
+
+The recommended way to access this class is via an existing project instance:
+
+```typescript
+const memory = project.memory();
+```
+
+**Parameters**
+
+| **Name**        | **Type**                                                     | **Description**                                              |
+| --------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `memoryContext` | [`MemoryContext`](../interfaces/Project) | Optional scope settings to filter or categorize these memories. |
+
+------
+
+## Methods
+
+### `add()`
+
+Adds a new memory to the MemMachine server.
+
+```typescript
+await memory.add(content: string, options?: AddMemoryOptions)
+```
+
+**Parameters**
+
+| **Name**  | **Type**                                                     | **Description**                                     |
+| --------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| `content` | `string`                                                     | The text or data to be remembered.                  |
+| `options` | [`AddMemoryOptions`](../interfaces/AddMemoryOptions) | Configuration like `episode_type` or producer role. |
+
+**Returns**
+
+- `Promise<AddMemoryResult>` — The result containing the unique `id` of the new memory.
+
+------
+
+### `search()`
+
+Performs a semantic search to find relevant memories based on a natural language query.
+
+```typescript
+await memory.search(query: string, options?: SearchMemoryOptions)
+```
+
+**Parameters**
+
+| **Name**  | **Type**                                                     | **Description**                                |
+| --------- | ------------------------------------------------------------ | ---------------------------------------------- |
+| `query`   | `string`                                                     | The question or phrase to search for.          |
+| `options` | [`SearchMemoryOptions`](../interfaces/SearchMemoryResult) | Limits, filters, or minimum similarity scores. |
+
+**Returns**
+
+- `Promise<SearchMemoryResult>` — A list of relevant [EpisodicMemory](../interfaces/EpisodicMemory) objects.
+
+------
+
+### `delete()`
+
+Permanently removes a specific memory from the system.
+
+```typescript
+await memory.delete(id: string, type: MemoryType)
+```
+
+**Parameters**
+
+| **Name** | **Type**                                                     | **Description**                                              |
+| -------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `id`     | `string`                                                     | The unique ID of the memory (returned during `add` or `search`). |
+| `type`   | [`MemoryType`](../interfaces/Types) | Specify either `episodic` or `semantic`.                     |
+
+------
+
+### `getContext()`
+
+Returns the combined Project and Memory configuration currently in use by this instance.
+
+```typescript
+memory.getContext()
+```
+
+**Returns**
+
+- `ProjectContext & MemoryContext` — The active scope for this memory instance.
+
+------
+
+## Usage Example
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const client = new MemMachineClient({ base_url: 'https://your-base-url' });
+const project = client.project({ org_id: 'your_org_id', project_id: 'your_project_id'})
+const memory = project.memory();
+
+// 1. Store a piece of information
+await memory.add('The user mentioned they live in Seattle and love hiking.');
+
+// 2. Retrieve information later
+const response = await memory.search('Where does the user live?');
+
+if (response.memories.length > 0) {
+  console.log(`Found memory: ${response.memories[0].content}`);
+}
+```

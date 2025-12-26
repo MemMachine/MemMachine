@@ -1,0 +1,60 @@
+---
+title: "Retrieving Memory"
+description: "Search query configurations and the multi-layered memory result model."
+---
+
+## Interface `SearchMemoryOptions`
+
+Fine-tune your semantic search by applying filters, limits, and specifying which memory types to scan.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `limit` | `number` | *Optional.* The maximum number of results to return. |
+| `filter` | `Record<string, unknown>` | *Optional.* Metadata filters to narrow the search scope. |
+| `types` | [`MemoryType[]`](./Types) | *Optional.* Search within `episodic`, `semantic`, or both. |
+
+---
+
+## Interface `SearchMemoryResult`
+
+The search response provides a structured view of retrieved information, categorized by memory "depth" and type.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `status` | `number` | The status code of the search operation. |
+| `content` | `object` | The container for all retrieved memory data. |
+
+### The `content` Object
+The search engine returns a tiered memory structure:
+
+**Episodic Memory (`content.episodic_memory`)**
+* `short_term_memory`: Recent interactions as [`EpisodicMemory[]`](./EpisodicMemory).
+* `long_term_memory`: Historical data as [`EpisodicMemory[]`](./EpisodicMemory).
+* `episode_summary`: A list of strings summarizing the found episodes.
+
+**Semantic Memory (`content.semantic_memory`)**
+* Returns an array of [`SemanticMemory[]`](./EpisodicMemory) representing distilled knowledge.
+
+---
+
+## Usage Example
+
+```typescript
+import { MemMachineClient } from '@memmachine/client';
+
+const memory = client.project({ org_id: 'org_1', project_id: 'proj_1' }).memory();
+
+const results = await memory.search("What are the user's favorite colors?");
+
+if (results.status === 200) {
+  // Accessing different "layers" of memory
+  const { short_term_memory, long_term_memory } = results.content.episodic_memory;
+  
+  console.log(`Found ${short_term_memory.length} recent context clues.`);
+  console.log(`Summary: ${results.content.episodic_memory.episode_summary[0]}`);
+  
+  // Accessing semantic knowledge
+  const knowledge = results.content.semantic_memory;
+  console.log(`Semantic Knowledge: ${knowledge.length} items found.`);
+}
+```

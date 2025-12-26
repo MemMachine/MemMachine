@@ -1,0 +1,123 @@
+---
+title: "Introduction"
+description: "The Typescript REST SDK for communicating with the MemMachine Client"
+icon: "t"
+---
+
+Welcome to the MemMachine TypeScript SDK. This library provides a seamless, type-safe way to integrate MemMachine's long-term memory capabilities into your Node.js or browser-based applications.
+
+With this SDK, you can easily store, retrieve, and manage AI memories without worrying about the underlying REST API complexities.
+
+## Key Capabilities
+
+* **Memory Lifecycle:** Effortlessly add, search, and manage memories with natural language.
+* **Project Isolation:** Organize data into distinct projects and organizations.
+* **Type Safety:** Built-in TypeScript definitions ensure your data structures are always correct.
+* **Resilient Design:** Robust error handling and health checks to keep your integration running smoothly.
+
+## Quick Start
+
+<Steps>
+<Step title="Install the Package">
+
+Add MemMachine to your project using your favorite package manager:
+
+```bash
+npm install @memmachine/client
+```
+</Step>
+<Step title="Initialize and Use">
+The SDK follows a hierarchical structure: Client → Project → Memory. Here is a quick example of how to store your first memory and search it later.
+
+```typescript expandable
+import MemMachineClient, { MemMachineAPIError } from '@memmachine/client'
+
+async function run() {
+  const client = new MemMachineClient({ base_url: 'https://your-base-url' })
+
+  // Create a MemMachineProject instance
+  const project = client.project({ org_id: 'demo_org', project_id: 'demo_project' })
+
+  // Create the project with config options on the MemMachine server if it does not exist
+  // await project.create({ description: 'Demo Project' })
+
+  // Create a MemMachineMemory instance for the project
+  const memory = project.memory()
+
+  try {
+    // Add a memory
+    await memory.add('I like pizza and pasta')
+
+    // Search memories
+    const result = await memory.search('What do I like to eat?')
+    console.dir(result, { depth: null })
+  } catch (err) {
+    if (err instanceof MemMachineAPIError) {
+      // Handle error
+      console.error(err.message)
+    }
+  }
+}
+
+run()
+```
+</Step>
+</Steps>
+
+## Explore the SDK
+
+The MemMachine SDK is organized into three primary classes. Click a class below to view its full technical reference, including parameters and return types.
+
+<CardGroup cols={3}>
+  <Card title="MemMachineClient" icon="terminal" href="./classes/MemMachineClient">
+    The entry point. Use this to connect to the server and manage high-level project lists.
+  </Card>
+  <Card title="MemMachineProject" icon="folders" href="./classes/MemMachineProject">
+    The project manager. Handles project creation, metadata, and memory counts.
+  </Card>
+  <Card title="MemMachineMemory" icon="brain-circuit" href="./classes/MemMachineMemory">
+    The memory engine. Where you add, search, and manage individual memories.
+  </Card>
+</CardGroup>
+
+## Supporting References
+
+### Data Types & Configuration
+Understanding the data structures is key to a smooth integration. These references define how you configure your environment and the shape of the data returned by the memory engine.
+
+<AccordionGroup>
+  <Accordion title="Setup & Identity" icon="gears">
+    - **[Client Configuration](./interfaces/ClientOptions)**: Manage connection settings, authentication, and server health status.
+    - **[Project Context](./interfaces/ProjectContext)**: Define organization IDs, project IDs, and project creation settings.
+    - **[The Workspace](./interfaces/Project)**: Explore project metadata and manage the active memory scope.
+  </Accordion>
+  
+  <Accordion title="Memory Operations" icon="brain">
+    - **[Storing Memory](./interfaces/AddMemoryOptions)**: Input parameters and result schemas for adding new episodic data.
+    - **[Retrieving Memory](./interfaces/SearchMemoryResult)**: Search query configurations and semantic search result models.
+    - **[Memory Structures](./interfaces/EpisodicMemory)**: The core data models for Episode and Semantic memory objects.
+  </Accordion>
+
+  <Accordion title="Constants & Enums" icon="list-check">
+    - **[Types & Roles](./interfaces/Types)**: Allowed values for `MemoryType` (episodic/semantic) and `MemoryProducerRole` (user/assistant/system).
+  </Accordion>
+</AccordionGroup>
+
+### Error Handling
+Reliable apps need good error handling. We provide a custom error class to help you catch and debug API-specific issues.
+
+- **[MemMachineAPIError](./classes/MemMachineAPIError)**: Catch this to access specific error messages and status codes returned by the MemMachine server.
+
+---
+
+## Contributing & Development
+
+If you are looking to contribute to the SDK or run local tests, follow these steps:
+
+1. **Install Dependencies:** `npm install`
+2. **Build the Package:** `npm run build`
+3. **Run Unit Tests:** `npm run test`
+4. **Try the Demo:** Execute `npm run example` to see a local script in action.
+
+## License
+MemMachine REST Client is open-source software licensed under the [Apache-2.0 License](https://www.apache.org/licenses/LICENSE-2.0).

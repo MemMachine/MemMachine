@@ -100,6 +100,33 @@
             "openapi": "openapi.json"
             },
           {
+          "group": "Typescript REST SDK",
+          "pages": [
+            "api_reference/ts-rest/typescript", 
+            {
+              "group": "Classes",
+              "pages": [
+                "api_reference/ts-rest/classes/MemMachineClient",
+                "api_reference/ts-rest/classes/MemMachineProject",
+                "api_reference/ts-rest/classes/MemMachineMemory",
+                "api_reference/ts-rest/classes/MemMachineAPIError"
+              ]
+            },
+            {
+              "group": "Interfaces",
+              "pages": [
+                "api_reference/ts-rest/interfaces/ClientOptions",
+                "api_reference/ts-rest/interfaces/ProjectContext",
+                "api_reference/ts-rest/interfaces/AddMemoryOptions",
+                "api_reference/ts-rest/interfaces/SearchMemoryResult",
+                "api_reference/ts-rest/interfaces/EpisodeMemory",
+                "api_reference/ts-rest/interfaces/Project",
+                "api_reference/ts-rest/interfaces/Types"
+              ]
+            }
+          ]
+        },
+          {
             "group": "PythonSDK Client",
             "pages": [
               "api_reference/python/client",
