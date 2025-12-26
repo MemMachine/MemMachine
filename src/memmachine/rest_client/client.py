@@ -1,5 +1,7 @@
 """Client utilities for interacting with the MemMachine HTTP API."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Mapping, Sequence
 from types import TracebackType

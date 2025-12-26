@@ -9,9 +9,10 @@ dependencies = [
     "pydantic>=2.0.0",
     "regex>=2023.0.0",
     "requests>=2.31.0",
+    "typing-extensions>=4.0.0",
     "urllib3>=2.0.0",
 ]
-requires-python = ">= 3.12"
+requires-python = ">= 3.10"
 authors = [
   {name="MemMachine", email="noreply@memmachine.ai"},
 ]
@@ -20,6 +21,11 @@ readme = "README.md"
 keywords = ["memmachine", "client", "memory", "ai", "agent"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 license = "Apache-2.0"
