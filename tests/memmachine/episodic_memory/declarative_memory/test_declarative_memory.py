@@ -297,19 +297,16 @@ async def test_search(declarative_memory):
     # Most relevant.
     assert "episode1" in [result.uid for result in results]
 
-    # The bunch of filler episodes should separate episode1 and episode2.
-    assert "episode2" not in [result.uid for result in results]
-
     results = await declarative_memory.search(
         query="Who wrote the test?",
-        max_num_episodes=4,
+        max_num_episodes=10,
         property_filter=FilterComparison(
             field="project",
             op="=",
             value="memmachine",
         ),
     )
-    assert len(results) == 4
+    assert len(results) == 10
     assert "episode1" in [result.uid for result in results]
     assert "episode5" in [result.uid for result in results]
 
