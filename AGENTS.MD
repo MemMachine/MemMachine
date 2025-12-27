@@ -83,8 +83,8 @@ The v2 API uses a project-based model where all operations are scoped to an orga
 - `POST /api/v2/memories/search` - Search memories
 - `POST /api/v2/memories/episodic/delete` - Delete episodic memories
 - `POST /api/v2/memories/semantic/delete` - Delete semantic memories
-- `GET /health` - Health check endpoint
-- `GET /metrics` - Prometheus metrics endpoint
+- `GET /api/v2/health` - Health check endpoint
+- `GET /api/v2/metrics` - Prometheus metrics endpoint
 
 ## Python SDK Usage
 
