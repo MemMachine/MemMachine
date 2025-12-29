@@ -290,7 +290,7 @@ class Memory:
 
             response = self.client.request(
                 "POST",
-                f"{self.client.base_url}/api/v2/memories",
+                self.client._build_api_url("/api/v2/memories"),
                 json=v2_data,
                 timeout=timeout,
             )
@@ -385,7 +385,7 @@ class Memory:
         try:
             response = self.client.request(
                 "POST",
-                f"{self.client.base_url}/api/v2/memories/search",
+                self.client._build_api_url("/api/v2/memories/search"),
                 json=v2_search_data,
                 timeout=timeout,
             )
@@ -449,7 +449,7 @@ class Memory:
         try:
             response = self.client.request(
                 "POST",
-                f"{self.client.base_url}/api/v2/memories/list",
+                self.client._build_api_url("/api/v2/memories/list"),
                 json=v2_list_data,
                 timeout=timeout,
             )
@@ -552,7 +552,7 @@ class Memory:
         try:
             response = self.client.request(
                 "POST",
-                f"{self.client.base_url}/api/v2/memories/episodic/delete",
+                self.client._build_api_url("/api/v2/memories/episodic/delete"),
                 json=v2_delete_data,
                 timeout=timeout,
             )
@@ -600,7 +600,7 @@ class Memory:
         try:
             response = self.client.request(
                 "POST",
-                f"{self.client.base_url}/api/v2/memories/semantic/delete",
+                self.client._build_api_url("/api/v2/memories/semantic/delete"),
                 json=v2_delete_data,
                 timeout=timeout,
             )
