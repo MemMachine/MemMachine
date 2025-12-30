@@ -18,12 +18,13 @@ semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
   database: profile_storage
+  config_database: profile_storage
 
 session_manager:
   database: profile_storage
 
 prompt:
-  session:
+  project_level:
   - profile_prompt
 
 resources:

@@ -122,6 +122,7 @@ class ConfigurationWizard:
             llm_model=self.LANGUAGE_MODEL_NAME,
             embedding_model=self.EMBEDDER_NAME,
             database=self.NEO4J_DB_ID,
+            config_database=self.SQLITE_DB_ID,
         )
 
     @cached_property

@@ -387,7 +387,7 @@ async def test_add_episodes_dispatches_to_all_memories(
     episode_storage.add_episodes.assert_awaited_once_with(session.session_key, entries)
     episodic_session.add_memory_episodes.assert_awaited_once_with(stored_episodes)
     semantic_manager.add_message.assert_awaited_once_with(
-        episode_ids=["e1", "e2"],
+        episodes=stored_episodes,
         session_data=session,
     )
 
