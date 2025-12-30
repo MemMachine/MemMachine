@@ -85,6 +85,7 @@ packages = [
     "memmachine.server.prompt",
     "memmachine.server.api_v2",
     "memmachine.semantic_memory",
+    "memmachine.semantic_memory.config_store",
     "memmachine.semantic_memory.util",
     "memmachine.semantic_memory.storage",
     "memmachine.semantic_memory.storage.alembic_pg",

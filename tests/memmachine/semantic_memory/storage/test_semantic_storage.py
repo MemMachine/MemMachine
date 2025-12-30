@@ -44,6 +44,121 @@ async def _add_episode(
 
 
 @pytest.mark.asyncio
+async def test_get_set_ids_starts_with(
+    semantic_storage: SemanticStorage,
+):
+    await semantic_storage.add_feature(
+        set_id="user1",
+        category_name="default",
+        feature="likes",
+        value="pizza",
+        tag="food",
+        embedding=np.array([1.0] * 1536, dtype=float),
+    )
+    await semantic_storage.add_feature(
+        set_id="user2",
+        category_name="default",
+        feature="likes",
+        value="sushi",
+        tag="food",
+        embedding=np.array([0.0] * 1536, dtype=float),
+    )
+    await semantic_storage.add_feature(
+        set_id="another",
+        category_name="default",
+        feature="likes",
+        value="burger",
+        tag="food",
+        embedding=np.array([0.0] * 1536, dtype=float),
+    )
+
+    set_ids = await semantic_storage.get_set_ids_starts_with("user")
+
+    set_ids = sorted(set_ids)
+    assert set_ids == ["user1", "user2"]
+
+
+@pytest.mark.asyncio
+async def test_get_set_ids_starts_with_with_no_results(
+    semantic_storage: SemanticStorage,
+):
+    set_ids = await semantic_storage.get_set_ids_starts_with("no_results")
+    assert set_ids == []
+
+
+@pytest.mark.asyncio
+async def test_get_set_ids_starts_with_with_cross_table(
+    semantic_storage: SemanticStorage,
+):
+    await semantic_storage.add_feature(
+        set_id="user1",
+        category_name="default",
+        feature="likes",
+        value="pizza",
+        tag="food",
+        embedding=np.array([0.0] * 1536, dtype=float),
+    )
+
+    await semantic_storage.add_history_to_set(
+        set_id="user1",
+        history_id="episode_id_a",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user1",
+        history_id="episode_id_b",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user2",
+        history_id="episode_id_c",
+    )
+
+    set_ids = await semantic_storage.get_set_ids_starts_with("user")
+
+    set_ids = sorted(set_ids)
+    assert set_ids == ["user1", "user2"]
+
+
+@pytest.mark.asyncio
+async def test_add_features_with_different_embedding_lengths(
+    semantic_storage: SemanticStorage,
+):
+    # Given two embeddings of different lengths
+    embed_a = np.array([0.1], dtype=float)
+    embed_b = np.array([1.0, 0.1], dtype=float)
+
+    # When we add them to the storage
+    id_a = await semantic_storage.add_feature(
+        set_id="user_a",
+        category_name="default",
+        feature="likes",
+        value="pizza",
+        tag="food",
+        embedding=embed_a,
+    )
+    id_b = await semantic_storage.add_feature(
+        set_id="user_b",
+        category_name="default",
+        feature="likes",
+        value="sushi",
+        tag="food",
+        embedding=embed_b,
+    )
+
+    # Expect no error to have occurred
+    assert id_a is not None
+    assert id_b is not None
+
+    # Expect to be able to search the memory without errors
+    res = await semantic_storage.get_feature_set(
+        filter_expr=_expr("set_id IN (user_a)"),
+        vector_search_opts=SemanticStorage.VectorSearchOpts(query_embedding=embed_a),
+    )
+
+    ids = {r.metadata.id for r in res}
+    assert ids == {id_a}
+
+
+@pytest.mark.asyncio
 async def test_empty_storage(semantic_storage: SemanticStorage):
     assert (
         await semantic_storage.get_feature_set(filter_expr=_expr("set_id IN (user)"))

@@ -93,6 +93,7 @@ def invalid_configure() -> Configuration:
             database="my_database",
             llm_model=MODEL_ID,
             embedding_model=EMBEDDER_ID,
+            config_database="my_database",
         ),
         logging=LogConf(),
         session_manager=SessionManagerConf(),

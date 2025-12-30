@@ -6,7 +6,7 @@ from asyncio import Task
 from collections.abc import Coroutine
 from typing import Any, Final, Protocol, cast
 
-from pydantic import BaseModel, InstanceOf, ValidationError
+from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
 
 from memmachine.common.api import MemoryType
 from memmachine.common.configuration import Configuration
@@ -32,8 +32,13 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory import EpisodicMemory
-from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
-from memmachine.semantic_memory.semantic_session_manager import IsolationType
+from memmachine.semantic_memory.semantic_model import (
+    CategoryIdT,
+    FeatureIdT,
+    OrgSetIdEntry,
+    SemanticFeature,
+    TagIdT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +53,16 @@ class MemMachine:
         """Protocol describing session-scoped metadata used by memories."""
 
         @property
-        def session_key(self) -> str:
-            """Unique session identifier."""
-            raise NotImplementedError
+        def org_id(self) -> str: ...
 
         @property
-        def user_profile_id(self) -> str | None:
-            raise NotImplementedError
+        def project_id(self) -> str: ...
 
         @property
-        def role_profile_id(self) -> str | None:
-            raise NotImplementedError
+        def session_key(self) -> str: ...
 
         @property
-        def session_id(self) -> str | None:
-            raise NotImplementedError
+        def metadata(self) -> dict[str, JsonValue] | None: ...
 
     def __init__(
         self, conf: Configuration, resources: ResourceManagerImpl | None = None
@@ -220,9 +220,10 @@ class MemMachine:
             await asyncio.gather(
                 semantic_memory_manager.delete_feature_set(
                     session_data=session_data,
-                    memory_type=[IsolationType.SESSION],
                 ),
-                semantic_memory_manager.delete_messages(session_data=session_data),
+                semantic_memory_manager.delete_all_project_messages(
+                    session_data=session_data
+                ),
             )
 
         tasks = [
@@ -289,7 +290,7 @@ class MemMachine:
             )
             tasks.append(
                 semantic_session_manager.add_message(
-                    episode_ids=episode_ids,
+                    episodes=episodes,
                     session_data=session_data,
                 )
             )
@@ -361,7 +362,6 @@ class MemMachine:
             semantic_session = await self._resources.get_semantic_session_manager()
             semantic_task = asyncio.create_task(
                 semantic_session.search(
-                    memory_type=[IsolationType.SESSION],
                     message=query,
                     session_data=session_data,
                     limit=limit,
@@ -485,3 +485,199 @@ class MemMachine:
     ) -> None:
         semantic_session = await self._resources.get_semantic_session_manager()
         await semantic_session.delete_features(feature_ids)
+
+    async def add_feature(
+        self,
+        session_data: SessionData,
+        *,
+        feature_metadata: dict[str, JsonValue] | None = None,
+        category_name: str,
+        feature: str,
+        value: str,
+        tag: str,
+        citations: list[EpisodeIdT] | None = None,
+        set_metadata_keys: list[str],
+        is_org_level: bool,
+    ) -> FeatureIdT:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.add_feature(
+            session_data=session_data,
+            feature_metadata=feature_metadata,
+            category_name=category_name,
+            feature=feature,
+            value=value,
+            tag=tag,
+            citations=citations,
+            is_org_level=is_org_level,
+            set_metadata_keys=set_metadata_keys,
+        )
+
+    async def get_feature(
+        self,
+        feature_id: FeatureIdT,
+        load_citations: bool = False,
+    ) -> SemanticFeature | None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+        return await semantic_session.get_feature(
+            feature_id=feature_id,
+            load_citations=load_citations,
+        )
+
+    async def update_feature(
+        self,
+        *,
+        feature_id: FeatureIdT,
+        category_name: str | None = None,
+        feature: str | None = None,
+        value: str | None = None,
+        tag: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.update_feature(
+            feature_id=feature_id,
+            category_name=category_name,
+            feature=feature,
+            value=value,
+            tag=tag,
+            metadata=metadata,
+        )
+
+    async def create_semantic_set_type(
+        self,
+        *,
+        session_data: SessionData,
+        is_org_level: bool,
+        metadata_tags: list[str],
+    ) -> str:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.create_org_set_type(
+            session_data=session_data,
+            is_org_level=is_org_level,
+            metadata_tags=metadata_tags,
+        )
+
+    async def delete_semantic_set_type(self, set_type_id: str) -> None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.delete_org_set_type(
+            org_set_id=set_type_id,
+        )
+
+    async def list_semantic_set_type(
+        self,
+        *,
+        session_data: SessionData,
+    ) -> list[OrgSetIdEntry]:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.list_org_set_types(
+            session_data=session_data,
+        )
+
+    async def configure_semantic_set_type(
+        self,
+        *,
+        session_data: SessionData,
+        is_org_level: bool = False,
+        set_metadata_keys: list[str],
+        embedder_name: str | None = None,
+        llm_name: str | None = None,
+    ) -> None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.configure_set(
+            session_data=session_data,
+            is_org_level=is_org_level,
+            set_metadata_keys=set_metadata_keys,
+            embedder_name=embedder_name,
+            llm_name=llm_name,
+        )
+
+    async def semantic_add_category(
+        self,
+        *,
+        session_data: SessionData,
+        set_metadata_keys: list[str],
+        is_org_level: bool = False,
+        category_name: str,
+        description: str,
+    ) -> CategoryIdT:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.add_new_category(
+            session_data=session_data,
+            set_metadata_keys=set_metadata_keys,
+            is_org_level=is_org_level,
+            category_name=category_name,
+            description=description,
+        )
+
+    async def semantic_disable_default_categories(
+        self,
+        *,
+        session_data: SessionData,
+        set_metadata_keys: list[str],
+        is_org_level: bool = False,
+        category_name: str,
+    ) -> None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.disable_default_category(
+            session_data=session_data,
+            set_metadata_keys=set_metadata_keys,
+            is_org_level=is_org_level,
+            category_name=category_name,
+        )
+
+    async def semantic_delete_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.delete_category_and_its_tags(
+            category_id=category_id,
+        )
+
+    async def semantic_add_tag_to_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+        tag_name: str,
+        tag_description: str,
+    ) -> TagIdT:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.add_tag(
+            category_id=category_id,
+            tag_name=tag_name,
+            tag_description=tag_description,
+        )
+
+    async def semantic_delete_tag(self, *, tag_id: TagIdT) -> None:
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.delete_tag(tag_id=tag_id)
+
+    async def delete_all(self) -> None:
+        logger.info("Deleting all data from MemMachine")
+
+        # TODO: Add episodic memory deletion
+
+        semantic_resource_manager = await self._resources.get_semantic_manager()
+        semantic_storage = await semantic_resource_manager.get_semantic_storage()
+        semantic_config_storage = (
+            await semantic_resource_manager.get_semantic_config_storage()
+        )
+
+        episodic_store = await self._resources.get_episode_storage()
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(semantic_storage.delete_all())
+            tg.create_task(semantic_config_storage.delete_all())
+            tg.create_task(episodic_store.delete_all())

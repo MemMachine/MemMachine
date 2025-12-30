@@ -20,6 +20,10 @@ class EpisodeStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def delete_all(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def add_episodes(
         self,
         session_key: str,
