@@ -10,6 +10,7 @@ def test_semantic_config_with_ingestion_triggers():
         "embedding_model": "embedding",
         "ingestion_trigger_messages": 24,
         "ingestion_trigger_age": "PT2M",
+        "config_database": "database",
     }
     conf = SemanticMemoryConf(**raw_conf)
     assert conf.ingestion_trigger_messages == 24
@@ -23,6 +24,7 @@ def test_semantic_config_timedelta_float():
         "embedding_model": "embedding",
         "ingestion_trigger_messages": 24,
         "ingestion_trigger_age": 120.5,
+        "config_database": "database",
     }
 
     conf = SemanticMemoryConf(**raw_conf)

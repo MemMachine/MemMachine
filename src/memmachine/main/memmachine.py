@@ -6,7 +6,7 @@ from asyncio import Task
 from collections.abc import Coroutine
 from typing import Any, Final, Protocol, cast
 
-from pydantic import BaseModel, InstanceOf, ValidationError
+from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
 
 from memmachine.common.api import MemoryType
 from memmachine.common.configuration import Configuration
@@ -33,7 +33,6 @@ from memmachine.common.resource_manager.resource_manager import ResourceManagerI
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
-from memmachine.semantic_memory.semantic_session_manager import IsolationType
 
 logger = logging.getLogger(__name__)
 
@@ -48,21 +47,16 @@ class MemMachine:
         """Protocol describing session-scoped metadata used by memories."""
 
         @property
-        def session_key(self) -> str:
-            """Unique session identifier."""
-            raise NotImplementedError
+        def org_id(self) -> str: ...
 
         @property
-        def user_profile_id(self) -> str | None:
-            raise NotImplementedError
+        def project_id(self) -> str: ...
 
         @property
-        def role_profile_id(self) -> str | None:
-            raise NotImplementedError
+        def session_key(self) -> str: ...
 
         @property
-        def session_id(self) -> str | None:
-            raise NotImplementedError
+        def metadata(self) -> dict[str, JsonValue] | None: ...
 
     def __init__(
         self, conf: Configuration, resources: ResourceManagerImpl | None = None
@@ -220,9 +214,10 @@ class MemMachine:
             await asyncio.gather(
                 semantic_memory_manager.delete_feature_set(
                     session_data=session_data,
-                    memory_type=[IsolationType.SESSION],
                 ),
-                semantic_memory_manager.delete_messages(session_data=session_data),
+                semantic_memory_manager.delete_all_project_messages(
+                    session_data=session_data
+                ),
             )
 
         tasks = [
@@ -289,7 +284,7 @@ class MemMachine:
             )
             tasks.append(
                 semantic_session_manager.add_message(
-                    episode_ids=episode_ids,
+                    episodes=episodes,
                     session_data=session_data,
                 )
             )
@@ -357,7 +352,6 @@ class MemMachine:
             semantic_session = await self._resources.get_semantic_session_manager()
             semantic_task = asyncio.create_task(
                 semantic_session.search(
-                    memory_type=[IsolationType.SESSION],
                     message=query,
                     session_data=session_data,
                     limit=limit,

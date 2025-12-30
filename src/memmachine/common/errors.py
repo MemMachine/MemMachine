@@ -1,5 +1,9 @@
 """Custom exceptions for MemMachine."""
 
+from collections.abc import Mapping
+
+from pydantic import JsonValue
+
 
 class MemMachineError(RuntimeError):
     """Base class for MemMachine errors."""
@@ -63,6 +67,10 @@ class SessionAlreadyExistsError(MemMachineError):
         self.session_key = session_key
         super().__init__(f"Session '{session_key}' already exists.")
 
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"SessionAlreadyExistsError('{self.session_key}')"
+
 
 class SessionNotFoundError(MemMachineError):
     """Error when trying to retrieve a session."""
@@ -71,6 +79,10 @@ class SessionNotFoundError(MemMachineError):
         """Initialize with the session key that does not exist."""
         self.session_key = session_key
         super().__init__(f"Session '{session_key}' does not exist.")
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"SessionNotFoundError('{self.session_key}')"
 
 
 class InvalidPasswordError(MemMachineError):
@@ -95,3 +107,42 @@ class InvalidEmbedderError(MemMachineError):
 
 class InvalidRerankerError(MemMachineError):
     """Exception raised for invalid reranker."""
+
+
+class InvalidSetIdConfigurationError(MemMachineError):
+    """Exception raised for invalid set id configuration."""
+
+    def __init__(self, set_id: str) -> None:
+        """Initialize with the invalid set id."""
+        self.set_id = set_id
+
+        super().__init__(f"Invalid set id: {self.set_id}")
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"InvalidSetIdConfigurationError('{self.set_id}')"
+
+
+class SetIdNotEnabledError(MemMachineError):
+    """Exception raised for invalid set id."""
+
+    def __init__(
+        self,
+        org_id: str,
+        project_id: str,
+        is_org_level: bool,
+        metadata: Mapping[str, JsonValue],
+    ) -> None:
+        """Initialize with the org/project ids and metadata."""
+        self.org_id = org_id
+        self.project_id = project_id
+        self.metadata = metadata
+        self.is_org_level = is_org_level
+
+        super().__init__(
+            f"Passed metadata combination not enabled for org '{self.org_id}', project '{self.project_id}', is org level group '{self.is_org_level}', and metadata '{self.metadata}'"
+        )
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"SetIdNotEnabledError('{self.org_id}', '{self.project_id}', {self.is_org_level}, {self.metadata})"

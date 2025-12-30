@@ -1,0 +1,109 @@
+"""Abstract interface for storing semantic configuration data."""
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from memmachine.semantic_memory.semantic_model import (
+    CategoryIdT,
+    OrgSetIdEntry,
+    SemanticCategory,
+    SetIdT,
+    TagIdT,
+)
+
+
+@runtime_checkable
+class SemanticConfigStorage(Protocol):
+    """Contract for persisting and retrieving semantic memory configuration."""
+
+    async def set_setid_config(
+        self,
+        *,
+        set_id: SetIdT,
+        embedder_name: str | None = None,
+        llm_name: str | None = None,
+    ) -> None: ...
+
+    @dataclass
+    class Config:
+        """Configuration values tied to a specific set identifier."""
+
+        embedder_name: str | None
+        llm_name: str | None
+        disabled_categories: list[str] | None
+        categories: list[SemanticCategory]
+
+    async def get_setid_config(
+        self,
+        *,
+        set_id: SetIdT,
+    ) -> Config: ...
+
+    async def create_category(
+        self,
+        *,
+        set_id: SetIdT,
+        category_name: str,
+        description: str,
+    ) -> CategoryIdT: ...
+
+    async def clone_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+        new_name: str,
+    ) -> CategoryIdT: ...
+
+    async def delete_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> None: ...
+
+    async def add_disabled_category_to_setid(
+        self,
+        *,
+        set_id: SetIdT,
+        category_name: str,
+    ) -> None: ...
+
+    async def remove_disabled_category_from_setid(
+        self,
+        *,
+        set_id: SetIdT,
+        category_name: str,
+    ) -> None: ...
+
+    async def add_tag(
+        self,
+        *,
+        category_id: CategoryIdT,
+        tag_name: str,
+        description: str,
+    ) -> TagIdT: ...
+
+    async def update_tag(
+        self,
+        *,
+        tag_id: str,
+        tag_name: str,
+        tag_description: str,
+    ) -> None: ...
+
+    async def delete_tag(
+        self,
+        *,
+        tag_id: str,
+    ) -> None: ...
+
+    async def add_org_set_id(
+        self,
+        *,
+        org_id: str,
+        org_level_set: bool = False,
+        metadata_tags: list[str],
+    ) -> str: ...
+
+    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]: ...
+
+    async def delete_org_set_id(self, *, org_set_id: str) -> None: ...

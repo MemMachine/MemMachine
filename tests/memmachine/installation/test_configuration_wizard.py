@@ -61,8 +61,8 @@ def test_configuration_with_prompt(mock_input, conf_args):
         assert embedder.base_url == "https://api.my-openai.com/v1"
         assert embedder.dimensions == 1536
     prompt = config.prompt
-    assert "profile_prompt" in prompt.session
-    assert "profile_prompt" in prompt.profile
+    assert "profile_prompt" in prompt.project_level
+    assert "profile_prompt" in prompt.org_level
 
 
 @patch("builtins.input")

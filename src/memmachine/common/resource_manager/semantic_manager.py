@@ -5,12 +5,17 @@ import asyncio
 from pydantic import InstanceOf
 
 from memmachine.common.configuration import PromptConf, SemanticMemoryConf
+from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeStorage
+from memmachine.common.language_model import LanguageModel
 from memmachine.common.resource_manager import CommonResourceManager
+from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
+from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
+    SemanticConfigStorageSqlAlchemy,
+)
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
-    ResourceRetriever,
-    Resources,
+    SemanticCategory,
     SetIdT,
 )
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
@@ -40,9 +45,6 @@ class SemanticResourceManager:
         self._prompt_conf = prompt_conf
         self._episode_storage = episode_storage
 
-        self._semantic_session_resource_manager: (
-            InstanceOf[ResourceRetriever] | None
-        ) = None
         self._semantic_service: SemanticService | None = None
         self._semantic_session_manager: SemanticSessionManager | None = None
 
@@ -54,39 +56,6 @@ class SemanticResourceManager:
             tasks.append(self._semantic_service.stop())
 
         await asyncio.gather(*tasks)
-
-    async def get_semantic_session_resource_manager(
-        self,
-    ) -> InstanceOf[ResourceRetriever]:
-        """Return a resource retriever for semantic sessions."""
-        if self._semantic_session_resource_manager is not None:
-            return self._semantic_session_resource_manager
-
-        semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
-
-        default_embedder = await self._resource_manager.get_embedder(
-            self._conf.embedding_model,
-            validate=True,
-        )
-        default_model = await self._resource_manager.get_language_model(
-            self._conf.llm_model,
-            validate=True,
-        )
-
-        class SemanticResourceRetriever:
-            def get_resources(self, set_id: SetIdT) -> Resources:
-                isolation_type = SemanticSessionManager.set_id_isolation_type(set_id)
-
-                return Resources(
-                    language_model=default_model,
-                    embedder=default_embedder,
-                    semantic_categories=semantic_categories_by_isolation[
-                        isolation_type
-                    ],
-                )
-
-        self._semantic_session_resource_manager = SemanticResourceRetriever()
-        return self._semantic_session_resource_manager
 
     async def _get_semantic_storage(self) -> SemanticStorage:
         database = self._conf.database
@@ -108,6 +77,24 @@ class SemanticResourceManager:
         await storage.startup()
         return storage
 
+    async def _get_semantic_config_storage(self) -> SemanticConfigStorage:
+        database = self._conf.config_database
+
+        sql_engine = await self._resource_manager.get_sql_engine(database)
+        storage = SemanticConfigStorageSqlAlchemy(sql_engine)
+
+        return storage
+
+    async def _get_default_embedder(self) -> Embedder:
+        embedder = self._conf.embedding_model
+        return await self._resource_manager.get_embedder(embedder, validate=True)
+
+    async def _get_default_language_model(self) -> LanguageModel:
+        language_model = self._conf.llm_model
+        return await self._resource_manager.get_language_model(
+            language_model, validate=True
+        )
+
     async def get_semantic_service(self) -> SemanticService:
         """Return the semantic service, constructing it if needed."""
         if self._semantic_service is not None:
@@ -115,13 +102,27 @@ class SemanticResourceManager:
 
         semantic_storage = await self._get_semantic_storage()
         episode_store = self._episode_storage
-        resource_retriever = await self.get_semantic_session_resource_manager()
+
+        semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
+
+        def get_default_categories(set_id: SetIdT) -> list[SemanticCategory]:
+            def_type = SemanticSessionManager.get_default_set_id_type(set_id)
+            return semantic_categories_by_isolation[def_type]
+
+        embedder = await self._get_default_embedder()
+        llm_model = await self._get_default_language_model()
+
+        config_store = await self._get_semantic_config_storage()
 
         self._semantic_service = SemanticService(
             SemanticService.Params(
                 semantic_storage=semantic_storage,
                 episode_storage=episode_store,
-                resource_retriever=resource_retriever,
+                resource_manager=self._resource_manager,
+                default_embedder=embedder,
+                default_language_model=llm_model,
+                default_category_retriever=get_default_categories,
+                semantic_config_storage=config_store,
                 uningested_time_limit=self._conf.ingestion_trigger_age,
                 uningested_message_limit=self._conf.ingestion_trigger_messages,
             ),
@@ -134,6 +135,7 @@ class SemanticResourceManager:
             return self._semantic_session_manager
 
         self._semantic_session_manager = SemanticSessionManager(
-            await self.get_semantic_service(),
+            semantic_service=await self.get_semantic_service(),
+            semantic_config_storage=await self._get_semantic_config_storage(),
         )
         return self._semantic_session_manager

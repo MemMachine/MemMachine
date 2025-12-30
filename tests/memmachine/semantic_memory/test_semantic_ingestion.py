@@ -96,7 +96,7 @@ async def ingestion_service(
     params = IngestionService.Params(
         semantic_storage=semantic_storage,
         history_store=episode_storage,
-        resource_retriever=resource_retriever,
+        resource_retriever=resource_retriever.get_resources,
         consolidated_threshold=2,
     )
     return IngestionService(params)
