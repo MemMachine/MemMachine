@@ -501,33 +501,36 @@ class AmazonBedrockLanguageModel(LanguageModel):
         start_time: float,
         end_time: float,
     ) -> None:
-        if self._should_collect_metrics:
-            if (response_usage := response.get("usage")) is not None:
-                self._input_tokens_usage_counter.increment(
-                    value=response_usage.get("inputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._output_tokens_usage_counter.increment(
-                    value=response_usage.get("outputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._total_tokens_usage_counter.increment(
-                    value=response_usage.get("totalTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._cache_read_input_tokens_usage_counter.increment(
-                    response_usage.get("cacheReadInputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
-                self._cache_read_input_tokens_usage_counter.increment(
-                    response_usage.get("cacheWriteInputTokens", 0),
-                    labels=self._user_metrics_labels,
-                )
+        try:
+            if self._should_collect_metrics and isinstance(response, dict):
+                if (response_usage := response.get("usage")) is not None:
+                    self._input_tokens_usage_counter.increment(
+                        value=response_usage.get("inputTokens", 0),
+                        labels=self._user_metrics_labels,
+                    )
+                    self._output_tokens_usage_counter.increment(
+                        value=response_usage.get("outputTokens", 0),
+                        labels=self._user_metrics_labels,
+                    )
+                    self._total_tokens_usage_counter.increment(
+                        value=response_usage.get("totalTokens", 0),
+                        labels=self._user_metrics_labels,
+                    )
+                    self._cache_read_input_tokens_usage_counter.increment(
+                        response_usage.get("cacheReadInputTokens", 0),
+                        labels=self._user_metrics_labels,
+                    )
+                    self._cache_read_input_tokens_usage_counter.increment(
+                        response_usage.get("cacheWriteInputTokens", 0),
+                        labels=self._user_metrics_labels,
+                    )
 
-            self._latency_summary.observe(
-                value=end_time - start_time,
-                labels=self._user_metrics_labels,
-            )
+                self._latency_summary.observe(
+                    value=end_time - start_time,
+                    labels=self._user_metrics_labels,
+                )
+        except Exception:
+            logger.exception("Failed to collect metrics")
 
     @staticmethod
     def _format_tools(tools: list[dict[str, Any]]) -> list[dict[str, dict[str, Any]]]:
