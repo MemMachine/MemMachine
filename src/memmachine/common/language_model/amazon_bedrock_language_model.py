@@ -276,7 +276,10 @@ class AmazonBedrockLanguageModel(LanguageModel):
         start_time = time.monotonic()
 
         try:
-            response = await client.chat.completions.create(**converse_kwargs)
+            (
+                response,
+                raw_response,
+            ) = await client.chat.completions.create_with_completion(**converse_kwargs)
         except instructor.core.exceptions.InstructorRetryException as exc:  # type: ignore[attr-defined]
             parsed = self._try_parse_bedrock_completion(
                 completion=getattr(exc, "last_completion", None),
@@ -290,7 +293,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
 
         end_time = time.monotonic()
 
-        self._collect_metrics(response, start_time, end_time)
+        self._collect_metrics(raw_response, start_time, end_time)
 
         parsed_response = self._try_parse_bedrock_completion(
             completion=response,
@@ -501,8 +504,11 @@ class AmazonBedrockLanguageModel(LanguageModel):
         start_time: float,
         end_time: float,
     ) -> None:
+        if not self._should_collect_metrics:
+            return
+
         try:
-            if self._should_collect_metrics and isinstance(response, dict):
+            if isinstance(response, dict):
                 if (response_usage := response.get("usage")) is not None:
                     self._input_tokens_usage_counter.increment(
                         value=response_usage.get("inputTokens", 0),
@@ -528,6 +534,11 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 self._latency_summary.observe(
                     value=end_time - start_time,
                     labels=self._user_metrics_labels,
+                )
+            else:
+                logger.warning(
+                    "Unable to collect metrics: response is not a dictionary: %s",
+                    str(response),
                 )
         except Exception:
             logger.exception("Failed to collect metrics")
