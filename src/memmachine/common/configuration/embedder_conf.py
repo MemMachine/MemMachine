@@ -40,6 +40,11 @@ class AmazonBedrockEmbedderConf(YamlSerializableMixin, AWSCredentialsMixin):
         description="Maximal retry interval in seconds when retrying API calls.",
         gt=0,
     )
+    batch_size: int | None = Field(
+        default=None,
+        description="Batch size for embedding requests.",
+        gt=0,
+    )
 
 
 class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
@@ -69,6 +74,11 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
         description="Maximal retry interval in seconds when retrying API calls",
         gt=0,
     )
+    batch_size: int | None = Field(
+        default=None,
+        description="Batch size for embedding requests.",
+        gt=0,
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -92,6 +102,10 @@ class SentenceTransformerEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMix
     max_input_length: int | None = Field(
         default=None,
         description="Maximum input length for the model (in Unicode code points).",
+    )
+    batch_size: int | None = Field(
+        default=None,
+        description="Batch size for embedding requests.",
         gt=0,
     )
 

@@ -48,6 +48,10 @@ class AmazonBedrockEmbedderParams(BaseModel):
         description="Maximal retry interval in seconds (defualt: 120).",
         gt=0,
     )
+    batch_size: int | None = Field(
+        None,
+        description="Batch size for embedding requests.",
+    )
 
 
 class AmazonBedrockEmbedder(Embedder):
@@ -55,7 +59,7 @@ class AmazonBedrockEmbedder(Embedder):
 
     def __init__(self, params: AmazonBedrockEmbedderParams) -> None:
         """Initialize the embedder with Bedrock client parameters."""
-        super().__init__()
+        super().__init__(batch_size=params.batch_size)
 
         self._client = params.client
 
@@ -76,7 +80,7 @@ class AmazonBedrockEmbedder(Embedder):
         """Return the underlying BedrockEmbeddings client."""
         return self._client
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
@@ -95,7 +99,7 @@ class AmazonBedrockEmbedder(Embedder):
         """Call Bedrock for document embeddings."""
         return await self._client.aembed_documents(inputs)
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[Any],
         max_attempts: int = 1,
