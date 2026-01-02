@@ -41,6 +41,7 @@ from memmachine.common.errors import (
 from memmachine.main.memmachine import ALL_MEMORY_TYPES
 from memmachine.server.api_v2.service import (
     _add_messages_to,
+    _list_target_memories,
     _search_target_memories,
     _SessionData,
     get_memmachine,
@@ -302,34 +303,6 @@ async def search_memories(
         raise
 
 
-async def _list_target_memories(
-    spec: ListMemoriesSpec,
-    memmachine: MemMachine,
-) -> SearchResult:
-    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
-    results = await memmachine.list_search(
-        session_data=_SessionData(
-            org_id=spec.org_id,
-            project_id=spec.project_id,
-        ),
-        target_memories=target_memories,
-        search_filter=spec.filter,
-        page_size=spec.page_size,
-        page_num=spec.page_num,
-    )
-
-    content = {}
-    if results.episodic_memory is not None:
-        content["episodic_memory"] = results.episodic_memory
-    if results.semantic_memory is not None:
-        content["semantic_memory"] = results.semantic_memory
-
-    return SearchResult(
-        status=0,
-        content=content,
-    )
-
-
 @router.post("/memories/list", description=RouterDoc.LIST_MEMORIES)
 async def list_memories(
     spec: ListMemoriesSpec,
@@ -400,13 +373,10 @@ async def metrics() -> Response:
 @router.get("/health", description=RouterDoc.HEALTH_CHECK)
 async def health_check() -> dict[str, str]:
     """Health check endpoint for container orchestration."""
-    try:
-        return {
-            "status": "healthy",
-            "service": "memmachine",
-        }
-    except Exception as e:
-        raise RestError(code=503, message="Service unhealthy", ex=e) from e
+    return {
+        "status": "healthy",
+        "service": "memmachine",
+    }
 
 
 def load_v2_api_router(app: FastAPI) -> APIRouter:

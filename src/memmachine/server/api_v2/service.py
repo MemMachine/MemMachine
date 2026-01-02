@@ -9,10 +9,12 @@ from memmachine.common.api import MemoryType as MemoryTypeE
 from memmachine.common.api.spec import (
     AddMemoriesSpec,
     AddMemoryResult,
+    ListMemoriesSpec,
     SearchMemoriesSpec,
     SearchResult,
 )
 from memmachine.common.episode_store.episode_model import EpisodeEntry
+from memmachine.main.memmachine import ALL_MEMORY_TYPES
 
 
 # Placeholder dependency injection function
@@ -92,6 +94,34 @@ async def _search_target_memories(
         content["episodic_memory"] = results.episodic_memory.model_dump()
     if results.semantic_memory is not None:
         content["semantic_memory"] = results.semantic_memory
+    return SearchResult(
+        status=0,
+        content=content,
+    )
+
+
+async def _list_target_memories(
+    spec: ListMemoriesSpec,
+    memmachine: MemMachine,
+) -> SearchResult:
+    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
+    results = await memmachine.list_search(
+        session_data=_SessionData(
+            org_id=spec.org_id,
+            project_id=spec.project_id,
+        ),
+        target_memories=target_memories,
+        search_filter=spec.filter,
+        page_size=spec.page_size,
+        page_num=spec.page_num,
+    )
+
+    content = {}
+    if results.episodic_memory is not None:
+        content["episodic_memory"] = results.episodic_memory
+    if results.semantic_memory is not None:
+        content["semantic_memory"] = results.semantic_memory
+
     return SearchResult(
         status=0,
         content=content,
