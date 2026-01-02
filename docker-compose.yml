@@ -59,6 +59,7 @@ services:
   # MemMachine application
   memmachine:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
+    pull_policy: always
     container_name: memmachine-app
     restart: unless-stopped
     ports:
