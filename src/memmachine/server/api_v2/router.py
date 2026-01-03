@@ -309,7 +309,10 @@ async def list_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> SearchResult:
     """List memories in a project."""
-    return await _list_target_memories(spec=spec, memmachine=memmachine)
+    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
+    return await _list_target_memories(
+        target_memories=target_memories, spec=spec, memmachine=memmachine
+    )
 
 
 @router.post(

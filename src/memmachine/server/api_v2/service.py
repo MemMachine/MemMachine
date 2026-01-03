@@ -1,6 +1,7 @@
 """API v2 service implementations."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Request
 
@@ -14,7 +15,6 @@ from memmachine.common.api.spec import (
     SearchResult,
 )
 from memmachine.common.episode_store.episode_model import EpisodeEntry
-from memmachine.main.memmachine import ALL_MEMORY_TYPES
 
 
 # Placeholder dependency injection function
@@ -89,8 +89,8 @@ async def _search_target_memories(
         search_filter=spec.filter,
         limit=spec.top_k,
     )
-    content = {}
-    if results.episodic_memory:
+    content: dict[str, Any] = {}
+    if results.episodic_memory is not None:
         content["episodic_memory"] = results.episodic_memory.model_dump()
     if results.semantic_memory is not None:
         content["semantic_memory"] = results.semantic_memory
@@ -101,10 +101,10 @@ async def _search_target_memories(
 
 
 async def _list_target_memories(
+    target_memories: list[MemoryTypeE],
     spec: ListMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
-    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
     results = await memmachine.list_search(
         session_data=_SessionData(
             org_id=spec.org_id,
@@ -116,7 +116,7 @@ async def _list_target_memories(
         page_num=spec.page_num,
     )
 
-    content = {}
+    content: dict[str, Any] = {}
     if results.episodic_memory is not None:
         content["episodic_memory"] = results.episodic_memory
     if results.semantic_memory is not None:
