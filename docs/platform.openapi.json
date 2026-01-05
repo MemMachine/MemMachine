@@ -7,7 +7,7 @@
    },
     "servers": [
         {
-        "url": "https://api.memmachine.ai/docs"
+        "url": "https://api.memmachine.ai"
         }
     ],
   "paths": {

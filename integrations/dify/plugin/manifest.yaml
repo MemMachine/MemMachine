@@ -1,0 +1,35 @@
+version: 0.2.1
+type: plugin
+author: memverge
+name: memmachine-plugin
+label:
+  en_US: memmachine-plugin
+  ja_JP: memmachine-plugin
+  zh_Hans: memmachine-plugin
+  pt_BR: memmachine-plugin
+description:
+  en_US: memmachine plugin
+  ja_JP: memmachine plugin
+  zh_Hans: memmachine plugin
+  pt_BR: memmachine plugin
+icon: icon.png
+icon_dark: icon.png
+resource:
+  memory: 268435456
+  permission: {}
+plugins:
+  tools:
+    - provider/memmachine-plugin.yaml
+meta:
+  version: 0.2.1
+  arch:
+    - amd64
+    - arm64
+  runner:
+    language: python
+    version: "3.12"
+    entrypoint: main
+  minimum_dify_version: null
+created_at: 2025-12-16T14:27:38.205214836+08:00
+privacy: PRIVACY.md
+verified: false

@@ -132,11 +132,18 @@ class TestMemory:
         assert json_data["project_id"] == "test_project"
         assert len(json_data["messages"]) == 1
         assert json_data["messages"][0]["content"] == "Test content"
-        assert json_data["messages"][0]["role"] == "user"
-        # producer and produced_for are None if not explicitly provided, and serialized as empty strings
-        assert json_data["messages"][0]["producer"] == ""
-        assert json_data["messages"][0]["produced_for"] == ""
-        assert "timestamp" in json_data["messages"][0]
+        assert json_data["messages"][0]["role"] == ""
+        # producer and produced_for are None if not explicitly provided
+        assert "producer" not in json_data["messages"][0], (
+            "producer should not be in message when None (server will use default 'user')"
+        )
+        assert "produced_for" not in json_data["messages"][0], (
+            "produced_for should not be in message when None (server will use default '')"
+        )
+        # timestamp is None if not explicitly provided
+        assert "timestamp" not in json_data["messages"][0], (
+            "timestamp should not be in message when None (server will use current time)"
+        )
         assert "metadata" in json_data["messages"][0]
 
     def test_add_with_metadata(self, mock_client):
@@ -246,9 +253,13 @@ class TestMemory:
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
-        # producer and produced_for should be empty strings when None
-        assert json_data["messages"][0]["producer"] == ""
-        assert json_data["messages"][0]["produced_for"] == ""
+        # producer and produced_for should NOT be in the message when None
+        assert "producer" not in json_data["messages"][0], (
+            "producer should not be in message when None (server will use default 'user')"
+        )
+        assert "produced_for" not in json_data["messages"][0], (
+            "produced_for should not be in message when None (server will use default '')"
+        )
 
     def test_add_with_episode_type(self, mock_client):
         """Test adding memory with episode_type."""

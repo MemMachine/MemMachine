@@ -305,7 +305,9 @@ class EpisodicMemory:
     async def query_memory(
         self,
         query: str,
+        *,
         limit: int | None = None,
+        score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> QueryResponse | None:
         """
@@ -320,6 +322,7 @@ class EpisodicMemory:
             limit: The maximum number of episodes to return. The limit is
                    applied to both short and long term memories. The default
                    value is 20.
+            score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
 
         Returns:
@@ -336,9 +339,12 @@ class EpisodicMemory:
         if self._short_term_memory is None:
             short_episode: list[Episode] = []
             short_summary = ""
-            long_episode = await cast("LongTermMemory", self._long_term_memory).search(
+            scored_long_episodes = await cast(
+                "LongTermMemory", self._long_term_memory
+            ).search_scored(
                 query,
                 num_episodes_limit=search_limit,
+                score_threshold=score_threshold,
                 property_filter=property_filter,
             )
         elif self._long_term_memory is None:
@@ -349,19 +355,20 @@ class EpisodicMemory:
                     filters=property_filter,
                 )
             )
-            long_episode = []
+            scored_long_episodes = []
             short_episode, short_summary = session_result
         else:
             # Concurrently search both memory stores
-            session_result, long_episode = await asyncio.gather(
+            session_result, scored_long_episodes = await asyncio.gather(
                 self._short_term_memory.get_short_term_memory_context(
                     query,
                     limit=search_limit,
                     filters=property_filter,
                 ),
-                self._long_term_memory.search(
+                self._long_term_memory.search_scored(
                     query,
                     num_episodes_limit=search_limit,
+                    score_threshold=score_threshold,
                     property_filter=property_filter,
                 ),
             )
@@ -371,11 +378,11 @@ class EpisodicMemory:
         # short-term memory
         episode_uid_set = {episode.uid for episode in short_episode}
 
-        unique_long_episodes = []
-        for episode in long_episode:
+        unique_scored_long_episodes = []
+        for score, episode in scored_long_episodes:
             if episode.uid not in episode_uid_set:
                 episode_uid_set.add(episode.uid)
-                unique_long_episodes.append(episode)
+                unique_scored_long_episodes.append((score, episode))
 
         end_time = time.monotonic_ns()
         delta = (end_time - start_time) / 1000000
@@ -391,8 +398,8 @@ class EpisodicMemory:
             ),
             long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
                 episodes=[
-                    EpisodeResponse(**episode.model_dump())
-                    for episode in unique_long_episodes
+                    EpisodeResponse(score=score, **episode.model_dump())
+                    for score, episode in unique_scored_long_episodes
                 ],
             ),
         )
@@ -401,6 +408,7 @@ class EpisodicMemory:
         self,
         query: str,
         limit: int | None = None,
+        score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> str:
         """
@@ -412,6 +420,7 @@ class EpisodicMemory:
         Args:
             query: The original query string.
             limit: The maximum number of episodes to include in the context.
+            score_threshold: Minimum score to include in the context.
             property_filter: Properties to filter the search.
 
         Returns:
@@ -420,8 +429,9 @@ class EpisodicMemory:
         """
         query_result = await self.query_memory(
             query,
-            limit,
-            property_filter,
+            limit=limit,
+            score_threshold=score_threshold,
+            property_filter=property_filter,
         )
         if query_result is None:
             logger.warning("Query result is None in formalize_query_with_context")

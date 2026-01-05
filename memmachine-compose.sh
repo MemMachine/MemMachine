@@ -759,13 +759,18 @@ start_services() {
     # to pull ${MEMMACHINE_IMAGE} if it is set, which may not be a remote image.
     ENV_MEMMACHINE_IMAGE=""
     # Pull the latest images to ensure we are running the latest version
-    print_info "Pulling latest images..."
+    local target_image="${memmachine_image_tmp:-${MEMMACHINE_IMAGE:-memmachine/memmachine:latest}}"
+    print_info "Pulling latest images... (Target: $target_image)"
     $COMPOSE_CMD pull
     ENV_MEMMACHINE_IMAGE="${memmachine_image_tmp:-}"
 
     # Start services (override the image if specified in memmachine-compose.sh start <image>:<tag>)
     print_info "Starting containers..."
-    MEMMACHINE_IMAGE="${ENV_MEMMACHINE_IMAGE:-}" $COMPOSE_CMD up -d
+    if [ -n "${ENV_MEMMACHINE_IMAGE:-}" ]; then
+        MEMMACHINE_IMAGE="${ENV_MEMMACHINE_IMAGE}" $COMPOSE_CMD up -d
+    else
+        $COMPOSE_CMD up -d
+    fi
     
     print_success "Services started successfully!"
 }

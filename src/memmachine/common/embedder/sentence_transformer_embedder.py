@@ -6,10 +6,12 @@ import time
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 from pydantic import BaseModel, Field, InstanceOf
 from sentence_transformers import SentenceTransformer
 
 from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
+from memmachine.common.utils import chunk_text_balanced, unflatten_like
 
 from .embedder import Embedder
 
@@ -26,6 +28,11 @@ class SentenceTransformerEmbedderParams(BaseModel):
     sentence_transformer: InstanceOf[SentenceTransformer] = Field(
         ...,
         description="The sentence transformer model to use for generating embeddings.",
+    )
+    max_input_length: int | None = Field(
+        default=None,
+        description="Maximum input length for the model (in Unicode code points).",
+        gt=0,
     )
 
 
@@ -59,6 +66,8 @@ class SentenceTransformerEmbedder(Embedder):
                 )
                 self._similarity_metric = SimilarityMetric.COSINE
 
+        self._max_input_length = params.max_input_length
+
     async def ingest_embed(
         self,
         inputs: list[Any],
@@ -87,6 +96,15 @@ class SentenceTransformerEmbedder(Embedder):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
+        inputs_chunks = [
+            chunk_text_balanced(input_text, self._max_input_length)
+            if self._max_input_length is not None and input_text
+            else [input_text]
+            for input_text in inputs
+        ]
+
+        chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
+
         embed_call_uuid = uuid4()
 
         start_time = time.monotonic()
@@ -100,7 +118,7 @@ class SentenceTransformerEmbedder(Embedder):
             )
             response = await asyncio.to_thread(
                 self._sentence_transformer.encode,
-                inputs,
+                chunks,
                 prompt_name=prompt_name,
                 show_progress_bar=False,
             )
@@ -121,7 +139,17 @@ class SentenceTransformerEmbedder(Embedder):
             end_time - start_time,
         )
 
-        return response.astype(float).tolist()
+        chunk_embeddings = response.astype(float).tolist()
+        inputs_chunk_embeddings = unflatten_like(
+            chunk_embeddings,
+            inputs_chunks,
+        )
+
+        # Average chunk embeddings to get input embeddings.
+        return [
+            np.mean(chunk_embeddings, axis=0).astype(float).tolist()
+            for chunk_embeddings in inputs_chunk_embeddings
+        ]
 
     @property
     def model_id(self) -> str:

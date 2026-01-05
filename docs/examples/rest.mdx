@@ -4,7 +4,6 @@ description: "Examples for using MemMachine's REST API"
 icon: "bed"
 ---
 
-# REST API Examples
 
 ## Hello World: A Guide to the MemMachine RESTful API v2
 
@@ -107,17 +106,31 @@ You should see a JSON response containing `episodic_memory` and `semantic_memory
 </Step>
 <Step title="Delete Memories">
 
-To clean up, you can use the `POST /api/v2/memories/delete` endpoint to remove memories matching a specific filter.
+To clean up, you can use the `POST /api/v2/memories/episodic/delete` endpoint to remove specific chronological events or message logs.
 
 **Command:**
-
 ```bash
-curl -X POST "http://127.0.0.1:8080/api/v2/memories/delete" \
+curl -X POST "[http://127.0.0.1:8080/api/v2/memories/episodic/delete](http://127.0.0.1:8080/api/v2/memories/episodic/delete)" \
 -H "Content-Type: application/json" \
 -d '{
   "org_id": "my-org",
   "project_id": "my-first-project",
-  "filter": {
+  "episodic_id": "specific-id-here",
+  "episodic_ids": []
+}'
+```
+
+You will also want to use the `POST /api/v2/memories/semantic/delete` endpoint to remove distilled facts, traits, or knowledge entries:
+```
+curl -X POST "[http://127.0.0.1:8080/api/v2/memories/semantic/delete](http://127.0.0.1:8080/api/v2/memories/semantic/delete)" \
+-H "Content-Type: application/json" \
+-d '{
+  "org_id": "my-org",
+  "project_id": "my-first-project",
+  "semantic_id": "specific-id-here",
+  "semantic_ids": []
+}'
+</Step> </Steps>
     "producer": "user-alice"
   }
 }'

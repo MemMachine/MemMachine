@@ -392,6 +392,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             examples=Examples.FILTER_MEM,
         ),
     ]
+    score_threshold: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description=SpecDoc.SCORE_THRESHOLD,
+            examples=Examples.SCORE_THRESHOLD,
+        ),
+    ]
     types: Annotated[
         list[MemoryType],
         Field(
@@ -430,9 +438,9 @@ class ListMemoriesSpec(_WithOrgAndProj):
         ),
     ]
     type: Annotated[
-        MemoryType,
+        MemoryType | None,
         Field(
-            default=MemoryType.Episodic,
+            default=None,
             description=SpecDoc.MEMORY_TYPE_SINGLE,
             examples=Examples.MEMORY_TYPE_SINGLE,
         ),

@@ -1,0 +1,84 @@
+identity:
+  name: "add-memory"
+  author: "memverge"
+  label:
+    en_US: "add-memory"
+    zh_Hans: "添加记忆"
+  description:
+    en_US: "Add a memory to MemMachine (default org/project)."
+    zh_Hans: "向 MemMachine 写入一条记忆（使用默认 org/project）。"
+description:
+  human:
+    en_US: "Add a memory to MemMachine."
+    zh_Hans: "添加一条记忆到 MemMachine。"
+  llm: "Add a memory to MemMachine. Uses default org_id/project_id."
+parameters:
+  - name: content
+    type: string
+    required: true
+    label:
+      en_US: Content
+      zh_Hans: 记忆内容
+    human_description:
+      en_US: "The memory text to store."
+      zh_Hans: "要写入的记忆文本。"
+    llm_description: "The memory text to store."
+    form: llm
+  - name: producer
+    type: string
+    required: false
+    label:
+      en_US: Producer
+      zh_Hans: 生产者
+    human_description:
+      en_US: "Who produced this message (optional)."
+      zh_Hans: "消息的生产者（可选）。"
+    llm_description: "Who produced this message (optional)."
+    form: llm
+  - name: produced_for
+    type: string
+    required: false
+    label:
+      en_US: Produced for
+      zh_Hans: 面向对象
+    human_description:
+      en_US: "Intended recipient (optional)."
+      zh_Hans: "消息面向的对象（可选）。"
+    llm_description: "Intended recipient (optional)."
+    form: llm
+  - name: role
+    type: string
+    required: false
+    label:
+      en_US: Role
+      zh_Hans: 角色
+    human_description:
+      en_US: "Conversation role (optional)."
+      zh_Hans: "对话角色（可选）。"
+    llm_description: "Conversation role (optional)."
+    form: llm
+  - name: timestamp
+    type: string
+    required: false
+    label:
+      en_US: Timestamp
+      zh_Hans: 时间戳
+    human_description:
+      en_US: "ISO 8601 timestamp (optional)."
+      zh_Hans: "ISO 8601 时间戳（可选）。"
+    llm_description: "ISO 8601 timestamp (optional)."
+    form: llm
+  - name: metadata
+    type: object
+    required: false
+    label:
+      en_US: Metadata
+      zh_Hans: 元数据
+    human_description:
+      en_US: "Extra metadata as a JSON object (optional)."
+      zh_Hans: "JSON 对象形式的额外元数据（可选）。"
+    llm_description: "Extra metadata as a JSON object (optional)."
+    form: llm
+extra:
+  python:
+    source: tools/add-memory.py

@@ -8,7 +8,7 @@ def reranker():
     return IdentityReranker()
 
 
-@pytest.fixture(params=["Are tomatoes fruits?", ""])
+@pytest.fixture(params=["Are tomatoes fruits?", ".", " ", ""])
 def query(request):
     return request.param
 
@@ -17,6 +17,8 @@ def query(request):
     params=[
         ["Apples are fruits.", "Tomatoes are red."],
         ["Apples are fruits.", "Tomatoes are red.", ""],
+        ["."],
+        [" "],
         [""],
         [],
     ],

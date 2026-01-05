@@ -9,6 +9,7 @@ from memmachine.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionNotFoundError,
 )
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine.server.api_v2.router import RestError, get_memmachine
@@ -196,8 +197,8 @@ def test_delete_project(client, mock_memmachine):
 
     # Not found
     mock_memmachine.delete_session.reset_mock()
-    mock_memmachine.delete_session.side_effect = ValueError(
-        "Session test_org/test_proj does not exist"
+    mock_memmachine.delete_session.side_effect = SessionNotFoundError(
+        "test_org/test_proj"
     )
     response = client.post("/api/v2/projects/delete", json=payload)
     assert response.status_code == 404
@@ -333,7 +334,7 @@ def test_list_memories(client, mock_memmachine):
     assert response.status_code == 200
     data = response.json()
     assert data["content"]["episodic_memory"] == [{"id": "1", "content": "mem1"}]
-    assert data["content"]["semantic_memory"] == []
+    assert "semantic_memory" not in data["content"]
 
     mock_memmachine.list_search.assert_awaited_once()
 

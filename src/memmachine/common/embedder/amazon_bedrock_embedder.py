@@ -7,11 +7,13 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import uuid4
 
+import numpy as np
 from botocore.exceptions import ClientError
 from langchain_aws import BedrockEmbeddings
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError, SimilarityMetric
+from memmachine.common.utils import chunk_text_balanced, unflatten_like
 
 from .embedder import Embedder
 
@@ -32,12 +34,17 @@ class AmazonBedrockEmbedderParams(BaseModel):
             "(e.g. 'amazon.titan-embed-text-v2:0')."
         ),
     )
+    max_input_length: int | None = Field(
+        default=None,
+        description="Maximum input length for the model (in Unicode code points).",
+        gt=0,
+    )
     similarity_metric: SimilarityMetric = Field(
-        SimilarityMetric.COSINE,
+        default=SimilarityMetric.COSINE,
         description="Similarity metric to use for comparing embeddings.",
     )
     max_retry_interval_seconds: int = Field(
-        120,
+        default=120,
         description="Maximal retry interval in seconds (defualt: 120).",
         gt=0,
     )
@@ -53,6 +60,7 @@ class AmazonBedrockEmbedder(Embedder):
         self._client = params.client
 
         self._model_id = params.model_id
+        self._max_input_length = params.max_input_length
         self._similarity_metric = params.similarity_metric
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
@@ -113,14 +121,27 @@ class AmazonBedrockEmbedder(Embedder):
         max_attempts: int = 1,
     ) -> list[list[float]]:
         """Shared retry logic for embedding requests."""
+        if not inputs:
+            return []
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
+
+        inputs = [input_text or "." for input_text in inputs]
+
+        inputs_chunks = [
+            chunk_text_balanced(input_text, self._max_input_length)
+            if self._max_input_length is not None
+            else [input_text]
+            for input_text in inputs
+        ]
+
+        chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
 
         embed_call_uuid = uuid4()
 
         start_time = time.monotonic()
 
-        embeddings = []
+        chunk_embeddings = []
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
             logger.debug(
@@ -134,7 +155,7 @@ class AmazonBedrockEmbedder(Embedder):
             )
 
             try:
-                embeddings = await async_embed_func(inputs)
+                chunk_embeddings = await async_embed_func(chunks)
                 break
             except Exception as e:
                 # Assume all exceptions may be retried.
@@ -170,7 +191,16 @@ class AmazonBedrockEmbedder(Embedder):
             end_time - start_time,
         )
 
-        return embeddings
+        inputs_chunk_embeddings = unflatten_like(
+            chunk_embeddings,
+            inputs_chunks,
+        )
+
+        # Average chunk embeddings to get input embeddings.
+        return [
+            np.mean(chunk_embeddings, axis=0).astype(float).tolist()
+            for chunk_embeddings in inputs_chunk_embeddings
+        ]
 
     @property
     def model_id(self) -> str:

@@ -19,6 +19,33 @@ def reranker(boto3_bedrock_agent_runtime_client, bedrock_integration_config):
     )
 
 
+@pytest.fixture(params=["Are tomatoes fruits?", ".", " ", ""])
+def query(request):
+    return request.param
+
+
+@pytest.fixture(
+    params=[
+        ["Apples are fruits.", "Tomatoes are red."],
+        ["Apples are fruits.", "Tomatoes are red.", ""],
+        ["."],
+        [" "],
+        [""],
+        [],
+    ],
+)
+def candidates(request):
+    return request.param
+
+
+@pytest.mark.asyncio
+async def test_shape(reranker, query, candidates):
+    scores = await reranker.score(query, candidates)
+    assert isinstance(scores, list)
+    assert len(scores) == len(candidates)
+    assert all(isinstance(score, float) for score in scores)
+
+
 @pytest.mark.asyncio
 async def test_rerank_sanity(reranker):
     query = "What is the capital of France?"

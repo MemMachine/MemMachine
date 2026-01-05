@@ -128,6 +128,10 @@ class SpecDoc:
     The maximum number of memories to return in the search results.
     """
 
+    SCORE_THRESHOLD = """
+    The minimum score for a memory to be included in the search results. Defaults to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
+    """
+
     QUERY = """
     The natural language query used for semantic memory search. This should be
     a descriptive string of the information you are looking for.
@@ -208,6 +212,7 @@ class Examples:
     RERANKER: ClassVar[list[str]] = ["bge-reranker-large", "my-custom-reranker"]
     EMBEDDER: ClassVar[list[str]] = ["bge-base-en", "my-embedder"]
     TOP_K: ClassVar[list[int]] = [5, 10, 20]
+    SCORE_THRESHOLD: ClassVar[list[float | None]] = [0.0, 0.5, None]
     QUERY: ClassVar[list[str]] = [
         "What was the user's last conversation about finance?"
     ]

@@ -191,7 +191,9 @@ class RerankerManager:
 
         cross_encoder = CrossEncoder(conf.model_name)
         self._rerankers[name] = CrossEncoderReranker(
-            CrossEncoderRerankerParams(cross_encoder=cross_encoder),
+            CrossEncoderRerankerParams(
+                cross_encoder=cross_encoder, max_input_length=conf.max_input_length
+            ),
         )
         return self._rerankers[name]
 

@@ -13,6 +13,7 @@ body:
       label: Your Question
       description: Clearly state your specific question.
       placeholder: e.g., Why does X happen when Y?
+      render: shell
     validations:
       required: true
   - type: textarea
@@ -21,7 +22,7 @@ body:
       label: Additional details
       description: Environment, steps, code snippets, logs, or screenshots (optional).
       placeholder: "e.g., OS: Ubuntu 22.04, MemMachine Version: 1.2.3"
-    render: shell
+      render: shell
     validations:
       required: true
   - type: checkboxes

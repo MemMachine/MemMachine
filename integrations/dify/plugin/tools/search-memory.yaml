@@ -1,0 +1,62 @@
+identity:
+  name: "search-memory"
+  author: "memverge"
+  label:
+    en_US: "search-memory"
+    zh_Hans: "搜索记忆"
+  description:
+    en_US: "Search memories in MemMachine (default org/project)."
+    zh_Hans: "在 MemMachine 中搜索记忆（使用默认 org/project）。"
+description:
+  human:
+    en_US: "Search memories in MemMachine."
+    zh_Hans: "搜索 MemMachine 中的记忆。"
+  llm: "Search memories in MemMachine. Uses default org_id/project_id."
+parameters:
+  - name: query
+    type: string
+    required: true
+    label:
+      en_US: Query
+      zh_Hans: 查询
+    human_description:
+      en_US: "Natural language query."
+      zh_Hans: "自然语言查询。"
+    llm_description: "Natural language query."
+    form: llm
+  - name: top_k
+    type: number
+    required: false
+    label:
+      en_US: Top K
+      zh_Hans: 返回数量
+    human_description:
+      en_US: "Max number of results (optional, default 10)."
+      zh_Hans: "返回结果数量上限（可选，默认 10）。"
+    llm_description: "Max number of results (optional, default 10)."
+    form: llm
+  - name: filter
+    type: string
+    required: false
+    label:
+      en_US: Filter
+      zh_Hans: 过滤条件
+    human_description:
+      en_US: "Metadata filter string (optional)."
+      zh_Hans: "元数据过滤条件字符串（可选）。"
+    llm_description: "Metadata filter string (optional)."
+    form: llm
+  - name: types
+    type: array
+    required: false
+    label:
+      en_US: Types
+      zh_Hans: 类型
+    human_description:
+      en_US: "Memory types to search, e.g. ['episodic','semantic'] (optional)."
+      zh_Hans: "要搜索的记忆类型，例如 ['episodic','semantic']（可选）。"
+    llm_description: "Memory types to search, e.g. ['episodic','semantic'] (optional)."
+    form: llm
+extra:
+  python:
+    source: tools/search-memory.py

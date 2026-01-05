@@ -100,6 +100,7 @@ def openai_embedder(openai_client, openai_integration_config):
             client=openai_client,
             model=openai_integration_config["embedding_model"],
             dimensions=1536,
+            max_input_length=2000,
         ),
     )
 
@@ -165,6 +166,24 @@ def bedrock_integration_config():
         "aws_session_token": aws_session_token,
         "aws_region": aws_region,
     }
+
+
+@pytest.fixture(scope="session")
+def cohere_integration_config():
+    cohere_api_key = os.environ.get("COHERE_API_KEY")
+    if not cohere_api_key:
+        pytest.skip("COHERE_API_KEY environment variable not set")
+
+    return {
+        "api_key": cohere_api_key,
+    }
+
+
+@pytest.fixture(scope="session")
+def cohere_client(cohere_integration_config):
+    from cohere import ClientV2
+
+    return ClientV2(api_key=cohere_integration_config["api_key"])
 
 
 @pytest.fixture(scope="session")

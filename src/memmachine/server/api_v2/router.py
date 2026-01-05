@@ -263,10 +263,8 @@ async def delete_project(
     )
     try:
         await memmachine.delete_session(session_data)
-    except ValueError as e:
-        if f"Session {session_data.session_key} does not exist" == str(e):
-            raise RestError(code=404, message="Project does not exist", ex=e) from e
-        raise
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project does not exist", ex=e) from e
     except Exception as e:
         raise RestError(code=500, message="Unable to delete project", ex=e) from e
 
@@ -308,27 +306,27 @@ async def _list_target_memories(
     spec: ListMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
+    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
     results = await memmachine.list_search(
         session_data=_SessionData(
             org_id=spec.org_id,
             project_id=spec.project_id,
         ),
-        target_memories=[spec.type],
+        target_memories=target_memories,
         search_filter=spec.filter,
         page_size=spec.page_size,
         page_num=spec.page_num,
     )
 
+    content = {}
+    if results.episodic_memory is not None:
+        content["episodic_memory"] = results.episodic_memory
+    if results.semantic_memory is not None:
+        content["semantic_memory"] = results.semantic_memory
+
     return SearchResult(
         status=0,
-        content={
-            "episodic_memory": results.episodic_memory
-            if results.episodic_memory
-            else [],
-            "semantic_memory": results.semantic_memory
-            if results.semantic_memory
-            else [],
-        },
+        content=content,
     )
 
 

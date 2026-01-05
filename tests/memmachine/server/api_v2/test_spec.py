@@ -23,7 +23,6 @@ from memmachine.common.api.spec import (
     _is_valid_name,
 )
 from memmachine.common.episode_store.episode_model import EpisodeType
-from memmachine.main.memmachine import MemoryType
 from memmachine.server.api_v2.router import RestError
 
 
@@ -208,7 +207,7 @@ def test_list_memories_spec():
     assert spec.page_size == 100
     assert spec.page_num == 0
     assert spec.filter == ""
-    assert spec.type == MemoryType.Episodic
+    assert spec.type is None
 
 
 def test_delete_episodic_memory_spec():

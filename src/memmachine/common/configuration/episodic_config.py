@@ -116,6 +116,10 @@ class LongTermMemoryConf(BaseModel):
         ...,
         description="ID of the Reranker instance for reranking search results",
     )
+    message_sentence_chunking: bool = Field(
+        False,
+        description="Whether to chunk message episodes into sentences for embedding",
+    )
 
 
 class LongTermMemoryConfPartial(BaseModel):

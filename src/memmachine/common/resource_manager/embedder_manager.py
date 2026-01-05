@@ -109,6 +109,7 @@ class EmbedderManager:
             client=client,
             model_id=conf.model_id,
             similarity_metric=conf.similarity_metric,
+            max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
         )
         return AmazonBedrockEmbedder(params)
@@ -132,6 +133,7 @@ class EmbedderManager:
             ),
             model=conf.model,
             dimensions=dimensions,
+            max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             metrics_factory=conf.get_metrics_factory(),
             user_metrics_labels=conf.user_metrics_labels,
@@ -154,5 +156,6 @@ class EmbedderManager:
         params = SentenceTransformerEmbedderParams(
             model_name=model_name,
             sentence_transformer=sentence_transformer,
+            max_input_length=conf.max_input_length,
         )
         return SentenceTransformerEmbedder(params)

@@ -23,4 +23,5 @@ async def long_term_memory_params_from_config(
         vector_graph_store=vector_graph_store,
         embedder=embedder,
         reranker=reranker,
+        message_sentence_chunking=config.message_sentence_chunking,
     )
