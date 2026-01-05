@@ -309,6 +309,7 @@ class MemMachine:
         session_data: InstanceOf[SessionData],
         query: str,
         limit: int | None = None,
+        score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
@@ -324,6 +325,7 @@ class MemMachine:
             response = await episodic_session.query_memory(
                 query=query,
                 limit=limit,
+                score_threshold=score_threshold,
                 property_filter=search_filter,
             )
 
@@ -337,6 +339,7 @@ class MemMachine:
         query: str,
         limit: int
         | None = None,  # TODO: Define if limit is per memory or is global limit
+        score_threshold: float = -float("inf"),
         search_filter: str | None = None,
     ) -> SearchResponse:
         episodic_task: Task | None = None
@@ -349,6 +352,7 @@ class MemMachine:
                     session_data=session_data,
                     query=query,
                     limit=limit,
+                    score_threshold=score_threshold,
                     search_filter=property_filter,
                 )
             )

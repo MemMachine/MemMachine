@@ -146,6 +146,7 @@ class MemMachineTools:
         query: str,
         user_id: str | None = None,
         limit: int = 5,
+        score_threshold: float | None = None,
     ) -> dict[str, Any]:
         """
         Retrieve relevant context, memories, or profile for a user.
@@ -154,6 +155,7 @@ class MemMachineTools:
             query: Search query string
             user_id: User ID override (uses instance user_id if not provided)
             limit: Maximum number of results (default: 5, max: 20)
+            score_threshold: Minimum score to include in results
 
         Returns:
             Dictionary with status, results, and summary fields
@@ -174,7 +176,9 @@ class MemMachineTools:
             else:
                 memory = self.memory
 
-            results = memory.search(query=query, limit=limit)
+            results = memory.search(
+                query=query, limit=limit, score_threshold=score_threshold
+            )
 
             # Extract episodic memory results
             episodic_memory = results.get("episodic_memory", [])

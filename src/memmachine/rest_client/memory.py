@@ -325,6 +325,7 @@ class Memory:
         self,
         query: str,
         limit: int | None = None,
+        score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
         timeout: int | None = None,
     ) -> SearchResult:
@@ -339,6 +340,7 @@ class Memory:
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            score_threshold: Minimum score to include in results.
             filter_dict: Additional filters for the search (key-value pairs as strings).
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
@@ -377,6 +379,7 @@ class Memory:
             project_id=self.__project_id,
             query=query,
             top_k=limit or 10,
+            score_threshold=score_threshold,
             filter=filter_str,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
         )

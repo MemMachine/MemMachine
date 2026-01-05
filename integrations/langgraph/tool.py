@@ -173,6 +173,7 @@ class MemMachineTools:
         group_id: str | None = None,
         session_id: str | None = None,
         limit: int = 5,
+        score_threshold: float | None = None,
         filter_dict: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -193,6 +194,7 @@ class MemMachineTools:
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 5)
+            score_threshold: Minimum score to include in results
             filter_dict: Additional filters for the search
 
         Returns:
@@ -206,6 +208,7 @@ class MemMachineTools:
             results = memory.search(
                 query=query,
                 limit=limit,
+                score_threshold=score_threshold,
                 filter_dict=filter_dict,
             )
 
