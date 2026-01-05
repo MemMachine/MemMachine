@@ -82,6 +82,7 @@ dev = [
     "ty>=0.0.1a26",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
+    "jedi-language-server>=0.46.0",
 ]
 
 [tool.mypy]

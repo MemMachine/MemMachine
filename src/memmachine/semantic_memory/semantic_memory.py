@@ -9,6 +9,7 @@ information extraction and a vector database for semantic search capabilities.
 
 import asyncio
 import logging
+from array import array
 from asyncio import Task
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -51,7 +52,7 @@ DefaultCategoryRetriever: type = Callable[[SetIdT], list[InstanceOf[SemanticCate
 
 @runtime_checkable
 class ResourceManager(Protocol):
-    """Resource Retriver interface for Semantic Memory."""
+    """Resource Retriever interface for Semantic Memory."""
 
     async def get_embedder(self, embedder_name: str) -> Embedder: ...
 
@@ -154,7 +155,7 @@ class SemanticService:
         self,
         *,
         set_id: str,
-        embedding: list[float],
+        embedding: list[float] | array[float],
         min_distance: float | None = None,
         limit: int | None = 30,
         load_citations: bool = False,

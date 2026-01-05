@@ -57,7 +57,7 @@ class SetIdResources(BaseSemanticConfigStore):
 class DisabledDefaultCategories(BaseSemanticConfigStore):
     """Default categories that are disabled for a given set."""
 
-    __tablename__ = "semantic.config.setidresources.desabledcategories"
+    __tablename__ = "semantic.config.setidresources.disabledcategories"
 
     set_id = mapped_column(
         String,
@@ -439,10 +439,6 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         org_level_set: bool = False,
         metadata_tags: list[str],
     ) -> str:
-        assert len(metadata_tags) == len(set(metadata_tags)), (
-            "metadata_tags must be unique"
-        )
-
         cleaned_tags = sorted({t.strip() for t in metadata_tags if t and t.strip()})
 
         assert all(_TAG_SEP not in t for t in cleaned_tags)
