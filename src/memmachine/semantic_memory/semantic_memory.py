@@ -51,7 +51,7 @@ DefaultCategoryRetriever: type = Callable[[SetIdT], list[InstanceOf[SemanticCate
 
 @runtime_checkable
 class ResourceManager(Protocol):
-    """Resource Retriver interface for Semantic Memory."""
+    """Resource Retriever interface for Semantic Memory."""
 
     async def get_embedder(self, embedder_name: str) -> Embedder: ...
 

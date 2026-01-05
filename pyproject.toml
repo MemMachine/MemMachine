@@ -43,7 +43,7 @@ dependencies = [
 ]
 requires-python = ">= 3.12"
 authors = [
-  {name="MemMachine", email="noreply@memmachine.ai"},
+    { name = "MemMachine", email = "noreply@memmachine.ai" },
 ]
 description = "MemMachine is an open-source memory layer for AI agents, giving your creations short-term, long-term, and personalization memory, enabling them to learn, adapt, and remember."
 readme = "README.md"
@@ -143,6 +143,9 @@ ignore = [
     "TRY003",
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
@@ -199,7 +202,7 @@ exclude = []
 
 [tool.coverage.run]
 source = [
-  "src/memmachine",
+    "src/memmachine",
 ]
 
 [tool.coverage.report]

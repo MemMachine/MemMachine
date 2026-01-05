@@ -108,7 +108,7 @@ class SemanticSessionManager:
     def _assert_session_data_implements_protocol(session_data: SessionData) -> None:
         if not isinstance(session_data, SemanticSessionManager.SessionData):
             raise TypeError(
-                "session_data must implement SematicSessionManager.SessionData protocol"
+                "session_data must implement SemanticSessionManager.SessionData protocol"
             )
 
     async def add_message(
@@ -121,7 +121,7 @@ class SemanticSessionManager:
             return
 
         episode_ids = [e.uid for e in episodes]
-        assert len(episode_ids) == len(set(episodes)), "Episodes must be unique"
+        assert len(episode_ids) == len(set(episode_ids)), "Episodes must be unique"
 
         async with asyncio.TaskGroup() as tg:
             for e in episodes:
