@@ -767,7 +767,7 @@ start_services() {
         export PULL_POLICY="always"
     else
         # Pull failed
-        if echo "$pull_output" | grep -q "manifest.*unknown"; then
+        if echo "$pull_output" | grep -q 'manifest unknown'; then
             # This is the expected error for local-only images
             print_warning "Image '${target_image}' not found in Docker Hub registry (manifest unknown). Assuming local image."
         else
