@@ -39,7 +39,7 @@ class Neo4jHelper:
         self.clear_stats()
 
     def my_print(self, msg):
-        self.printmsg(msg)
+        print(msg)
 
     def clear_stats(self):
         self.n4_stat = {
@@ -140,7 +140,7 @@ class PsqlHelper:
         self.clear_stats()
 
     def my_print(self, msg):
-        self.printmsg(msg)
+        print(msg)
 
     def clear_stats(self):
         self.db_tables = {}
