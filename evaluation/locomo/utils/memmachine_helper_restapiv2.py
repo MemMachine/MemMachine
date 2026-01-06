@@ -9,6 +9,7 @@ import os
 import sys
 from urllib.parse import urlparse
 
+import aiohttp
 import requests
 
 if True:
@@ -492,4 +493,62 @@ class MemmachineHelperRestapiv2(MemmachineHelperBase):
             )
 
         data = resp.json()
+        return data
+
+    async def async_search_memory(
+        self,
+        query,
+        org_id=None,
+        project_id=None,
+        top_k=None,
+        filter_str=None,
+        types=None,
+        headers=None,
+        timeout=None,
+    ):
+        """search memory in memmachine
+        See specs in memmachine source code
+        Note: if types is None, it defaults to all ['episodic', 'semantic']
+        Inputs:
+            filter_str (str): TBD check memmachine source code
+            types (list of str): [<None | episodic | semantic>, ...]
+        """
+        if not timeout:
+            timeout = 30
+
+        sm_payload = {}
+        if org_id:
+            sm_payload["org_id"] = org_id
+        if project_id:
+            sm_payload["project_id"] = project_id
+        if top_k:
+            sm_payload["top_k"] = top_k
+        if filter_str:
+            sm_payload["filter"] = filter_str
+        if types:
+            sm_payload["types"] = types
+        sm_payload["query"] = query
+        def_headers = self.get_headers()
+        if headers:
+            def_headers.update(headers)
+        headers = def_headers
+        url = self.mem_search_url
+        self.log.debug(f"POST url={url} payload={sm_payload}")
+
+        atimeout = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(timeout=atimeout) as session:
+            async with session.post(
+                url,
+                headers=headers,
+                json=sm_payload,
+            ) as resp:
+                self.log.debug(f"status={resp.status} reason={resp.reason}")
+                if resp.status < 200 or resp.status > 299:
+                    raise AssertionError(
+                        f"ERROR: status_code={resp.status} reason={resp.reason}"
+                    )
+                resp_text = await resp.text(encoding='utf-8')
+                self.log.debug(f"text={resp_text}")
+
+        data = await resp.json()
         return data

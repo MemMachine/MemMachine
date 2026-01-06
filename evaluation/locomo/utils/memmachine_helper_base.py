@@ -192,12 +192,17 @@ class MemmachineHelperBase:
         return ctx
 
     def split_data(self, data):
+        le = []  # long term memory episodes
+        se = []  # short term memory episodes
+        ss = []  # short term memory summaries
+        sm = []  # semantic memory facts
         if not self.rest_variation:
             self.check_rest_variation(data)
         if self.rest_variation == 1:
-            self.split_data_v1(data)
-        if self.rest_variation == 2:
-            self.split_data_v2(data)
+            le, se, ss, sm = self.split_data_v1(data)
+        elif self.rest_variation == 2:
+            le, se, ss, sm = self.split_data_v2(data)
+        return le, se, ss, sm
 
     def split_data_count(self, data):
         le, se, ss, sm = self.split_data(data)
@@ -333,14 +338,9 @@ class MemmachineHelperBase:
         ss = []  # short term memory summaries
         sm = []  # semantic memory facts
         try:
-            content = data["content"]
-            em = []
-            sm = []
-            if "episodic_memory" in content:
-                em = content["episodic_memory"]
-            if "profile_memory" in content:
-                sm = content["profile_memory"]
-
+            content = data.get("content", {})
+            em = content.get("episodic_memory", [])
+            sm = content.get("profile_memory", [])
             if len(em) > 0:
                 le = em[0]
             if len(em) > 1:
@@ -474,14 +474,14 @@ class MemmachineHelperBase:
         ss = []  # short term memory summaries
         sm = []  # semantic memory facts
         try:
-            content = data["content"]
-            em = content["episodic_memory"]
-            sm = content["semantic_memory"]
-            ltm = em["long_term_memory"]
-            stm = em["short_term_memory"]
-            le = ltm["episodes"]
-            se = stm["episodes"]
-            ss = stm["episode_summary"]
+            content = data.get("content", {})
+            em = content.get("episodic_memory", [])
+            sm = content.get("semantic_memory", [])
+            ltm = em.get("long_term_memory", {})
+            stm = em.get("short_term_memory", {})
+            le = ltm.get("episodes", [])
+            se = stm.get("episodes", [])
+            ss = stm.get("episode_summary", [])
             if ss == [""]:
                 ss = []
         except Exception:
