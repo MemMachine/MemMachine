@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'The git tag to build (e.g., v0.1.1)'
+        description: "The git tag to build (e.g., v0.1.1)"
         required: true
         type: string
 
@@ -45,6 +45,8 @@ jobs:
       - name: Checkout source (Release)
         if: github.event_name == 'release'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Step 1: Checkout source for Manual triggers
       - name: Checkout source (Manual)
@@ -52,6 +54,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
       # Step 2: Enable QEMU for multi-platform builds (required for ARM support)
       - name: Set up QEMU
@@ -67,6 +70,11 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_API_KEY }}
+
+      # Step 4.5: Get SCM Version
+      - name: Get SCM Version
+        id: scm
+        run: echo "version=$(git describe --tags --always | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/')" >> $GITHUB_OUTPUT
 
       # Step 5: Extract Docker metadata for CPU image
       - name: Extract Docker metadata for CPU image
@@ -102,13 +110,14 @@ jobs:
           # FIXED: Explicitly disable GPU here to ensure 'latest' is the CPU version
           build-args: |
             GPU=false
+            SCM_VERSION=${{ steps.scm.outputs.version }}
           tags: ${{ steps.meta-cpu.outputs.tags }}
           labels: ${{ steps.meta-cpu.outputs.labels }}
           platforms: linux/amd64,linux/arm64
           # FIXED: Added scope 'build-cpu' to isolate this cache
           cache-from: type=gha,scope=build-cpu
           cache-to: type=gha,mode=max,scope=build-cpu
-      
+
       # Step 7: Show the digest of the built CPU image (useful for traceability)
       - name: Show CPU image digest
         run: echo "CPU digest - ${{ steps.build_cpu.outputs.digest }}"
@@ -132,6 +141,8 @@ jobs:
       - name: Checkout source (Release)
         if: github.event_name == 'release'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Step 1: Checkout source for Manual triggers
       - name: Checkout source (Manual)
@@ -139,6 +150,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag }}
+          fetch-depth: 0
 
       # Step 2: Enable QEMU for multi-platform builds (required for ARM support)
       - name: Set up QEMU
@@ -154,6 +166,11 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_API_KEY }}
+
+      # Step 4.5: Get SCM Version
+      - name: Get SCM Version
+        id: scm
+        run: echo "version=$(git describe --tags --always)" >> $GITHUB_OUTPUT
 
       # Step 5: Extract Docker metadata for GPU image
       - name: Extract Docker metadata for GPU image
@@ -186,6 +203,7 @@ jobs:
           push: true
           build-args: |
             GPU=true
+            SCM_VERSION=${{ steps.scm.outputs.version }}
           tags: ${{ steps.meta-gpu.outputs.tags }}
           labels: ${{ steps.meta-gpu.outputs.labels }}
           platforms: linux/amd64,linux/arm64

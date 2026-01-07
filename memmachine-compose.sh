@@ -912,8 +912,10 @@ build_image() {
     fi
 
     # Proceed with build after validation passes
-    print_info "Building $name with '--build-arg GPU=$gpu'"
-    docker build --build-arg GPU=$gpu -t "$name" .
+    name="${name//+/_}"
+    local scm_version=$(git describe --tags --always 2>/dev/null | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/' || echo "")
+    print_info "Building $name with GPU=$gpu (SCM_VERSION: ${scm_version:-none})"
+    docker build --build-arg GPU=$gpu --build-arg SCM_VERSION="$scm_version" -t "$name" .
 }
 
 # Main execution

@@ -168,12 +168,19 @@ get_interactive_choices() {
     esac
 
     local latest_git_tag; latest_git_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
+    local scm_ver; scm_ver=$(git describe --tags --always 2>/dev/null | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/' || echo "")
+
     if [[ "$latest_git_tag" != "none" ]]; then
         read -p "Latest Git tag is '${latest_git_tag}'. Use this? (Y/n): " use_latest_tag
         if [[ ! "$use_latest_tag" =~ ^[nN]$ ]]; then VERSION="$latest_git_tag"; fi
     fi
     if [[ -z "$VERSION" ]]; then
-        read -p "Please enter the version tag (e.g., v0.1.1): " VERSION
+        if [[ -n "$scm_ver" ]]; then
+            read -p "Suggested SCM version is '${scm_ver}'. Press Enter to use or enter manual tag: " user_ver
+            VERSION="${user_ver:-$scm_ver}"
+        else
+            read -p "Please enter the version tag (e.g., v0.1.1): " VERSION
+        fi
         if [[ -z "$VERSION" ]]; then error "Version tag cannot be empty."; fi
     fi
 
@@ -189,6 +196,9 @@ get_interactive_choices() {
 }
 
 print_summary_and_confirm() {
+    # Sanitize VERSION for Docker tagging (replace '+' with '_')
+    VERSION="${VERSION//+/_}"
+
     local build_types=""
     if [[ "$BUILD_CPU" == true ]]; then build_types="CPU "; fi
     if [[ "$BUILD_GPU" == true ]]; then build_types+="GPU"; fi
@@ -227,8 +237,10 @@ build_image() {
         final_args+=("--push")
     fi
 
+    local scm_version; scm_version=$(git describe --tags --always 2>/dev/null | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/' || echo "$VERSION")
+
     # shellcheck disable=SC2086
-    docker buildx build --platform "${PLATFORMS}" ${build_args} "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build for ${build_type_upper} failed."
+    docker buildx build --platform "${PLATFORMS}" ${build_args} --build-arg SCM_VERSION="${scm_version}" "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build for ${build_type_upper} failed."
 
     if [[ "$ACTION" == "Local Build" ]]; then
         success "${build_type_upper} image built successfully!"

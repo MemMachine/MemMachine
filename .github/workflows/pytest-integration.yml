@@ -1,7 +1,7 @@
 name: Run Python integration tests
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -14,7 +14,6 @@ concurrency:
   # Don't cancel if running on a push to the main branch.
   cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
 
-
 jobs:
   integration-test:
     strategy:
@@ -22,24 +21,25 @@ jobs:
       matrix:
         # Each integration test is a separate job to allow for parallel execution
         test-paths: [
-          # Common tests
-          "tests/memmachine/common/",
-          # Episodic Memory tests
-          "tests/memmachine/episodic_memory/",
-          # Main MemMachine tests
-          "tests/memmachine/main/",
-          # Semantic Memory tests
-          "tests/memmachine/semantic_memory/",
-        ]
-        os: [ ubuntu-latest, ubuntu-24.04-arm ]
+            # Common tests
+            "tests/memmachine/common/",
+            # Episodic Memory tests
+            "tests/memmachine/episodic_memory/",
+            # Main MemMachine tests
+            "tests/memmachine/main/",
+            # Semantic Memory tests
+            "tests/memmachine/semantic_memory/",
+          ]
+        os: [ubuntu-latest, ubuntu-24.04-arm]
         # Test on the oldest and newest supported Python versions
-        python-version: [ "3.12", "3.14" ]
+        python-version: ["3.12", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.ref || github.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 0
 
       - name: Install the latest version of uv and set the python version
         uses: astral-sh/setup-uv@v6

@@ -26,6 +26,8 @@ COPY README.md README.md
 
 # Determine whether to include GPU dependencies
 ARG GPU="false"
+ARG SCM_VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
 
 # Install dependencies into a virtual environment, but NOT the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -71,8 +73,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Download NLTK data and models
 RUN python -c "import nltk, sys; \
-       passed = nltk.download('punkt_tab') and nltk.download('stopwords'); \
-       sys.exit(0 if passed else 1)"
+    passed = nltk.download('punkt_tab') and nltk.download('stopwords'); \
+    sys.exit(0 if passed else 1)"
 
 # Set host to 0.0.0.0 to allow external access
 ENV HOST=0.0.0.0

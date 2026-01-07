@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -64,7 +66,7 @@ jobs:
           python -c "
           from memmachine.common.api import MemoryType
           from memmachine.rest_client import MemMachineClient, Memory, Project
-          
+
           print('All imports successful')
           print(f'MemoryType.Semantic = {MemoryType.Semantic.value}')
           print(f'MemoryType.Episodic = {MemoryType.Episodic.value}')
@@ -80,16 +82,16 @@ jobs:
           python -c "
           from memmachine.rest_client import MemMachineClient
           from memmachine.common.api import MemoryType
-          
+
           # Test client instantiation
           client = MemMachineClient(base_url='http://localhost:8080')
           print('Client instantiation successful')
-          
+
           # Test MemoryType enum
           assert MemoryType.Semantic.value == 'semantic'
           assert MemoryType.Episodic.value == 'episodic'
           print('MemoryType enum values correct')
-          
+
           # Test that client has expected methods
           assert hasattr(client, 'get_project')
           assert hasattr(client, 'create_project')
@@ -105,13 +107,12 @@ jobs:
           import memmachine
           import memmachine.common.api
           import memmachine.rest_client
-          
+
           # Check that modules exist
           assert hasattr(memmachine.common.api, 'MemoryType')
           assert hasattr(memmachine.rest_client, 'MemMachineClient')
           assert hasattr(memmachine.rest_client, 'Memory')
           assert hasattr(memmachine.rest_client, 'Project')
-          
+
           print('Package structure verified')
           "
-

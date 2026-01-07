@@ -1,7 +1,7 @@
 name: Run Python test
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -14,18 +14,19 @@ concurrency:
   # Don't cancel if running on a push to the main branch.
   cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
 
-
 jobs:
   unit-test:
     name: Run Python unit tests
     strategy:
       fail-fast: false
       matrix:
-        python-version: [ "3.12", "3.13", "3.14" ]
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest ]
+        python-version: ["3.12", "3.13", "3.14"]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install the latest version of uv and set the python version
         uses: astral-sh/setup-uv@v6
@@ -34,4 +35,3 @@ jobs:
 
       - name: Test with python ${{ matrix.python-version }}
         run: uv run --frozen --all-extras pytest -n auto --cov=memmachine
-
