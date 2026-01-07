@@ -21,6 +21,7 @@ from memmachine.common.api.spec import (
     DeleteEpisodicMemorySpec,
     DeleteSemanticMemorySpec,
     ListMemoriesSpec,
+    ListResult,
     MemoryMessage,
     SearchMemoriesSpec,
     SearchResult,
@@ -410,7 +411,7 @@ class Memory:
         page_num: int = 0,
         filter_dict: dict[str, str] | None = None,
         timeout: int | None = None,
-    ) -> SearchResult:
+    ) -> ListResult:
         """
         List memories in this project (v2 API).
 
@@ -424,7 +425,7 @@ class Memory:
             timeout: Request timeout override
 
         Returns:
-            SearchResult object containing list results
+            ListResult object containing list results
 
         """
         if self._client_closed:
@@ -459,7 +460,7 @@ class Memory:
             response.raise_for_status()
             response_data = response.json()
             # Parse response using Pydantic model for validation
-            search_result = SearchResult(**response_data)
+            search_result = ListResult(**response_data)
             logger.info(
                 "List completed for org_id=%s project_id=%s type=%s page_num=%s page_size=%s",
                 self.__org_id,

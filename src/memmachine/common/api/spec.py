@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
+from enum import Enum
 
 # Python 3.11+ has UTC as a constant, Python 3.10 uses timezone.utc
 try:
@@ -18,7 +19,16 @@ except ImportError:
     from typing_extensions import Self
 
 import regex
-from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 from . import EpisodeType, MemoryType
 from .doc import Examples, SpecDoc
@@ -27,6 +37,179 @@ DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
 
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------------------
+# Client-safe DTOs
+#
+# NOTE:
+# These models intentionally live in this API spec module (and do NOT import the
+# internal/core models) so that the client distribution can import the API schema
+# without pulling in server-only packages.
+# --------------------------------------------------------------------------------------
+
+EpisodeIdT = str
+
+
+class ContentType(Enum):
+    """Enumeration for the type of content within an Episode."""
+
+    STRING = "string"
+
+
+class EpisodeEntry(BaseModel):
+    """Payload used when creating a new episode entry."""
+
+    content: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_CONTENT),
+    ]
+    producer_id: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_PRODUCER_ID),
+    ]
+    producer_role: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_PRODUCER_ROLE),
+    ]
+    produced_for_id: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID),
+    ]
+    episode_type: Annotated[
+        EpisodeType | None,
+        Field(default=None, description=SpecDoc.EPISODE_TYPE),
+    ]
+    metadata: Annotated[
+        dict[str, JsonValue] | None,
+        Field(default=None, description=SpecDoc.EPISODE_METADATA),
+    ]
+    created_at: Annotated[
+        AwareDatetime | None,
+        Field(default=None, description=SpecDoc.EPISODE_CREATED_AT),
+    ]
+
+
+class EpisodeResponse(EpisodeEntry):
+    """Episode data returned in search responses."""
+
+    uid: Annotated[
+        EpisodeIdT,
+        Field(..., description=SpecDoc.EPISODE_UID),
+    ]
+    score: Annotated[
+        float | None,
+        Field(default=None, description=SpecDoc.EPISODE_SCORE),
+    ]
+
+
+class Episode(BaseModel):
+    """Episode data returned in list responses."""
+
+    uid: Annotated[
+        EpisodeIdT,
+        Field(..., description=SpecDoc.EPISODE_UID),
+    ]
+    content: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_CONTENT),
+    ]
+    session_key: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_SESSION_KEY),
+    ]
+    created_at: Annotated[
+        AwareDatetime,
+        Field(..., description=SpecDoc.EPISODE_CREATED_AT),
+    ]
+
+    producer_id: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_PRODUCER_ID),
+    ]
+    producer_role: Annotated[
+        str,
+        Field(..., description=SpecDoc.EPISODE_PRODUCER_ROLE),
+    ]
+    produced_for_id: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID),
+    ]
+
+    sequence_num: Annotated[
+        int,
+        Field(default=0, description=SpecDoc.EPISODE_SEQUENCE_NUM),
+    ]
+
+    episode_type: Annotated[
+        EpisodeType,
+        Field(default=EpisodeType.MESSAGE, description=SpecDoc.EPISODE_TYPE),
+    ]
+    content_type: Annotated[
+        ContentType,
+        Field(default=ContentType.STRING, description=SpecDoc.EPISODE_CONTENT_TYPE),
+    ]
+    filterable_metadata: Annotated[
+        dict[str, Any] | None,
+        Field(default=None, description=SpecDoc.EPISODE_FILTERABLE_METADATA),
+    ]
+    metadata: Annotated[
+        dict[str, JsonValue] | None,
+        Field(default=None, description=SpecDoc.EPISODE_METADATA),
+    ]
+
+    def __hash__(self) -> int:
+        """Hash an episode by its UID."""
+        return hash(self.uid)
+
+
+SetIdT = str
+FeatureIdT = str
+
+
+class SemanticFeature(BaseModel):
+    """Semantic memory entry returned in API responses."""
+
+    class Metadata(BaseModel):
+        """Storage metadata for a semantic feature, including id and citations."""
+
+        citations: Annotated[
+            list[EpisodeIdT] | None,
+            Field(default=None, description=SpecDoc.SEMANTIC_METADATA_CITATIONS),
+        ]
+        id: Annotated[
+            FeatureIdT | None,
+            Field(default=None, description=SpecDoc.SEMANTIC_METADATA_ID),
+        ]
+        other: Annotated[
+            dict[str, Any] | None,
+            Field(default=None, description=SpecDoc.SEMANTIC_METADATA_OTHER),
+        ]
+
+    set_id: Annotated[
+        SetIdT | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_SET_ID),
+    ]
+    category: Annotated[
+        str,
+        Field(..., description=SpecDoc.SEMANTIC_CATEGORY),
+    ]
+    tag: Annotated[
+        str,
+        Field(..., description=SpecDoc.SEMANTIC_TAG),
+    ]
+    feature_name: Annotated[
+        str,
+        Field(..., description=SpecDoc.SEMANTIC_FEATURE_NAME),
+    ]
+    value: Annotated[
+        str,
+        Field(..., description=SpecDoc.SEMANTIC_VALUE),
+    ]
+    metadata: Annotated[
+        Metadata,
+        Field(default_factory=Metadata, description=SpecDoc.SEMANTIC_METADATA),
+    ]
 
 
 class InvalidNameError(ValueError):
@@ -548,11 +731,96 @@ class SearchResult(BaseModel):
         ),
     ]
     content: Annotated[
-        dict[str, Any],
+        "SearchResultContent",
         Field(
             ...,
             description=SpecDoc.CONTENT,
         ),
+    ]
+
+
+class EpisodicSearchShortTermMemory(BaseModel):
+    """Short-term episodic memory search results."""
+
+    episodes: Annotated[
+        list[EpisodeResponse],
+        Field(..., description=SpecDoc.EPISODIC_SHORT_EPISODES),
+    ]
+    episode_summary: Annotated[
+        list[str],
+        Field(..., description=SpecDoc.EPISODIC_SHORT_SUMMARY),
+    ]
+
+
+class EpisodicSearchLongTermMemory(BaseModel):
+    """Long-term episodic memory search results."""
+
+    episodes: Annotated[
+        list[EpisodeResponse],
+        Field(..., description=SpecDoc.EPISODIC_LONG_EPISODES),
+    ]
+
+
+class EpisodicSearchResult(BaseModel):
+    """Episodic payload returned by `/memories/search`."""
+
+    long_term_memory: Annotated[
+        EpisodicSearchLongTermMemory,
+        Field(..., description=SpecDoc.EPISODIC_LONG_TERM),
+    ]
+    short_term_memory: Annotated[
+        EpisodicSearchShortTermMemory,
+        Field(..., description=SpecDoc.EPISODIC_SHORT_TERM),
+    ]
+
+
+class SearchResultContent(BaseModel):
+    """Payload for SearchResult.content returned by `/memories/search`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    episodic_memory: Annotated[
+        EpisodicSearchResult | None,
+        Field(default=None, description=SpecDoc.SEARCH_EPISODIC_MEMORY),
+    ]
+    semantic_memory: Annotated[
+        list[SemanticFeature] | None,
+        Field(default=None, description=SpecDoc.SEARCH_SEMANTIC_MEMORY),
+    ]
+
+
+class ListResult(BaseModel):
+    """Response model for memory list results."""
+
+    status: Annotated[
+        int,
+        Field(
+            default=0,
+            description=SpecDoc.STATUS,
+            examples=Examples.SEARCH_RESULT_STATUS,
+        ),
+    ]
+    content: Annotated[
+        "ListResultContent",
+        Field(
+            ...,
+            description=SpecDoc.CONTENT,
+        ),
+    ]
+
+
+class ListResultContent(BaseModel):
+    """Payload for ListResult.content returned by `/memories/list`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    episodic_memory: Annotated[
+        list[Episode] | None,
+        Field(default=None, description=SpecDoc.LIST_EPISODIC_MEMORY),
+    ]
+    semantic_memory: Annotated[
+        list[SemanticFeature] | None,
+        Field(default=None, description=SpecDoc.LIST_SEMANTIC_MEMORY),
     ]
 
 

@@ -26,6 +26,13 @@ from memmachine.rest_client.client import MemMachineClient
 from memmachine.rest_client.project import Project
 
 
+def _get_episodic_episodes(results: SearchResult) -> list[Any]:
+    episodic = results.content.episodic_memory
+    if episodic is None:
+        return []
+    return episodic.short_term_memory.episodes + episodic.long_term_memory.episodes
+
+
 def check_server_available():
     """Check if MemMachine server is available."""
     base_url = os.environ.get("MEMORY_BACKEND_URL", "http://localhost:8080")
@@ -286,18 +293,12 @@ class TestMemMachineIntegration:
         results = memory.search("What is my profession?", limit=5)
 
         assert isinstance(results, SearchResult)
-        assert "episodic_memory" in results.content
-        assert "semantic_memory" in results.content
-        # episodic_memory is now a dict with long_term_memory and short_term_memory
-        assert isinstance(results.content["episodic_memory"], dict)
-        assert isinstance(results.content["semantic_memory"], list)
+        assert results.content.episodic_memory is not None
+        assert results.content.semantic_memory is not None
 
         # Should find at least one result
-        episodic = results.content["episodic_memory"]
-        episodes = episodic.get("short_term_memory", {}).get(
-            "episodes", []
-        ) + episodic.get("long_term_memory", {}).get("episodes", [])
-        assert len(episodes) > 0 or len(results.content["semantic_memory"]) > 0
+        episodes = _get_episodic_episodes(results)
+        assert len(episodes) > 0 or len(results.content.semantic_memory or []) > 0
 
     def test_search_memory_with_limit(self, memory):
         """Test memory search with limit parameter."""
@@ -313,8 +314,8 @@ class TestMemMachineIntegration:
 
         # Limit applies per memory type, so we may get more than limit total
         # But each type should respect the limit
-        episodic_count = len(results.content.get("episodic_memory", []))
-        semantic_count = len(results.content.get("semantic_memory", []))
+        episodic_count = len(_get_episodic_episodes(results))
+        semantic_count = len(results.content.semantic_memory or [])
 
         # Each type should respect limit (may be less if not enough matches)
         # Note: limit is applied per memory type, so total may exceed limit
@@ -344,10 +345,7 @@ class TestMemMachineIntegration:
         # Search without filter first to verify memories exist
         results_no_filter = memory.search("drink", limit=10)
         assert isinstance(results_no_filter, SearchResult)
-        episodic = results_no_filter.content.get("episodic_memory", {})
-        all_episodes = episodic.get("short_term_memory", {}).get(
-            "episodes", []
-        ) + episodic.get("long_term_memory", {}).get("episodes", [])
+        all_episodes = _get_episodic_episodes(results_no_filter)
         assert len(all_episodes) >= 2, (
             "Should find both morning and afternoon memories without filter"
         )
@@ -362,11 +360,8 @@ class TestMemMachineIntegration:
             assert isinstance(results, SearchResult)
 
             # Verify filter is working: only memories with time="morning" should be returned
-            episodic = results.content.get("episodic_memory", {})
-            filtered_episodes = episodic.get("short_term_memory", {}).get(
-                "episodes", []
-            ) + episodic.get("long_term_memory", {}).get("episodes", [])
-            filtered_semantic = results.content.get("semantic_memory", [])
+            filtered_episodes = _get_episodic_episodes(results)
+            filtered_semantic = results.content.semantic_memory or []
 
             # Check all returned episodic memories match the filter
             for episode in filtered_episodes:
@@ -386,7 +381,7 @@ class TestMemMachineIntegration:
             # (should exclude afternoon memories)
             total_filtered = len(filtered_episodes) + len(filtered_semantic)
             total_unfiltered = len(all_episodes) + len(
-                results_no_filter.content.get("semantic_memory", [])
+                results_no_filter.content.semantic_memory or []
             )
             assert total_filtered <= total_unfiltered, (
                 "Filtered results should not exceed unfiltered results"
@@ -488,10 +483,7 @@ class TestMemMachineIntegration:
 
         # Search without filter first to verify memories exist
         results_no_filter = memory.search("work", limit=10)
-        episodic = results_no_filter.content.get("episodic_memory", {})
-        all_episodes = episodic.get("short_term_memory", {}).get(
-            "episodes", []
-        ) + episodic.get("long_term_memory", {}).get("episodes", [])
+        all_episodes = _get_episodic_episodes(results_no_filter)
         assert len(all_episodes) >= 2, (
             "Should find both profession and hobby memories without filter"
         )
@@ -507,11 +499,8 @@ class TestMemMachineIntegration:
             assert isinstance(results, SearchResult)
 
             # Verify filter is working: only memories with category="profession" should be returned
-            episodic = results.content.get("episodic_memory", {})
-            filtered_episodes = episodic.get("short_term_memory", {}).get(
-                "episodes", []
-            ) + episodic.get("long_term_memory", {}).get("episodes", [])
-            filtered_semantic = results.content.get("semantic_memory", [])
+            filtered_episodes = _get_episodic_episodes(results)
+            filtered_semantic = results.content.semantic_memory or []
 
             # Check all returned episodic memories match the filter
             for episode in filtered_episodes:
@@ -531,7 +520,7 @@ class TestMemMachineIntegration:
             # (should exclude hobby memories)
             total_filtered = len(filtered_episodes) + len(filtered_semantic)
             total_unfiltered = len(all_episodes) + len(
-                results_no_filter.content.get("semantic_memory", [])
+                results_no_filter.content.semantic_memory or []
             )
             assert total_filtered <= total_unfiltered, (
                 "Filtered results should not exceed unfiltered results"
@@ -630,10 +619,7 @@ class TestMemMachineIntegration:
 
         # Search without filter first - should return memories from both users
         results_no_filter = memory_user1.search("programming", limit=10)
-        episodic = results_no_filter.content.get("episodic_memory", {})
-        all_episodes = episodic.get("short_term_memory", {}).get(
-            "episodes", []
-        ) + episodic.get("long_term_memory", {}).get("episodes", [])
+        all_episodes = _get_episodic_episodes(results_no_filter)
         assert len(all_episodes) >= 2, (
             "Should find memories from both users without filter"
         )
@@ -650,8 +636,8 @@ class TestMemMachineIntegration:
         )
 
         # Verify all returned memories belong to user1
-        filtered_episodes_user1 = results_user1.content.get("episodic_memory", [])
-        filtered_semantic_user1 = results_user1.content.get("semantic_memory", [])
+        filtered_episodes_user1 = _get_episodic_episodes(results_user1)
+        filtered_semantic_user1 = results_user1.content.semantic_memory or []
 
         for episode in filtered_episodes_user1:
             self._verify_episode_user_id(episode, user1_id)
@@ -668,7 +654,7 @@ class TestMemMachineIntegration:
         )
 
         # Verify all returned memories belong to user2
-        filtered_episodes_user2 = results_user2.content.get("episodic_memory", [])
+        filtered_episodes_user2 = _get_episodic_episodes(results_user2)
 
         for episode in filtered_episodes_user2:
             self._verify_episode_user_id(episode, user2_id)
@@ -684,14 +670,14 @@ class TestMemMachineIntegration:
             filtered_episodes_user1,
             filtered_semantic_user1,
             all_episodes,
-            results_no_filter.content.get("semantic_memory", []),
+            results_no_filter.content.semantic_memory or [],
             "User1",
         )
         self._verify_filtered_results(
             filtered_episodes_user2,
-            results_user2.content.get("semantic_memory", []),
+            results_user2.content.semantic_memory or [],
             all_episodes,
-            results_no_filter.content.get("semantic_memory", []),
+            results_no_filter.content.semantic_memory or [],
             "User2",
         )
 
@@ -700,8 +686,8 @@ class TestMemMachineIntegration:
         results = memory.search("", limit=10)
 
         assert isinstance(results, SearchResult)
-        assert "episodic_memory" in results.content
-        assert "semantic_memory" in results.content
+        assert results.content.episodic_memory is not None
+        assert results.content.semantic_memory is not None
 
     def test_delete_episodic_memory(self, memory):
         """Test deleting a specific episodic memory."""
@@ -713,18 +699,10 @@ class TestMemMachineIntegration:
 
         # Search to get memory ID
         results = memory.search("deleted", limit=1)
-        episodic = results.content.get("episodic_memory", {})
-        episodes = episodic.get("short_term_memory", {}).get(
-            "episodes", []
-        ) + episodic.get("long_term_memory", {}).get("episodes", [])
+        episodes = _get_episodic_episodes(results)
         if episodes:
             first_episode = episodes[0]
-            # Handle both dict and object responses
-            episodic_id = (
-                first_episode.get("uid")
-                if isinstance(first_episode, dict)
-                else getattr(first_episode, "uid", None)
-            )
+            episodic_id = getattr(first_episode, "uid", None)
             if episodic_id:
                 # Delete the memory
                 result = memory.delete_episodic(episodic_id)
@@ -740,16 +718,12 @@ class TestMemMachineIntegration:
 
         # Search to get semantic memory ID
         results = memory.search("organic food", limit=10)
-        semantic_features = results.content.get("semantic_memory", [])
+        semantic_features = results.content.semantic_memory or []
         if semantic_features:
             first_feature = semantic_features[0]
-            # Handle both dict and object responses
-            semantic_id = (
-                first_feature.get("uid") or first_feature.get("id")
-                if isinstance(first_feature, dict)
-                else getattr(first_feature, "uid", None)
-                or getattr(first_feature, "id", None)
-            )
+            semantic_id = None
+            if getattr(first_feature, "metadata", None) is not None:
+                semantic_id = getattr(first_feature.metadata, "id", None)
             if semantic_id:
                 # Delete the semantic memory
                 result = memory.delete_semantic(semantic_id)
@@ -864,10 +838,10 @@ class TestMemMachineIntegration:
         for content in contents:
             results = memory.search(content[:10], limit=5)
             # Should find the memory (may be in episodic or semantic)
-            for result in results.content["episodic_memory"]:
+            for result in _get_episodic_episodes(results):
                 if content.lower() in str(result).lower():
                     break
-            for result in results.content["semantic_memory"]:
+            for result in results.content.semantic_memory or []:
                 if content.lower() in str(result).lower():
                     break
             # Note: May not always find exact match due to semantic processing
@@ -892,11 +866,7 @@ class TestMemMachineIntegration:
         results = memory2.search("persistent memory", limit=5)
 
         # Should find the memory added via memory1
-        episodic = results.content.get("episodic_memory", {})
-        episodes = episodic.get("short_term_memory", {}).get(
-            "episodes", []
-        ) + episodic.get("long_term_memory", {}).get("episodes", [])
-        for result in episodes:
+        for result in _get_episodic_episodes(results):
             if "persistent memory" in str(result).lower():
                 break
         # Note: Soft assertion as semantic processing may vary
@@ -978,8 +948,8 @@ class TestMemMachineIntegration:
         # Search should find some of them - add timeout to prevent hanging
         results = memory.search("rapid memory", limit=20, timeout=30)
         assert (
-            len(results.content["episodic_memory"]) > 0
-            or len(results.content["semantic_memory"]) > 0
+            len(_get_episodic_episodes(results)) > 0
+            or len(results.content.semantic_memory or []) > 0
         )
 
     def test_concurrent_project_operations(self, client, unique_test_ids):

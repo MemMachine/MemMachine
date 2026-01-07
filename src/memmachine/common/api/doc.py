@@ -79,6 +79,68 @@ class SpecDoc:
 
     EPISODE_COUNT = "The total number of episodic memories in the project."
 
+    EPISODE_CONTENT = "The content payload of the episode."
+
+    EPISODE_PRODUCER_ID = "Identifier of the episode producer."
+
+    EPISODE_PRODUCER_ROLE = "Role of the producer (e.g., user/assistant/system)."
+
+    EPISODE_PRODUCED_FOR_ID = "Identifier of the intended recipient of the episode."
+
+    EPISODE_TYPE = "The type of episode being stored (e.g., message)."
+
+    EPISODE_METADATA = "Optional metadata associated with the episode."
+
+    EPISODE_CREATED_AT = "Timestamp when the episode was created."
+
+    EPISODE_UID = "Unique identifier for the episode."
+
+    EPISODE_SCORE = "Optional relevance score for the episode."
+
+    EPISODE_SESSION_KEY = "Session key associated with the episode."
+
+    EPISODE_SEQUENCE_NUM = "Sequence number within the session."
+
+    EPISODE_CONTENT_TYPE = "Content type of the episode."
+
+    EPISODE_FILTERABLE_METADATA = "Metadata indexed for filtering."
+
+    SEMANTIC_SET_ID = "Identifier of the semantic set."
+
+    SEMANTIC_CATEGORY = "Category of the semantic feature."
+
+    SEMANTIC_TAG = "Tag associated with the semantic feature."
+
+    SEMANTIC_FEATURE_NAME = "Name of the semantic feature."
+
+    SEMANTIC_VALUE = "Value of the semantic feature."
+
+    SEMANTIC_METADATA = "Storage metadata for the semantic feature."
+
+    SEMANTIC_METADATA_CITATIONS = "Episode IDs cited by this semantic feature."
+
+    SEMANTIC_METADATA_ID = "Identifier for the semantic feature."
+
+    SEMANTIC_METADATA_OTHER = "Additional storage metadata for the semantic feature."
+
+    EPISODIC_SHORT_EPISODES = "Matched short-term episodic entries."
+
+    EPISODIC_SHORT_SUMMARY = "Summaries of matched short-term episodes."
+
+    EPISODIC_LONG_EPISODES = "Matched long-term episodic entries."
+
+    EPISODIC_LONG_TERM = "Long-term episodic search results."
+
+    EPISODIC_SHORT_TERM = "Short-term episodic search results."
+
+    SEARCH_EPISODIC_MEMORY = "Episodic memory search results."
+
+    SEARCH_SEMANTIC_MEMORY = "Semantic memory search results."
+
+    LIST_EPISODIC_MEMORY = "Listed episodic memory entries."
+
+    LIST_SEMANTIC_MEMORY = "Listed semantic memory entries."
+
     MEMORY_CONTENT = "The content or text of the message."
 
     MEMORY_PRODUCER = """

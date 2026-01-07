@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from memmachine.common.api.spec import Episode, SearchResult
 from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.common.errors import (
     ConfigurationError,
@@ -287,17 +288,35 @@ def test_search_memories(client, mock_memmachine):
     with patch(
         "memmachine.server.api_v2.router._search_target_memories"
     ) as mock_search:
-        mock_search.return_value = {
-            "status": 0,
-            "content": {"episodic_memory": [], "semantic_memory": []},
-        }
+        mock_search.return_value = SearchResult(
+            status=0,
+            content={
+                "episodic_memory": {
+                    "long_term_memory": {"episodes": []},
+                    "short_term_memory": {
+                        "episodes": [],
+                        "episode_summary": [],
+                    },
+                },
+                "semantic_memory": [],
+            },
+        )
 
         # Success
         response = client.post("/api/v2/memories/search", json=payload)
         assert response.status_code == 200
         assert response.json() == {
             "status": 0,
-            "content": {"episodic_memory": [], "semantic_memory": []},
+            "content": {
+                "episodic_memory": {
+                    "long_term_memory": {"episodes": []},
+                    "short_term_memory": {
+                        "episodes": [],
+                        "episode_summary": [],
+                    },
+                },
+                "semantic_memory": [],
+            },
         }
         mock_search.assert_awaited_once()
 
@@ -326,14 +345,30 @@ def test_list_memories(client, mock_memmachine):
     }
 
     mock_results = MagicMock()
-    mock_results.episodic_memory = [{"id": "1", "content": "mem1"}]
+    mock_results.episodic_memory = [
+        Episode(
+            uid="1",
+            content="mem1",
+            session_key="test_org/test_proj",
+            created_at="2025-01-01T00:00:00Z",
+            producer_id="user",
+            producer_role="user",
+            produced_for_id=None,
+            sequence_num=0,
+            episode_type="message",
+            content_type="string",
+            filterable_metadata=None,
+            metadata=None,
+        )
+    ]
     mock_results.semantic_memory = None
     mock_memmachine.list_search.return_value = mock_results
 
     response = client.post("/api/v2/memories/list", json=payload)
     assert response.status_code == 200
     data = response.json()
-    assert data["content"]["episodic_memory"] == [{"id": "1", "content": "mem1"}]
+    assert data["content"]["episodic_memory"][0]["uid"] == "1"
+    assert data["content"]["episodic_memory"][0]["content"] == "mem1"
     assert "semantic_memory" not in data["content"]
 
     mock_memmachine.list_search.assert_awaited_once()

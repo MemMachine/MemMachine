@@ -336,7 +336,13 @@ class TestMemory:
         mock_response.json.return_value = {
             "status": 0,
             "content": {
-                "episodic_memory": [["result1", "result2"]],
+                "episodic_memory": {
+                    "long_term_memory": {"episodes": []},
+                    "short_term_memory": {
+                        "episodes": [],
+                        "episode_summary": [],
+                    },
+                },
                 "semantic_memory": [],
             },
         }
@@ -354,7 +360,7 @@ class TestMemory:
 
         assert isinstance(results, SearchResult)
         assert results.status == 0
-        assert "episodic_memory" in results.content
+        assert results.content.episodic_memory is not None
         mock_client.request.assert_called_once()
         call_args = mock_client.request.call_args
         assert call_args[0][0] == "POST"
