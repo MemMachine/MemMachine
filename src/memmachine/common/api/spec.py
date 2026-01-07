@@ -2,10 +2,20 @@
 
 import logging
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Annotated, Any, Self
 
 import regex
-from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    field_validator,
+    model_validator,
+)
 
 from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.doc import Examples, SpecDoc
@@ -14,6 +24,89 @@ DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
 
 logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------------------
+# Client-safe DTOs
+#
+# NOTE:
+# These models intentionally live in this API spec module (and do NOT import the
+# internal/core models) so that the client distribution can import the API schema
+# without pulling in server-only packages.
+# --------------------------------------------------------------------------------------
+
+EpisodeIdT = str
+
+
+class ContentType(Enum):
+    """Enumeration for the type of content within an Episode."""
+
+    STRING = "string"
+
+
+class EpisodeEntry(BaseModel):
+    """Payload used when creating a new episode entry."""
+
+    content: str
+    producer_id: str
+    producer_role: str
+    produced_for_id: str | None = None
+    episode_type: EpisodeType | None = None
+    metadata: dict[str, JsonValue] | None = None
+    created_at: AwareDatetime | None = None
+
+
+class EpisodeResponse(EpisodeEntry):
+    """Episode data returned in search responses."""
+
+    uid: EpisodeIdT
+    score: float | None = None
+
+
+class Episode(BaseModel):
+    """Episode data returned in list responses."""
+
+    uid: EpisodeIdT
+    content: str
+    session_key: str
+    created_at: AwareDatetime
+
+    producer_id: str
+    producer_role: str
+    produced_for_id: str | None = None
+
+    sequence_num: int = 0
+
+    episode_type: EpisodeType = EpisodeType.MESSAGE
+    content_type: ContentType = ContentType.STRING
+    filterable_metadata: dict[str, Any] | None = None
+    metadata: dict[str, JsonValue] | None = None
+
+    def __hash__(self) -> int:
+        """Hash an episode by its UID."""
+        return hash(self.uid)
+
+
+SetIdT = str
+FeatureIdT = str
+
+
+class SemanticFeature(BaseModel):
+    """Semantic memory entry returned in API responses."""
+
+    class Metadata(BaseModel):
+        """Storage metadata for a semantic feature, including id and citations."""
+
+        citations: list[EpisodeIdT] | None = None
+        id: FeatureIdT | None = None
+        other: dict[str, Any] | None = None
+
+    set_id: SetIdT | None = None
+    category: str
+    tag: str
+    feature_name: str
+    value: str
+    metadata: Metadata = Field(default_factory=Metadata)
 
 
 class InvalidNameError(ValueError):
@@ -534,12 +627,70 @@ class SearchResult(BaseModel):
         ),
     ]
     content: Annotated[
-        dict[str, Any],
+        "SearchResultContent",
         Field(
             ...,
             description=SpecDoc.CONTENT,
         ),
     ]
+
+
+class EpisodicSearchShortTermMemory(BaseModel):
+    """Short-term episodic memory search results."""
+
+    episodes: list[EpisodeResponse]
+    episode_summary: list[str]
+
+
+class EpisodicSearchLongTermMemory(BaseModel):
+    """Long-term episodic memory search results."""
+
+    episodes: list[EpisodeResponse]
+
+
+class EpisodicSearchResult(BaseModel):
+    """Episodic payload returned by `/memories/search`."""
+
+    long_term_memory: EpisodicSearchLongTermMemory
+    short_term_memory: EpisodicSearchShortTermMemory
+
+
+class SearchResultContent(BaseModel):
+    """Payload for SearchResult.content returned by `/memories/search`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    episodic_memory: EpisodicSearchResult | None = None
+    semantic_memory: list[SemanticFeature] | None = None
+
+
+class ListResult(BaseModel):
+    """Response model for memory list results."""
+
+    status: Annotated[
+        int,
+        Field(
+            default=0,
+            description=SpecDoc.STATUS,
+            examples=Examples.SEARCH_RESULT_STATUS,
+        ),
+    ]
+    content: Annotated[
+        "ListResultContent",
+        Field(
+            ...,
+            description=SpecDoc.CONTENT,
+        ),
+    ]
+
+
+class ListResultContent(BaseModel):
+    """Payload for ListResult.content returned by `/memories/list`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    episodic_memory: list[Episode] | None = None
+    semantic_memory: list[SemanticFeature] | None = None
 
 
 class RestErrorModel(BaseModel):

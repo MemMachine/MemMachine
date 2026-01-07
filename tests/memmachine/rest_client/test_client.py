@@ -339,7 +339,7 @@ class TestMemMachineClient:
 
 class TestMemory:
     def test_list_memories_calls_list_endpoint_and_parses(self):
-        """Test Memory.list() hits /memories/list and parses SearchResult content."""
+        """Test Memory.list() hits /memories/list and parses ListResult content."""
         client = MemMachineClient(base_url="http://localhost:8080")
         memory = Memory(
             client=client, org_id="org1", project_id="proj1", metadata={"user_id": "u1"}
@@ -350,10 +350,22 @@ class TestMemory:
         mock_response.json.return_value = {
             "status": 0,
             "content": {
-                "episodic_memory": {
-                    "long_term_memory": {"episodes": [{"id": "e1"}]},
-                    "short_term_memory": {"episodes": [], "episode_summary": []},
-                },
+                "episodic_memory": [
+                    {
+                        "uid": "e1",
+                        "content": "hello",
+                        "session_key": "org1/proj1",
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "producer_id": "u1",
+                        "producer_role": "user",
+                        "produced_for_id": None,
+                        "sequence_num": 0,
+                        "episode_type": "message",
+                        "content_type": "string",
+                        "filterable_metadata": None,
+                        "metadata": None,
+                    }
+                ],
                 "semantic_memory": [],
             },
         }
@@ -377,13 +389,12 @@ class TestMemory:
         # Built-in filters should include user_id when present
         assert "metadata.user_id='u1'" in sent.get("filter", "")
 
-        from memmachine.common.api.spec import SearchResult
+        from memmachine.common.api.spec import ListResult
 
-        assert isinstance(result, SearchResult)
-        assert result.content["episodic_memory"]["long_term_memory"]["episodes"] == [
-            {"id": "e1"}
-        ]
-        assert result.content["semantic_memory"] == []
+        assert isinstance(result, ListResult)
+        assert result.content.episodic_memory is not None
+        assert result.content.episodic_memory[0].uid == "e1"
+        assert result.content.semantic_memory == []
 
 
 class TestProject:
