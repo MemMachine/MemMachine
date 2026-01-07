@@ -3,10 +3,10 @@ type: plugin
 author: memverge
 name: memmachine-plugin
 label:
-  en_US: memmachine-plugin
-  ja_JP: memmachine-plugin
-  zh_Hans: memmachine-plugin
-  pt_BR: memmachine-plugin
+  en_US: MemMachine
+  ja_JP: MemMachine
+  zh_Hans: MemMachine
+  pt_BR: MemMachine
 description:
   en_US: memmachine plugin
   ja_JP: memmachine plugin
