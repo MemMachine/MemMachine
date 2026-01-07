@@ -36,12 +36,16 @@ resources:
         user: postgres
         password: <YOUR_PASSWORD_HERE>
         db_name: postgres
+        pool_size: 5
+        max_overflow: 10
     my_storage_id:
       provider: neo4j
       config:
         uri: 'bolt://localhost:7687'
         username: neo4j
         password: <YOUR_PASSWORD_HERE>
+        range_index_creation_threshold: 10000
+        vector_index_creation_threshold: 10000
     sqlite_test:
       provider: sqlite
       config:
