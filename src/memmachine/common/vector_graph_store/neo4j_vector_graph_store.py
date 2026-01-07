@@ -557,9 +557,8 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         )
         await self._driver.execute_query(
             "UNWIND $edges AS edge\n"
-            "MATCH"
-            f"    (source:{sanitized_source_collection} {{uid: edge.source_uid}}),"
-            f"    (target:{sanitized_target_collection} {{uid: edge.target_uid}})\n"
+            f"MATCH (source:{sanitized_source_collection} {{uid: edge.source_uid}})\n"
+            f"MATCH (target:{sanitized_target_collection} {{uid: edge.target_uid}})\n"
             "CREATE (source)"
             f"    -[r:{sanitized_relation} {{uid: edge.uid}}]->"
             "    (target)\n"
