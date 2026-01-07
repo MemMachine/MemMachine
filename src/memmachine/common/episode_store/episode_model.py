@@ -35,6 +35,7 @@ class EpisodeResponse(EpisodeEntry):
     """Episode data returned in responses."""
 
     uid: EpisodeIdT
+    score: float | None = None
 
 
 class Episode(BaseModel):

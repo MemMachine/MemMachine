@@ -1,5 +1,6 @@
 """Public package exports and utilities for MemMachine."""
 
+from memmachine.common import api  # noqa: F401
 from memmachine.rest_client import MemMachineClient, Memory, Project
 
 try:

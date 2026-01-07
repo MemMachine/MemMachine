@@ -2,9 +2,16 @@
 
 <div align="center">
 
+![GitHub Release Version](https://img.shields.io/github/v/release/memmachine/memmachine?display_name=release)
 ![Discord](https://img.shields.io/discord/1412878659479666810)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MemMachine/MemMachine)
 ![GitHub License](https://img.shields.io/github/license/MemMachine/MemMachine)
+<br/>
+![Docker Pulls](https://img.shields.io/docker/pulls/memmachine/memmachine)
+![GitHub Downloads](https://img.shields.io/github/downloads/memmachine/memmachine/total?label=GitHub%20Downloads)
+<br/>
+![PyPI Downloads - memmachine-client](https://img.shields.io/pypi/dm/memmachine-client?label=PyPI%20Downloads%3A%20memmachine-client)
+![PyPI Downloads - memmachine-server](https://img.shields.io/pypi/dm/memmachine-server?label=PyPI%20Downloads%3A%20memmachine-server)
 
 </div>
 

@@ -160,6 +160,7 @@ class MemMachineMemory(BaseMemory):
         query: str,
         user_id: str | None = None,
         limit: int = 5,
+        score_threshold: float | None = None,
         filter_dict: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Search for memories in MemMachine.
@@ -171,6 +172,7 @@ class MemMachineMemory(BaseMemory):
             query: Search query string.
             user_id: Optional override for user ID in metadata.
             limit: Maximum number of results.
+            score_threshold: Minimum score to include in results.
             filter_dict: Optional additional filters.
 
         Returns:
@@ -181,7 +183,12 @@ class MemMachineMemory(BaseMemory):
         """
         try:
             memory = self._get_memory(user_id=user_id)
-            results = memory.search(query=query, limit=limit, filter_dict=filter_dict)
+            results = memory.search(
+                query=query,
+                limit=limit,
+                score_threshold=score_threshold,
+                filter_dict=filter_dict,
+            )
 
             formatted_results: dict[str, Any] = {
                 "query": query,

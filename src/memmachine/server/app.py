@@ -14,6 +14,7 @@ It includes:
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -104,18 +105,43 @@ async def access_log_middleware(request: Request, call_next: Callable) -> Respon
     return response
 
 
-async def start() -> None:
-    """Run the FastAPI application using uvicorn server."""
+def start_http() -> None:
+    """Run the FastAPI HTTP application using the uvicorn server."""
     config = load_configuration()
-    await uvicorn.Server(
-        uvicorn.Config(
-            app,
-            host=config.server.host,
-            port=config.server.port,
-            access_log=True,
-            log_level=str(config.logging.level).lower(),
-        ),
-    ).serve()
+
+    # Determine number of workers.
+    # Note: We do not use (os.cpu_count() - 1) as this is often inaccurate in container
+    # environments (reporting host CPUs vs container limits). We leave it to the
+    # user to configure MEMMACHINE_WORKERS based on their allocated vCPUs to
+    # avoid creating excessive worker processes at startup.
+    workers_env = os.getenv("MEMMACHINE_WORKERS")
+    if workers_env:
+        # Verify workers_env is a valid integer, default to 1 if invalid
+        try:
+            workers = int(workers_env)
+        except ValueError:
+            logger.warning(
+                "Invalid MEMMACHINE_WORKERS value '%s'. Defaulting to 1.", workers_env
+            )
+            workers = 1
+    else:
+        # Default to 1 for predictable resource usage in containers
+        workers = 1
+
+    if workers == 1:
+        logger.info("Starting server with 1 worker")
+    else:
+        logger.info("Starting server with %d workers", workers)
+
+    # Use uvicorn.run() to correctly handle multiprocessing with workers
+    uvicorn.run(
+        "memmachine.server.app:app",
+        host=config.server.host,
+        port=config.server.port,
+        workers=workers,
+        access_log=True,
+        log_level=str(config.logging.level).lower(),
+    )
 
 
 def main() -> None:
@@ -126,6 +152,10 @@ def main() -> None:
         load_dotenv(conf_env_file)
     else:
         load_dotenv()
+
+    # Configure basic logging to ensure we see startup messages
+    logging.basicConfig(level=logging.INFO)
+    logger.debug("memmachine-server entrypoint called")
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="MemMachine server")
@@ -147,7 +177,7 @@ def main() -> None:
             asyncio.run(run_mcp_server())
         else:
             # HTTP mode for REST API
-            asyncio.run(start())
+            start_http()
     except KeyboardInterrupt:
         logger.warning("Application cancelled by user.")
         sys.exit(130)  # Standard exit code for Ctrl+C
