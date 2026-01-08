@@ -20,35 +20,42 @@ class UnknownMetricsFactoryError(ValueError):
     """Raised when the metrics factory name is invalid."""
 
 
-class MetricsFactoryIdMixin(BaseModel):
-    """Mixin for configurations that include a metrics factory ID."""
+class WithMetricsFactory:
+    """Runtime mixin that provides access to a metrics factory."""
+
+    _factories: ClassVar[dict[str, MetricsFactory]] = {}
+
+    # These are *protocol attributes* — provided by subclasses
+    metrics_factory_id: str | None
+
+    def get_metrics_factory(self) -> MetricsFactory:
+        """Return the configured metrics factory instance."""
+        factory_id = self.metrics_factory_id or "prometheus"
+
+        if factory_id not in self._factories:
+            match factory_id:
+                case "prometheus":
+                    self._factories[factory_id] = PrometheusMetricsFactory()
+                case _:
+                    raise UnknownMetricsFactoryError(
+                        f"Unknown MetricsFactory name: {factory_id}"
+                    )
+
+        return self._factories[factory_id]
+
+
+class MetricsFactoryIdMixin(WithMetricsFactory, BaseModel):
+    """Pydantic mixin for configs that include a metrics factory ID."""
 
     metrics_factory_id: str | None = Field(
         default=None,
         description="Metrics factory ID for monitoring and metrics collection.",
     )
+
     user_metrics_labels: dict[str, str] = Field(
         default_factory=dict,
         description="User-defined labels for metrics.",
     )
-
-    _factories: ClassVar[dict[str, MetricsFactory]] = {}
-
-    def get_metrics_factory(self) -> MetricsFactory | None:
-        """Return the configured metrics factory instance, if any."""
-        factory_id = self.metrics_factory_id
-        if factory_id is None:
-            factory_id = "prometheus"
-        if factory_id not in self._factories:
-            match factory_id:
-                case "prometheus":
-                    factory = PrometheusMetricsFactory()
-                    self._factories[factory_id] = factory
-                case _:
-                    raise UnknownMetricsFactoryError(
-                        f"Unknown MetricsFactory name: {factory_id}"
-                    )
-        return self._factories[factory_id]
 
 
 class WithValueFromEnv:
