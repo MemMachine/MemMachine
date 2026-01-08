@@ -68,19 +68,6 @@ jobs:
           docker pull ollama/ollama
           docker run -d --name ollama -p 11434:11434 ollama/ollama
 
-          # Wait up to 120 seconds
-          count=0
-          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
-            echo "Waiting for Ollama service ($((count * 5))/120s)..."
-            sleep 5
-            count=$((count + 1))
-          done
-
-          if [ $count -eq 24 ]; then
-            echo "Ollama failed to start within 120 seconds"
-            exit 1
-          fi
-
       - name: Linux - Test installation
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -112,19 +99,6 @@ jobs:
         run: |
           winget install Ollama.Ollama --accept-source-agreements
 
-          # Wait up to 120 seconds
-          count=0
-          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
-            echo "Waiting for Ollama service ($((count * 5))/120s)..."
-            sleep 5
-            count=$((count + 1))
-          done
-
-          if [ $count -eq 24 ]; then
-            echo "Ollama failed to start within 120 seconds"
-            exit 1
-          fi
-
       - name: Windows - Install the package
         if: matrix.os == 'windows-latest'
         shell: bash
@@ -144,19 +118,6 @@ jobs:
         run: |
           brew install ollama
           brew services start ollama
-
-          # Wait up to 120 seconds
-          count=0
-          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
-            echo "Waiting for Ollama service ($((count * 5))/120s)..."
-            sleep 5
-            count=$((count + 1))
-          done
-
-          if [ $count -eq 24 ]; then
-            echo "Ollama failed to start within 120 seconds"
-            exit 1
-          fi
 
       - name: macOS - Test installation
         if: matrix.os == 'macos-latest'
