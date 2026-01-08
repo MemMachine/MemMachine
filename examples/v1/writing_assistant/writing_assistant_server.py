@@ -21,7 +21,23 @@ writing_assistant_constructor = WritingAssistantQueryConstructor()
 
 
 def format_error_response(e: Exception, context: str):
-    """Format a user-friendly error message based on the exception type."""
+    """
+    Format a user-friendly error message based on the exception type.
+
+    Parameters
+    ----------
+    e : Exception
+        The exception that was raised, typically a `requests` exception.
+    context : str
+        A short description of the operation being performed when the error occurred.
+
+    Returns
+    -------
+    dict
+        A dictionary with the keys:
+        - ``status`` (str): Always set to ``"error"``.
+        - ``message`` (str): A human-readable error message tailored to the exception type and context.
+    """
     if isinstance(e, requests.exceptions.Timeout):
         return {
             "status": "error",
