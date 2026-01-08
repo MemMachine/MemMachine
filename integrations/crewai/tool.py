@@ -1,7 +1,7 @@
 """
-Tools for integrating MemMachine memory operations into LangGraph.
+Tools for integrating MemMachine memory operations into CrewAI.
 
-This module provides tools that can be used in LangGraph workflows
+This module provides tools that can be used in CrewAI agents
 to enable AI agents with persistent memory capabilities.
 """
 
@@ -9,6 +9,22 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from memmachine import MemMachineClient
+from memmachine.common.api import EpisodeType
+
+# Try to import CrewAI tools, fallback to function-based tools if not available
+try:
+    from crewai.tools import BaseTool
+
+    CREWAI_AVAILABLE = True
+except ImportError:
+    try:
+        import crewai_tools  # noqa: F401
+
+        CREWAI_AVAILABLE = True
+        BaseTool = None  # Use decorator-based approach
+    except ImportError:
+        CREWAI_AVAILABLE = False
+        BaseTool = None
 
 if TYPE_CHECKING:
     from memmachine.rest_client.memory import Memory
@@ -16,17 +32,17 @@ if TYPE_CHECKING:
 
 class MemMachineTools:
     """
-    Tools for integrating MemMachine memory operations into LangGraph.
+    Tools for integrating MemMachine memory operations into CrewAI.
 
-    This class provides static methods that can be used as tools in LangGraph workflows.
+    This class provides methods that can be used as tools in CrewAI agents.
     """
 
     def __init__(
         self,
         client: MemMachineClient | None = None,
         base_url: str = "http://localhost:8080",
-        org_id: str = "langgraph_org",
-        project_id: str = "langgraph_project",
+        org_id: str = "crewai_org",
+        project_id: str = "crewai_project",
         group_id: str | None = None,
         agent_id: str | None = None,
         user_id: str | None = None,
@@ -101,7 +117,7 @@ class MemMachineTools:
         agent_id: str | None = None,
         group_id: str | None = None,
         session_id: str | None = None,
-        episode_type: str = "text",
+        episode_type: EpisodeType | None = EpisodeType.MESSAGE,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -120,7 +136,7 @@ class MemMachineTools:
             agent_id: Agent ID (overrides default, stored in metadata)
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
-            episode_type: Type of episode (default: "text", stored in metadata)
+            episode_type: Type of episode (default: EpisodeType.MESSAGE)
             metadata: Additional metadata for the episode
 
         Returns:
@@ -131,27 +147,32 @@ class MemMachineTools:
             memory = self.get_memory(
                 org_id, project_id, user_id, agent_id, group_id, session_id
             )
-            success = memory.add(
+            # memory.add() returns list[AddMemoryResult]
+            results = memory.add(
                 content=content,
                 role=role,
                 episode_type=episode_type,
                 metadata=metadata or {},
             )
-            if success:
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Error adding memory: {e!s}",
+            }
+        else:
+            # Check if results list is not empty
+            if results:
+                # Extract UIDs from AddMemoryResult objects
+                uids = [result.uid for result in results if hasattr(result, "uid")]
                 return {
                     "status": "success",
                     "message": f"Memory added successfully: {content[:50]}...",
                     "content": content,
+                    "uids": uids,
                 }
-        except Exception:
             return {
                 "status": "error",
-                "message": "Error adding memory",
-            }
-        else:
-            return {
-                "status": "error",
-                "message": "Failed to add memory",
+                "message": "Failed to add memory: no results returned",
             }
 
     def search_memory(
@@ -164,7 +185,6 @@ class MemMachineTools:
         group_id: str | None = None,
         session_id: str | None = None,
         limit: int = 5,
-        score_threshold: float | None = None,
         filter_dict: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -185,7 +205,6 @@ class MemMachineTools:
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 5)
-            score_threshold: Minimum score to include in results
             filter_dict: Additional filters for the search
 
         Returns:
@@ -196,20 +215,23 @@ class MemMachineTools:
             memory = self.get_memory(
                 org_id, project_id, user_id, agent_id, group_id, session_id
             )
-            results = memory.search(
+            search_result = memory.search(
                 query=query,
                 limit=limit,
-                score_threshold=score_threshold,
                 filter_dict=filter_dict,
             )
 
             # Format results for easier consumption
+            # SearchResult is a Pydantic model with 'content' attribute
             # v2 API returns "semantic_memory" instead of "profile_memory"
             formatted_results = {
                 "query": query,
                 "episodic_memory": [],
                 "profile_memory": [],
             }
+
+            # Access the content dictionary from SearchResult
+            results = search_result.content if hasattr(search_result, "content") else {}
 
             if results:
                 # Extract episodic memories
@@ -303,82 +325,193 @@ class MemMachineTools:
             self.client.close()
 
 
-# Convenience functions for LangGraph tool creation
-def create_add_memory_tool(
-    tools: MemMachineTools,
-) -> Callable[[str, str | None, dict[str, Any] | None], dict[str, Any]]:
+def create_memmachine_tools(
+    base_url: str = "http://localhost:8080",
+    org_id: str = "crewai_org",
+    project_id: str = "crewai_project",
+    group_id: str | None = None,
+    agent_id: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> list[Any]:
     """
-    Create an add_memory tool function for LangGraph.
+    Create CrewAI tools for MemMachine memory operations.
+
+    This function creates CrewAI-compatible tools that can be used by agents
+    to add and search memories.
 
     Args:
-        tools: MemMachineTools instance
+        base_url: Base URL for MemMachine server
+        org_id: Organization ID for v2 API
+        project_id: Project ID for v2 API
+        group_id: Optional group ID (stored in metadata)
+        agent_id: Optional agent ID (stored in metadata)
+        user_id: Optional user ID (stored in metadata)
+        session_id: Optional session ID (stored in metadata)
 
     Returns:
-        Tool function that can be used in LangGraph
+        List of CrewAI Tool objects
 
     """
+    tools_instance = MemMachineTools(
+        base_url=base_url,
+        org_id=org_id,
+        project_id=project_id,
+        group_id=group_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        session_id=session_id,
+    )
 
-    def add_memory_tool(
-        content: str,
-        user_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Tool to add a memory to MemMachine.
+    # Try to use BaseTool if available (CrewAI native)
+    if BaseTool is not None:
+        return _create_basetool_tools(tools_instance)
 
-        Args:
-            content: The content to store in memory
-            user_id: Optional user ID override
-            metadata: Optional metadata for the memory
+    # Fallback to function-based tools (crewai_tools decorator)
+    try:
+        from crewai_tools import tool
 
-        Returns:
-            Result dictionary with status and message
-
-        """
-        return tools.add_memory(
-            content=content,
-            user_id=user_id,
-            metadata=metadata,
-        )
-
-    return add_memory_tool
+        return _create_decorator_tools(tools_instance, tool)
+    except ImportError:
+        return _create_simple_function_tools(tools_instance)
 
 
-def create_search_memory_tool(
-    tools: MemMachineTools,
-) -> Callable[[str, str | None, int], dict[str, Any]]:
+def _create_basetool_tools(tools_instance: MemMachineTools) -> list[Any]:
     """
-    Create a search_memory tool function for LangGraph.
+    Create BaseTool-based tools for CrewAI.
 
     Args:
-        tools: MemMachineTools instance
+        tools_instance: MemMachineTools instance
 
     Returns:
-        Tool function that can be used in LangGraph
+        List of BaseTool instances
 
     """
 
-    def search_memory_tool(
-        query: str,
-        user_id: str | None = None,
-        limit: int = 5,
-    ) -> dict[str, Any]:
-        """
-        Tool to search memories in MemMachine.
-
-        Args:
-            query: Search query string
-            user_id: Optional user ID override
-            limit: Maximum number of results to return
-
-        Returns:
-            Result dictionary with search results
-
-        """
-        return tools.search_memory(
-            query=query,
-            user_id=user_id,
-            limit=limit,
+    class AddMemoryTool(BaseTool):
+        name: str = "Add Memory to MemMachine"
+        description: str = (
+            "Add a memory to MemMachine. Use this to store important information, "
+            "facts, preferences, or conversation context that should be remembered for future interactions."
         )
 
-    return search_memory_tool
+        def _run(self, content: str, role: str = "user") -> str:
+            result = tools_instance.add_memory(content=content, role=role)
+            if result["status"] == "success":
+                return result["message"]
+            return f"Error: {result.get('message', 'Unknown error')}"
+
+    class SearchMemoryTool(BaseTool):
+        name: str = "Search Memory in MemMachine"
+        description: str = (
+            "Search for memories in MemMachine. Use this to retrieve relevant context, "
+            "past conversations, or user preferences when you need to recall information from previous interactions."
+        )
+
+        def _run(self, query: str, limit: int = 5) -> str:
+            result = tools_instance.search_memory(query=query, limit=limit)
+            if result["status"] == "success":
+                return result.get("summary", "No memories found")
+            return f"Error: {result.get('message', 'Unknown error')}"
+
+    return [AddMemoryTool(), SearchMemoryTool()]
+
+
+def _create_decorator_tools(
+    tools_instance: MemMachineTools,
+    tool: Callable[..., Any],  # type: ignore[type-arg]
+) -> list[Callable[..., Any]]:
+    """
+    Create decorator-based tools using crewai_tools.
+
+    Args:
+        tools_instance: MemMachineTools instance
+        tool: The tool decorator from crewai_tools
+
+    Returns:
+        List of decorated tool functions
+
+    """
+
+    @tool("Add Memory to MemMachine")
+    def add_memory_tool(content: str, role: str = "user") -> str:
+        """
+        Add a memory to MemMachine.
+
+        Use this to store important information, facts, preferences, or conversation context that should be remembered for future interactions.
+
+        Args:
+            content: The content to store in memory. Include full context and important details.
+            role: Message role - "user", "assistant", or "system" (default: "user")
+
+        Returns:
+            Status message indicating success or failure
+
+        """
+        result = tools_instance.add_memory(content=content, role=role)
+        if result["status"] == "success":
+            return result["message"]
+        return f"Error: {result.get('message', 'Unknown error')}"
+
+    @tool("Search Memory in MemMachine")
+    def search_memory_tool(query: str, limit: int = 5) -> str:
+        """
+        Search for memories in MemMachine.
+
+        Use this to retrieve relevant context, past conversations, or user preferences when you need to recall information from previous interactions.
+
+        Args:
+            query: Search query string describing what you're looking for
+            limit: Maximum number of results to return (default: 5)
+
+        Returns:
+            Formatted summary of relevant memories found
+
+        """
+        result = tools_instance.search_memory(query=query, limit=limit)
+        if result["status"] == "success":
+            return result.get("summary", "No memories found")
+        return f"Error: {result.get('message', 'Unknown error')}"
+
+    return [add_memory_tool, search_memory_tool]
+
+
+def _create_simple_function_tools(tools_instance: MemMachineTools) -> list[Any]:
+    """
+    Create simple function-based tools when CrewAI tools are not available.
+
+    Args:
+        tools_instance: MemMachineTools instance
+
+    Returns:
+        List of function-based tools
+
+    """
+
+    def add_memory_tool(content: str, role: str = "user") -> str:
+        """Add a memory to MemMachine."""
+        result = tools_instance.add_memory(content=content, role=role)
+        if result["status"] == "success":
+            return result["message"]
+        return f"Error: {result.get('message', 'Unknown error')}"
+
+    def search_memory_tool(query: str, limit: int = 5) -> str:
+        """Search for memories in MemMachine."""
+        result = tools_instance.search_memory(query=query, limit=limit)
+        if result["status"] == "success":
+            return result.get("summary", "No memories found")
+        return f"Error: {result.get('message', 'Unknown error')}"
+
+    # Add metadata for CrewAI
+    add_memory_tool.name = "Add Memory to MemMachine"
+    add_memory_tool.description = (
+        "Add a memory to MemMachine. Use this to store important information, "
+        "facts, preferences, or conversation context that should be remembered for future interactions."
+    )
+    search_memory_tool.name = "Search Memory in MemMachine"
+    search_memory_tool.description = (
+        "Search for memories in MemMachine. Use this to retrieve relevant context, "
+        "past conversations, or user preferences when you need to recall information from previous interactions."
+    )
+
+    return [add_memory_tool, search_memory_tool]
