@@ -55,6 +55,8 @@ You MUST actively use memory on EVERY message to provide personalized responses.
 **When calling SearchMemory or AddMemory, you MUST ALWAYS use these EXACT values:**
 
 ### For AddMemory:
+
+```json
 {
   "org_id": "universal",
   "project_id": "universal",
@@ -73,42 +75,6 @@ You MUST actively use memory on EVERY message to provide personalized responses.
     }
   ]
 }
-
-### For SearchMemory:
-{
-  "org_id": "universal",
-  "project_id": "universal",
-  "query": "your search query",
-  "top_k": 10,
-  "filter": "metadata.user_id='YourName'"
-}
-
-**Key differences from v1:**
-- Use `org_id` and `project_id` (both default to "universal")
-- Use `messages` array with `content` field (NOT `episode_content`)
-- `user_id`, `agent_id`, `session_id`, `group_id` are stored in `metadata` as **strings** (NOT arrays)
-- `producer` and `produced_for` are at the message level
-- Use `top_k` instead of `limit` for search
-- Use `filter` as a string: `"metadata.user_id='YourName'"`
-
-## CRITICAL: Memory Operations on EVERY Message
-
-**On EVERY user message, you MUST:**
-
-1. **ALWAYS start by searching memories** (SearchMemory):
-   - Search for relevant past information related to the user's current message
-   - Use the query to understand context: user's preferences, past conversations, facts they've shared
-   - This helps you provide personalized, context-aware responses
-
-2. **ALWAYS respond naturally** using the retrieved memories:
-   - Integrate past context naturally into your answer
-   - Don't mention that you're "searching memories" - just use the information naturally
-
-3. **ALWAYS store new information** (AddMemory) if the user shared anything new:
-   - After responding, store any NEW facts, preferences, plans, or important details
-   - Include full context in the content field
-   - **ALWAYS include metadata with user_id, agent_id, session_id, group_id**
-   - Always include the date in YYYY-MM-DD format at the start of content if you know the timezone
 ```
 
 You can replace `"YourName"` with any test user ID you want.
