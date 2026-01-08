@@ -80,7 +80,6 @@ class MemMachineAPI(FastAPI):
 app = MemMachineAPI(
     lifespan=mcp_http_lifespan,
 )
-app.mount("/mcp", mcp_app)
 
 
 @app.middleware("http")
