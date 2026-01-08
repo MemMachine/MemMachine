@@ -1,9 +1,11 @@
 """Client utilities for interacting with the MemMachine HTTP API."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any, TypedDict
+from typing import Any, NoReturn, Self, TypedDict
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -263,15 +265,7 @@ class MemMachineClient:
         if self._closed:
             raise RuntimeError("Cannot get project: client has been closed")
 
-        # Validate inputs
-        if not org_id or not isinstance(org_id, str):
-            raise ValueError("org_id must be a non-empty string")
-        if not project_id or not isinstance(project_id, str):
-            raise ValueError("project_id must be a non-empty string")
-        if "/" in org_id:
-            raise ValueError("org_id cannot contain '/'")
-        if "/" in project_id:
-            raise ValueError("project_id cannot contain '/'")
+        self._validate_project_ids(org_id, project_id)
 
         url = f"{self.base_url}/api/v2/projects/get"
         spec = GetProjectSpec(org_id=org_id, project_id=project_id)
@@ -292,22 +286,35 @@ class MemMachineClient:
                 config=project_response.config,
             )
         except requests.HTTPError as e:
-            if e.response.status_code == 422:
-                # Try to get detailed error message from response
-                try:
-                    error_detail = e.response.json()
-                    error_msg = f"Validation error (422): {error_detail}"
-                except Exception:
-                    error_msg = "Validation error (422): Invalid org_id or project_id format. Ensure they don't contain '/' and are non-empty strings."
-                logger.exception(
-                    "Failed to get project %s/%s: %s", org_id, project_id, error_msg
-                )
-                raise ValueError(error_msg) from e
-            logger.exception("Failed to get project %s/%s", org_id, project_id)
-            raise
+            self._handle_get_project_http_error(e, org_id, project_id)
         except requests.RequestException:
             logger.exception("Failed to get project %s/%s", org_id, project_id)
             raise
+
+    def _handle_get_project_http_error(
+        self, error: requests.HTTPError, org_id: str, project_id: str
+    ) -> NoReturn:
+        """Handle HTTP errors from get_project request."""
+        if error.response.status_code == 404:
+            # 404 is expected when project doesn't exist - re-raise HTTPError
+            # (tests expect HTTPError, not ValueError)
+            raise
+        if error.response.status_code == 422:
+            # Try to get detailed error message from response
+            try:
+                error_detail = error.response.json()
+                error_msg = f"Validation error (422): {error_detail}"
+            except Exception:
+                error_msg = (
+                    "Validation error (422): Invalid org_id or project_id format. "
+                    "Ensure they don't contain '/' and are non-empty strings."
+                )
+            logger.exception(
+                "Failed to get project %s/%s: %s", org_id, project_id, error_msg
+            )
+            raise ValueError(error_msg) from error
+        logger.exception("Failed to get project %s/%s", org_id, project_id)
+        raise
 
     def _validate_project_ids(self, org_id: str, project_id: str) -> None:
         """Validate org_id and project_id."""
@@ -408,7 +415,7 @@ class MemMachineClient:
                 return self._create_project_with_retry(
                     org_id, project_id, description, embedder, reranker, timeout
                 )
-            # Re-raise other HTTP errors from get
+            # Re-raise other HTTP errors
             raise
 
     def list_projects(self, timeout: int | None = None) -> list[Project]:
@@ -539,7 +546,7 @@ class MemMachineClient:
         if hasattr(self, "_session"):
             self._session.close()
 
-    def __enter__(self) -> "MemMachineClient":
+    def __enter__(self) -> Self:
         """Context manager entry."""
         return self
 

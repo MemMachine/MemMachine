@@ -1,3 +1,11 @@
+"""
+Example: Using MemMachine with LlamaIndex.
+
+This example demonstrates how to integrate MemMachine memory with LlamaIndex
+to provide persistent memory capabilities for conversational AI applications.
+"""
+# ruff: noqa: T201
+
 import os
 
 from llama_index.core.chat_engine import SimpleChatEngine

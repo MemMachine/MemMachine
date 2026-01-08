@@ -1,21 +1,21 @@
+"""MemMachine-backed memory implementation for LlamaIndex."""
+# ruff: noqa: C901
+
 from typing import Any
 
-import requests
 from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.core.memory import BaseMemory
 from llama_index.core.memory import Memory as LlamaIndexMemory
 
 from memmachine import MemMachineClient
 
-# This module provides a MemMachine-backed memory implementation for LlamaIndex.
-
-
 DEFAULT_INTRO_PREFERENCES = "Below are a set of relevant preferences retrieved from potentially several memory sources:"
 DEFAULT_OUTRO_PREFERENCES = "This is the end of the retrieved preferences."
 
 
 class MemMachineMemory(BaseMemory):
-    """MemMachine-backed memory for LlamaIndex chat engines.
+    """
+    MemMachine-backed memory for LlamaIndex chat engines.
 
     This class integrates MemMachine with LlamaIndex to provide persistent memory.
     It stores new messages into MemMachine (episodic memory) and retrieves relevant
@@ -40,9 +40,10 @@ class MemMachineMemory(BaseMemory):
         session_id: str | None = None,
         search_msg_limit: int = 5,
         client: MemMachineClient | None = None,
-        **_: Any,
+        **kwargs: Any,  # noqa: ARG002, ANN401
     ) -> None:
-        """Initialize MemMachine memory.
+        """
+        Initialize MemMachine memory.
 
         Args:
             base_url: Base URL for the MemMachine server.
@@ -54,7 +55,8 @@ class MemMachineMemory(BaseMemory):
             session_id: Optional session identifier stored in metadata.
             search_msg_limit: Number of recent messages to use for retrieval queries.
             client: Optional pre-initialized MemMachineClient; if not provided, one is created.
-            **_: Ignored extra kwargs for compatibility with LlamaIndex factories.
+            **kwargs: Ignored extra kwargs for compatibility with LlamaIndex factories.
+
         """
         # Local chat history (private pydantic attribute)
         self._primary_memory: LlamaIndexMemory = LlamaIndexMemory.from_defaults()
@@ -85,8 +87,9 @@ class MemMachineMemory(BaseMemory):
         agent_id: str | None = None,
         group_id: str | None = None,
         session_id: str | None = None,
-    ):
-        """Get or create a MemMachine project memory bound to the current context.
+    ) -> Any:  # noqa: ANN401
+        """
+        Get or create a MemMachine project memory bound to the current context.
 
         Args:
             org_id: Override organization ID.
@@ -98,12 +101,13 @@ class MemMachineMemory(BaseMemory):
 
         Returns:
             A MemMachine memory instance for add/search operations.
+
         """
         org = org_id or self._context.get("org_id")
         proj = project_id or self._context.get("project_id")
         try:
             project = self._client.get_project(org_id=org, project_id=proj)
-        except requests.RequestException:
+        except (ValueError, Exception):
             project = self._client.create_project(org_id=org, project_id=proj)
 
         return project.memory(
@@ -123,7 +127,8 @@ class MemMachineMemory(BaseMemory):
         user_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Add a memory to MemMachine.
+        """
+        Add a memory to MemMachine.
 
         Stores important information about the user or conversation into
         MemMachine as an episodic memory.
@@ -136,6 +141,7 @@ class MemMachineMemory(BaseMemory):
 
         Returns:
             A dict with status and message describing the result.
+
         """
         try:
             memory = self._get_memory(user_id=user_id)
@@ -151,7 +157,7 @@ class MemMachineMemory(BaseMemory):
                     "message": f"Memory added successfully: {content[:50]}...",
                     "content": content,
                 }
-            return {"status": "error", "message": "Failed to add memory"}
+            return {"status": "error", "message": "Failed to add memory"}  # noqa: TRY300
         except Exception as e:
             return {"status": "error", "message": f"Error adding memory: {e!s}"}
 
@@ -163,7 +169,8 @@ class MemMachineMemory(BaseMemory):
         score_threshold: float | None = None,
         filter_dict: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Search for memories in MemMachine.
+        """
+        Search for memories in MemMachine.
 
         Retrieves relevant context and facts based on a query constructed
         from recent chat history. Results are normalized for easier use.
@@ -180,6 +187,7 @@ class MemMachineMemory(BaseMemory):
               - status: "success" or "error".
               - results: { query, episodic_memory, profile_memory }.
               - summary: formatted textual summary.
+
         """
         try:
             memory = self._get_memory(user_id=user_id)
@@ -209,7 +217,7 @@ class MemMachineMemory(BaseMemory):
                     formatted_results["profile_memory"] = results["semantic_memory"]
 
             summary = self._format_search_summary(formatted_results)
-            return {
+            return {  # noqa: TRY300
                 "status": "success",
                 "results": formatted_results,
                 "summary": summary,
@@ -218,13 +226,15 @@ class MemMachineMemory(BaseMemory):
             return {"status": "error", "message": f"Error searching memory: {e!s}"}
 
     def _format_search_summary(self, results: dict[str, Any]) -> str:
-        """Format search results into a short, readable summary.
+        """
+        Format search results into a short, readable summary.
 
         Args:
             results: Normalized search results dict.
 
         Returns:
             A concise multi-line string summarizing top matches.
+
         """
         summary_parts: list[str] = []
         episodic_memories = results.get("episodic_memory", [])
@@ -243,19 +253,21 @@ class MemMachineMemory(BaseMemory):
     # ----------------------------------
     # BaseMemory interface for chat usage
     # ----------------------------------
-    def get(self, input_text: str | None = None, **kwargs: Any) -> list[ChatMessage]:
-        """Return chat history augmented with a SYSTEM memory context message.
+    def get(self, input_text: str | None = None, **kwargs: Any) -> list[ChatMessage]:  # noqa: ANN401
+        """
+        Return chat history augmented with a SYSTEM memory context message.
 
         Builds a compact query from recent messages, searches MemMachine
         for relevant memories, and injects a SYSTEM message with filtered
         user facts plus a short summary.
 
         Args:
-            input: Optional latest user text to append to the retrieval query.
+            input_text: Optional latest user text to append to the retrieval query.
             **kwargs: Forwarded to the underlying in-process memory.
 
         Returns:
             A list of `ChatMessage` including an injected SYSTEM message.
+
         """
         # Get existing chat history
         messages = self._primary_memory.get(input=input_text, **kwargs)
@@ -324,14 +336,22 @@ class MemMachineMemory(BaseMemory):
         return messages
 
     def get_all(self) -> list[ChatMessage]:
-        """Return all chat history from the in-process memory."""
+        """
+        Return all chat history from the in-process memory.
+
+        Returns:
+            List of all chat messages.
+
+        """
         return self._primary_memory.get_all()
 
     def put(self, message: ChatMessage) -> None:
-        """Persist a new message to MemMachine and local history.
+        """
+        Persist a new message to MemMachine and local history.
 
         Args:
             message: Chat message to store.
+
         """
         if getattr(message, "content", None):
             self.add(
@@ -341,10 +361,12 @@ class MemMachineMemory(BaseMemory):
         self._primary_memory.release_ref(message)
 
     def set(self, messages: list[ChatMessage]) -> None:
-        """Replace the full chat history; persist only newly added messages.
+        """
+        Replace the full chat history; persist only newly added messages.
 
         Args:
             messages: Full list of chat messages to set.
+
         """
         initial_len = len(self._primary_memory.get_all())
         new_msgs = messages[initial_len:]
@@ -362,15 +384,29 @@ class MemMachineMemory(BaseMemory):
     # -----------------------------
     @classmethod
     def class_name(cls) -> str:
-        """Return class name for LlamaIndex registry."""
+        """
+        Return class name for LlamaIndex registry.
+
+        Returns:
+            Class name string.
+
+        """
         return "MemMachineMemory"
 
     @classmethod
-    def from_defaults(cls, **kwargs: Any) -> "MemMachineMemory":
-        """Construct memory from defaults.
+    def from_defaults(cls, **kwargs: Any) -> "MemMachineMemory":  # noqa: ANN401
+        """
+        Construct memory from defaults.
 
         LlamaIndex factories may provide unrelated kwargs (e.g., `llm`).
         Only relevant configuration is extracted and applied here.
+
+        Args:
+            **kwargs: Configuration parameters, with MemMachine-related ones extracted.
+
+        Returns:
+            A new MemMachineMemory instance.
+
         """
         # Extract MemMachine-related kwargs with sane defaults
         init_kwargs = {
