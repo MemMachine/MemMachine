@@ -1,6 +1,6 @@
 """Manages database for session config and short term data."""
 
-import io
+import json
 import os
 import pickle
 from typing import Annotated, Any
@@ -9,17 +9,18 @@ from sqlalchemy import (
     JSON,
     ForeignKeyConstraint,
     Integer,
-    LargeBinary,
     PrimaryKeyConstraint,
     String,
     and_,
     func,
     insert,
+    inspect,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -44,7 +45,6 @@ IntColumn = Annotated[int, mapped_column(Integer)]
 StringKeyColumn = Annotated[str, mapped_column(String, primary_key=True)]
 StringColumn = Annotated[str, mapped_column(String)]
 JSONColumn = Annotated[dict, mapped_column(JSON_AUTO)]
-BinaryColumn = Annotated[bytes, mapped_column(LargeBinary)]
 
 
 class SessionDataManagerSQL(SessionDataManager):
@@ -57,7 +57,7 @@ class SessionDataManagerSQL(SessionDataManager):
         session_key: Mapped[StringKeyColumn]
         timestamp: Mapped[IntColumn]
         configuration: Mapped[JSONColumn]
-        param_data: Mapped[BinaryColumn]
+        param_data: Mapped[JSONColumn]
         description: Mapped[StringColumn]
         user_metadata: Mapped[JSONColumn]
         __table_args__ = (PrimaryKeyConstraint("session_key"),)
@@ -93,7 +93,24 @@ class SessionDataManagerSQL(SessionDataManager):
 
     async def create_tables(self) -> None:
         """Create the necessary tables in the database."""
+
+        def _check_migration_needed(conn: AsyncConnection) -> bool:
+            inspector = inspect(conn)
+            schema = self.SessionConfig.__table__.schema
+            table_name = "sessions"
+            table_names = inspector.get_table_names(schema=schema)
+            if table_name not in table_names:
+                return False
+            columns = inspector.get_columns(table_name, schema=schema)
+            for column in columns:
+                if column["name"] == "param_data":
+                    return "JSON" not in str(column["type"]).upper()
+            return False
+
         async with self._engine.begin() as conn:
+            if await conn.run_sync(_check_migration_needed):
+                await self._migrate_pickle_to_json()
+                return
             await conn.run_sync(Base.metadata.create_all)
 
     async def drop_tables(self) -> None:
@@ -104,6 +121,64 @@ class SessionDataManagerSQL(SessionDataManager):
     async def close(self) -> None:
         """Close any underlying connections."""
 
+    async def _migrate_pickle_to_json(self) -> None:
+        """Migrate param_data from pickle to JSON."""
+        schema = self.SessionConfig.__table__.schema
+        table_name = f"{schema}.sessions" if schema else "sessions"
+        dialect = self._engine.dialect.name
+        json_type = "JSONB" if dialect == "postgresql" else "JSON"
+
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} RENAME COLUMN param_data TO param_data_blob"
+                )
+            )
+            await conn.execute(
+                text(f"ALTER TABLE {table_name} ADD COLUMN param_data {json_type}")
+            )
+
+            result = await conn.execute(
+                text(f"SELECT session_key, param_data_blob FROM {table_name}")
+            )
+
+            for session_key, blob_data in result:
+                if not blob_data:
+                    continue
+                try:
+                    obj = pickle.loads(blob_data)
+                    if hasattr(obj, "model_dump"):
+                        json_data = obj.model_dump(mode="json")
+                    elif hasattr(obj, "dict"):
+                        json_data = obj.dict()
+                    else:
+                        json_data = obj.__dict__
+
+                    val = json.dumps(json_data, default=str)
+
+                    if dialect == "postgresql":
+                        await conn.execute(
+                            text(
+                                f"UPDATE {table_name} SET param_data = :val::jsonb WHERE session_key = :key"
+                            ),
+                            {"val": val, "key": session_key},
+                        )
+                    else:
+                        await conn.execute(
+                            text(
+                                f"UPDATE {table_name} SET param_data = :val WHERE session_key = :key"
+                            ),
+                            {"val": val, "key": session_key},
+                        )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Error migrating session {session_key}"
+                    ) from exc
+
+            await conn.execute(
+                text(f"ALTER TABLE {table_name} DROP COLUMN param_data_blob")
+            )
+
     async def create_new_session(
         self,
         session_key: str,
@@ -113,10 +188,13 @@ class SessionDataManagerSQL(SessionDataManager):
         metadata: dict[str, object],
     ) -> None:
         """Create a new session entry in the database."""
-        buffer = io.BytesIO()
-        pickle.dump(param, buffer)
-        buffer.seek(0)
-        param_data = buffer.getvalue()
+        if hasattr(param, "model_dump"):
+            param_data = param.model_dump(mode="json")
+        elif hasattr(param, "dict"):
+            param_data = param.dict()
+        else:
+            param_data = param.__dict__
+
         async with self._async_session() as dbsession:
             # Query for an existing session with the same ID
             sessions = await dbsession.execute(
@@ -164,9 +242,7 @@ class SessionDataManagerSQL(SessionDataManager):
             session = sessions.scalars().first()
             if session is None:
                 return None
-            binary_buffer = io.BytesIO(session.param_data)
-            binary_buffer.seek(0)
-            param: EpisodicMemoryConf = pickle.load(binary_buffer)
+            param = EpisodicMemoryConf(**session.param_data)
 
             return SessionDataManager.SessionInfo(
                 configuration=session.configuration,
