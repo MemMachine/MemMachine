@@ -22,11 +22,19 @@ know that you are taking ownership of it.
 
 Follow these steps to set up your local development environment:
 
-1. **Clone the Repository:**
+1. **Fork and Clone the Repository:**
+   
+    First, fork the project on GitHub to your own account. Then, clone your forked repository:
 
     ```bash
-    git clone https://github.com/MemMachine/MemMachine.git
+    git clone https://github.com/YOUR_USERNAME/MemMachine.git
     cd MemMachine
+    ```
+
+    Next, add the original repository as an `upstream` remote to keep your fork in sync:
+
+    ```bash
+    git remote add upstream https://github.com/MemMachine/MemMachine.git
     ```
 
 2. **Install the Package:**

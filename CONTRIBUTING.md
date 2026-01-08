@@ -36,9 +36,17 @@ created specific guides for each.
 
 All contributions, regardless of type, should follow this general workflow:
 
-1. **Fork the Repository**: Fork the project on GitHub.
-2. **Create a Branch**: Create a new branch for your changes.
-3. **Make Your Changes**: Follow the instructions in the relevant guide (Core or
+1. **Fork the Repository**: Fork the project on GitHub to your own account.
+2. **Clone Your Fork**: Clone your forked repository to your local machine:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/MemMachine.git
+   cd MemMachine
+   ```
+3. **Create a Branch**: Create a new branch for your changes:
+   ```bash
+   git checkout -b feat/your-feature-name
+   ```
+4. **Make Your Changes**: Follow the instructions in the relevant guide (Core or
    Documentation).
 4. **Sign Your Commits**: All commits must be signed using the `-sS` flags. This
    ensures a verifiable chain of custody for all code. For instructions to
