@@ -132,32 +132,49 @@ jobs:
       # Shared Steps (all OSes)
       # ─────────────────────────────────────
       #
-      - name: Wait for Ollama and Pull Models
+      - name: Wait for Ollama Readiness
+        shell: bash
+        run: |
+          set -eo pipefail
+          # Wait for Ollama to be responsive (up to 120s)
+          count=0
+          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Ollama service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
+          done
+
+          if [ $count -eq 24 ]; then
+            echo "Ollama failed to start within 120 seconds"
+            exit 1
+          fi
+          echo "Ollama is ready!"
+
+      - name: Pull Ollama Models
         uses: nick-fields/retry@v3
         with:
-          max_attempts: 10
+          max_attempts: 5
           retry_wait_seconds: 10
-          timeout_seconds: 120
+          timeout_seconds: 60
           shell: bash
           command: |
             set -eo pipefail
 
-            # Wait for Ollama to be responsive (up to 120s)
-            count=0
-            until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
-              echo "Waiting for Ollama service ($((count * 5))/120s)..."
-              sleep 5
-              count=$((count + 1))
-            done
-
-            if [ $count -eq 24 ]; then
-              echo "Ollama failed to start within 120 seconds"
+            echo "Pulling model qwen3:0.6b..."
+            qwen_response=$(curl -sS http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}')
+            echo "Response for qwen3:0.6b: $qwen_response"
+            if ! echo "$qwen_response" | grep -q '"status":"success"'; then
+              echo "Model pull for qwen3:0.6b did not complete successfully"
               exit 1
             fi
 
-            echo "Ollama is up. Pulling models..."
-            curl -sSf http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}'
-            curl -sSf http://localhost:11434/api/pull -d '{"name": "nomic-embed-text"}'
+            echo "Pulling model nomic-embed-text..."
+            embed_response=$(curl -sS http://localhost:11434/api/pull -d '{"name": "nomic-embed-text"}')
+            echo "Response for nomic-embed-text: $embed_response"
+            if ! echo "$embed_response" | grep -q '"status":"success"'; then
+              echo "Model pull for nomic-embed-text did not complete successfully"
+              exit 1
+            fi
 
       - name: Run memmachine-configure
         shell: bash
@@ -207,13 +224,14 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          SERVER_URL="http://127.0.0.1:8080/api/v2/health"
-          echo "Checking server readiness at $SERVER_URL..."
+          HEALTH_URL="http://127.0.0.1:8080/api/v2/health"
+          READY_URL="http://127.0.0.1:8080/api/v2/projects/list"
+          echo "Checking server liveness at $HEALTH_URL..."
 
-          # Wait up to 300 seconds (5 minutes)
+          # Stage 1: Wait for process liveness (up to 300 seconds)
           count=0
-          until curl -sSf "$SERVER_URL" > /dev/null || [ $count -eq 60 ]; do
-            echo "Waiting for memmachine-server ($((count * 5))/300s)..."
+          until curl -sSf "$HEALTH_URL" > /dev/null || [ $count -eq 60 ]; do
+            echo "Waiting for memmachine-server process ($((count * 5))/300s)..."
             sleep 5
             count=$((count + 1))
           done
@@ -224,9 +242,18 @@ jobs:
             cat server-out.log || echo "Could not read server-out.log"
             exit 1
           fi
+          echo "Server process is alive!"
 
-          echo "Server is ready!"
-          curl -s "$SERVER_URL"
+          # Stage 2: Verify application readiness
+          echo "Verifying application readiness at $READY_URL..."
+          if ! curl -sSf -X POST "$READY_URL" > /dev/null; then
+            echo "Server is alive but application readiness check failed!"
+            echo "===== Server Logs ====="
+            cat server-out.log || echo "Could not read server-out.log"
+            exit 1
+          fi
+
+          echo "Server is fully ready!"
 
       - name: Install uv
         shell: bash
