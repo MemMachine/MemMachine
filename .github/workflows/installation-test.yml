@@ -155,7 +155,7 @@ jobs:
         with:
           max_attempts: 5
           retry_wait_seconds: 10
-          timeout_seconds: 60
+          timeout_seconds: 300
           shell: bash
           command: |
             set -eo pipefail
