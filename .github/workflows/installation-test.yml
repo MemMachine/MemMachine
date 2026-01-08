@@ -10,7 +10,6 @@ concurrency:
   # Don't cancel if running on a push to the main branch.
   cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
 
-
 on:
   push:
     branches: [main]
@@ -69,18 +68,18 @@ jobs:
           docker pull ollama/ollama
           docker run -d --name ollama -p 11434:11434 ollama/ollama
 
-      - name: Linux - Wait for Ollama and pull models
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          set -eo pipefail
-          until curl -s http://localhost:11434/ > /dev/null; do
-            echo "Ollama not up yet, sleeping..."
-            sleep 1
+          # Wait up to 120 seconds
+          count=0
+          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Ollama service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
           done
 
-          curl -sSf http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}' -v
-          curl -sSf http://localhost:11434/api/pull -d '{"name": "nomic-embed-text"}' -v
+          if [ $count -eq 24 ]; then
+            echo "Ollama failed to start within 120 seconds"
+            exit 1
+          fi
 
       - name: Linux - Test installation
         if: matrix.os == 'ubuntu-latest'
@@ -111,16 +110,20 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          set -eo pipefail
           winget install Ollama.Ollama --accept-source-agreements
 
-          until curl -s http://localhost:11434/ > /dev/null; do
-            echo "Ollama not up yet, sleeping..."
-            sleep 1
+          # Wait up to 120 seconds
+          count=0
+          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Ollama service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
           done
 
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"qwen3:0.6b"}'
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"nomic-embed-text"}'
+          if [ $count -eq 24 ]; then
+            echo "Ollama failed to start within 120 seconds"
+            exit 1
+          fi
 
       - name: Windows - Install the package
         if: matrix.os == 'windows-latest'
@@ -139,16 +142,21 @@ jobs:
       - name: macOS - Install Ollama
         if: matrix.os == 'macos-latest'
         run: |
-          set -eo pipefail
           brew install ollama
           brew services start ollama
 
-          until curl -s http://localhost:11434/ > /dev/null; do
-            sleep 1
+          # Wait up to 120 seconds
+          count=0
+          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Ollama service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
           done
 
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"qwen3:0.6b"}'
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"nomic-embed-text"}'
+          if [ $count -eq 24 ]; then
+            echo "Ollama failed to start within 120 seconds"
+            exit 1
+          fi
 
       - name: macOS - Test installation
         if: matrix.os == 'macos-latest'
@@ -163,6 +171,32 @@ jobs:
       # Shared Steps (all OSes)
       # ─────────────────────────────────────
       #
+      - name: Wait for Ollama and Pull Models
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 10
+          retry_wait_seconds: 10
+          timeout_seconds: 120
+          shell: bash
+          command: |
+            set -eo pipefail
+
+            # Wait for Ollama to be responsive (up to 120s)
+            count=0
+            until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
+              echo "Waiting for Ollama service ($((count * 5))/120s)..."
+              sleep 5
+              count=$((count + 1))
+            done
+
+            if [ $count -eq 24 ]; then
+              echo "Ollama failed to start within 120 seconds"
+              exit 1
+            fi
+
+            echo "Ollama is up. Pulling models..."
+            curl -sSf http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}'
+            curl -sSf http://localhost:11434/api/pull -d '{"name": "nomic-embed-text"}'
 
       - name: Run memmachine-configure
         shell: bash
@@ -171,7 +205,7 @@ jobs:
           y
           Ollama
           qwen3:0.6b
-      
+
           http://localhost:11434/v1
           nomic-embed-text
           768
@@ -180,15 +214,24 @@ jobs:
           EOF
 
       - name: Wait for Neo4j to be ready
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 12          # 12 × 5s = 60 seconds
-          retry_wait_seconds: 5
-          timeout_seconds: 5
-          shell: bash
-          command: |
-            echo "Checking Neo4j Bolt port on localhost:7687..."
-            curl -sf http://localhost:7474 || exit 1
+        shell: bash
+        run: |
+          set -eo pipefail
+          echo "Checking Neo4j HTTP port on localhost:7474..."
+
+          # Wait up to 120 seconds
+          count=0
+          until curl -sf http://localhost:7474/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Neo4j service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
+          done
+
+          if [ $count -eq 24 ]; then
+            echo "Neo4j failed to start within 120 seconds"
+            exit 1
+          fi
+          echo "Neo4j is ready!"
 
       - name: Start memmachine-server
         shell: bash
@@ -200,33 +243,29 @@ jobs:
           echo "Server PID: $(cat server.pid)"
 
       - name: Wait for server to be ready
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 30          # 30 × 10s = 5 minutes
-          retry_wait_seconds: 10
-          timeout_seconds: 10
-          shell: bash
-          command: |
-            set -eo pipefail
+        shell: bash
+        run: |
+          set -eo pipefail
+          SERVER_URL="http://127.0.0.1:8080/api/v2/health"
+          echo "Checking server readiness at $SERVER_URL..."
 
-            SERVER_URL="http://127.0.0.1:8080/api/v2/projects/list"
+          # Wait up to 300 seconds (5 minutes)
+          count=0
+          until curl -sSf "$SERVER_URL" > /dev/null || [ $count -eq 60 ]; do
+            echo "Waiting for memmachine-server ($((count * 5))/300s)..."
+            sleep 5
+            count=$((count + 1))
+          done
 
-            echo "Checking server readiness..."
+          if [ $count -eq 60 ]; then
+            echo "memmachine-server failed to start within 5 minutes"
+            echo "===== Server Logs ====="
+            cat server-out.log || echo "Could not read server-out.log"
+            exit 1
+          fi
 
-            http_code=$(curl -X POST -s -o curl_body.tmp -w "%{http_code}" "$SERVER_URL" || true)
-            body=$( [ -f curl_body.tmp ] && cat curl_body.tmp || echo "empty body" )
-            rm -f curl_body.tmp
-
-            if [ "$http_code" != "200" ]; then
-              echo "Server not ready yet (HTTP $http_code)"
-              echo "===== Response Body ====="
-              echo "$body"
-              exit 1   # triggers retry
-            fi
-
-            echo "Server is ready!"
-            echo "===== Server Response ====="
-            echo "$body"
+          echo "Server is ready!"
+          curl -s "$SERVER_URL"
 
       - name: Install uv
         shell: bash
