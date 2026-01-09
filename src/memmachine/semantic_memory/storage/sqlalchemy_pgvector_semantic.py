@@ -25,6 +25,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    union,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -91,7 +92,7 @@ class Feature(BaseSemanticStorage):
     id = mapped_column(Integer, primary_key=True)
 
     # Feature data
-    set_id = mapped_column(String, nullable=False)
+    set_id = mapped_column(String, nullable=False, index=True)
     semantic_category_id = mapped_column(String, nullable=False)
     tag_id = mapped_column(String, nullable=False)
     feature = mapped_column(String, nullable=False)
@@ -158,7 +159,7 @@ class SetIngestedHistory(BaseSemanticStorage):
     """Tracks which history messages have been processed for a set."""
 
     __tablename__ = "set_ingested_history"
-    set_id = mapped_column(String, primary_key=True)
+    set_id = mapped_column(String, primary_key=True, index=True)
     history_id = mapped_column(
         String,
         primary_key=True,
@@ -221,6 +222,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(delete(SetIngestedHistory))
             await session.execute(delete(Feature))
             await session.commit()
+
+    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+        pass
 
     async def add_feature(
         self,
@@ -743,6 +747,20 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             stmt = stmt.where(conditions[0])
         elif len(conditions) > 1:
             stmt = stmt.where(or_(*conditions))
+
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            set_ids = result.scalars().all()
+
+        return TypeAdapter(list[SetIdT]).validate_python(set_ids)
+
+    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+        stmt = union(
+            select(SetIngestedHistory.set_id).where(
+                SetIngestedHistory.set_id.startswith(prefix)
+            ),
+            select(Feature.set_id).where(Feature.set_id.startswith(prefix)),
+        )
 
         async with self._create_session() as session:
             result = await session.execute(stmt)

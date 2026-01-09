@@ -1,9 +1,11 @@
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 from urllib.parse import urlparse
 
 import pytest
 import pytest_asyncio
+from pydantic import JsonValue
 
 from memmachine import MemMachine, setup_nltk
 from memmachine.common.configuration import (
@@ -24,7 +26,6 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.configuration.reranker_conf import RerankersConf
-from memmachine.semantic_memory.semantic_model import SetIdT
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
 
 
@@ -252,8 +253,10 @@ def memmachine_config(
         ),
         semantic_memory=SemanticMemoryConf(
             database=postgres_db,
+            config_database=postgres_db,
             llm_model=language_model_id,
             embedding_model=embedder_id,
+            ingestion_trigger_age=timedelta(milliseconds=10),
         ),
         logging=LogConf(),
         prompt=PromptConf(),
@@ -275,25 +278,27 @@ def session_setup():
 
 @pytest_asyncio.fixture
 async def memmachine(memmachine_top: MemMachine):
+    await memmachine_top.delete_all()
     await memmachine_top.start()
     yield memmachine_top
     await memmachine_top.stop()
+    await memmachine_top.delete_all()
 
 
 @pytest_asyncio.fixture
 async def session_data(memmachine: MemMachine):
     @dataclass
     class _SessionData:
-        user_profile_id: SetIdT | None
-        session_id: SetIdT | None
-        role_profile_id: SetIdT | None
-        session_key: str | None
+        org_id: str
+        project_id: str
+        session_key: str
+        metadata: dict[str, JsonValue] | None = None
 
     s_data = _SessionData(
-        user_profile_id="test_user",
-        session_id="test_session",
         session_key="test_session",
-        role_profile_id=None,
+        org_id="test_org",
+        project_id="test_proj",
+        metadata={},
     )
     semantic_session: SemanticSessionManager = (
         await memmachine._resources.get_semantic_session_manager()
@@ -301,7 +306,7 @@ async def session_data(memmachine: MemMachine):
 
     await asyncio.gather(
         semantic_session.delete_feature_set(session_data=s_data),
-        semantic_session.delete_messages(session_data=s_data),
+        semantic_session.delete_all_project_messages(session_data=s_data),
     )
 
     await memmachine.create_session(s_data.session_key)
@@ -311,5 +316,5 @@ async def session_data(memmachine: MemMachine):
     await asyncio.gather(
         memmachine.delete_session(session_data=s_data),
         semantic_session.delete_feature_set(session_data=s_data),
-        semantic_session.delete_messages(session_data=s_data),
+        semantic_session.delete_all_project_messages(session_data=s_data),
     )

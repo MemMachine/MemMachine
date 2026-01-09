@@ -5,28 +5,27 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from pydantic import JsonValue
 
+from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeEntry, EpisodeStorage
+from memmachine.common.language_model import LanguageModel
 from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
 )
+from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_memory import (
     SemanticService,
 )
 from memmachine.semantic_memory.semantic_model import (
-    ResourceRetriever,
-    Resources,
     SetIdT,
 )
 from memmachine.semantic_memory.semantic_session_manager import (
-    IsolationType,
     SemanticSessionManager,
 )
+from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine.server.prompt.coding_style_prompt import CodingStyleSemanticCategory
 from memmachine.server.prompt.profile_prompt import UserProfileSemanticCategory
-from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
-    SimpleSessionResourceRetriever,
-)
 
 
 @pytest.fixture
@@ -37,12 +36,6 @@ def embedder(openai_embedder):
 @pytest.fixture
 def llm_model(real_llm_model):
     return real_llm_model
-
-
-@pytest_asyncio.fixture
-async def storage(pgvector_semantic_storage):
-    yield pgvector_semantic_storage
-    await pgvector_semantic_storage.delete_all()
 
 
 @pytest.fixture
@@ -61,71 +54,66 @@ def profile_types():
 
 
 @pytest.fixture
-def default_session_resources(
-    llm_model,
-    embedder,
+def default_session_categories(
     session_types,
     profile_types,
 ):
-    return {
-        IsolationType.SESSION: Resources(
-            embedder=embedder,
-            language_model=llm_model,
-            semantic_categories=session_types,
-        ),
-        IsolationType.ROLE: Resources(
-            embedder=embedder,
-            language_model=llm_model,
-            semantic_categories=[],
-        ),
-        IsolationType.USER: Resources(
-            embedder=embedder,
-            language_model=llm_model,
-            semantic_categories=profile_types,
-        ),
+    s_categories = {
+        SemanticSessionManager.DefaultType.OrgSet: session_types,
+        SemanticSessionManager.DefaultType.ProjectSet: profile_types,
+        SemanticSessionManager.DefaultType.OtherSet: [],
     }
 
+    def get_cats(set_id: SetIdT):
+        isolation_type = SemanticSessionManager.get_default_set_id_type(set_id)
+        return s_categories[isolation_type]
 
-@pytest.fixture
-def resource_retriever(
-    default_session_resources: dict[IsolationType, Resources],
-):
-    r = SimpleSessionResourceRetriever(
-        default_resources=default_session_resources,
-    )
-    assert isinstance(r, ResourceRetriever)
-    return r
+    return get_cats
 
 
 @pytest.fixture
 def basic_session_data():
     @dataclass
     class _SessionData:
-        user_profile_id: SetIdT | None
-        session_id: SetIdT | None
-        role_profile_id: SetIdT | None
+        org_id: str
+        project_id: str
+        metadata: dict[str, JsonValue] | None = None
 
     return _SessionData(
-        user_profile_id="test_user",
-        session_id="test_session",
-        role_profile_id=None,
+        org_id="test_org",
+        project_id="test_project",
+        metadata={},
     )
 
 
 @pytest_asyncio.fixture
 async def semantic_service(
-    storage,
     episode_storage: EpisodeStorage,
-    resource_retriever: ResourceRetriever,
+    semantic_storage: SemanticStorage,
+    semantic_config_storage: SemanticConfigStorage,
+    embedder: Embedder,
+    llm_model: LanguageModel,
+    default_session_categories,
 ):
+    class _ResourceManager:
+        async def get_embedder(self, _: str) -> Embedder:
+            return embedder
+
+        async def get_language_model(self, _: str) -> LanguageModel:
+            return llm_model
+
     mem = SemanticService(
         SemanticService.Params(
-            semantic_storage=storage,
+            semantic_storage=semantic_storage,
+            semantic_config_storage=semantic_config_storage,
             episode_storage=episode_storage,
-            resource_retriever=resource_retriever,
             feature_update_interval_sec=0.05,
             uningested_message_limit=0,
             debug_fail_loudly=True,
+            default_embedder=embedder,
+            default_language_model=llm_model,
+            default_category_retriever=default_session_categories,
+            resource_manager=_ResourceManager(),
         ),
     )
     await mem.start()
@@ -136,9 +124,11 @@ async def semantic_service(
 @pytest_asyncio.fixture
 async def semantic_memory(
     semantic_service: SemanticService,
+    semantic_config_storage: SemanticConfigStorage,
 ):
     return SemanticSessionManager(
         semantic_service=semantic_service,
+        semantic_config_storage=semantic_config_storage,
     )
 
 
@@ -164,11 +154,10 @@ class TestLongMemEvalIngestion:
                 )
 
                 assert len(episodes) == 1
-                h_id = episodes[0].uid
 
                 await semantic_memory.add_message(
                     session_data=session_data,
-                    episode_ids=[h_id],
+                    episodes=episodes,
                 )
 
     @staticmethod

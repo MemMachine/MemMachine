@@ -36,6 +36,11 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+        """Reset the set ids for the provided feature sets."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_feature(
         self,
         feature_id: FeatureIdT,
@@ -177,4 +182,9 @@ class SemanticStorage(ABC):
         older_than: datetime | None = None,
     ) -> list[SetIdT]:
         """Return all set id's that match the specified filters."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+        """Return all set id's that start with the specified prefix."""
         raise NotImplementedError
