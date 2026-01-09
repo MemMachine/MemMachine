@@ -25,11 +25,12 @@ pytestmark = pytest.mark.asyncio
 class SpyEmbedder(Embedder):
     """Test double that records calls and produces deterministic embeddings."""
 
-    def __init__(self) -> None:
+    def __init__(self, batch_size: int | None = None) -> None:
+        super().__init__(batch_size=batch_size)
         self.ingest_calls: list[list[str]] = []
         self.search_calls: list[list[str]] = []
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[str],
         max_attempts: int = 1,
@@ -37,7 +38,7 @@ class SpyEmbedder(Embedder):
         self.ingest_calls.append(list(inputs))
         return [self._vector(text) for text in inputs]
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[str],
         max_attempts: int = 1,
