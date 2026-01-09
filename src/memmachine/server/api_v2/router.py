@@ -21,6 +21,7 @@ from memmachine.common.api.spec import (
     GetProjectSpec,
     InvalidNameError,
     ListMemoriesSpec,
+    ListResult,
     ProjectConfig,
     ProjectResponse,
     RestErrorModel,
@@ -284,7 +285,11 @@ async def add_memories(
     return AddMemoriesResponse(results=results)
 
 
-@router.post("/memories/search", description=RouterDoc.SEARCH_MEMORIES)
+@router.post(
+    "/memories/search",
+    description=RouterDoc.SEARCH_MEMORIES,
+    response_model_exclude_none=True,
+)
 async def search_memories(
     spec: SearchMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -303,11 +308,15 @@ async def search_memories(
         raise
 
 
-@router.post("/memories/list", description=RouterDoc.LIST_MEMORIES)
+@router.post(
+    "/memories/list",
+    description=RouterDoc.LIST_MEMORIES,
+    response_model_exclude_none=True,
+)
 async def list_memories(
     spec: ListMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
-) -> SearchResult:
+) -> ListResult:
     """List memories in a project."""
     target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
     return await _list_target_memories(

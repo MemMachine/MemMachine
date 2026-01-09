@@ -230,7 +230,7 @@ async def test_search_memory_failure(mock_search, params, mcp_client):
 @pytest.mark.asyncio
 @patch("memmachine.server.api_v2.mcp._search_target_memories", new_callable=AsyncMock)
 async def test_search_memory_variants(mock_search, params, mcp_client):
-    content = {"ep": "Memory found"}
+    content = {"semantic_memory": [], "episodic_memory": None}
     mock_search.return_value = SearchResult(status=200, content=content)
     result = await mcp_client.call_tool(
         name="search_memory",
