@@ -388,21 +388,21 @@ class DeclarativeMemory:
             for episode_node in episode_nodes
         )
 
-        # Use source episodes as nuclei for contextualization.
         nuclear_episodes = [
             DeclarativeMemory._episode_from_episode_node(source_episode_node)
             for source_episode_node in source_episode_nodes
         ]
 
-        contextualize_episode_tasks = [
-            self._contextualize_episode(
-                nuclear_episode,
-                mangled_property_filter=mangled_property_filter,
-            )
-            for nuclear_episode in nuclear_episodes
-        ]
+        for derivative_node, nuclear_episode in zip(
+            matched_derivative_nodes,
+            nuclear_episodes,
+            strict=True,
+        ):
+            nuclear_episode.content = derivative_node.properties["content"]
 
-        episode_contexts = await asyncio.gather(*contextualize_episode_tasks)
+        episode_contexts = [
+            [nuclear_episode] for nuclear_episode in nuclear_episodes
+        ]
 
         # Rerank episode contexts.
         episode_context_scores = await self._score_episode_contexts(
