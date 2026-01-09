@@ -32,6 +32,20 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
         default=False,
         description="Whether to force exact similarity search",
     )
+    range_index_creation_threshold: int | None = Field(
+        default=None,
+        description=(
+            "Minimum number of entities in a collection or relationship "
+            "required before Neo4j automatically creates a range index."
+        ),
+    )
+    vector_index_creation_threshold: int | None = Field(
+        default=None,
+        description=(
+            "Minimum number of entities in a collection or relationship "
+            "required before Neo4j automatically creates a vector index."
+        ),
+    )
 
     def get_uri(self) -> str:
         if self.uri:
@@ -60,6 +74,21 @@ class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
         ),
     )
     db_name: str | None = Field(default=None, description="DB name")
+    pool_size: int | None = Field(
+        default=None,
+        description=(
+            "Number of persistent connections to maintain in the connection pool. "
+            "If set, the pool will keep up to this many open connections ready for use."
+        ),
+    )
+    max_overflow: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of temporary connections allowed above `pool_size` during "
+            "traffic spikes. These overflow connections are created on demand and "
+            "disposed of when no longer needed."
+        ),
+    )
 
     @property
     def schema_part(self) -> str:
