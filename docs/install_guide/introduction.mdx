@@ -27,15 +27,20 @@ MemMachine offers flexible installation options to meet diverse development need
 </Columns>
 
 - **Integrations:** Find specific configuration and integration details for using MemMachine in popular AI applications and workflows:
-<Columns cols={2}>
+<Columns cols={3}>
 <Card title="Claude Code and MCP" icon="star-of-life" href="/install_guide/integrate/claude_code_mcp">
   **Give Claude Real-Time Recall.** Step-by-step guide to configuring the MemMachine Control Protocol (MCP) as a **Custom Tool**. Instantly provide Claude with access to persistent user profiles and deep conversation context.
 </Card>
 <Card title="OpenAI GPTStore" icon="openai" href="/install_guide/integrate/GPTStore">
   **Persistent Memory for Custom GPTs.** Learn how to set up MemMachine as a **Custom Action** to furnish your GPTs with reliable, long-term memory and accurate user history.
 </Card>
+</Columns>
+<Columns cols={2}>
 <Card title="LangGraph" icon="circle-nodes" href="/install_guide/integrate/LangGraph">
   **Master State and Workflow with LangGraph.** A practical guide to integrating MemMachine into your graph chains for managing **state, complex agent handoffs,** and durable session memory.
+</Card>
+<Card title="Google ADK" icon="google" href="/install_guide/integrate/Google_ADK">
+  **Extend Google GenAI with Long-Term Memory.** A guide to integrating MemMachine as a `BaseMemoryService` for Google ADK. Automatically archive sessions and empower Gemini agents to recall past user interactions through the standard `load_memory` tool.
 </Card>
 <Card title="Dify" icon="puzzle-piece" href="/install_guide/integrate/dify">
   **Build State-of-the-Art LLM Apps with Dify.** A quick-start guide to adding MemMachine as a **Custom Tool Provider** in Dify, enabling your agents with robust long-term memory, conversation history, and user context.

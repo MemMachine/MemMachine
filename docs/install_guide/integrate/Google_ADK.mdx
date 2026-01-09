@@ -1,0 +1,100 @@
+---
+title: "Google ADK"
+description: "Integrate MemMachine as the memory service for Google ADK agents"
+icon: "google"
+---
+
+The MemMachine adapter for the [Google Agent Development Kit (ADK)](https://github.com/google/adk) provides a seamless implementation of the `BaseMemoryService`. This allows your Google GenAI agents to automatically store session events and retrieve relevant context using MemMachine's hybrid episodic and semantic search.
+
+## Overview
+
+By using the `MemmachineMemoryService`, your ADK agents can:
+- **Auto-Archive Sessions:** Automatically move completed ADK session events into MemMachine episodic memory.
+- **Contextual Recall:** Use the standard ADK `load_memory` tool to query past interactions across different sessions.
+- **Scoped Search:** Metadata like `app_name` and `user_id` are automatically preserved to ensure privacy and relevance.
+
+## Configuration
+
+The adapter is configured via constructor arguments when initializing the service.
+
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `api_key` | **Required.** Your MemMachine API Key. | N/A |
+| `endpoint` | The MemMachine v2 REST API URL. | `https://api.memmachine.ai/v2` |
+| `org_id` | Your organization identifier. | `None` |
+| `project_id` | Your project identifier. | `None` |
+
+---
+
+<Steps>
+  <Step title="Install with ADK Extra">
+    To ensure all Google GenAI and ADK dependencies are included, install the client with the `google-adk` extra:
+
+    ```bash
+    pip install "memmachine-client[google-adk]"
+    ```
+  </Step>
+
+  <Step title="Initialize the Memory Service">
+    Create an instance of the `MemmachineMemoryService`. This service acts as the bridge between Google ADK and your memory backend.
+
+    ```python
+    from memmachine.integrations.google_adk.memmachine_memory_service import MemmachineMemoryService
+    
+    memory_service = MemmachineMemoryService(
+        api_key="YOUR_API_KEY",
+        endpoint="http://localhost:8080/api/v2", # Use for self-hosted
+        org_id="my-org",
+        project_id="my-project"
+    )
+    ```
+  </Step>
+
+  <Step title="Equip the Agent">
+    Add the standard `load_memory` tool to your `LlmAgent`. This allows the agent to decide when it needs to "look back" at past conversations to answer a query.
+
+    ```python
+    from google.adk.agents import LlmAgent
+    from google.adk.tools import load_memory
+    
+    agent = LlmAgent(
+        model="gemini-2.0-flash",
+        name="MemoryAgent",
+        instruction="Use the 'load_memory' tool if the answer is in past conversations.",
+        tools=[load_memory]
+    )
+    ```
+  </Step>
+
+  <Step title="Wire the Runner">
+    Connect your agent, session service, and the MemMachine memory service into a `Runner`.
+
+    ```python
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    
+    runner = Runner(
+        agent=agent,
+        app_name="my_adk_app",
+        session_service=InMemorySessionService(),
+        memory_service=memory_service
+    )
+    ```
+  </Step>
+</Steps>
+
+## Memory Lifecycle
+
+### Persistence
+To move a session from active memory into long-term storage (so it can be recalled by other sessions), call `add_session_to_memory` once a conversation is finished:
+
+```python
+# completed_session is a google.adk.sessions.session.Session object
+await memory_service.add_session_to_memory(completed_session)
+```
+
+### Retrieval
+
+When the agent invokes `load_memory`, the adapter automatically filters results based on the `app_name` and `user_id` defined in the Runner, ensuring the agent only recalls information relevant to the current user.
+
+<Note> **Important:** The ADK integration requires **Python 3.10+** and the `google-adk` extra package. If you encounter import errors, verify that you have installed `memmachine-client[google-adk]`. </Note>

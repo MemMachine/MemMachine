@@ -57,6 +57,7 @@
               "install_guide/integrate/claude_code_mcp",
               "install_guide/integrate/GPTStore",
               "install_guide/integrate/LangGraph",
+              "install_guide/integrate/Google_ADK",
               "install_guide/integrate/dify"
             ]
            },
