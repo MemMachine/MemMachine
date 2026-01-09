@@ -14,7 +14,7 @@ from sqlalchemy import (
     insert,
     inspect,
 )
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
 from memmachine.common.session_manager.session_data_manager_sql_impl import (
@@ -23,10 +23,8 @@ from memmachine.common.session_manager.session_data_manager_sql_impl import (
 
 
 @pytest.mark.asyncio
-async def test_migrate_pickle_to_json() -> None:
+async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
     """Test that the database migrates from pickle to JSON correctly."""
-    # Use an in-memory SQLite database
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 
     # Define the old schema (before migration)
     metadata = MetaData()
@@ -42,7 +40,7 @@ async def test_migrate_pickle_to_json() -> None:
     )
 
     # Create the table with the old schema
-    async with engine.begin() as conn:
+    async with sqlalchemy_engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
 
     # Create a dummy EpisodicMemoryConf and pickle it
@@ -52,7 +50,7 @@ async def test_migrate_pickle_to_json() -> None:
     pickled_data = pickle.dumps(param)
 
     # Insert a record with the pickled data
-    async with engine.begin() as conn:
+    async with sqlalchemy_engine.begin() as conn:
         await conn.execute(
             insert(sessions_table).values(
                 session_key=session_key,
@@ -66,7 +64,7 @@ async def test_migrate_pickle_to_json() -> None:
 
     # Initialize the SessionDataManagerSQL
     # This should trigger the migration in create_tables
-    manager = SessionDataManagerSQL(engine)
+    manager = SessionDataManagerSQL(sqlalchemy_engine)
     await manager.create_tables()
 
     # Verify the migration
@@ -85,8 +83,9 @@ async def test_migrate_pickle_to_json() -> None:
             if col["name"] == "param_data":
                 assert "JSON" in str(col["type"]).upper()
 
-    async with engine.connect() as conn:
+    async with sqlalchemy_engine.connect() as conn:
         await conn.run_sync(check_column)
 
+    await manager.drop_tables()
     await manager.close()
-    await engine.dispose()
+    await sqlalchemy_engine.dispose()

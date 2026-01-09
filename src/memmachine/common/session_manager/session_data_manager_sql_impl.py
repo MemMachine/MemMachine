@@ -125,8 +125,7 @@ class SessionDataManagerSQL(SessionDataManager):
         """Migrate param_data from pickle to JSON."""
         schema = self.SessionConfig.__table__.schema
         table_name = f"{schema}.sessions" if schema else "sessions"
-        dialect = self._engine.dialect.name
-        json_type = "JSONB" if dialect == "postgresql" else "JSON"
+        json_type = "JSON"
 
         async with self._engine.begin() as conn:
             await conn.execute(
@@ -156,20 +155,12 @@ class SessionDataManagerSQL(SessionDataManager):
 
                     val = json.dumps(json_data, default=str)
 
-                    if dialect == "postgresql":
-                        await conn.execute(
-                            text(
-                                f"UPDATE {table_name} SET param_data = :val::jsonb WHERE session_key = :key"
-                            ),
-                            {"val": val, "key": session_key},
-                        )
-                    else:
-                        await conn.execute(
-                            text(
-                                f"UPDATE {table_name} SET param_data = :val WHERE session_key = :key"
-                            ),
-                            {"val": val, "key": session_key},
-                        )
+                    await conn.execute(
+                        text(
+                            f"UPDATE {table_name} SET param_data = :val WHERE session_key = :key"
+                        ),
+                        {"val": val, "key": session_key},
+                    )
                 except Exception as exc:
                     raise RuntimeError(
                         f"Error migrating session {session_key}"
