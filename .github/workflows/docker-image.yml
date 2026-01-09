@@ -82,6 +82,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
+          flavor: |
+            # Disable 'latest' tag for CPU image to prevent conflicts with GPU Image
+            # We use manual 'latest' tags for CPU images
+            latest=false
           tags: |
             # For Manual (workflow_dispatch) runs
             type=semver,pattern=v{{version}}-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
@@ -178,6 +182,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
             # For Manual (workflow_dispatch) runs
             type=semver,pattern=v{{version}}-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
