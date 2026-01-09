@@ -1,0 +1,119 @@
+---
+title: "CrewAI"
+description: "Enable persistent, long-term memory for your CrewAI agents"
+icon: "people-group"
+---
+
+For the full source code and advanced implementation details, see the official **[CrewAI Integration](https://github.com/MemMachine/MemMachine/tree/main/integrations/crewai)** in our repository.
+
+## Overview
+
+Integrating MemMachine with [CrewAI](https://crewai.com) empowers your agents with a persistent memory layer. Unlike standard session memory, this integration allows your crews to remember past interactions, learn user preferences, and maintain deep context across multiple tasks and sessions.
+
+## Configuration
+
+The integration is primarily managed through environment variables. You can set these in your `.env` file or export them directly in your shell:
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `MEMORY_BACKEND_URL` | The URL of your MemMachine backend service | `http://localhost:8080` |
+| `CREWAI_ORG_ID` | Your organization identifier | `crewai_org` |
+| `CREWAI_PROJECT_ID` | Your project identifier | `crewai_project` |
+| `CREWAI_USER_ID` | (Optional) Scopes memory to a specific user | `None` |
+| `CREWAI_SESSION_ID`| (Optional) Scopes memory to a specific session| `None` |
+
+---
+
+<Steps>
+  <Step title="Install Dependencies">
+    Install the core CrewAI framework along with the MemMachine client:
+
+    ```bash
+    pip install crewai crewai-tools memmachine-client
+    ```
+  </Step>
+
+  <Step title="Initialize Memory Tools">
+    The `create_memmachine_tools` helper simplifies the setup. This will return a list of tools that agents can use to `add` and `search` their memory.
+
+    ```python
+    from integrations.crewai.tool import create_memmachine_tools
+    
+    # Initialize tools with your project configuration
+    memmachine_tools = create_memmachine_tools(
+        base_url="http://localhost:8080",
+        org_id="my_org",
+        project_id="my_project",
+        user_id="user123",
+    )
+    ```
+  </Step>
+
+  <Step title="Assign Tools to Agents">
+    Pass the `memmachine_tools` list to your CrewAI agents. Agents will use these tools automatically when they need to store a new finding or recall a past preference.
+
+    ```python
+    from crewai import Agent, Task, Crew
+    
+    researcher = Agent(
+        role="Research Specialist",
+        goal="Identify emerging trends and remember key data points",
+        backstory="You are an expert researcher. You prioritize long-term memory to avoid repeating work.",
+        tools=memmachine_tools,
+        verbose=True,
+    )
+    ```
+  </Step>
+
+  <Step title="Execute the Crew">
+    Once the agent is equipped with the memory tools, define your tasks and kickoff the crew.
+
+    ```python
+    task = Task(
+        description="Research the latest 2026 AI trends and store the top 5 findings in memory.",
+        agent=researcher,
+    )
+    
+    crew = Crew(agents=[researcher], tasks=[task])
+    result = crew.kickoff()
+    ```
+  </Step>
+</Steps>
+
+## Advanced Usage
+
+### Shared Team Memory
+If you want multiple agents to share the same knowledge pool, initialize the tools with a `group_id`. This is ideal for collaborative agents where a "Writer" needs to recall information stored by a "Researcher."
+
+```python
+memmachine_tools = create_memmachine_tools(
+    org_id="my_org",
+    project_id="my_project",
+    group_id="research_team", # Agents in this group share memory
+)
+```
+
+### Manual Memory Management
+
+For more granular control, you can use the `MemMachineTools` class directly without the CrewAI agent wrapper.
+
+```python
+from integrations.crewai.tool import MemMachineTools
+
+tools = MemMachineTools(org_id="my_org", project_id="my_project")
+
+# Manually add a specific fact
+tools.add_memory(content="User prefers Python for data science.", role="user")
+
+# Manually query memory
+results = tools.search_memory(query="What is the user's preferred language?")
+print(results["summary"])
+```
+
+<Note> **Pro Tip:** Use clear `user_id` or `session_id` identifiers to prevent "memory bleed" between different users or unrelated tasks. </Note>
+
+## Requirements
+
+- **MemMachine Server:** Must be reachable at the `MEMORY_BACKEND_URL`.
+- **Python:** 3.10 or higher.
+- **Framework:** CrewAI and `crewai-tools`.
