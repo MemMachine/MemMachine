@@ -12,8 +12,8 @@ def test_migration(dry_run=True):
     base_url = "http://localhost:8080"
     my_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(my_dir)
-    chat_history = "../../evaluation/locomo/locomo10.json"
-    chat_type = "locomo"
+    chat_history = "data/conversations-chatgpt-sample.json"
+    chat_type = "openai"
     start_time = 0
     max_messages = 0
     summarize = False

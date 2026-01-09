@@ -1,9 +1,7 @@
 import argparse
 import datetime
-import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 from openai_summary import OpenAISummary
 from process_chat_history import (
@@ -20,29 +18,28 @@ class MigrationHack:
     def __init__(
         self,
         base_url="http://localhost:8080",
-        user_session_file="user_session.json",
-        chat_history_file="data/locomo10.json",
-        chat_type="locomo",
+        chat_history_file="data/conversations-chatgpt-sample.json",
+        chat_type="openai",
+        org_id="",
+        project_id="",
         start_time=0,
         max_messages=0,
         extract_dir="extracted",
         model=None,
         dry_run=False,
     ):
-        self.user_session_file = user_session_file
-        with open(self.user_session_file, "r") as f:
-            self.user_session = json.load(f)
         self.base_url = base_url
         self.client = MemMachineRestClient(
             base_url=self.base_url,
-            session=self.user_session,
             verbose=False,
         )
         self.chat_history_file = chat_history_file
         self.chat_type = chat_type
+        self.org_id = org_id
+        self.project_id = project_id
         self.start_time = start_time
         self.max_messages = max_messages
-        # Extract the base filename from the locomo file path
+        # Extract the base filename from the chat history file path
         self.chat_base_name = os.path.splitext(
             os.path.basename(self.chat_history_file),
         )[0]
@@ -146,7 +143,7 @@ class MigrationHack:
             else:
                 self.summaries[conv_id] = []
                 for i in range(0, len(messages), summarize_every):
-                    batch = messages[i : i + summarize_every]
+                    batch = messages[i: i + summarize_every]
                     batch_text = "\n".join(batch)
                     summary = ""
                     try:
@@ -179,12 +176,14 @@ class MigrationHack:
             leave=True,
         )
         for message in msg_pbar:
-            # TODO: insert messages into episodic memory
             if not self.dry_run:
-                self.client.post_episodic_memory(
-                    message,
-                    session_id=f"conversation_{conv_id}",
+                self.client.add_memory(
+                    org_id=self.org_id,
+                    project_id=self.project_id,
+                    messages=[message],
                 )
+            else:
+                print(f"Dry run: would add memory {message} to {self.org_id}/{self.project_id}")
 
         msg_pbar.close()
         return conv_id, len(messages)
@@ -284,6 +283,12 @@ def get_args():
         default=20,
         help="Summarize every n messages",
     )
+    parser.add_argument(
+        "--dry_run",
+        default=False,
+        action="store_true",
+        help="Dry run",
+    )
     args = parser.parse_args()
     return args
 
@@ -294,6 +299,7 @@ if __name__ == "__main__":
     chat_history = args.chat_history
     chat_type = args.chat_type
     start_time = args.start_time
+    dry_run = args.dry_run
     try:
         start_time = int(start_time)
     except Exception:
@@ -307,11 +313,11 @@ if __name__ == "__main__":
     summarize_every = args.summarize_every
     migration_hack = MigrationHack(
         base_url=base_url,
-        user_session_file="user_session.json",
         chat_history_file=chat_history,
         chat_type=chat_type,
         start_time=start_time,
         max_messages=max_messages,
+        dry_run=dry_run,
     )
 
     migration_hack.migrate(summarize=summarize, summarize_every=summarize_every)
