@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
@@ -247,10 +248,20 @@ class DeclarativeMemory:
                         ),
                     ]
 
+                partitions = {
+                    partition
+                    for line in episode.content.strip().splitlines()
+                    for partition in sent_tokenize(line.strip())
+                }
+
                 sentences = {
                     sentence
-                    for line in episode.content.strip().splitlines()
-                    for sentence in sent_tokenize(line.strip())
+                    for partition in partitions
+                    for sentence in re.findall(
+                        r".*?(?:[?!\.\uff1f\uff01\u3002]*[?!\uff1f\uff01\u3002][?!\.\uff1f\uff01\u3002]*)+|.+$",
+                        partition,
+                    )
+                    if sentence
                 }
 
                 return [
