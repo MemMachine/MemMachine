@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
         python-version: ["3.12"]
 
     steps:
@@ -114,13 +114,13 @@ jobs:
       # ─────────────────────────────────────
       #
       - name: macOS - Install Ollama
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' || matrix.os == 'macos-15-intel'
         run: |
           brew install ollama
           brew services start ollama
 
       - name: macOS - Test installation
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' || matrix.os == 'macos-15-intel'
         shell: bash
         run: |
           set -eo pipefail
