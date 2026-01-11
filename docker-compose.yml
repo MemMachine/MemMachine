@@ -103,6 +103,8 @@ services:
       start_period: 60s
     networks:
       - memmachine-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres_data:
