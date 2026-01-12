@@ -68,8 +68,8 @@ class MemmachineHelperBase:
         if not self.rest_variation:
             raise AssertionError(f"ERROR: cannot parse variation from data={data}")
 
-    def edwin_timestamp_format(self, timestamp_str):
-        """timestamp format that Edwin used
+    def locomo_timestamp_format(self, timestamp_str):
+        """timestamp format that is in locomo10.json dataset
         when running the mem0 evaluation of locomo benchmark.
         We use this to replicate Edwin's benchmark scores
         """
@@ -242,7 +242,7 @@ class MemmachineHelperBase:
                 ts = metadata["source_timestamp"]
             else:
                 ts = episode["timestamp"]
-            ts = self.edwin_timestamp_format(ts)
+            ts = self.locomo_timestamp_format(ts)
             if "source_speaker" in metadata:
                 user = metadata["source_speaker"]
             else:
@@ -276,7 +276,7 @@ class MemmachineHelperBase:
                 ts = metadata["source_timestamp"]
             else:
                 ts = episode["timestamp"]
-            ts = self.edwin_timestamp_format(ts)
+            ts = self.locomo_timestamp_format(ts)
             if "source_speaker" in metadata:
                 user = metadata["source_speaker"]
             else:
@@ -373,7 +373,7 @@ class MemmachineHelperBase:
                 ts = metadata["source_timestamp"]
             else:
                 ts = episode["created_at"]
-            ts = self.edwin_timestamp_format(ts)
+            ts = self.locomo_timestamp_format(ts)
             if "source_speaker" in metadata:
                 user = metadata["source_speaker"]
             else:
@@ -406,7 +406,7 @@ class MemmachineHelperBase:
                 ts = metadata["source_timestamp"]
             else:
                 ts = episode["created_at"]
-            ts = self.edwin_timestamp_format(ts)
+            ts = self.locomo_timestamp_format(ts)
             if "source_speaker" in metadata:
                 user = metadata["source_speaker"]
             else:
