@@ -72,7 +72,6 @@ def process_conversation(idx, item, args, mmai):
                 # content = text + blip caption
                 content = message["text"] + caption_str
 
-                # edwin_content = f'[{msg_ts_str}] {producer}: {content}'
                 metadata = {
                     "locomo_session_id": session_id,
                     "source_timestamp": msg_ts_str,
@@ -112,7 +111,6 @@ def process_conversation(idx, item, args, mmai):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", required=True, help="Path to the data file")
-    # TOM1
     parser.add_argument(
         "--conv-start", type=int, default=1, help="start at this conversation"
     )
@@ -133,7 +131,6 @@ def main():
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    # TOM1
     mmai = MemmachineHelper.factory("restapiv2")
     health = mmai.get_health()
     print("mmai health:")
@@ -146,6 +143,7 @@ def main():
 
     print(f"batch_size={args.batch_size}")
     for idx, item in enumerate(locomo_data):
+        # loop through conversations
         conv_num = idx + 1
         if conv_num >= args.conv_start and conv_num <= args.conv_stop:
             process_conversation(idx, item, args, mmai)
@@ -161,20 +159,22 @@ def main():
     metrics_filename = f"ingest_metrics_delta_{os.getpid()}.json"
     with open(metrics_filename, "w") as fp:
         json.dump(new_delta, fp, indent=4)
-    print(f"metrics_filename={metrics_filename}")
     i_tokens = 0
     o_tokens = 0
     e_tokens = 0
+    rerank_queries = 0
     if "language_model_openai_usage_input_tokens_total" in metrics_delta:
         i_tokens = int(metrics_delta["language_model_openai_usage_input_tokens_total"])
     if "language_model_openai_usage_output_tokens_total" in metrics_delta:
         o_tokens = int(metrics_delta["language_model_openai_usage_output_tokens_total"])
     if "embedder_openai_usage_prompt_tokens_total" in metrics_delta:
         e_tokens = int(metrics_delta["embedder_openai_usage_prompt_tokens_total"])
+    if "amazon_bedrock_reranker_score_calls_total" in metrics_delta:
+        rerank_queries = int(metrics_delta["amazon_bedrock_reranker_score_calls_total"])
     tokens_str = (
         f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
     )
-    print(f"save: memmachine {tokens_str}")
+    print(f"save: memmachine {tokens_str} rerank_queries={rerank_queries}")
     vm_before = 0.0
     vm_after = 0.0
     rss_before = 0.0
@@ -200,6 +200,7 @@ def main():
     mem_str += "RSS_after "
     mem_str += "%8.4f GiB " % rss_after
     print(f"save: memmachine memory {mem_str}")
+    print(f"metrics_filename={metrics_filename}")
 
 
 if __name__ == "__main__":

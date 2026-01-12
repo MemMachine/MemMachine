@@ -2,7 +2,6 @@
 import argparse
 import json
 import os
-import re
 import sys
 import time
 import traceback
@@ -11,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import openai
 from dotenv import load_dotenv
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 from tqdm import tqdm
 
 if True:
@@ -26,27 +24,6 @@ if True:
 
 language = "english"
 stop_words = stopwords.words(language)
-
-
-def default_tokenize(text: str) -> list[str]:
-    """
-    Preprocess the input text
-    by removing non-alphanumeric characters,
-    converting to lowercase,
-    word-tokenizing,
-    and removing stop words.
-
-    Args:
-        text (str): The input text to preprocess.
-
-    Returns:
-        list[str]: A list of tokens for use in BM25 scoring.
-    """
-    alphanumeric_text = re.sub(r"\W+", " ", text)
-    lower_text = alphanumeric_text.lower()
-    words = word_tokenize(lower_text, language)
-    tokens = [word for word in words if word and word not in stop_words]
-    return tokens
 
 
 ANSWER_PROMPT = """
@@ -84,7 +61,6 @@ def process_question(
     conv_num,
     q_num,
 ):
-    # TOM1
     result = {
         "question": "",
         "locomo_answer": "",
@@ -139,7 +115,7 @@ def process_question(
             input=[{"role": "user", "content": prompt}],
         )
         llm_end = time.time()
-        # TOM1 get token usage
+        # get token usage
         run_usage = {}
         try:
             usage = rsp.usage
@@ -147,6 +123,9 @@ def process_question(
                 "input_tokens": usage.input_tokens,
                 "output_tokens": usage.output_tokens,
                 "total_tokens": usage.total_tokens,
+                "ctx_usage": ctx_usage,
+                "memory_secs": memory_end - memory_start,
+                "chat_secs": llm_end - llm_start,
             }
         except Exception:
             pass
@@ -157,17 +136,17 @@ def process_question(
 
     rsp_text = rsp.output_text
 
-    print(
-        f"conv={conv_num} question={q_num} category={category}\n"
-        f"Question: {question}\n"
-        f"Answer: {answer}\n"
-        f"Response: {rsp_text}\n"
-        f"Ctx usage: {ctx_usage}\n"
-        f"Memory retrieval time: {memory_end - memory_start:.2f} seconds\n"
-        f"LLM response time: {llm_end - llm_start:.2f} seconds\n"
-        f"run_usage: {run_usage}\n\n"
-    )
-    # TOM1 too much to print f"MEMORIES START\n{formatted_context}MEMORIES END\n"
+    # print(
+    #     f"conv={conv_num} question={q_num} category={category}\n"
+    #     f"Question: {question}\n"
+    #     f"Answer: {answer}\n"
+    #     f"Response: {rsp_text}\n"
+    #     f"Ctx usage: {ctx_usage}\n"
+    #     f"Memory retrieval time: {memory_end - memory_start:.2f} seconds\n"
+    #     f"LLM response time: {llm_end - llm_start:.2f} seconds\n"
+    #     f"run_usage: {run_usage}\n\n"
+    # )
+    # too much to print f"MEMORIES START\n{formatted_context}MEMORIES END\n"
     result = {
         "question": question,
         "locomo_answer": answer,
@@ -189,7 +168,6 @@ def main():
     parser.add_argument(
         "--target-path", required=True, help="Path to the target data file"
     )
-    # TOM1
     parser.add_argument(
         "--conv-start", type=int, default=1, help="start at this conversation"
     )
@@ -211,7 +189,6 @@ def main():
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    # TOM1
     openai_eval_chat_client = openai.OpenAI(
         api_key=openai_api_key,
         base_url=openai_api_base,
@@ -229,7 +206,7 @@ def main():
     print(f"top_k={args.top_k} max_workers={args.max_workers}")
     results = {}
     for idx, item in enumerate(locomo_data):
-        # TOM1
+        # loop through conversations
         conv_num = idx + 1
         if conv_num < args.conv_start or conv_num > args.conv_stop:
             continue
@@ -237,9 +214,8 @@ def main():
         if "conversation" not in item:
             continue
 
-        qa_list = item["qa"]
-
         print(f"Processing questions for group {idx}...")
+        qa_list = item["qa"]
 
         def respond_question(qa, conv_num, q_num):
             question = qa["question"]
@@ -271,10 +247,10 @@ def main():
 
         responses = []
         with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-            # submit tasks
+            # submit tasks for all questions
             futures = []
             for q_idx, qa in enumerate(qa_list):
-                # TOM1 only do category 1 to 4, skip cat5 adversarial
+                # only do category 1 to 4, skip cat5 adversarial
                 try:
                     category = int(qa["category"])
                     if category < 1 or category > 4:
@@ -295,12 +271,12 @@ def main():
                 results[category] = []
             results[category].append(response)
 
-    # TOM1 workaround intermittent crash
+    # workaround intermittent crash
     # TypeError: Object of type set is not JSON serializable
     clean_results = {}
     categories = list(results.keys())
     categories = sorted(categories)
-    print(f"save:TOM1: validate results categories={categories}")
+    print(f"save: validate results categories={categories}")
     num_items = 0
     num_errors = 0
     total_i_tokens = 0
@@ -324,7 +300,7 @@ def main():
                         total_i_tokens += i_tokens
                         total_o_tokens += o_tokens
             except Exception as ex:
-                print(f"save:ERROR: json dump failed result={result_item} ex={ex}")
+                print(f"save: ERROR: json dump failed result={result_item} ex={ex}")
                 cat_num_errors += 1
             cat_num_items += 1
         num_items += cat_num_items
@@ -352,20 +328,22 @@ def main():
     metrics_filename = f"search_metrics_delta_{os.getpid()}.json"
     with open(metrics_filename, "w") as fp:
         json.dump(new_delta, fp, indent=4)
-    print(f"metrics_filename={metrics_filename}")
     i_tokens = 0
     o_tokens = 0
     e_tokens = 0
+    rerank_queries = 0
     if "language_model_openai_usage_input_tokens_total" in metrics_delta:
         i_tokens = int(metrics_delta["language_model_openai_usage_input_tokens_total"])
     if "language_model_openai_usage_output_tokens_total" in metrics_delta:
         o_tokens = int(metrics_delta["language_model_openai_usage_output_tokens_total"])
     if "embedder_openai_usage_prompt_tokens_total" in metrics_delta:
         e_tokens = int(metrics_delta["embedder_openai_usage_prompt_tokens_total"])
+    if "amazon_bedrock_reranker_score_calls_total" in metrics_delta:
+        rerank_queries = int(metrics_delta["amazon_bedrock_reranker_score_calls_total"])
     tokens_str = (
         f"chat i_tokens={i_tokens} o_tokens={o_tokens} embedder tokens={e_tokens}"
     )
-    print(f"save: memmachine {tokens_str}")
+    print(f"save: memmachine {tokens_str} rerank_queries={rerank_queries}")
     vm_before = 0.0
     vm_after = 0.0
     rss_before = 0.0
@@ -391,11 +369,12 @@ def main():
     mem_str += "RSS_after "
     mem_str += "%8.4f GiB " % rss_after
     print(f"save: memmachine memory {mem_str}")
+    print(f"metrics_filename={metrics_filename}")
 
 
 if __name__ == "__main__":
     load_dotenv()
-    # TOM1
+    # get test params from env
     openai_api_key = os.getenv("OPENAI_API_KEY", "none")
     openai_api_base = os.getenv("OPENAI_API_BASE", None)
     openai_base_url = os.getenv("OPENAI_BASE_URL", None)
