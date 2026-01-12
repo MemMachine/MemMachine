@@ -22,7 +22,6 @@ from agents import (
     trace,
 )
 from dotenv import load_dotenv
-from nltk.corpus import stopwords
 from tqdm.asyncio import tqdm_asyncio
 
 if True:
@@ -33,10 +32,6 @@ if True:
     sys.path.insert(1, utils_dir)
     sys.path.insert(1, top_dir)
     from memmachine_helper import MemmachineHelper
-
-
-language = "english"
-stop_words = stopwords.words(language)
 
 
 def convert_for_json(obj):
@@ -383,14 +378,6 @@ async def process_question(mmai_ctx):
 
         result_response = results.get("response")
         run_usage = results.get("run_usage", {})
-        # print(
-        #     f"conv={conv_num} question={q_num} category={category}\n"
-        #     f"Question: {question}\n"
-        #     f"Answer: {answer}\n"
-        #     f"Response: {result_response}\n"
-        #     f"Agent time: {agent_end - agent_start:.2f} seconds\n"
-        #     f"run_usage: {run_usage}\n\n"
-        # )
         count_token_usage(stat)
         stat["agent_requests"] = run_usage.get("requests", 0)
         stat["agent_i_tokens"] = run_usage.get("input_tokens", 0)
