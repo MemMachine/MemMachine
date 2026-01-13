@@ -97,11 +97,12 @@ async def test_can_not_change_embedder(
 async def test_add_new_category_to_set_id_config(
     semantic_service: SemanticService,
 ):
-    description = "Try to identify interests the user may have."
+    prompt = "Try to identify interests the user may have."
     c_id = await semantic_service.add_new_category_to_set_id(
         set_id="user-123",
         category_name="interests",
-        description=description,
+        prompt=prompt,
+        description="Prompt to extract user interests",
     )
     assert c_id is not None
 
@@ -111,7 +112,15 @@ async def test_add_new_category_to_set_id_config(
 
     assert conf.categories[0].name == "interests"
     assert conf.categories[0].id == c_id
-    assert description in conf.categories[0].prompt.update_prompt
+    assert prompt in conf.categories[0].prompt.update_prompt
+
+    category = await semantic_service.get_category(category_id=c_id)
+
+    assert category is not None
+    assert category.id == c_id
+    assert category.name == "interests"
+    assert category.description == "Prompt to extract user interests"
+    assert category.prompt == prompt
 
 
 async def test_add_tags_to_category(
@@ -121,7 +130,8 @@ async def test_add_tags_to_category(
     c_id = await semantic_service.add_new_category_to_set_id(
         set_id="user-123",
         category_name="interests",
-        description=description,
+        prompt=description,
+        description="",
     )
 
     tag_a_name = "Music"

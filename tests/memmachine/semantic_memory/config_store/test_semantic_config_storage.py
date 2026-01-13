@@ -57,7 +57,7 @@ async def test_upsert_and_category_retrieval(
     category_id = await semantic_config_storage.create_category(
         set_id=set_id,
         category_name="interests",
-        description="What the user cares about",
+        prompt="What the user cares about",
     )
     await semantic_config_storage.add_tag(
         category_id=category_id,
@@ -93,6 +93,38 @@ async def test_upsert_and_category_retrieval(
 
 
 @pytest.mark.asyncio
+async def test_add_and_get_category(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    set_id = "set-c"
+    category_id = await semantic_config_storage.create_category(
+        set_id=set_id,
+        category_name="behavior",
+        prompt="User behavior",
+        description="Description of user behavior",
+    )
+
+    category = await semantic_config_storage.get_category(category_id=category_id)
+
+    assert category is not None
+    assert category.id == category_id
+    assert category.name == "behavior"
+    assert category.prompt == "User behavior"
+    assert category.description == "Description of user behavior"
+
+
+@pytest.mark.asyncio
+async def test_get_non_existent_category(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    category = await semantic_config_storage.get_category(category_id="non-existent")
+    assert category is None
+
+    category = await semantic_config_storage.get_category(category_id="523")
+    assert category is None
+
+
+@pytest.mark.asyncio
 async def test_remove_category_from_setid(
     semantic_config_storage: SemanticConfigStorage,
 ):
@@ -100,7 +132,7 @@ async def test_remove_category_from_setid(
     category_id = await semantic_config_storage.create_category(
         set_id=set_id,
         category_name="behavior",
-        description="User behavior",
+        prompt="User behavior",
     )
 
     with_category = await semantic_config_storage.get_setid_config(set_id=set_id)
@@ -110,6 +142,37 @@ async def test_remove_category_from_setid(
 
     without_category = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert without_category.categories == []
+
+    category = await semantic_config_storage.get_category(category_id=category_id)
+    assert category is None
+
+
+@pytest.mark.asyncio
+async def test_remove_category_deletes_tags(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    set_id = "set-c"
+    category_id = await semantic_config_storage.create_category(
+        set_id=set_id,
+        category_name="behavior",
+        prompt="User behavior",
+    )
+
+    category = await semantic_config_storage.get_category(category_id=category_id)
+    assert category is not None
+
+    tag_id = await semantic_config_storage.add_tag(
+        category_id=category_id,
+        tag_name="old-tag",
+        description="Old description",
+    )
+    tag = await semantic_config_storage.get_tag(tag_id=tag_id)
+    assert tag is not None
+
+    await semantic_config_storage.delete_category(category_id=category_id)
+
+    tag = await semantic_config_storage.get_tag(tag_id=tag_id)
+    assert tag is None
 
 
 @pytest.mark.asyncio
@@ -121,7 +184,7 @@ async def test_update_and_delete_tags(
 
     category_id = await semantic_config_storage.create_category(
         category_name="profile",
-        description="Profile details",
+        prompt="Profile details",
         set_id=set_id,
     )
 
@@ -160,7 +223,7 @@ async def test_clone_category_copies_tags(
 
     original_category_id = await semantic_config_storage.create_category(
         category_name="interests",
-        description="What the user cares about",
+        prompt="What the user cares about",
         set_id=set_id,
     )
 
@@ -206,14 +269,14 @@ async def test_add_category_to_setid_rejects_duplicate_names(
 
     await semantic_config_storage.create_category(
         category_name="interests",
-        description="First interests description",
+        prompt="First interests description",
         set_id=set_id,
     )
 
     with pytest.raises(IntegrityError):
         await semantic_config_storage.create_category(
             category_name="interests",
-            description="Conflicting interests description",
+            prompt="Conflicting interests description",
             set_id=set_id,
         )
 
@@ -227,7 +290,7 @@ async def test_delete_category_removes_tags_and_association(
 
     category_id = await semantic_config_storage.create_category(
         category_name="interests",
-        description="What the user cares about",
+        prompt="What the user cares about",
         set_id=set_id,
     )
     await semantic_config_storage.add_tag(

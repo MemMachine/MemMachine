@@ -28,7 +28,7 @@ class SemanticConfigStorage(Protocol):
         llm_name: str | None = None,
     ) -> None: ...
 
-    @dataclass
+    @dataclass(frozen=True)
     class Config:
         """Configuration values tied to a specific set identifier."""
 
@@ -43,12 +43,28 @@ class SemanticConfigStorage(Protocol):
         set_id: SetIdT,
     ) -> Config: ...
 
+    @dataclass(frozen=True)
+    class Category:
+        """Represents a semantic category as stored in the database."""
+
+        id: CategoryIdT
+        name: str
+        prompt: str
+        description: str | None
+
+    async def get_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> Category | None: ...
+
     async def create_category(
         self,
         *,
         set_id: SetIdT,
         category_name: str,
-        description: str,
+        prompt: str,
+        description: str | None = None,
     ) -> CategoryIdT: ...
 
     async def clone_category(
@@ -77,6 +93,20 @@ class SemanticConfigStorage(Protocol):
         set_id: SetIdT,
         category_name: str,
     ) -> None: ...
+
+    @dataclass(frozen=True)
+    class Tag:
+        """Represents a tag associated with a category as represented in the database."""
+
+        id: str
+        name: str
+        description: str
+
+    async def get_tag(
+        self,
+        *,
+        tag_id: str,
+    ) -> Tag | None: ...
 
     async def add_tag(
         self,

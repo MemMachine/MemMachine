@@ -1,5 +1,7 @@
 """SQLAlchemy-backed implementation of the semantic config storage."""
 
+import logging
+
 from sqlalchemy import (
     ForeignKey,
     Integer,
@@ -23,6 +25,7 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.sql.sqltypes import Boolean, String
 
+from memmachine.common.errors import ResourceNotFoundError
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
@@ -32,6 +35,8 @@ from memmachine.semantic_memory.semantic_model import (
     StructuredSemanticPrompt,
     TagIdT,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class BaseSemanticConfigStore(DeclarativeBase):
@@ -44,6 +49,9 @@ class SetIdResources(BaseSemanticConfigStore):
     __tablename__ = "semantic.config.setidresources"
 
     set_id = mapped_column(String, primary_key=True, nullable=False)
+    set_name = mapped_column(String, nullable=True)
+    set_description = mapped_column(String, nullable=True)
+
     embedder_name = mapped_column(String, nullable=True)
     language_model_name = mapped_column(String, nullable=True)
 
@@ -78,7 +86,8 @@ class Category(BaseSemanticConfigStore):
     id = mapped_column(Integer, primary_key=True, nullable=False)
     set_id = mapped_column(String, nullable=False, index=True)
     name = mapped_column(String, nullable=False)
-    prompt_description = mapped_column(String, nullable=False)
+    prompt = mapped_column(String, nullable=False)
+    description = mapped_column(String, nullable=True)
 
     tags: Mapped[list["Tag"]] = relationship(
         "Tag",
@@ -94,7 +103,7 @@ class Category(BaseSemanticConfigStore):
             id=CategoryIdT(self.id),
             name=self.name,
             prompt=StructuredSemanticPrompt(
-                description=self.prompt_description,
+                description=self.prompt,
                 tags=tags,
             ),
         )
@@ -258,19 +267,48 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             disabled_categories=disabled_categories,
         )
 
+    async def get_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> SemanticConfigStorage.Category | None:
+        try:
+            category_id_int = int(category_id)
+        except (TypeError, ValueError):
+            logger.exception("Error parsing category ID")
+            return None
+
+        stmt = select(Category).where(Category.id == category_id_int)
+
+        async with self._create_session() as session:
+            res = await session.execute(stmt)
+            category = res.scalar_one_or_none()
+
+        if category is None:
+            return None
+
+        return SemanticConfigStorage.Category(
+            id=CategoryIdT(category.id),
+            name=category.name,
+            prompt=category.prompt,
+            description=category.description,
+        )
+
     async def create_category(
         self,
         *,
         set_id: SetIdT,
         category_name: str,
-        description: str,
+        prompt: str,
+        description: str | None = None,
     ) -> CategoryIdT:
         stmt = (
             insert(Category)
             .values(
                 name=category_name,
-                prompt_description=description,
+                prompt=prompt,
                 set_id=set_id,
+                description=description,
             )
             .returning(Category.id)
         )
@@ -300,7 +338,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
             cloned_category = Category(
                 name=new_name,
-                prompt_description=category.prompt_description,
+                prompt=category.prompt,
+                description=category.description,
                 set_id=category.set_id,
             )
             session.add(cloned_category)
@@ -376,6 +415,32 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             await session.execute(stmt)
             await session.commit()
 
+    async def get_tag(
+        self,
+        *,
+        tag_id: str,
+    ) -> Tag | None:
+        try:
+            tag_id_int = int(tag_id)
+        except (TypeError, ValueError):
+            logger.exception("Error parsing tag ID")
+            return None
+
+        stmt = select(Tag).where(Tag.id == tag_id_int)
+
+        async with self._create_session() as session:
+            res = await session.execute(stmt)
+            tag = res.scalar_one_or_none()
+
+        if tag is None:
+            return None
+
+        return Tag(
+            id=tag_id_int,
+            name=tag.name,
+            description=tag.description,
+        )
+
     async def add_tag(
         self,
         *,
@@ -383,7 +448,10 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         tag_name: str,
         description: str,
     ) -> TagIdT:
-        category_id_int = int(category_id)
+        try:
+            category_id_int = int(category_id)
+        except (TypeError, ValueError) as e:
+            raise ResourceNotFoundError(f"Invalid feature ID: {category_id}") from e
 
         tag_stmt = (
             insert(Tag)

@@ -9,6 +9,7 @@ import pytest_asyncio
 from pydantic import JsonValue
 
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeStorage
+from memmachine.common.errors import InvalidSetIdConfigurationError
 from memmachine.common.filter.filter_parser import parse_filter
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_memory import SemanticService
@@ -23,14 +24,15 @@ from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import 
 pytestmark = pytest.mark.asyncio
 
 
+@dataclass
+class _SessionData:
+    org_id: str
+    project_id: str
+    metadata: dict[str, JsonValue] | None = None
+
+
 @pytest.fixture
 def session_data():
-    @dataclass
-    class _SessionData:
-        org_id: str
-        project_id: str
-        metadata: dict[str, JsonValue] | None = None
-
     return _SessionData(
         org_id="test_org",
         project_id="test_proj",
@@ -167,47 +169,38 @@ async def test_search_returns_relevant_features(
     assert matches[0].set_id in {profile_id, session_id}
 
 
-async def test_add_feature_applies_requested_isolation(
+async def test_add_feature_isolation(
     session_manager: SemanticSessionManager,
     semantic_storage: SemanticStorage,
     spy_embedder: SpyEmbedder,
-    session_data,
 ):
-    # Given a profile-scoped feature request
+    set_id_a = "set_id_a"
+    set_id_b = "set_id_b"
+
+    # Given an add feature to set_id_a
     feature_id = await session_manager.add_feature(
-        session_data=session_data,
+        set_id=set_id_a,
         category_name="Profile",
         feature="tone",
         value="Alpha casual",
         tag="writing_style",
-        set_metadata_keys=[],
     )
 
     # When retrieving features for each set id
-    org_set_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
+    a_features = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(f"set_id IN ('{set_id_a}')")
     )
-    project_set_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
-
-    org_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{org_set_id}')")
-    )
-    project_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{project_set_id}')")
+    b_features = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(f"set_id IN ('{set_id_b}')")
     )
 
     # Then only the profile receives the new feature and embeddings were generated
-    assert len(org_features) == 0
-    assert len(project_features) == 1
+    assert len(a_features) == 1
+    assert len(b_features) == 0
 
-    assert feature_id == project_features[0].metadata.id
-    assert project_features[0].feature_name == "tone"
-    assert project_features[0].value == "Alpha casual"
+    assert feature_id == a_features[0].metadata.id
+    assert a_features[0].feature_name == "tone"
+    assert a_features[0].value == "Alpha casual"
 
     assert spy_embedder.ingest_calls == [["Alpha casual"]]
 
@@ -405,29 +398,23 @@ async def test_number_of_uningested_messages_delegates(
 async def test_add_feature_translates_to_single_set(
     mock_session_manager: SemanticSessionManager,
     mock_semantic_service: MagicMock,
-    session_data,
 ):
+    set_id = "test_set_id"
+
     feature_id = await mock_session_manager.add_feature(
-        session_data=session_data,
+        set_id=set_id,
         category_name="Profile",
         feature="tone",
         value="Alpha calm",
         tag="writing_style",
         feature_metadata={"source": "test"},
         citations=["1", "2"],
-        set_metadata_keys=[],
-    )
-
-    project_set_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
     )
 
     mock_semantic_service.add_new_feature.assert_awaited_once()
     _, kwargs = mock_semantic_service.add_new_feature.await_args
     assert kwargs == {
-        "set_id": project_set_id,
+        "set_id": set_id,
         "category_name": "Profile",
         "feature": "tone",
         "value": "Alpha calm",
@@ -494,3 +481,89 @@ async def test_get_set_features_wraps_opts(
     assert kwargs["page_size"] == 7
     assert kwargs["with_citations"] is True
     assert result == ["features"]
+
+
+async def test_list_set_ids(
+    session_manager: SemanticSessionManager,
+    session_data,
+):
+    # Default org has 2 ids. Org level and project level set.
+    set_ids = await session_manager.list_set_ids(session_data=session_data)
+    assert len(set_ids) == 2
+
+    expanded_session = _SessionData(
+        org_id="test_org",
+        project_id="test_proj",
+        metadata={
+            "user_id": "test_user",
+        },
+    )
+
+    # Add user level isolation
+    await session_manager.create_org_set_type(
+        session_data=session_data,
+        is_org_level=True,
+        metadata_tags=["user_id"],
+    )
+
+    # Since session contains user_id it should apear on the list
+    set_ids = await session_manager.list_set_ids(session_data=expanded_session)
+    assert len(set_ids) == 3
+
+    # While if we create an isolation level that isn't covered by session_data it won't be included.
+    await session_manager.create_org_set_type(
+        session_data=session_data,
+        is_org_level=True,
+        metadata_tags=["other_id"],
+    )
+    set_ids = await session_manager.list_set_ids(session_data=expanded_session)
+    assert len(set_ids) == 3
+
+
+async def test_configure_set(
+    session_manager: SemanticSessionManager,
+):
+    set_id = "test_set"
+
+    await session_manager.configure_set(
+        set_id=set_id,
+        llm_name="test_llm",
+        embedder_name="test_embedder",
+    )
+
+    config = await session_manager.get_set_id_config(set_id=set_id)
+
+    assert config.llm_name == "test_llm"
+    assert config.embedder_name == "test_embedder"
+
+
+async def test_invalid_embedder_change_with_dirty_set(
+    session_manager: SemanticSessionManager,
+):
+    set_id = "test_set"
+    await session_manager.configure_set(
+        set_id=set_id,
+        llm_name="test_llm",
+        embedder_name="test_embedder",
+    )
+
+    await session_manager.add_feature(
+        set_id=set_id,
+        category_name="Profile",
+        feature="test_feature",
+        value="test_value",
+        tag="test_tag",
+    )
+
+    with pytest.raises(InvalidSetIdConfigurationError):
+        await session_manager.configure_set(
+            set_id=set_id,
+            llm_name="test_llm_2",
+            embedder_name="test_embedder_2",
+        )
+    with pytest.raises(InvalidSetIdConfigurationError):
+        await session_manager.configure_set(
+            set_id=set_id,
+            llm_name="test_llm_2",
+            embedder_name=None,
+        )

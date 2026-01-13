@@ -555,18 +555,29 @@ class SemanticService:
 
         return await self._semantic_config_storage.get_setid_config(set_id=set_id)
 
+    async def get_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> SemanticConfigStorage.Category | None:
+        logger.debug("Getting category %s", category_id)
+
+        return await self._semantic_config_storage.get_category(category_id=category_id)
+
     async def add_new_category_to_set_id(
         self,
         *,
         set_id: SetIdT,
         category_name: str,
-        description: str,
+        prompt: str,
+        description: str | None,
     ) -> CategoryIdT:
         logger.info("Adding new category %s to set %s", category_name, set_id)
 
         category_id = await self._semantic_config_storage.create_category(
             set_id=set_id,
             category_name=category_name,
+            prompt=prompt,
             description=description,
         )
 

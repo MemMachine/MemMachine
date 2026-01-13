@@ -32,11 +32,13 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory import EpisodicMemory
+from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
     OrgSetIdEntry,
     SemanticFeature,
+    SetIdT,
     TagIdT,
 )
 
@@ -674,30 +676,26 @@ class MemMachine:
 
     async def add_feature(
         self,
-        session_data: SessionData,
         *,
+        set_id: SetIdT,
         feature_metadata: dict[str, JsonValue] | None = None,
         category_name: str,
         feature: str,
         value: str,
         tag: str,
         citations: list[EpisodeIdT] | None = None,
-        set_metadata_keys: list[str],
-        is_org_level: bool,
     ) -> FeatureIdT:
         """
         Add a semantic feature to the current semantic set.
 
         Args:
-            session_data: Context used to locate the project/org scope.
+            set_id: Set ID to add the feature to.
             feature_metadata: Optional metadata to store alongside the feature.
             category_name: Category name to attach the feature to.
             feature: Feature name/key.
             value: Feature value.
             tag: Tag name to associate with the feature.
             citations: Optional episode IDs supporting this feature.
-            set_metadata_keys: Metadata keys defining the target set.
-            is_org_level: Whether the set is org-scoped (vs project-scoped).
 
         Returns:
             The created feature ID.
@@ -706,15 +704,13 @@ class MemMachine:
         semantic_session = await self._resources.get_semantic_session_manager()
 
         return await semantic_session.add_feature(
-            session_data=session_data,
+            set_id=set_id,
             feature_metadata=feature_metadata,
             category_name=category_name,
             feature=feature,
             value=value,
             tag=tag,
             citations=citations,
-            is_org_level=is_org_level,
-            set_metadata_keys=set_metadata_keys,
         )
 
     async def get_feature(
@@ -804,6 +800,52 @@ class MemMachine:
             metadata_tags=metadata_tags,
         )
 
+    async def semantic_list_set_ids(
+        self,
+        *,
+        session_data: SessionData,
+    ) -> list[SetIdT]:
+        """
+        List set IDs for the given session data.
+
+        Args:
+            session_data: Context used to locate the project/org scope.
+
+        Returns:
+            List of set IDs matching the session data criteria.
+
+        """
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.list_set_ids(session_data=session_data)
+
+    async def semantic_get_set_id(
+        self,
+        *,
+        session_data: SessionData,
+        is_org_level: bool,
+        metadata_tags: list[str],
+    ) -> SetIdT:
+        """
+        Retrieve the set ID for a given set type and metadata tags.
+
+        Args:
+            session_data: Context used to locate the project/org scope.
+            is_org_level: Whether the set is org-scoped (vs project-scoped).
+            metadata_tags: Ordered list of metadata tag keys defining the set.
+
+        Returns:
+            The set ID.
+
+        """
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.get_set_id(
+            session_data=session_data,
+            is_org_level=is_org_level,
+            set_metadata_keys=metadata_tags,
+        )
+
     async def delete_semantic_set_type(self, set_type_id: str) -> None:
         """
         Delete a semantic set type by ID.
@@ -842,12 +884,10 @@ class MemMachine:
             session_data=session_data,
         )
 
-    async def configure_semantic_set_type(
+    async def configure_semantic_set(
         self,
         *,
-        session_data: SessionData,
-        is_org_level: bool = False,
-        set_metadata_keys: list[str],
+        set_id: SetIdT,
         embedder_name: str | None = None,
         llm_name: str | None = None,
     ) -> None:
@@ -855,9 +895,7 @@ class MemMachine:
         Configure the semantic set used for feature extraction/storage.
 
         Args:
-            session_data: Context used to locate the project/org scope.
-            is_org_level: Whether to configure an org-scoped set.
-            set_metadata_keys: Metadata keys that define the target set.
+            set_id: The set ID to configure.
             embedder_name: Optional embedder override for this set.
             llm_name: Optional LLM override for this set.
 
@@ -868,30 +906,45 @@ class MemMachine:
         semantic_session = await self._resources.get_semantic_session_manager()
 
         return await semantic_session.configure_set(
-            session_data=session_data,
-            is_org_level=is_org_level,
-            set_metadata_keys=set_metadata_keys,
+            set_id=set_id,
             embedder_name=embedder_name,
             llm_name=llm_name,
         )
 
+    async def semantic_get_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> SemanticConfigStorage.Category | None:
+        """
+        Get a semantic category by its ID.
+
+        Args:
+            category_id: The ID of the category to retrieve.
+
+        Returns:
+            The category if found, otherwise None.
+
+        """
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.get_category(category_id=category_id)
+
     async def semantic_add_category(
         self,
         *,
-        session_data: SessionData,
-        set_metadata_keys: list[str],
-        is_org_level: bool = False,
+        set_id: str,
         category_name: str,
-        description: str,
+        prompt: str,
+        description: str | None = None,
     ) -> CategoryIdT:
         """
         Create a new semantic category within the configured set.
 
         Args:
-            session_data: Context used to locate the project/org scope.
-            set_metadata_keys: Metadata keys defining the target set.
-            is_org_level: Whether the set is org-scoped.
+            set_id: Set ID to create the category in.
             category_name: Name of the category.
+            prompt: Prompt to go with the category.
             description: Human-readable category description.
 
         Returns:
@@ -901,28 +954,23 @@ class MemMachine:
         semantic_session = await self._resources.get_semantic_session_manager()
 
         return await semantic_session.add_new_category(
-            session_data=session_data,
-            set_metadata_keys=set_metadata_keys,
-            is_org_level=is_org_level,
+            set_id=set_id,
             category_name=category_name,
+            prompt=prompt,
             description=description,
         )
 
     async def semantic_disable_default_categories(
         self,
         *,
-        session_data: SessionData,
-        set_metadata_keys: list[str],
-        is_org_level: bool = False,
+        set_id: SetIdT,
         category_name: str,
     ) -> None:
         """
         Disable a default semantic category for the configured set.
 
         Args:
-            session_data: Context used to locate the project/org scope.
-            set_metadata_keys: Metadata keys defining the target set.
-            is_org_level: Whether the set is org-scoped.
+            set_id: Set ID to disable the category in.
             category_name: Name of the default category to disable.
 
         Returns:
@@ -932,9 +980,7 @@ class MemMachine:
         semantic_session = await self._resources.get_semantic_session_manager()
 
         return await semantic_session.disable_default_category(
-            session_data=session_data,
-            set_metadata_keys=set_metadata_keys,
-            is_org_level=is_org_level,
+            set_id=set_id,
             category_name=category_name,
         )
 

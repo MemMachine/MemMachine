@@ -12,6 +12,9 @@ from pydantic import JsonValue
 
 from memmachine.common.episode_store import Episode, EpisodeIdT
 from memmachine.common.filter.filter_parser import FilterExpr
+from memmachine.semantic_memory.config_store.config_store import (
+    SemanticConfigStorage as ESemanticConfigStorage,
+)
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
@@ -196,30 +199,15 @@ class SemanticSessionManager:
 
     async def add_feature(
         self,
-        session_data: SessionData,
         *,
+        set_id: SetIdT,
         feature_metadata: dict[str, JsonValue] | None = None,
         category_name: str,
         feature: str,
         value: str,
         tag: str,
         citations: list[EpisodeIdT] | None = None,
-        set_metadata_keys: list[str],
-        is_org_level: bool = False,
     ) -> FeatureIdT:
-        self._assert_session_data_implements_protocol(session_data=session_data)
-
-        metadata = (
-            {key: session_data.metadata.get(key) for key in set_metadata_keys}
-            if session_data.metadata is not None
-            else {}
-        )
-        set_id = self._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id if not is_org_level else None,
-            metadata=metadata,
-        )
-
         return await self._semantic_service.add_new_feature(
             set_id=set_id,
             category_name=category_name,
@@ -474,41 +462,55 @@ class SemanticSessionManager:
 
     async def configure_set(
         self,
-        session_data: SessionData,
         *,
-        set_metadata_keys: list[str],
-        is_org_level: bool = False,
+        set_id: SetIdT,
         embedder_name: str | None = None,
         llm_name: str | None = None,
     ) -> None:
-        self._assert_session_data_implements_protocol(session_data=session_data)
-
-        metadata = (
-            {key: session_data.metadata.get(key) for key in set_metadata_keys}
-            if session_data.metadata is not None
-            else {}
-        )
-        set_id = self._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id if not is_org_level else None,
-            metadata=metadata,
-        )
-
         await self._semantic_service.set_set_id_config(
             set_id=set_id,
             embedder_name=embedder_name,
             llm_name=llm_name,
         )
 
+    async def get_set_id_config(
+        self,
+        *,
+        set_id: SetIdT,
+    ) -> ESemanticConfigStorage.Config | None:
+        return await self._semantic_service.get_set_id_config(
+            set_id=set_id,
+        )
+
+    async def get_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> ESemanticConfigStorage.Category | None:
+        return await self._semantic_service.get_category(category_id=category_id)
+
     async def add_new_category(
+        self,
+        *,
+        set_id: SetIdT,
+        category_name: str,
+        prompt: str,
+        description: str | None,
+    ) -> CategoryIdT:
+        return await self._semantic_service.add_new_category_to_set_id(
+            set_id=set_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+
+    async def get_set_id(
         self,
         *,
         session_data: SessionData,
         set_metadata_keys: list[str],
         is_org_level: bool = False,
-        category_name: str,
-        description: str,
-    ) -> CategoryIdT:
+    ) -> SetIdT:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         metadata = (
@@ -522,33 +524,24 @@ class SemanticSessionManager:
             metadata=metadata,
         )
 
-        return await self._semantic_service.add_new_category_to_set_id(
-            set_id=set_id,
-            category_name=category_name,
-            description=description,
+        return set_id
+
+    async def list_set_ids(self, *, session_data: SessionData) -> list[SetIdT]:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        set_ids = await self._get_set_ids_str_from_metadata(
+            session_data=session_data,
+            metadata=session_data.metadata,
         )
+
+        return set_ids
 
     async def disable_default_category(
         self,
         *,
-        session_data: SessionData,
-        set_metadata_keys: list[str],
-        is_org_level: bool = False,
+        set_id: SetIdT,
         category_name: str,
     ) -> None:
-        self._assert_session_data_implements_protocol(session_data=session_data)
-
-        metadata = (
-            {key: session_data.metadata.get(key) for key in set_metadata_keys}
-            if session_data.metadata is not None
-            else {}
-        )
-        set_id = self._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id if not is_org_level else None,
-            metadata=metadata,
-        )
-
         await self._semantic_service.disable_default_category(
             set_id=set_id,
             category_name=category_name,
