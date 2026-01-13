@@ -7,7 +7,11 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
-from memmachine.common.errors import SessionAlreadyExistsError
+from memmachine.common.errors import (
+    EpisodicMemoryManagerClosedError,
+    SessionAlreadyExistsError,
+    SessionInUseError,
+)
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.resource_manager import CommonResourceManager
@@ -153,9 +157,13 @@ async def test_create_episodic_memory_success(
             mock_episodic_memory_cls.assert_called_once_with(
                 mock_params_from_config.return_value,
             )
-            assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from add
+            assert (
+                await manager._instance_cache.get_ref_count(session_key) == 1
+            )  # 1 from add
 
-    assert manager._instance_cache.get_ref_count(session_key) == 0  # put is called
+    assert (
+        await manager._instance_cache.get_ref_count(session_key) == 0
+    )  # put is called
 
 
 @pytest.mark.asyncio
@@ -201,7 +209,9 @@ async def test_create_or_open_episodic_memory_success(
         metadata,
     ) as instance:
         assert instance is not None
-        assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from add
+        assert (
+            await manager._instance_cache.get_ref_count(session_key) == 1
+        )  # 1 from add
 
     # Open the same session again
     async with manager.open_or_create_episodic_memory(
@@ -211,9 +221,13 @@ async def test_create_or_open_episodic_memory_success(
         metadata,
     ) as instance:
         assert instance is not None
-        assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from open
+        assert (
+            await manager._instance_cache.get_ref_count(session_key) == 1
+        )  # 1 from open
 
-    assert manager._instance_cache.get_ref_count(session_key) == 0  # put is called
+    assert (
+        await manager._instance_cache.get_ref_count(session_key) == 0
+    )  # put is called
     await manager.close_session(session_key)
 
     # Open the same session again, should load from storage
@@ -224,7 +238,9 @@ async def test_create_or_open_episodic_memory_success(
         metadata,
     ) as instance:
         assert instance is not None
-        assert manager._instance_cache.get_ref_count(session_key) == 1  # 1 from add
+        assert (
+            await manager._instance_cache.get_ref_count(session_key) == 1
+        )  # 1 from add
 
 
 @pytest.mark.asyncio
@@ -263,9 +279,9 @@ async def test_open_episodic_memory_new_instance(
         assert instance is mock_episodic_memory_instance
         mock_params_from_config.assert_awaited_once()
         mock_episodic_memory_cls.assert_called_once_with(mock_params)
-        assert manager._instance_cache.get_ref_count(session_key) == 1
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
 
-    assert manager._instance_cache.get_ref_count(session_key) == 0
+    assert await manager._instance_cache.get_ref_count(session_key) == 0
 
 
 @pytest.mark.asyncio
@@ -297,9 +313,9 @@ async def test_open_episodic_memory_cached_instance(
         assert instance is mock_episodic_memory_instance
         # Should not call storage or create again
         mock_episodic_memory_cls.assert_not_called()
-        assert manager._instance_cache.get_ref_count(session_key) == 1
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
 
-    assert manager._instance_cache.get_ref_count(session_key) == 0
+    assert await manager._instance_cache.get_ref_count(session_key) == 0
 
 
 @pytest.mark.asyncio
@@ -323,12 +339,12 @@ async def test_delete_episodic_session_not_in_use(
     ):
         pass
 
-    assert manager._instance_cache.get_ref_count(session_key) == 0
+    assert await manager._instance_cache.get_ref_count(session_key) == 0
 
     await manager.delete_episodic_session(session_key)
 
     # Verify it's gone from cache and storage
-    assert manager._instance_cache.get(session_key) is None
+    assert await manager._instance_cache.get(session_key) is None
     mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
     mock_episodic_memory_instance.close.assert_awaited_once()
 
@@ -352,10 +368,10 @@ async def test_delete_episodic_session_in_use_raises_error(
         "",
         {},
     ):
-        assert manager._instance_cache.get_ref_count(session_key) == 1
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
         with pytest.raises(
-            RuntimeError,
-            match=f"Session {session_key} is still in use",
+            SessionInUseError,
+            match=f"Session '{session_key}' is in use",
         ):
             await manager.delete_episodic_session(session_key)
 
@@ -417,7 +433,7 @@ async def test_close_session_not_in_use(
     await manager.close_session(session_key)
 
     mock_episodic_memory_instance.close.assert_awaited_once()
-    assert manager._instance_cache.get(session_key) is None
+    assert await manager._instance_cache.get(session_key) is None
 
 
 @pytest.mark.asyncio
@@ -438,7 +454,9 @@ async def test_close_session_in_use_raises_error(
         "",
         {},
     ):
-        with pytest.raises(RuntimeError, match=f"Session {session_key} is busy"):
+        with pytest.raises(
+            SessionInUseError, match=f"Session '{session_key}' is in use"
+        ):
             await manager.close_session(session_key)
 
 
@@ -475,11 +493,13 @@ async def test_manager_close(manager: EpisodicMemoryManager, mock_episodic_memor
     # Verify instances were closed and removed from cache
     mock_instance1.close.assert_awaited_once()
     mock_instance2.close.assert_awaited_once()
-    assert manager._instance_cache.get(session_key1) is None
-    assert manager._instance_cache.get(session_key2) is None
+    assert await manager._instance_cache.get(session_key1) is None
+    assert await manager._instance_cache.get(session_key2) is None
 
     # Verify manager is in a closed state
-    with pytest.raises(RuntimeError, match="Memory is closed"):
+    with pytest.raises(
+        EpisodicMemoryManagerClosedError, match="The EpisodicMemoryManager is closed"
+    ):
         async with manager.open_episodic_memory("any_session"):
             pass
 
@@ -489,16 +509,18 @@ async def test_manager_methods_after_close_raise_error(manager: EpisodicMemoryMa
     """Test that all public methods raise RuntimeError after the manager is closed."""
     await manager.close()
 
-    with pytest.raises(RuntimeError, match="Memory is closed"):
+    close_err_msg = "The EpisodicMemoryManager is closed"
+
+    with pytest.raises(EpisodicMemoryManagerClosedError, match=close_err_msg):
         async with manager.create_episodic_memory("s", MagicMock(), "", {}):
             pass
 
-    with pytest.raises(RuntimeError, match="Memory is closed"):
+    with pytest.raises(EpisodicMemoryManagerClosedError, match=close_err_msg):
         async with manager.open_episodic_memory("s"):
             pass
 
-    with pytest.raises(RuntimeError, match="Memory is closed"):
+    with pytest.raises(EpisodicMemoryManagerClosedError, match=close_err_msg):
         await manager.delete_episodic_session("s")
 
-    with pytest.raises(RuntimeError, match="Memory is closed"):
+    with pytest.raises(EpisodicMemoryManagerClosedError, match=close_err_msg):
         await manager.close_session("s")

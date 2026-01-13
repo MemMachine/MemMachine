@@ -338,7 +338,7 @@ class MemMachineMemory(BaseMemory):
                 content=message.content,
                 role=message.role.value if message.role else None,
             )
-        self._primary_memory.put(message)
+        self._primary_memory.release_ref(message)
 
     def set(self, messages: list[ChatMessage]) -> None:
         """Replace the full chat history; persist only newly added messages.

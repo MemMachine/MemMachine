@@ -6,7 +6,13 @@ from contextlib import asynccontextmanager
 
 from pydantic import BaseModel, Field, InstanceOf
 
+from memmachine.common import rw_locks
 from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine.common.errors import (
+    EpisodicMemoryManagerClosedError,
+    SessionInUseError,
+    SessionNotFoundError,
+)
 from memmachine.common.resource_manager import CommonResourceManager
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory.episodic_memory import EpisodicMemory
@@ -75,17 +81,29 @@ class EpisodicMemoryManager:
         self._resource_manager = params.resource_manager
         self._session_data_manager = params.session_data_manager
 
-        self._lock = asyncio.Lock()
+        self._session_locks = rw_locks.AsyncRWLockPool()
+        self._close_lock = rw_locks.AsyncRWLock()
         self._closed = False
         self._check_instance_task = asyncio.create_task(
             self._check_instance_life_time(),
         )
 
+    async def is_closed(self) -> bool:
+        """Check if the manager is closed."""
+        async with self._close_lock.read_lock():
+            return self._closed
+
     async def _check_instance_life_time(self) -> None:
-        while not self._closed:
+        while not await self.is_closed():
             await asyncio.sleep(2)
-            async with self._lock:
-                await self._instance_cache.clean_old_instance()
+            await self._instance_cache.clean_old_instance()
+
+    async def _update_cache(
+        self, instance: EpisodicMemory | None, session_key: str
+    ) -> None:
+        """Update the cache with the given instance and session key."""
+        if instance is not None:
+            await self._instance_cache.release_ref(session_key)
 
     @asynccontextmanager
     async def open_episodic_memory(
@@ -110,34 +128,40 @@ class EpisodicMemoryManager:
 
         """
         instance: EpisodicMemory | None = None
-        async with self._lock:
+        async with self._close_lock.read_lock():
             if self._closed:
-                raise RuntimeError(f"Memory is closed {session_key}")
-
-            # Check if the instance is in the cache and in use
-            instance = self._instance_cache.get(session_key)
+                raise EpisodicMemoryManagerClosedError
+            async with self._session_locks.read_lock(session_key):
+                instance = await self._instance_cache.get(session_key)
             if instance is None:
-                # load from the database
-                session_info = await self._session_data_manager.get_session_info(
-                    session_key
-                )
-                if session_info is None:
-                    raise RuntimeError(
-                        f"No session info found for session {session_key}"
-                    )
+                async with self._session_locks.write_lock(session_key):
+                    # Check if the instance is in the cache and in use
+                    instance = await self._instance_cache.get(session_key)
+                    if instance is None:
+                        # load from the database
+                        session_info = await self.get_session_info(session_key)
+                        if session_info is None:
+                            raise SessionNotFoundError(session_key)
 
-                episodic_memory_params = await episodic_memory_params_from_config(
-                    session_info.episode_memory_conf,
-                    self._resource_manager,
-                )
-                instance = EpisodicMemory(episodic_memory_params)
-                await self._instance_cache.add(session_key, instance)
+                        instance = await self._create_episodic_memory(
+                            session_key,
+                            session_info.episode_memory_conf,
+                        )
         try:
             yield instance
         finally:
-            if instance is not None:
-                async with self._lock:
-                    self._instance_cache.put(session_key)
+            await self._update_cache(instance, session_key)
+
+    async def _create_episodic_memory(
+        self, session_key: str, conf: EpisodicMemoryConf
+    ) -> EpisodicMemory:
+        episodic_memory_params = await episodic_memory_params_from_config(
+            conf,
+            self._resource_manager,
+        )
+        instance = EpisodicMemory(episodic_memory_params)
+        await self._instance_cache.add(session_key, instance)
+        return instance
 
     @asynccontextmanager
     async def create_episodic_memory(
@@ -165,29 +189,25 @@ class EpisodicMemoryManager:
         instance: EpisodicMemory | None = None
         if config is None:
             config = {}
-        async with self._lock:
+        async with self._close_lock.read_lock():
             if self._closed:
-                raise RuntimeError(f"Memory is closed {session_key}")
-
-            await self._session_data_manager.create_new_session(
-                session_key,
-                config,
-                episodic_memory_config,
-                description,
-                metadata,
-            )
-            episodic_memory_params = await episodic_memory_params_from_config(
-                episodic_memory_config,
-                self._resource_manager,
-            )
-            instance = EpisodicMemory(episodic_memory_params)
-            await self._instance_cache.add(session_key, instance)
+                raise EpisodicMemoryManagerClosedError
+            async with self._session_locks.write_lock(session_key):
+                await self._session_data_manager.create_new_session(
+                    session_key,
+                    config,
+                    episodic_memory_config,
+                    description,
+                    metadata,
+                )
+                instance = await self._create_episodic_memory(
+                    session_key,
+                    episodic_memory_config,
+                )
         try:
             yield instance
         finally:
-            if instance is not None:
-                async with self._lock:
-                    self._instance_cache.put(session_key)
+            await self._update_cache(instance, session_key)
 
     @asynccontextmanager
     async def open_or_create_episodic_memory(
@@ -212,46 +232,39 @@ class EpisodicMemoryManager:
         instance: EpisodicMemory | None = None
         if config is None:
             config = {}
-        async with self._lock:
+        async with self._close_lock.read_lock():
             if self._closed:
-                raise RuntimeError(f"Memory is closed {session_key}")
-
-            # Check if the instance is in the cache
-            instance = self._instance_cache.get(session_key)
+                raise EpisodicMemoryManagerClosedError
+            async with self._session_locks.read_lock(session_key):
+                instance = await self._instance_cache.get(session_key)
             if instance is None:
-                # try to load from the database
-                session_info = await self._session_data_manager.get_session_info(
-                    session_key
-                )
-                if session_info is not None:
-                    episodic_memory_params = await episodic_memory_params_from_config(
-                        session_info.episode_memory_conf,
-                        self._resource_manager,
-                    )
-                    instance = EpisodicMemory(episodic_memory_params)
-                    await self._instance_cache.add(session_key, instance)
+                async with self._session_locks.write_lock(session_key):
+                    # Check if the instance is in the cache
+                    instance = await self._instance_cache.get(session_key)
+                    if instance is None:
+                        # try to load from the database
+                        session_info = await self.get_session_info(session_key)
+                        if session_info is not None:
+                            instance = await self._create_episodic_memory(
+                                session_key, session_info.episode_memory_conf
+                            )
 
-            if instance is None:
-                # session does not exist, create it
-                await self._session_data_manager.create_new_session(
-                    session_key,
-                    config,
-                    episodic_memory_config,
-                    description,
-                    metadata,
-                )
-                episodic_memory_params = await episodic_memory_params_from_config(
-                    episodic_memory_config,
-                    self._resource_manager,
-                )
-                instance = EpisodicMemory(episodic_memory_params)
-                await self._instance_cache.add(session_key, instance)
+                    if instance is None:
+                        # session does not exist, create it
+                        await self._session_data_manager.create_new_session(
+                            session_key,
+                            config,
+                            episodic_memory_config,
+                            description,
+                            metadata,
+                        )
+                        instance = await self._create_episodic_memory(
+                            session_key, episodic_memory_config
+                        )
         try:
             yield instance
         finally:
-            if instance is not None:
-                async with self._lock:
-                    self._instance_cache.put(session_key)
+            await self._update_cache(instance, session_key)
 
     async def delete_episodic_session(self, session_key: str) -> None:
         """
@@ -261,34 +274,32 @@ class EpisodicMemoryManager:
             session_key: The unique identifier of the session to delete.
 
         """
-        instance: EpisodicMemory | None = None
-        async with self._lock:
+        async with self._close_lock.read_lock():
             if self._closed:
-                raise RuntimeError(f"Memory is closed {session_key}")
-            # Check if the instance is in the cache and in use
-            ref_count = self._instance_cache.get_ref_count(session_key)
-            instance = self._instance_cache.get(session_key)
-            if instance and ref_count > 0:
-                raise RuntimeError(f"Session {session_key} is still in use {ref_count}")
-            if instance:
-                self._instance_cache.put(session_key)
-            self._instance_cache.erase(session_key)
-            if instance is None:
-                # Open it
-                session_info = await self._session_data_manager.get_session_info(
-                    session_key
-                )
-                if session_info is None:
-                    raise RuntimeError(f"Session {session_key} is None")
+                raise EpisodicMemoryManagerClosedError
+            async with self._session_locks.write_lock(session_key):
+                # Check if the instance is in the cache and in use
+                ref_count = await self._instance_cache.get_ref_count(session_key)
+                instance = await self._instance_cache.get(session_key)
+                if instance and ref_count > 0:
+                    raise SessionInUseError(session_key, ref_count)
+                if instance:
+                    await self._instance_cache.release_ref(session_key)
+                await self._instance_cache.erase(session_key)
+                if instance is None:
+                    # Open it
+                    session_info = await self.get_session_info(session_key)
+                    if session_info is None:
+                        raise SessionNotFoundError(session_key)
 
-                params = await episodic_memory_params_from_config(
-                    session_info.episode_memory_conf,
-                    self._resource_manager,
-                )
-                instance = EpisodicMemory(params)
-            await instance.delete_session_episodes()
-            await instance.close()
-            await self._session_data_manager.delete_session(session_key)
+                    params = await episodic_memory_params_from_config(
+                        session_info.episode_memory_conf,
+                        self._resource_manager,
+                    )
+                    instance = EpisodicMemory(params)
+                await instance.delete_session_episodes()
+                await instance.close()
+                await self._session_data_manager.delete_session(session_key)
 
     async def get_episodic_memory_keys(
         self,
@@ -306,7 +317,7 @@ class EpisodicMemoryManager:
         """
         return await self._session_data_manager.get_sessions(filters)
 
-    async def get_session_configuration(
+    async def get_session_info(
         self,
         session_key: str,
     ) -> SessionDataManager.SessionInfo | None:
@@ -321,28 +332,29 @@ class EpisodicMemoryManager:
             session_key: The unique identifier of the session to close.
 
         """
-        async with self._lock:
+        async with self._close_lock.read_lock():
             if self._closed:
-                raise RuntimeError(f"Memory is closed {session_key}")
-            ref_count = self._instance_cache.get_ref_count(session_key)
-            if ref_count < 0:
-                return
-            if ref_count > 0:
-                raise RuntimeError(f"Session {session_key} is busy")
-            instance = self._instance_cache.get(session_key)
-            if instance is not None:
-                await instance.close()
-                self._instance_cache.put(session_key)
-            self._instance_cache.erase(session_key)
+                raise EpisodicMemoryManagerClosedError
+            async with self._session_locks.write_lock(session_key):
+                ref_count = await self._instance_cache.get_ref_count(session_key)
+                if ref_count < 0:
+                    return
+                if ref_count > 0:
+                    raise SessionInUseError(session_key, ref_count)
+                instance = await self._instance_cache.get(session_key)
+                if instance is not None:
+                    await instance.close()
+                    await self._instance_cache.release_ref(session_key)
+                await self._instance_cache.erase(session_key)
 
     async def close(self) -> None:
         """Close all open episodic memory instances and the session storage."""
-        async with self._lock:
+        async with self._close_lock.write_lock():
             if self._closed:
                 return
-            await self._instance_cache.clear_cache()
+            await self._instance_cache.close()
             await self._session_data_manager.close()
-            self._instance_cache.clear()
+            await self._session_locks.close()
             self._closed = True
 
         if hasattr(self, "_check_instance_task"):
