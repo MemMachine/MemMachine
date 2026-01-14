@@ -101,11 +101,11 @@ def _read_txt(filename: str) -> str:
 class PromptConf(YamlSerializableMixin):
     """Prompt configuration for semantic memory contexts."""
 
-    org_level: list[str] = Field(
+    default_org_categories: list[str] = Field(
         default=["profile_prompt"],
         description="The default prompts to use for semantic organization memory",
     )
-    project_level: list[str] = Field(
+    default_project_categories: list[str] = Field(
         default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
         description="The default prompts to use for semantic project memory",
     )
@@ -123,7 +123,11 @@ class PromptConf(YamlSerializableMixin):
         """Return True if the prompt name is known."""
         return prompt_name in PREDEFINED_SEMANTIC_CATEGORIES
 
-    @field_validator("org_level", "project_level", check_fields=True)
+    @field_validator(
+        "default_project_categories",
+        "default_org_categories",
+        check_fields=True,
+    )
     @classmethod
     def validate_profile(cls, v: list[str]) -> list[str]:
         """Validate that provided prompts exist."""
@@ -153,18 +157,19 @@ class PromptConf(YamlSerializableMixin):
     @property
     def default_semantic_categories(
         self,
-    ) -> dict[SemanticSessionManager.DefaultType, list[SemanticCategory]]:
+    ) -> dict[SemanticSessionManager.SetType, list[SemanticCategory]]:
         """Build the default semantic categories for each isolation type."""
         semantic_categories = PREDEFINED_SEMANTIC_CATEGORIES
 
         return {
-            SemanticSessionManager.DefaultType.OrgSet: [
-                semantic_categories[s_name] for s_name in self.org_level
+            SemanticSessionManager.SetType.OrgSet: [
+                semantic_categories[s_name] for s_name in self.default_org_categories
             ],
-            SemanticSessionManager.DefaultType.ProjectSet: [
-                semantic_categories[s_name] for s_name in self.project_level
+            SemanticSessionManager.SetType.ProjectSet: [
+                semantic_categories[s_name]
+                for s_name in self.default_project_categories
             ],
-            SemanticSessionManager.DefaultType.OtherSet: [],
+            SemanticSessionManager.SetType.OtherSet: [],
         }
 
 

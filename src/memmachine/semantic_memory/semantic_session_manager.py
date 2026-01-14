@@ -20,6 +20,7 @@ from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
     OrgSetIdEntry,
+    SemanticCategory,
     SemanticFeature,
     SetIdT,
     TagIdT,
@@ -54,6 +55,13 @@ class SemanticConfigStorage(Protocol):
 
     async def delete_org_set_id(self, *, org_set_id: str) -> None: ...
 
+    async def register_set_id_org_set(
+        self,
+        *,
+        set_id: SetIdT,
+        org_set_id: str,
+    ) -> None: ...
+
 
 class SemanticSessionManager:
     """
@@ -76,7 +84,7 @@ class SemanticSessionManager:
         @property
         def metadata(self) -> Mapping[str, JsonValue] | None: ...
 
-    class DefaultType(Enum):
+    class SetType(Enum):
         """Default set_id prefixes used by `SemanticSessionManager`."""
 
         OrgSet = "org_set"
@@ -208,13 +216,19 @@ class SemanticSessionManager:
         tag: str,
         citations: list[EpisodeIdT] | None = None,
     ) -> FeatureIdT:
+        metadata = (
+            {k: str(v) for k, v in feature_metadata.items()}
+            if feature_metadata is not None
+            else None
+        )
+
         return await self._semantic_service.add_new_feature(
             set_id=set_id,
             category_name=category_name,
             feature=feature,
             value=value,
             tag=tag,
-            metadata=feature_metadata,
+            metadata=metadata,
             citations=citations,
         )
 
@@ -313,6 +327,7 @@ class SemanticSessionManager:
     class SetIdEntry:
         """Resolved set_id qualifiers for a session message."""
 
+        org_set_id: str
         is_org_level: bool
         tags: Mapping[str, str]
 
@@ -338,13 +353,18 @@ class SemanticSessionManager:
             logger.debug("No relevant set ids found for metadata %s", metadata)
             return []
 
-        set_id_entries = [
-            SemanticSessionManager.SetIdEntry(
-                is_org_level=sid.is_org_level,
-                tags={t: str(metadata[t]) for t in sid.tags},
+        set_id_entries: list[SemanticSessionManager.SetIdEntry] = []
+        for sid in relevant_set_ids:
+            if sid.id is None:
+                continue
+
+            set_id_entries.append(
+                SemanticSessionManager.SetIdEntry(
+                    org_set_id=sid.id,
+                    is_org_level=sid.is_org_level,
+                    tags={t: str(metadata[t]) for t in sid.tags},
+                )
             )
-            for sid in relevant_set_ids
-        ]
 
         return set_id_entries
 
@@ -359,25 +379,33 @@ class SemanticSessionManager:
             metadata=metadata,
         )
 
-        set_ids = [
-            self._generate_set_id(
+        set_ids: list[SetIdT] = []
+        for sid in set_id_entries:
+            set_id = self._generate_set_id(
                 org_id=session_data.org_id,
                 project_id=session_data.project_id if not sid.is_org_level else None,
                 metadata=sid.tags,
             )
-            for sid in set_id_entries
-        ] + [
-            self._generate_set_id(
-                org_id=session_data.org_id,
-                project_id=session_data.project_id,
-                metadata={},
-            ),
-            self._generate_set_id(
-                org_id=session_data.org_id,
-                project_id=None,
-                metadata={},
-            ),
-        ]
+            set_ids.append(set_id)
+            await self._semantic_config.register_set_id_org_set(
+                set_id=set_id,
+                org_set_id=sid.org_set_id,
+            )
+
+        set_ids.extend(
+            [
+                self._generate_set_id(
+                    org_id=session_data.org_id,
+                    project_id=session_data.project_id,
+                    metadata={},
+                ),
+                self._generate_set_id(
+                    org_id=session_data.org_id,
+                    project_id=None,
+                    metadata={},
+                ),
+            ]
+        )
 
         return list(set(set_ids))
 
@@ -411,19 +439,19 @@ class SemanticSessionManager:
 
         if len(string_tags) == 0:
             if project_id is not None:
-                def_type = SemanticSessionManager.DefaultType.ProjectSet
+                def_type = SemanticSessionManager.SetType.ProjectSet
             else:
-                def_type = SemanticSessionManager.DefaultType.OrgSet
+                def_type = SemanticSessionManager.SetType.OrgSet
         else:
-            def_type = SemanticSessionManager.DefaultType.OtherSet
+            def_type = SemanticSessionManager.SetType.OtherSet
 
         return f"mem_{def_type.value}_{org_project}_{len(metadata)}_{_hash_tag_list(metadata.keys())}__{'_'.join(sorted(string_tags))}"
 
     @staticmethod
     def get_default_set_id_type(
         set_id: SetIdT,
-    ) -> DefaultType:
-        for def_type in SemanticSessionManager.DefaultType:
+    ) -> SetType:
+        for def_type in SemanticSessionManager.SetType:
             if set_id.startswith(f"mem_{def_type.value}"):
                 return def_type
 
@@ -504,6 +532,28 @@ class SemanticSessionManager:
             description=description,
         )
 
+    async def add_new_org_set_category(
+        self,
+        *,
+        org_set_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None,
+    ) -> CategoryIdT:
+        return await self._semantic_service.add_new_category_to_org_set(
+            org_set_id=org_set_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+
+    async def list_org_set_categories(
+        self, *, org_set_id: str
+    ) -> list[SemanticCategory]:
+        return await self._semantic_service.get_org_set_categories(
+            org_set_id=org_set_id
+        )
+
     async def get_set_id(
         self,
         *,
@@ -524,6 +574,25 @@ class SemanticSessionManager:
             metadata=metadata,
         )
 
+        org_set_ids = await self._semantic_config.list_org_set_ids(
+            org_id=session_data.org_id
+        )
+        for org_set in org_set_ids:
+            if org_set.id is None:
+                continue
+
+            if org_set.is_org_level != is_org_level:
+                continue
+
+            if set(org_set.tags) != set(set_metadata_keys):
+                continue
+
+            await self._semantic_config.register_set_id_org_set(
+                set_id=set_id,
+                org_set_id=org_set.id,
+            )
+            break
+
         return set_id
 
     async def list_set_ids(self, *, session_data: SessionData) -> list[SetIdT]:
@@ -536,13 +605,13 @@ class SemanticSessionManager:
 
         return set_ids
 
-    async def disable_default_category(
+    async def disable_category(
         self,
         *,
         set_id: SetIdT,
         category_name: str,
     ) -> None:
-        await self._semantic_service.disable_default_category(
+        await self._semantic_service.disable_category(
             set_id=set_id,
             category_name=category_name,
         )

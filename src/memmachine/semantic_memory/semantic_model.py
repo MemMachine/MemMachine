@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, InstanceOf
 
@@ -127,6 +127,10 @@ class SemanticCategory(BaseModel):
     """Defines a semantic feature category, its allowed tags, and prompt strategy."""
 
     id: CategoryIdT | None = None
+
+    origin_type: Literal["set_id", "org_tag_set"] | None = None
+    origin_id: str | None = None
+    inherited: bool | None = None
 
     name: str
     prompt: InstanceOf[SemanticPrompt]

@@ -567,3 +567,75 @@ async def test_invalid_embedder_change_with_dirty_set(
             llm_name="test_llm_2",
             embedder_name=None,
         )
+
+
+async def test_org_type_categories(
+    session_manager: SemanticSessionManager, session_data
+):
+    org_type_id = await session_manager.create_org_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["repo"],
+    )
+    c_id = await session_manager.add_new_org_set_category(
+        org_set_id=org_type_id,
+        category_name="test_category",
+        description="test_description",
+        prompt="test_prompt",
+    )
+
+    await session_manager.add_tag(
+        category_id=c_id,
+        tag_name="test_tag",
+        tag_description="test_tag_description",
+    )
+
+    categories = await session_manager.list_org_set_categories(org_set_id=org_type_id)
+    assert len(categories) == 1
+
+    assert categories[0].category_id == c_id
+    assert categories[0].category_name == "test_category"
+
+
+async def test_org_type_categories_are_visible_to_children(
+    session_manager: SemanticSessionManager,
+    session_data,
+):
+    expanded_session = _SessionData(
+        org_id="test_org",
+        project_id="test_proj",
+        metadata={
+            "user_id": "test_user",
+        },
+    )
+
+    org_type_id = await session_manager.create_org_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+    )
+    set_id = await session_manager.get_set_id(
+        session_data=expanded_session,
+        is_org_level=False,
+        set_metadata_keys=["user_id"],
+    )
+
+    c_id = await session_manager.add_new_org_set_category(
+        org_set_id=org_type_id,
+        category_name="test_category",
+        description="test_description",
+        prompt="test_prompt",
+    )
+
+    await session_manager.add_tag(
+        category_id=c_id,
+        tag_name="test_tag",
+        tag_description="test_tag_description",
+    )
+
+    config = await session_manager.get_set_id_config(set_id=set_id)
+
+    categories = config.categories
+
+    assert len(categories) == 1
+    assert categories[0].id == c_id

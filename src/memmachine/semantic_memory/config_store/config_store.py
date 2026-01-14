@@ -43,6 +43,13 @@ class SemanticConfigStorage(Protocol):
         set_id: SetIdT,
     ) -> Config: ...
 
+    async def register_set_id_org_set(
+        self,
+        *,
+        set_id: SetIdT,
+        org_set_id: str,
+    ) -> None: ...
+
     @dataclass(frozen=True)
     class Category:
         """Represents a semantic category as stored in the database."""
@@ -71,6 +78,7 @@ class SemanticConfigStorage(Protocol):
         self,
         *,
         category_id: CategoryIdT,
+        new_set_id: SetIdT,
         new_name: str,
     ) -> CategoryIdT: ...
 
@@ -93,6 +101,21 @@ class SemanticConfigStorage(Protocol):
         set_id: SetIdT,
         category_name: str,
     ) -> None: ...
+
+    async def create_org_set_category(
+        self,
+        *,
+        org_set_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None = None,
+    ) -> CategoryIdT: ...
+
+    async def get_org_set_categories(
+        self,
+        *,
+        org_set_id: str,
+    ) -> list[SemanticCategory]: ...
 
     @dataclass(frozen=True)
     class Tag:

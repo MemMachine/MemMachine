@@ -115,8 +115,8 @@ class TestMemMachineLongMemEval:
 
             semantic_features = (result.semantic_memory or [])[:4]
             episodic_context = [
-                *result.episodic_memory.long_term_memory[:4],
-                *result.episodic_memory.short_term_memory[:4],
+                *result.episodic_memory.long_term_memory.episodes[:4],
+                *result.episodic_memory.short_term_memory.episodes[:4],
             ]
 
             system_prompt = (

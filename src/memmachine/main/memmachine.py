@@ -37,6 +37,7 @@ from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
     OrgSetIdEntry,
+    SemanticCategory,
     SemanticFeature,
     SetIdT,
     TagIdT,
@@ -960,7 +961,48 @@ class MemMachine:
             description=description,
         )
 
-    async def semantic_disable_default_categories(
+    async def semantic_add_set_type_category(
+        self,
+        *,
+        set_type_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None = None,
+    ) -> CategoryIdT:
+        """Create a new semantic category on an org set type.
+
+        Categories created here are inherited by set_ids mapped to the set type.
+
+        Args:
+            set_type_id: The org-set-type identifier (OrgTagSet id).
+            category_name: Name of the category.
+            prompt: Prompt to go with the category.
+            description: Human-readable category description.
+
+        Returns:
+            The created category ID.
+
+        """
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.add_new_org_set_category(
+            org_set_id=set_type_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+
+    async def semantic_list_set_type_categories(
+        self,
+        *,
+        set_type_id: str,
+    ) -> list[SemanticCategory]:
+        """List semantic categories defined on an org set type."""
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.list_org_set_categories(org_set_id=set_type_id)
+
+    async def semantic_disable_category(
         self,
         *,
         set_id: SetIdT,
@@ -979,7 +1021,7 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.disable_default_category(
+        return await semantic_session.disable_category(
             set_id=set_id,
             category_name=category_name,
         )

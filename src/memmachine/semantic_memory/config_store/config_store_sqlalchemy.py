@@ -3,6 +3,7 @@
 import logging
 
 from sqlalchemy import (
+    CheckConstraint,
     ForeignKey,
     Integer,
     UniqueConstraint,
@@ -55,6 +56,13 @@ class SetIdResources(BaseSemanticConfigStore):
     embedder_name = mapped_column(String, nullable=True)
     language_model_name = mapped_column(String, nullable=True)
 
+    org_tag_set_id = mapped_column(
+        Integer,
+        ForeignKey("org_tag_set.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     disabled_categories: Mapped[list["DisabledDefaultCategories"]] = relationship(
         "DisabledDefaultCategories",
         cascade="all, delete-orphan",
@@ -84,7 +92,13 @@ class Category(BaseSemanticConfigStore):
     __tablename__ = "semantic.config.category"
 
     id = mapped_column(Integer, primary_key=True, nullable=False)
-    set_id = mapped_column(String, nullable=False, index=True)
+    set_id = mapped_column(String, nullable=True, index=True)
+    org_tag_set_id = mapped_column(
+        Integer,
+        ForeignKey("org_tag_set.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     name = mapped_column(String, nullable=False)
     prompt = mapped_column(String, nullable=False)
     description = mapped_column(String, nullable=True)
@@ -99,8 +113,24 @@ class Category(BaseSemanticConfigStore):
     def to_typed_model(self) -> SemanticCategory:
         tags = {t.name: t.description for t in self.tags}
 
+        if self.set_id is not None:
+            origin_type = "set_id"
+            origin_id = self.set_id
+            inherited = False
+        elif self.org_tag_set_id is not None:
+            origin_type = "org_tag_set"
+            origin_id = str(self.org_tag_set_id)
+            inherited = True
+        else:
+            origin_type = None
+            origin_id = None
+            inherited = None
+
         return SemanticCategory(
             id=CategoryIdT(self.id),
+            origin_type=origin_type,
+            origin_id=origin_id,
+            inherited=inherited,
             name=self.name,
             prompt=StructuredSemanticPrompt(
                 description=self.prompt,
@@ -108,7 +138,14 @@ class Category(BaseSemanticConfigStore):
             ),
         )
 
-    __table_args__ = (UniqueConstraint("set_id", "name", name="_set_id_name_uc"),)
+    __table_args__ = (
+        UniqueConstraint("set_id", "name", name="_set_id_name_uc"),
+        UniqueConstraint("org_tag_set_id", "name", name="_org_tag_set_id_name_uc"),
+        CheckConstraint(
+            "(org_tag_set_id IS NOT NULL AND set_id IS NULL) OR (org_tag_set_id IS NULL AND set_id IS NOT NULL)",
+            name="_exactly_one_fk_orgtagset_vs_setid",
+        ),
+    )
 
 
 class Tag(BaseSemanticConfigStore):
@@ -234,7 +271,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             .options(selectinload(SetIdResources.disabled_categories))
         )
 
-        category_stmt = (
+        local_category_stmt = (
             select(Category)
             .where(Category.set_id == set_id)
             .options(selectinload(Category.tags))
@@ -244,10 +281,26 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             res_resources = await session.execute(stmt)
             resources = res_resources.scalar_one_or_none()
 
-            res_categories = await session.execute(category_stmt)
-            categories_raw = res_categories.scalars().unique().all()
+            res_local_categories = await session.execute(local_category_stmt)
+            local_categories_raw = res_local_categories.scalars().unique().all()
+            local_categories = [c.to_typed_model() for c in local_categories_raw]
 
-            categories = [c.to_typed_model() for c in categories_raw]
+            inherited_categories: list[SemanticCategory] = []
+            if resources is not None and resources.org_tag_set_id is not None:
+                inherited_stmt = (
+                    select(Category)
+                    .where(Category.org_tag_set_id == resources.org_tag_set_id)
+                    .options(selectinload(Category.tags))
+                )
+                res_inherited = await session.execute(inherited_stmt)
+                inherited_raw = res_inherited.scalars().unique().all()
+                inherited_categories = [c.to_typed_model() for c in inherited_raw]
+
+        local_by_name = {c.name: c for c in local_categories}
+        inherited_filtered = [
+            c for c in inherited_categories if c.name not in local_by_name
+        ]
+        categories = local_categories + inherited_filtered
 
         if resources is not None:
             llm_name = resources.language_model_name
@@ -266,6 +319,81 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             categories=categories,
             disabled_categories=disabled_categories,
         )
+
+    async def register_set_id_org_set(
+        self,
+        *,
+        set_id: SetIdT,
+        org_set_id: str,
+    ) -> None:
+        org_set_id_int = int(org_set_id)
+
+        dialect_name = self._engine.dialect.name
+        ins: PgInsert | SQliteInsert
+        if dialect_name == "postgresql":
+            ins = pg_insert(SetIdResources)
+        elif dialect_name == "sqlite":
+            ins = sqlite_insert(SetIdResources)
+        else:
+            raise NotImplementedError
+
+        stmt = ins.values(
+            set_id=set_id,
+            org_tag_set_id=org_set_id_int,
+        ).on_conflict_do_nothing(
+            index_elements=["set_id"],
+        )
+
+        async with self._create_session() as session:
+            await session.execute(stmt)
+            await session.commit()
+
+    async def create_org_set_category(
+        self,
+        *,
+        org_set_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None = None,
+    ) -> CategoryIdT:
+        org_set_id_int = int(org_set_id)
+
+        stmt = (
+            insert(Category)
+            .values(
+                name=category_name,
+                prompt=prompt,
+                org_tag_set_id=org_set_id_int,
+                description=description,
+            )
+            .returning(Category.id)
+        )
+
+        async with self._create_session() as session:
+            res = await session.execute(stmt)
+            await session.commit()
+            category_id = res.scalar_one()
+
+        return CategoryIdT(category_id)
+
+    async def get_org_set_categories(
+        self,
+        *,
+        org_set_id: str,
+    ) -> list[SemanticCategory]:
+        org_set_id_int = int(org_set_id)
+
+        stmt = (
+            select(Category)
+            .where(Category.org_tag_set_id == org_set_id_int)
+            .options(selectinload(Category.tags))
+        )
+
+        async with self._create_session() as session:
+            res = await session.execute(stmt)
+            categories_raw = res.scalars().unique().all()
+
+        return [c.to_typed_model() for c in categories_raw]
 
     async def get_category(
         self,
@@ -324,6 +452,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         self,
         *,
         category_id: CategoryIdT,
+        new_set_id: SetIdT,
         new_name: str,
     ) -> CategoryIdT:
         category_id_int = int(category_id)
@@ -340,7 +469,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
                 name=new_name,
                 prompt=category.prompt,
                 description=category.description,
-                set_id=category.set_id,
+                set_id=new_set_id,
             )
             session.add(cloned_category)
             await session.flush()
@@ -419,7 +548,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         self,
         *,
         tag_id: str,
-    ) -> Tag | None:
+    ) -> SemanticConfigStorage.Tag | None:
         try:
             tag_id_int = int(tag_id)
         except (TypeError, ValueError):
@@ -435,8 +564,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         if tag is None:
             return None
 
-        return Tag(
-            id=tag_id_int,
+        return SemanticConfigStorage.Tag(
+            id=str(tag_id_int),
             name=tag.name,
             description=tag.description,
         )

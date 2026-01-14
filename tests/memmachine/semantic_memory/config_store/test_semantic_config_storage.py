@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -11,6 +13,7 @@ from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
     SemanticConfigStorageSqlAlchemy,
     Tag,
 )
+from memmachine.semantic_memory.semantic_model import StructuredSemanticPrompt
 
 
 @pytest_asyncio.fixture
@@ -85,8 +88,11 @@ async def test_upsert_and_category_retrieval(
     category = config.categories[0]
     assert category.id == category_id
     assert category.name == "interests"
-    assert category.prompt.description == "What the user cares about"
-    assert category.prompt.tags == {
+    assert (
+        cast(StructuredSemanticPrompt, category.prompt).description
+        == "What the user cares about"
+    )
+    assert cast(StructuredSemanticPrompt, category.prompt).tags == {
         "food": "Favorite foods",
         "music": "Preferred music genres",
     }
@@ -204,14 +210,17 @@ async def test_update_and_delete_tags(
     )
 
     updated_config = await semantic_config_storage.get_setid_config(set_id=set_id)
-    assert updated_config.categories[0].prompt.tags == {
+    assert cast(StructuredSemanticPrompt, updated_config.categories[0].prompt).tags == {
         "updated-tag": "Updated description",
     }
 
     await semantic_config_storage.delete_tag(tag_id=tag_id)
 
     config_after_delete = await semantic_config_storage.get_setid_config(set_id=set_id)
-    assert config_after_delete.categories[0].prompt.tags == {}
+    assert (
+        cast(StructuredSemanticPrompt, config_after_delete.categories[0].prompt).tags
+        == {}
+    )
 
 
 @pytest.mark.asyncio
@@ -241,6 +250,7 @@ async def test_clone_category_copies_tags(
     cloned_category_id = await semantic_config_storage.clone_category(
         category_id=original_category_id,
         new_name="cloned-interests",
+        new_set_id=set_id,
     )
     assert cloned_category_id != original_category_id
 
@@ -254,7 +264,7 @@ async def test_clone_category_copies_tags(
 
     assert {c.name for c in config.categories} == {"interests", "cloned-interests"}
 
-    assert config.categories[0].prompt.tags == {
+    assert cast(StructuredSemanticPrompt, config.categories[0].prompt).tags == {
         "music": "Preferred music genres",
         "food": "Favorite foods",
     }
@@ -346,3 +356,77 @@ async def test_add_and_remove_disabled_categories(
 
     config_after_removal = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert config_after_removal.disabled_categories == ["default-history"]
+
+
+@pytest.mark.asyncio
+async def test_org_set_categories_are_inherited_by_mapped_set_id(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-a",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    inherited_category_id = await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_id,
+        category_name="org-category",
+        prompt="Org prompt",
+    )
+    await semantic_config_storage.add_tag(
+        category_id=inherited_category_id,
+        tag_name="t1",
+        description="Tag 1",
+    )
+
+    set_id = "set-inherits"
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id,
+        org_set_id=org_set_id,
+    )
+
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+
+    assert [c.name for c in config.categories] == ["org-category"]
+    assert config.categories[0].origin_type == "org_tag_set"
+    assert config.categories[0].origin_id == org_set_id
+    assert config.categories[0].inherited is True
+    assert cast(StructuredSemanticPrompt, config.categories[0].prompt).tags == {
+        "t1": "Tag 1"
+    }
+
+
+@pytest.mark.asyncio
+async def test_set_local_category_overrides_inherited_by_name(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-b",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_id,
+        category_name="conflict",
+        prompt="Inherited prompt",
+    )
+
+    set_id = "set-overrides"
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id,
+        org_set_id=org_set_id,
+    )
+
+    await semantic_config_storage.create_category(
+        set_id=set_id,
+        category_name="conflict",
+        prompt="Local prompt",
+    )
+
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+
+    assert [c.name for c in config.categories] == ["conflict"]
+    assert config.categories[0].origin_type == "set_id"
+    assert config.categories[0].origin_id == set_id
+    assert config.categories[0].inherited is False

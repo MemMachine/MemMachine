@@ -583,22 +583,48 @@ class SemanticService:
 
         return category_id
 
+    async def add_new_category_to_org_set(
+        self,
+        *,
+        org_set_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None,
+    ) -> CategoryIdT:
+        logger.info("Adding new category %s to org set %s", category_name, org_set_id)
+
+        return await self._semantic_config_storage.create_org_set_category(
+            org_set_id=org_set_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+
+    async def get_org_set_categories(
+        self, *, org_set_id: str
+    ) -> list[SemanticCategory]:
+        logger.debug("Getting org set categories for %s", org_set_id)
+
+        return await self._semantic_config_storage.get_org_set_categories(
+            org_set_id=org_set_id
+        )
+
     async def clone_category(
         self,
         *,
         category_id: CategoryIdT,
+        new_set_id: SetIdT,
         new_category_name: str,
     ) -> CategoryIdT:
         logger.info("Cloning category %s to %s", category_id, new_category_name)
 
         return await self._semantic_config_storage.clone_category(
             category_id=category_id,
+            new_set_id=new_set_id,
             new_name=new_category_name,
         )
 
-    async def disable_default_category(
-        self, *, set_id: SetIdT, category_name: str
-    ) -> None:
+    async def disable_category(self, *, set_id: SetIdT, category_name: str) -> None:
         logger.info("Disabling default category %s for set %s", category_name, set_id)
 
         await self._semantic_config_storage.add_disabled_category_to_setid(
@@ -612,6 +638,8 @@ class SemanticService:
         category_id: CategoryIdT,
     ) -> None:
         logger.info("Deleting category %s", category_id)
+
+        # TODO: Delete data contained in category
 
         await self._semantic_config_storage.delete_category(category_id=category_id)
 
