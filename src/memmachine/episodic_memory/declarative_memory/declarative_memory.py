@@ -104,6 +104,8 @@ class DeclarativeMemory:
 
         self._derived_from_relation = f"DERIVED_FROM_{session_id}"
 
+        self._score_single_episodes_threshold = 10
+
     async def add_episodes(
         self,
         episodes: Iterable[Episode],
@@ -405,6 +407,16 @@ class DeclarativeMemory:
         ]
 
         episode_contexts = await asyncio.gather(*contextualize_episode_tasks)
+
+        if max_num_episodes <= self._score_single_episodes_threshold:
+            nuclear_episodes = [
+                episode
+                for episode_context in episode_contexts
+                for episode in episode_context
+            ]
+            episode_contexts = [
+                [nuclear_episode] for nuclear_episode in nuclear_episodes
+            ]
 
         # Rerank episode contexts.
         episode_context_scores = await self._score_episode_contexts(
