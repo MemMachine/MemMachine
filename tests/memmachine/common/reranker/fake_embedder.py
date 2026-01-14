@@ -5,19 +5,23 @@ from memmachine.common.embedder import Embedder
 
 
 class FakeEmbedder(Embedder):
-    def __init__(self, similarity_metric=SimilarityMetric.COSINE):
-        super().__init__()
+    def __init__(
+        self,
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+        batch_size: int | None = None,
+    ) -> None:
+        super().__init__(batch_size=batch_size)
 
         self._similarity_metric = similarity_metric
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
     ) -> list[list[float]]:
         return [[float(len(_input)), -float(len(_input))] for _input in inputs]
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[Any],
         max_attempts: int = 1,
