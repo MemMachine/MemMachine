@@ -280,7 +280,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 response,
                 raw_response,
             ) = await client.chat.completions.create_with_completion(**converse_kwargs)
-        except instructor.core.exceptions.InstructorRetryException as exc:  # type: ignore[attr-defined]
+        except instructor.core.exceptions.InstructorRetryException as exc:
             parsed = self._try_parse_bedrock_completion(
                 completion=getattr(exc, "last_completion", None),
                 output_format=output_format,

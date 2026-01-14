@@ -96,6 +96,8 @@ class SessionDataManagerSQL(SessionDataManager):
 
         def _check_migration_needed(conn: AsyncConnection) -> bool:
             inspector = inspect(conn)
+            assert inspector is not None
+
             schema = self.SessionConfig.__table__.schema
             table_name = "sessions"
             table_names = inspector.get_table_names(schema=schema)

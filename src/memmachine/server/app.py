@@ -19,6 +19,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 import uvicorn
 from dotenv import load_dotenv
@@ -26,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.types import AppType, ExceptionHandler, Lifespan
+from starlette.types import ExceptionHandler, Lifespan
 
 from memmachine.server.api_v2.mcp import (
     initialize_resource,
@@ -43,11 +44,15 @@ logger = logging.getLogger(__name__)
 class MemMachineAPI(FastAPI):
     """MemMachine API wrapper."""
 
-    def __init__(self, lifespan: Lifespan[AppType] | None = None) -> None:
+    def __init__(self, lifespan: Lifespan[Any] | None = None) -> None:
         """Init the MemMachine API wrapper."""
         title = "MemMachine Server"
         description = "REST API server for MemMachine memory system"
-        super().__init__(title=title, description=description, lifespan=lifespan)
+        super().__init__(
+            title=title,
+            description=description,
+            lifespan=cast(Any, lifespan),
+        )
         self._configure()
 
     def _configure(self) -> None:
@@ -63,18 +68,18 @@ class MemMachineAPI(FastAPI):
     def _validation_error_handler_factory(error_code: int) -> ExceptionHandler:
         """Create an error handler factory for the validation error."""
 
-        async def handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+        async def handler(_: Request, exc: Exception) -> JSONResponse:
             err = RestError(
                 code=error_code,
                 message="Invalid request payload",
-                ex=exc,
+                ex=cast(RequestValidationError, exc),
             )
             content = None
             if err.payload is not None:
                 content = {"detail": err.payload.model_dump()}
             return JSONResponse(status_code=error_code, content=content)
 
-        return handler
+        return cast(ExceptionHandler, handler)
 
 
 app = MemMachineAPI(

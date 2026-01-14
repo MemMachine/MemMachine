@@ -11,7 +11,7 @@ import re
 import time
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import Enum
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 from neo4j import AsyncDriver
@@ -174,7 +174,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         """Initialize the graph store with the provided parameters."""
         super().__init__()
 
-        self._driver = params.driver
+        self._driver: Any = params.driver
 
         self._force_exact_similarity_search = params.force_exact_similarity_search
         self._filtered_similarity_search_fudge_factor = (
