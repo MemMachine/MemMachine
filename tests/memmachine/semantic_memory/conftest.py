@@ -86,6 +86,7 @@ async def semantic_service(
         feature_update_message_limit=10,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
+        default_embedder_name="default_embedder",
         default_language_model=mock_llm_model,
         default_category_retriever=semantic_category_retriever,
     )

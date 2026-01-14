@@ -69,6 +69,10 @@ class SemanticMemoryConf(YamlSerializableMixin):
         ...,
         description="The config database to use for semantic memory",
     )
+    with_config_cache: bool = Field(
+        default=True,
+        description="Whether to use a in memory cache for semantic memory config.",
+    )
     llm_model: str = Field(
         ...,
         description="The default language model to use for semantic memory",

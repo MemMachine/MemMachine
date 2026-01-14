@@ -593,8 +593,8 @@ async def test_org_type_categories(
     categories = await session_manager.list_org_set_categories(org_set_id=org_type_id)
     assert len(categories) == 1
 
-    assert categories[0].category_id == c_id
-    assert categories[0].category_name == "test_category"
+    assert categories[0].id == c_id
+    assert categories[0].name == "test_category"
 
 
 async def test_org_type_categories_are_visible_to_children(

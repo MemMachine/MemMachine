@@ -4,8 +4,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from memmachine.semantic_memory.config_store.caching_semantic_config_storage import (
+    CachingSemanticConfigStorage,
+)
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
     BaseSemanticConfigStore,
@@ -16,13 +19,24 @@ from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
 from memmachine.semantic_memory.semantic_model import StructuredSemanticPrompt
 
 
+@pytest.fixture(
+    params=[True, False],
+)
+def with_cache(request):
+    return request.param
+
+
 @pytest_asyncio.fixture
-async def semantic_config_storage(sqlalchemy_engine: AsyncEngine):
+async def semantic_config_storage(sqlalchemy_engine: AsyncEngine, with_cache: bool):
     async with sqlalchemy_engine.begin() as conn:
         await conn.run_sync(BaseSemanticConfigStore.metadata.drop_all)
         await conn.run_sync(BaseSemanticConfigStore.metadata.create_all)
 
     storage = SemanticConfigStorageSqlAlchemy(sqlalchemy_engine)
+
+    if with_cache:
+        storage = CachingSemanticConfigStorage(storage)
+
     yield storage
 
     async with sqlalchemy_engine.begin() as conn:
@@ -184,6 +198,7 @@ async def test_remove_category_deletes_tags(
 @pytest.mark.asyncio
 async def test_update_and_delete_tags(
     semantic_config_storage: SemanticConfigStorage,
+    sqlalchemy_engine: AsyncEngine,
 ):
     set_id = "set-d"
     await semantic_config_storage.set_setid_config(set_id=set_id)
@@ -200,7 +215,9 @@ async def test_update_and_delete_tags(
         description="Old description",
     )
 
-    async with semantic_config_storage._create_session() as session:  # type: ignore[attr-defined]
+    session_factory = async_sessionmaker(bind=sqlalchemy_engine, expire_on_commit=False)
+
+    async with session_factory() as session:
         tag_id = str((await session.execute(select(Tag.id))).scalar_one())
 
     await semantic_config_storage.update_tag(
@@ -293,7 +310,8 @@ async def test_add_category_to_setid_rejects_duplicate_names(
 
 @pytest.mark.asyncio
 async def test_delete_category_removes_tags_and_association(
-    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+    semantic_config_storage: SemanticConfigStorage,
+    sqlalchemy_engine: AsyncEngine,
 ):
     set_id = "set-f"
     await semantic_config_storage.set_setid_config(set_id=set_id)
@@ -314,7 +332,9 @@ async def test_delete_category_removes_tags_and_association(
     config = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert config.categories == []
 
-    async with semantic_config_storage._create_session() as session:  # type: ignore[attr-defined]
+    session_factory = async_sessionmaker(bind=sqlalchemy_engine, expire_on_commit=False)
+
+    async with session_factory() as session:
         remaining_tags = (await session.execute(select(Tag))).scalars().all()
         remaining_categories = (await session.execute(select(Category))).scalars().all()
 
@@ -430,3 +450,74 @@ async def test_set_local_category_overrides_inherited_by_name(
     assert config.categories[0].origin_type == "set_id"
     assert config.categories[0].origin_id == set_id
     assert config.categories[0].inherited is False
+
+
+@pytest.mark.asyncio
+async def test_register_set_id_org_set_after_setid_config(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-c",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+    await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_id,
+        category_name="org-category",
+        prompt="Org prompt",
+    )
+
+    set_id = "set-has-config"
+    await semantic_config_storage.set_setid_config(
+        set_id=set_id,
+        embedder_name="embedder",
+        llm_name="llm",
+    )
+
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id,
+        org_set_id=org_set_id,
+    )
+
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert [c.name for c in config.categories] == ["org-category"]
+
+
+@pytest.mark.asyncio
+async def test_register_set_id_org_set_is_first_write_wins(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    org_set_a = await semantic_config_storage.add_org_set_id(
+        org_id="org-d",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+    org_set_b = await semantic_config_storage.add_org_set_id(
+        org_id="org-d",
+        org_level_set=False,
+        metadata_tags=["repo", "other"],
+    )
+
+    await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_a,
+        category_name="from-a",
+        prompt="A",
+    )
+    await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_b,
+        category_name="from-b",
+        prompt="B",
+    )
+
+    set_id = "set-first-write-wins"
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id,
+        org_set_id=org_set_a,
+    )
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id,
+        org_set_id=org_set_b,
+    )
+
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert [c.name for c in config.categories] == ["from-a"]

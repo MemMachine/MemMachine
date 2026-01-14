@@ -95,6 +95,7 @@ class SemanticService:
         resource_manager: InstanceOf[ResourceManager]
 
         default_embedder: InstanceOf[Embedder]
+        default_embedder_name: str
         default_language_model: InstanceOf[LanguageModel]
         default_category_retriever: DefaultCategoryRetriever
 
@@ -114,6 +115,7 @@ class SemanticService:
 
         self._resource_manager = params.resource_manager
         self._default_embedder: Embedder = params.default_embedder
+        self._default_embedder_name: str = params.default_embedder_name
         self._default_language_model: LanguageModel = params.default_language_model
         self._default_category_retriever: Callable[[SetIdT], list[SemanticCategory]] = (
             params.default_category_retriever
@@ -476,6 +478,12 @@ class SemanticService:
 
         embedder: Embedder
         if config.embedder_name is None:
+            # When no embedder is specified, use the default embedder and store it in the set_id config.
+            await self._semantic_config_storage.set_setid_config(
+                set_id=set_id,
+                embedder_name=self._default_embedder_name,
+            )
+
             embedder = self._default_embedder
         else:
             embedder = await self._resource_manager.get_embedder(config.embedder_name)

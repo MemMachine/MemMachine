@@ -90,6 +90,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
         semantic_config_storage=semantic_config_storage,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
+        default_embedder_name="default_embedder",
         default_language_model=mock_llm_model,
         default_category_retriever=semantic_category_retriever,
     )
@@ -240,6 +241,7 @@ async def test_multiple_sets_processed_independently(
         semantic_config_storage=semantic_config_storage,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
+        default_embedder_name="default_embedder",
         default_language_model=mock_llm_model,
         default_category_retriever=semantic_category_retriever,
     )

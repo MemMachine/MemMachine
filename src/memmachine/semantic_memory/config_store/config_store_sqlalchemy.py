@@ -56,17 +56,28 @@ class SetIdResources(BaseSemanticConfigStore):
     embedder_name = mapped_column(String, nullable=True)
     language_model_name = mapped_column(String, nullable=True)
 
-    org_tag_set_id = mapped_column(
-        Integer,
-        ForeignKey("org_tag_set.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
     disabled_categories: Mapped[list["DisabledDefaultCategories"]] = relationship(
         "DisabledDefaultCategories",
         cascade="all, delete-orphan",
         single_parent=True,
+    )
+
+
+class SetIdOrgTagSet(BaseSemanticConfigStore):
+    """One-way mapping assigning a set_id to an org tag set.
+
+    This mapping is "first write wins": once a `set_id` has been associated
+    with an `org_tag_set_id`, subsequent registrations should not overwrite it.
+    """
+
+    __tablename__ = "semantic.config.setidresources.orgtagset"
+
+    set_id = mapped_column(String, primary_key=True, nullable=False)
+    org_tag_set_id = mapped_column(
+        Integer,
+        ForeignKey("org_tag_set.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
 
 
@@ -219,6 +230,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
     async def delete_all(self) -> None:
         async with self._create_session() as session:
             await session.execute(delete(SetIdResources))
+            await session.execute(delete(SetIdOrgTagSet))
             await session.execute(delete(Category))
             await session.execute(delete(Tag))
             await session.execute(delete(OrgTagSet))
@@ -285,11 +297,18 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             local_categories_raw = res_local_categories.scalars().unique().all()
             local_categories = [c.to_typed_model() for c in local_categories_raw]
 
+            res_org_tag_set = await session.execute(
+                select(SetIdOrgTagSet.org_tag_set_id).where(
+                    SetIdOrgTagSet.set_id == set_id
+                )
+            )
+            org_tag_set_id = res_org_tag_set.scalar_one_or_none()
+
             inherited_categories: list[SemanticCategory] = []
-            if resources is not None and resources.org_tag_set_id is not None:
+            if org_tag_set_id is not None:
                 inherited_stmt = (
                     select(Category)
-                    .where(Category.org_tag_set_id == resources.org_tag_set_id)
+                    .where(Category.org_tag_set_id == org_tag_set_id)
                     .options(selectinload(Category.tags))
                 )
                 res_inherited = await session.execute(inherited_stmt)
@@ -331,9 +350,9 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         dialect_name = self._engine.dialect.name
         ins: PgInsert | SQliteInsert
         if dialect_name == "postgresql":
-            ins = pg_insert(SetIdResources)
+            ins = pg_insert(SetIdOrgTagSet)
         elif dialect_name == "sqlite":
-            ins = sqlite_insert(SetIdResources)
+            ins = sqlite_insert(SetIdOrgTagSet)
         else:
             raise NotImplementedError
 

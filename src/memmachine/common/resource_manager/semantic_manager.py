@@ -9,6 +9,9 @@ from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeStorage
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.resource_manager import CommonResourceManager
+from memmachine.semantic_memory.config_store.caching_semantic_config_storage import (
+    CachingSemanticConfigStorage,
+)
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
     SemanticConfigStorageSqlAlchemy,
@@ -82,6 +85,12 @@ class SemanticResourceManager:
 
         sql_engine = await self._resource_manager.get_sql_engine(database)
         storage = SemanticConfigStorageSqlAlchemy(sql_engine)
+
+        if self._conf.with_config_cache:
+            storage = CachingSemanticConfigStorage(
+                wrapped=storage,
+            )
+
         await storage.startup()
 
         return storage
@@ -121,6 +130,7 @@ class SemanticResourceManager:
                 episode_storage=episode_store,
                 resource_manager=self._resource_manager,
                 default_embedder=embedder,
+                default_embedder_name=self._conf.embedding_model,
                 default_language_model=llm_model,
                 default_category_retriever=get_default_categories,
                 semantic_config_storage=config_store,

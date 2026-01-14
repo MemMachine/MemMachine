@@ -111,6 +111,7 @@ async def semantic_service(
             uningested_message_limit=0,
             debug_fail_loudly=True,
             default_embedder=embedder,
+            default_embedder_name="default_embedder",
             default_language_model=llm_model,
             default_category_retriever=default_session_categories,
             resource_manager=_ResourceManager(),
