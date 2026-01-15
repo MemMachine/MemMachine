@@ -284,6 +284,14 @@ class SemanticService:
         logger.info("Adding new feature %s to set %s", feature, set_id)
 
         resources = await self._set_id_resource(set_id=set_id)
+
+        # Validate that the category exists
+        category_names = {cat.name for cat in resources.semantic_categories}
+        if category_name not in category_names:
+            from memmachine.common.errors import CategoryNotFoundError
+
+            raise CategoryNotFoundError(set_id=set_id, category_name=category_name)
+
         embedding = (await resources.embedder.ingest_embed([value]))[0]
 
         f_id = await self._semantic_storage.add_feature(
@@ -346,8 +354,9 @@ class SemanticService:
         metadata: dict[str, str] | None = None,
     ) -> None:
         logger.info("Updating feature %s", feature_id)
+        embedding = None
 
-        if value is not None:
+        if category_name is not None or value is not None:
             if set_id is None:
                 original_feature = await self._semantic_storage.get_feature(feature_id)
                 if original_feature is None or original_feature.set_id is None:
@@ -355,13 +364,24 @@ class SemanticService:
                         "Unable to deduce set_id, the feature_id may be incorrect. "
                         "set_id is required to update a feature",
                     )
-                set_id = original_feature.set_id
+                str_set_id = original_feature.set_id
+            else:
+                str_set_id = set_id
+            resources = await self._set_id_resource(set_id=str_set_id)
 
-            resources = await self._set_id_resource(set_id=set_id)
+            if value is not None:
+                e = (await resources.embedder.ingest_embed([value]))[0]
+                embedding = np.array(e)
 
-            embedding = (await resources.embedder.ingest_embed([value]))[0]
-        else:
-            embedding = None
+            if category_name is not None:
+                category_names = {cat.name for cat in resources.semantic_categories}
+
+                if category_name not in category_names:
+                    from memmachine.common.errors import CategoryNotFoundError
+
+                    raise CategoryNotFoundError(
+                        set_id=str_set_id, category_name=category_name
+                    )
 
         await self._semantic_storage.update_feature(
             feature_id=feature_id,
@@ -371,7 +391,7 @@ class SemanticService:
             value=value,
             tag=tag,
             metadata=metadata,
-            embedding=np.array(embedding),
+            embedding=embedding,
         )
 
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:

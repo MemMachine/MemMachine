@@ -174,3 +174,20 @@ class EpisodicMemoryManagerClosedError(MemMachineError):
     def __repr__(self) -> str:
         """Return a helpful debug representation."""
         return "EpisodicMemoryManagerClosedError()"
+
+
+class CategoryNotFoundError(MemMachineError):
+    """Exception raised when a category does not exist for a set_id."""
+
+    def __init__(self, set_id: str, category_name: str) -> None:
+        """Initialize with the set_id and category name."""
+        self.set_id = set_id
+        self.category_name = category_name
+        super().__init__(
+            f"Category '{category_name}' does not exist for set_id '{set_id}'. "
+            f"Please create the category before adding features to it."
+        )
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"CategoryNotFoundError('{self.set_id}', '{self.category_name}')"

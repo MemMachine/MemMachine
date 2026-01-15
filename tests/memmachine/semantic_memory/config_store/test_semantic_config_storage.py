@@ -535,7 +535,9 @@ async def test_get_category_set_ids_for_set_id_category(
         prompt="Local category prompt",
     )
 
-    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+    set_ids = await semantic_config_storage.get_category_set_ids(
+        category_id=category_id,
+    )
 
     assert set_ids == [set_id]
 
@@ -587,7 +589,9 @@ async def test_get_category_set_ids_for_org_set_category_no_overrides(
     )
 
     # Get set_ids associated with the org category
-    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+    set_ids = await semantic_config_storage.get_category_set_ids(
+        category_id=category_id,
+    )
 
     # All three set_ids should be returned since none override the category
     assert sorted(set_ids) == sorted([set_id_1, set_id_2, set_id_3])
@@ -636,7 +640,9 @@ async def test_get_category_set_ids_for_org_set_category_with_overrides(
     )
 
     # Get set_ids associated with the org category
-    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+    set_ids = await semantic_config_storage.get_category_set_ids(
+        category_id=category_id,
+    )
 
     # Only the non-overriding set_ids should be returned
     assert sorted(set_ids) == sorted([set_id_1, set_id_3])
@@ -687,7 +693,9 @@ async def test_get_category_set_ids_for_org_set_category_with_different_category
     )
 
     # Get set_ids associated with the org category
-    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+    set_ids = await semantic_config_storage.get_category_set_ids(
+        category_id=category_id,
+    )
 
     # Both set_ids should be returned since the local category has a different name
     assert sorted(set_ids) == sorted([set_id_1, set_id_2])

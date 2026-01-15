@@ -423,7 +423,7 @@ async def test_delete_category_deletes_underlying_features(
     )
 
     # Add a feature in a different category (should not be deleted)
-    other_category_id = await semantic_service.add_new_category_to_set_id(
+    await semantic_service.add_new_category_to_set_id(
         set_id=set_id,
         category_name="OtherCategory",
         prompt="Other category prompt",
@@ -611,3 +611,135 @@ async def test_delete_org_set_category_only_deletes_non_overridden_features(
     local_category = await semantic_service.get_category(category_id=local_category_id)
     assert local_category is not None
     assert local_category.name == "OverridableCategory"
+
+
+async def test_add_new_feature_validates_category_exists(
+    semantic_service: SemanticService,
+):
+    """Test that adding a feature to a non-existent category raises CategoryNotFoundError."""
+    from memmachine.common.errors import CategoryNotFoundError
+
+    set_id = "user-validate-category"
+
+    # Try to add a feature to a category that doesn't exist
+    with pytest.raises(CategoryNotFoundError) as exc_info:
+        await semantic_service.add_new_feature(
+            set_id=set_id,
+            category_name="NonExistentCategory",
+            feature="test_feature",
+            value="test value",
+            tag="test_tag",
+        )
+
+    # Verify the error message contains the correct information
+    assert exc_info.value.set_id == set_id
+    assert exc_info.value.category_name == "NonExistentCategory"
+    assert "does not exist" in str(exc_info.value)
+
+
+async def test_add_new_feature_succeeds_with_valid_category(
+    semantic_service: SemanticService,
+):
+    """Test that adding a feature to a valid category succeeds."""
+    set_id = "user-valid-category"
+
+    # Create a category
+    await semantic_service.add_new_category_to_set_id(
+        set_id=set_id,
+        category_name="ValidCategory",
+        prompt="Test category prompt",
+        description="Test description",
+    )
+
+    # Add a feature to the valid category - should succeed
+    feature_id = await semantic_service.add_new_feature(
+        set_id=set_id,
+        category_name="ValidCategory",
+        feature="test_feature",
+        value="test value",
+        tag="test_tag",
+    )
+
+    assert feature_id is not None
+
+    # Verify the feature was created
+    features = await semantic_service.get_set_features(set_ids=[set_id])
+    assert len(features) == 1
+    assert features[0].category == "ValidCategory"
+
+
+async def test_update_feature_validates_category_exists(
+    semantic_service: SemanticService,
+):
+    """Test that updating a feature to a non-existent category raises CategoryNotFoundError."""
+    from memmachine.common.errors import CategoryNotFoundError
+
+    set_id = "user-update-validate"
+
+    # Create a category and feature
+    await semantic_service.add_new_category_to_set_id(
+        set_id=set_id,
+        category_name="OriginalCategory",
+        prompt="Original prompt",
+        description="Original description",
+    )
+
+    feature_id = await semantic_service.add_new_feature(
+        set_id=set_id,
+        category_name="OriginalCategory",
+        feature="test_feature",
+        value="test value",
+        tag="test_tag",
+    )
+
+    # Try to update the feature to a non-existent category
+    with pytest.raises(CategoryNotFoundError) as exc_info:
+        await semantic_service.update_feature(
+            feature_id=feature_id,
+            category_name="NonExistentCategory",
+        )
+
+    # Verify the error message contains the correct information
+    assert exc_info.value.set_id == set_id
+    assert exc_info.value.category_name == "NonExistentCategory"
+
+
+async def test_update_feature_succeeds_with_valid_category(
+    semantic_service: SemanticService,
+):
+    """Test that updating a feature to a valid category succeeds."""
+    set_id = "user-update-valid"
+
+    # Create two categories
+    await semantic_service.add_new_category_to_set_id(
+        set_id=set_id,
+        category_name="Category1",
+        prompt="Category 1 prompt",
+        description="Category 1 description",
+    )
+    await semantic_service.add_new_category_to_set_id(
+        set_id=set_id,
+        category_name="Category2",
+        prompt="Category 2 prompt",
+        description="Category 2 description",
+    )
+
+    # Create a feature in Category1
+    feature_id = await semantic_service.add_new_feature(
+        set_id=set_id,
+        category_name="Category1",
+        feature="test_feature",
+        value="test value",
+        tag="test_tag",
+    )
+
+    # Update the feature to Category2 - should succeed
+    await semantic_service.update_feature(
+        feature_id=feature_id,
+        category_name="Category2",
+    )
+
+    # Verify the feature was updated
+    feature = await semantic_service.get_feature(feature_id, load_citations=False)
+    assert feature is not None
+    assert feature.category == "Category2"
