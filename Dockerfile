@@ -26,7 +26,7 @@ COPY README.md README.md
 
 # Determine whether to include GPU dependencies
 ARG GPU="false"
-ARG SCM_VERSION
+ARG SCM_VERSION="0.0.0"
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
 
 # Install dependencies into a virtual environment, but NOT the project itself
