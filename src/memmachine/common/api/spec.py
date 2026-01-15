@@ -7,8 +7,8 @@ from typing import Annotated, Any, Self
 import regex
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
-from memmachine.common.api import EpisodeType, MemoryType
-from memmachine.common.api.doc import Examples, SpecDoc
+from . import EpisodeType, MemoryType
+from .doc import Examples, SpecDoc
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
