@@ -27,6 +27,7 @@ from memmachine.common.api.spec import (
     SearchMemoriesSpec,
     SearchResult,
 )
+from memmachine.common.api.version import get_version
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
     LongTermMemoryConfPartial,
@@ -379,6 +380,7 @@ async def health_check() -> dict[str, str]:
     return {
         "status": "healthy",
         "service": "memmachine",
+        "version": get_version().server_version,
     }
 
 

@@ -581,3 +581,33 @@ class RestErrorModel(BaseModel):
             description=SpecDoc.ERROR_TRACE,
         ),
     ]
+
+
+class Version(BaseModel):
+    """Model representing version information."""
+
+    server_version: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SERVER_VERSION,
+            examples=Examples.SERVER_VERSION,
+        ),
+    ]
+    client_version: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CLIENT_VERSION,
+            examples=Examples.CLIENT_VERSION,
+        ),
+    ]
+
+    def __str__(self) -> str:
+        """Return the version as a string."""
+        return "\n".join(
+            [
+                f"server: {self.server_version}",
+                f"client: {self.client_version}",
+            ]
+        )

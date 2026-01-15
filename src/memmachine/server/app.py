@@ -28,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import AppType, ExceptionHandler, Lifespan
 
+from memmachine.common.api.version import get_version
 from memmachine.server.api_v2.mcp import (
     initialize_resource,
     load_configuration,
@@ -163,7 +164,17 @@ def main() -> None:
         action="store_true",
         help="Run in MCP stdio mode",
     )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Show the version and exit",
+    )
     args = parser.parse_args()
+
+    # Handle --version early
+    if args.version:
+        sys.stdout.write(f"{get_version()}\n")
+        sys.exit(0)
 
     try:
         if args.stdio:

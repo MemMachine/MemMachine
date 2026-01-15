@@ -199,6 +199,12 @@ class SpecDoc:
     ERROR_INTERNAL = """
     The real error that triggered the exception, for internal debugging."""
 
+    SERVER_VERSION = """
+    The version of the MemMachine server."""
+
+    CLIENT_VERSION = """
+    The version of the MemMachine client."""
+
 
 class Examples:
     """Common examples for API fields."""
@@ -228,6 +234,8 @@ class Examples:
     SEMANTIC_ID: ClassVar[list[str]] = ["12", "23"]
     SEMANTIC_IDS: ClassVar[list[list[str]]] = [["123", "345"], ["23"]]
     SEARCH_RESULT_STATUS: ClassVar[list[int]] = [0]
+    SERVER_VERSION: ClassVar[list[str]] = ["0.1.2", "0.2.0"]
+    CLIENT_VERSION: ClassVar[list[str]] = ["0.1.2", "0.2.0"]
 
 
 class RouterDoc:

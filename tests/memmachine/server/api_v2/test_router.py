@@ -473,7 +473,10 @@ def test_metrics(client):
 def test_health_check(client):
     response = client.get("/api/v2/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy", "service": "memmachine"}
+    resp_json = response.json()
+    assert resp_json["status"] == "healthy"
+    assert resp_json["service"] == "memmachine"
+    assert len(resp_json["version"]) > 0
 
 
 def test_rest_error():
