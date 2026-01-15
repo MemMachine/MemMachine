@@ -521,3 +521,179 @@ async def test_register_set_id_org_set_is_first_write_wins(
 
     config = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert [c.name for c in config.categories] == ["from-a"]
+
+
+@pytest.mark.asyncio
+async def test_get_category_set_ids_for_set_id_category(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    """Test that get_category_set_ids returns the single set_id for a set-specific category."""
+    set_id = "set-get-ids-1"
+    category_id = await semantic_config_storage.create_category(
+        set_id=set_id,
+        category_name="local-category",
+        prompt="Local category prompt",
+    )
+
+    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+
+    assert set_ids == [set_id]
+
+
+@pytest.mark.asyncio
+async def test_get_category_set_ids_for_non_existent_category(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    """Test that get_category_set_ids returns empty list for non-existent category."""
+    set_ids = await semantic_config_storage.get_category_set_ids(category_id="999999")
+
+    assert set_ids == []
+
+
+@pytest.mark.asyncio
+async def test_get_category_set_ids_for_org_set_category_no_overrides(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    """Test that get_category_set_ids returns all inheriting set_ids when no overrides exist."""
+    # Create org set with a category
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-get-ids-1",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    category_id = await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_id,
+        category_name="shared-category",
+        prompt="Shared org category",
+    )
+
+    # Register three set_ids to this org set
+    set_id_1 = "set-inherit-1"
+    set_id_2 = "set-inherit-2"
+    set_id_3 = "set-inherit-3"
+
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id_1,
+        org_set_id=org_set_id,
+    )
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id_2,
+        org_set_id=org_set_id,
+    )
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id_3,
+        org_set_id=org_set_id,
+    )
+
+    # Get set_ids associated with the org category
+    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+
+    # All three set_ids should be returned since none override the category
+    assert sorted(set_ids) == sorted([set_id_1, set_id_2, set_id_3])
+
+
+@pytest.mark.asyncio
+async def test_get_category_set_ids_for_org_set_category_with_overrides(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    """Test that get_category_set_ids excludes set_ids that override the category."""
+    # Create org set with a category
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-get-ids-2",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    category_id = await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_id,
+        category_name="overridable-category",
+        prompt="Original org prompt",
+    )
+
+    # Register four set_ids to this org set
+    set_id_1 = "set-no-override-1"
+    set_id_2 = "set-override-1"
+    set_id_3 = "set-no-override-2"
+    set_id_4 = "set-override-2"
+
+    for sid in [set_id_1, set_id_2, set_id_3, set_id_4]:
+        await semantic_config_storage.register_set_id_org_set(
+            set_id=sid,
+            org_set_id=org_set_id,
+        )
+
+    # Override the category in two of the set_ids
+    await semantic_config_storage.create_category(
+        set_id=set_id_2,
+        category_name="overridable-category",
+        prompt="Override prompt for set 2",
+    )
+    await semantic_config_storage.create_category(
+        set_id=set_id_4,
+        category_name="overridable-category",
+        prompt="Override prompt for set 4",
+    )
+
+    # Get set_ids associated with the org category
+    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+
+    # Only the non-overriding set_ids should be returned
+    assert sorted(set_ids) == sorted([set_id_1, set_id_3])
+
+    # Verify that the overriding set_ids do have the category (but local version)
+    config_2 = await semantic_config_storage.get_setid_config(set_id=set_id_2)
+    assert len(config_2.categories) == 1
+    assert config_2.categories[0].name == "overridable-category"
+    assert config_2.categories[0].inherited is False
+
+
+@pytest.mark.asyncio
+async def test_get_category_set_ids_for_org_set_category_with_different_category(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    """Test that set_ids with different category names still inherit the org category."""
+    # Create org set with a category
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-get-ids-3",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    category_id = await semantic_config_storage.create_org_set_category(
+        org_set_id=org_set_id,
+        category_name="org-category",
+        prompt="Org category prompt",
+    )
+
+    # Register two set_ids
+    set_id_1 = "set-different-cat-1"
+    set_id_2 = "set-different-cat-2"
+
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id_1,
+        org_set_id=org_set_id,
+    )
+    await semantic_config_storage.register_set_id_org_set(
+        set_id=set_id_2,
+        org_set_id=org_set_id,
+    )
+
+    # Add a different category to set_id_2 (not an override, different name)
+    await semantic_config_storage.create_category(
+        set_id=set_id_2,
+        category_name="different-category",
+        prompt="Different category prompt",
+    )
+
+    # Get set_ids associated with the org category
+    set_ids = await semantic_config_storage.get_category_set_ids(category_id=category_id)
+
+    # Both set_ids should be returned since the local category has a different name
+    assert sorted(set_ids) == sorted([set_id_1, set_id_2])
+
+    # Verify that set_id_2 has both categories
+    config_2 = await semantic_config_storage.get_setid_config(set_id=set_id_2)
+    assert len(config_2.categories) == 2
+    category_names = {c.name for c in config_2.categories}
+    assert category_names == {"org-category", "different-category"}

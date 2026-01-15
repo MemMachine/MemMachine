@@ -640,14 +640,60 @@ class SemanticService:
             category_name=category_name,
         )
 
-    async def delete_category_and_its_tags(
+    async def get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> list[SetIdT]:
+        logger.debug("Getting set_ids for category %s", category_id)
+
+        return await self._semantic_config_storage.get_category_set_ids(
+            category_id=category_id
+        )
+
+    async def delete_category(
         self,
         *,
         category_id: CategoryIdT,
     ) -> None:
         logger.info("Deleting category %s", category_id)
 
-        # TODO: Delete data contained in category
+        async with asyncio.TaskGroup() as tg:
+            set_ids_task = tg.create_task(
+                self._semantic_config_storage.get_category_set_ids(
+                    category_id=category_id,
+                )
+            )
+
+            category_task = tg.create_task(
+                self._semantic_config_storage.get_category(
+                    category_id=category_id,
+                )
+            )
+
+        set_ids = set_ids_task.result()
+        category = category_task.result()
+
+        if category is not None and set_ids:
+            logger.debug(
+                "Deleting features for category %s for set_ids: %s",
+                category.name,
+                set_ids,
+            )
+
+            await self.delete_feature_set(
+                set_ids=set_ids,
+                filter_expr=Comparison(
+                    field="category_name",
+                    op="=",
+                    value=category.name,
+                ),
+            )
+        else:
+            logger.debug(
+                "No features found for category %s, nothing to delete",
+                category_id,
+            )
 
         await self._semantic_config_storage.delete_category(category_id=category_id)
 

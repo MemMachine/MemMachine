@@ -112,6 +112,13 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
 
         return category
 
+    async def get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> list[SetIdT]:
+        return await self._wrapped.get_category_set_ids(category_id=category_id)
+
     async def create_category(
         self,
         *,

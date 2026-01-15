@@ -390,3 +390,224 @@ async def test_search_returns_matching_features(
     assert spy_embedder.search_calls == [["Why does alpha prefer quiet chats?"]]
     assert len(results) == 1
     assert results[0].feature_name == "alpha_fact"
+
+
+async def test_delete_category_deletes_underlying_features(
+    semantic_service: SemanticService,
+):
+    """Test that deleting a set_id category also deletes all features in that category."""
+    set_id = "user-delete-cat"
+
+    # Create a category
+    category_id = await semantic_service.add_new_category_to_set_id(
+        set_id=set_id,
+        category_name="TestCategory",
+        prompt="Test category prompt",
+        description="Test description",
+    )
+
+    # Add features to this category
+    await semantic_service.add_new_feature(
+        set_id=set_id,
+        category_name="TestCategory",
+        feature="feature1",
+        value="value1",
+        tag="tag1",
+    )
+    await semantic_service.add_new_feature(
+        set_id=set_id,
+        category_name="TestCategory",
+        feature="feature2",
+        value="value2",
+        tag="tag2",
+    )
+
+    # Add a feature in a different category (should not be deleted)
+    other_category_id = await semantic_service.add_new_category_to_set_id(
+        set_id=set_id,
+        category_name="OtherCategory",
+        prompt="Other category prompt",
+        description="Other description",
+    )
+    await semantic_service.add_new_feature(
+        set_id=set_id,
+        category_name="OtherCategory",
+        feature="other_feature",
+        value="other_value",
+        tag="other_tag",
+    )
+
+    # Verify features exist
+    features_before = await semantic_service.get_set_features(
+        set_ids=[set_id],
+    )
+    assert len(features_before) == 3
+    test_category_features = [
+        f for f in features_before if f.category == "TestCategory"
+    ]
+    other_category_features = [
+        f for f in features_before if f.category == "OtherCategory"
+    ]
+    assert len(test_category_features) == 2
+    assert len(other_category_features) == 1
+
+    # Delete the category
+    await semantic_service.delete_category(category_id=category_id)
+
+    # Verify the category config is deleted
+    category = await semantic_service.get_category(category_id=category_id)
+    assert category is None
+
+    # Verify only TestCategory features are deleted
+    features_after = await semantic_service.get_set_features(
+        set_ids=[set_id],
+    )
+    assert len(features_after) == 1
+    assert features_after[0].category == "OtherCategory"
+    assert features_after[0].feature_name == "other_feature"
+
+
+async def test_delete_org_set_category_deletes_inherited_features(
+    semantic_service: SemanticService,
+):
+    """Test that deleting an org_set category deletes features from all inheriting set_ids."""
+    # Create an org set
+    org_set_id = await semantic_service._semantic_config_storage.add_org_set_id(
+        org_id="org-delete-test",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    # Create a category in the org set
+    category_id = await semantic_service.add_new_category_to_org_set(
+        org_set_id=org_set_id,
+        category_name="SharedCategory",
+        prompt="Shared category prompt",
+        description="Shared description",
+    )
+
+    # Register three set_ids to this org set
+    set_id_1 = "set-inherit-del-1"
+    set_id_2 = "set-inherit-del-2"
+    set_id_3 = "set-inherit-del-3"
+
+    for sid in [set_id_1, set_id_2, set_id_3]:
+        await semantic_service._semantic_config_storage.register_set_id_org_set(
+            set_id=sid,
+            org_set_id=org_set_id,
+        )
+
+    # Add features to each set_id with the shared category
+    await semantic_service.add_new_feature(
+        set_id=set_id_1,
+        category_name="SharedCategory",
+        feature="feature1",
+        value="value1 for set1",
+        tag="tag1",
+    )
+    await semantic_service.add_new_feature(
+        set_id=set_id_2,
+        category_name="SharedCategory",
+        feature="feature2",
+        value="value2 for set2",
+        tag="tag2",
+    )
+    await semantic_service.add_new_feature(
+        set_id=set_id_3,
+        category_name="SharedCategory",
+        feature="feature3",
+        value="value3 for set3",
+        tag="tag3",
+    )
+
+    # Verify features exist in all sets
+    all_features = await semantic_service.get_set_features(
+        set_ids=[set_id_1, set_id_2, set_id_3],
+    )
+    assert len(all_features) == 3
+    assert all(f.category == "SharedCategory" for f in all_features)
+
+    # Delete the category
+    await semantic_service.delete_category(category_id=category_id)
+
+    # Verify all features are deleted from all set_ids
+    remaining_features = await semantic_service.get_set_features(
+        set_ids=[set_id_1, set_id_2, set_id_3],
+    )
+    assert len(remaining_features) == 0
+
+
+async def test_delete_org_set_category_only_deletes_non_overridden_features(
+    semantic_service: SemanticService,
+):
+    """Test that deleting an org_set category only deletes features from non-overriding set_ids."""
+    # Create an org set
+    org_set_id = await semantic_service._semantic_config_storage.add_org_set_id(
+        org_id="org-delete-override",
+        org_level_set=False,
+        metadata_tags=["repo"],
+    )
+
+    # Create a category in the org set
+    org_category_id = await semantic_service.add_new_category_to_org_set(
+        org_set_id=org_set_id,
+        category_name="OverridableCategory",
+        prompt="Original org prompt",
+        description="Original description",
+    )
+
+    # Register two set_ids
+    set_id_inherit = "set-inherit-no-override"
+    set_id_override = "set-override-local"
+
+    for sid in [set_id_inherit, set_id_override]:
+        await semantic_service._semantic_config_storage.register_set_id_org_set(
+            set_id=sid,
+            org_set_id=org_set_id,
+        )
+
+    # Add features to both sets with the shared category
+    await semantic_service.add_new_feature(
+        set_id=set_id_inherit,
+        category_name="OverridableCategory",
+        feature="inherited_feature",
+        value="inherited value",
+        tag="tag1",
+    )
+    await semantic_service.add_new_feature(
+        set_id=set_id_override,
+        category_name="OverridableCategory",
+        feature="override_feature",
+        value="override value",
+        tag="tag2",
+    )
+
+    # Override the category in set_id_override
+    local_category_id = await semantic_service.add_new_category_to_set_id(
+        set_id=set_id_override,
+        category_name="OverridableCategory",
+        prompt="Local override prompt",
+        description="Local override description",
+    )
+
+    # Verify both features exist
+    all_features_before = await semantic_service.get_set_features(
+        set_ids=[set_id_inherit, set_id_override],
+    )
+    assert len(all_features_before) == 2
+
+    # Delete the org category
+    await semantic_service.delete_category(category_id=org_category_id)
+
+    # Verify only the inherited feature is deleted
+    remaining_features = await semantic_service.get_set_features(
+        set_ids=[set_id_inherit, set_id_override],
+    )
+    assert len(remaining_features) == 1
+    assert remaining_features[0].set_id == set_id_override
+    assert remaining_features[0].feature_name == "override_feature"
+
+    # Verify the local category still exists
+    local_category = await semantic_service.get_category(category_id=local_category_id)
+    assert local_category is not None
+    assert local_category.name == "OverridableCategory"

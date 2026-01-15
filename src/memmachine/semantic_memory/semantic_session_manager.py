@@ -517,6 +517,15 @@ class SemanticSessionManager:
     ) -> ESemanticConfigStorage.Category | None:
         return await self._semantic_service.get_category(category_id=category_id)
 
+    async def get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> list[SetIdT]:
+        return await self._semantic_service.get_category_set_ids(
+            category_id=category_id
+        )
+
     async def add_new_category(
         self,
         *,
@@ -616,12 +625,12 @@ class SemanticSessionManager:
             category_name=category_name,
         )
 
-    async def delete_category_and_its_tags(
+    async def delete_category(
         self,
         *,
         category_id: CategoryIdT,
     ) -> None:
-        await self._semantic_service.delete_category_and_its_tags(
+        await self._semantic_service.delete_category(
             category_id=category_id,
         )
 

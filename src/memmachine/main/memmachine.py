@@ -961,7 +961,7 @@ class MemMachine:
             description=description,
         )
 
-    async def semantic_add_set_type_category(
+    async def semantic_add_org_type_category(
         self,
         *,
         set_type_id: str,
@@ -1026,6 +1026,27 @@ class MemMachine:
             category_name=category_name,
         )
 
+    async def semantic_get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> list[SetIdT]:
+        """
+        Get the set_ids associated with a semantic category.
+
+        Args:
+            category_id: Category identifier to query.
+
+        Returns:
+            List of set_ids associated with the category.
+
+        """
+        semantic_session = await self._resources.get_semantic_session_manager()
+
+        return await semantic_session.get_category_set_ids(
+            category_id=category_id,
+        )
+
     async def semantic_delete_category(
         self,
         *,
@@ -1043,7 +1064,7 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.delete_category_and_its_tags(
+        return await semantic_session.delete_category(
             category_id=category_id,
         )
 

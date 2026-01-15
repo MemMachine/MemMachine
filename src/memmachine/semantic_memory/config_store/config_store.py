@@ -65,6 +65,12 @@ class SemanticConfigStorage(Protocol):
         category_id: CategoryIdT,
     ) -> Category | None: ...
 
+    async def get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> list[SetIdT]: ...
+
     async def create_category(
         self,
         *,

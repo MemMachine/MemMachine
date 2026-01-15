@@ -192,7 +192,10 @@ class OrgTagSet(BaseSemanticConfigStore):
 
     __table_args__ = (
         UniqueConstraint(
-            "org_id", "org_level_set", "metadata_tags_sig", name="uq_org_level_tagsig"
+            "org_id",
+            "org_level_set",
+            "metadata_tags_sig",
+            name="uq_org_level_tagsig",
         ),
     )
 
@@ -440,6 +443,41 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             prompt=category.prompt,
             description=category.description,
         )
+
+    async def get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> list[SetIdT]:
+        category_id_int = int(category_id)
+
+        async with self._create_session() as session:
+            category_stmt = select(Category).where(Category.id == category_id_int)
+            category_res = await session.execute(category_stmt)
+            category = category_res.scalar_one_or_none()
+
+            if category is None:
+                return []
+            if category.set_id is not None:
+                return [SetIdT(category.set_id)]
+            if category.org_tag_set_id is None:
+                return []
+
+            set_ids_stmt = select(SetIdOrgTagSet.set_id).where(
+                SetIdOrgTagSet.org_tag_set_id == category.org_tag_set_id
+            )
+            set_ids_res = await session.execute(set_ids_stmt)
+            all_set_ids = [SetIdT(sid) for sid in set_ids_res.scalars().all()]
+
+            overriding_set_ids_stmt = select(Category.set_id).where(
+                Category.name == category.name,
+                Category.set_id.in_(all_set_ids),
+            )
+            overriding_res = await session.execute(overriding_set_ids_stmt)
+            overriding_set_ids = set(overriding_res.scalars().all())
+
+            # Return set_ids that don't override the category
+            return [sid for sid in all_set_ids if sid not in overriding_set_ids]
 
     async def create_category(
         self,
