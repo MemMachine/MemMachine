@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any, NoReturn, Self, TypedDict
+from typing import Any, NoReturn, Self, TypedDict, Unpack
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -155,7 +155,7 @@ class MemMachineClient:
         method: str,
         url: str,
         timeout: int | None = None,
-        **kwargs: RequestExtraOptions,
+        **kwargs: Unpack[RequestExtraOptions],
     ) -> requests.Response:
         """
         Make an HTTP request using the client's session.

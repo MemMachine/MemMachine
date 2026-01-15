@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import cast
 
 from pydantic import SecretStr
 
@@ -22,6 +23,7 @@ from memmachine.common.configuration import (
 from memmachine.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
+    SqlAlchemyConf,
     SupportedDB,
 )
 from memmachine.common.configuration.embedder_conf import (
@@ -299,7 +301,10 @@ class ConfigurationWizard:
     def database_conf(self) -> DatabasesConf:
         neo4j_db_conf = self.neo4j_configs
         db_provider = SupportedDB.from_provider("sqlite")
-        sqlite_db_conf = db_provider.build_config({"path": "memmachine.db"})
+        sqlite_db_conf = cast(
+            SqlAlchemyConf,
+            db_provider.build_config({"path": "memmachine.db"}),
+        )
         return DatabasesConf(
             neo4j_confs={self.NEO4J_DB_ID: neo4j_db_conf},
             relational_db_confs={self.SQLITE_DB_ID: sqlite_db_conf},

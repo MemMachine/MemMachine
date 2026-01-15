@@ -1,9 +1,10 @@
 """API v2 service implementations."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Request
+from pydantic import JsonValue
 
 from memmachine import MemMachine
 from memmachine.common.api import MemoryType as MemoryTypeE
@@ -57,7 +58,7 @@ async def _add_messages_to(
             produced_for_id=message.produced_for,
             producer_role=message.role,
             created_at=message.timestamp,
-            metadata=message.metadata,
+            metadata=cast(dict[str, JsonValue], message.metadata),
             episode_type=message.episode_type,
         )
         for message in spec.messages

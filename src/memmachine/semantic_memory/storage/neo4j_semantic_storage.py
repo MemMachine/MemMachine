@@ -105,7 +105,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         owns_driver: bool = False,
     ) -> None:
         """Initialize the storage with a Neo4j driver."""
-        self._driver = driver
+        self._driver: Any = driver
         self._owns_driver = owns_driver
         # Exposed for fixtures to know which backend is in use
         self.backend_name = "neo4j"

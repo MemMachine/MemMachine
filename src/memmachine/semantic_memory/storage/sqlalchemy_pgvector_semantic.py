@@ -604,7 +604,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             )
             if filter_expr is not None:
                 clause = self._compile_feature_filter_expr(filter_expr, Feature)
-                working_stmt = working_stmt.where(clause)
+                if clause is not None:
+                    working_stmt = working_stmt.where(clause)
             return working_stmt
 
         if k is not None or vector_search_opts is not None:
@@ -615,7 +616,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         delete_stmt = stmt
         if filter_expr is not None:
             clause = self._compile_feature_filter_expr(filter_expr, Feature)
-            delete_stmt = delete_stmt.where(clause)
+            if clause is not None:
+                delete_stmt = delete_stmt.where(clause)
 
         return delete_stmt
 
@@ -643,13 +645,19 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         if isinstance(expr, FilterAnd):
             left = self._compile_feature_filter_expr(expr.left, table)
             right = self._compile_feature_filter_expr(expr.right, table)
-
+            if left is None:
+                return right
+            if right is None:
+                return left
             return and_(left, right)
 
         if isinstance(expr, FilterOr):
             left = self._compile_feature_filter_expr(expr.left, table)
             right = self._compile_feature_filter_expr(expr.right, table)
-
+            if left is None:
+                return right
+            if right is None:
+                return left
             return or_(left, right)
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
