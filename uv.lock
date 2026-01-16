@@ -1639,6 +1639,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "regex" },
     { name = "requests" },
+    { name = "typing-extensions" },
     { name = "urllib3" },
 ]
 
@@ -1647,6 +1648,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "regex", specifier = ">=2023.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
+    { name = "typing-extensions", specifier = ">=4.0.0" },
     { name = "urllib3", specifier = ">=2.0.0" },
 ]
 
