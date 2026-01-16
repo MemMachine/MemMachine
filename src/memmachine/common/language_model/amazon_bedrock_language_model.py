@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import instructor
+from json_repair import repair_json
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -493,7 +494,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
             return None
 
         try:
-            parsed_json = json.loads(json_match.group(0))
+            parsed_json = repair_json(json_match.group(0))
             return TypeAdapter(output_format).validate_python(parsed_json)
         except Exception:
             return None

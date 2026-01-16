@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 from dotenv import load_dotenv
+from json_repair import repair_json
 from openai import OpenAI
 
 load_dotenv()
@@ -60,7 +61,7 @@ def evaluate_llm_judge(question: str, gold_answer: str, generated_answer: str) -
         response_format={"type": "json_object"},
         temperature=0.0,
     )
-    label = json.loads(response.choices[0].message.content)["label"]
+    label = repair_json(response.choices[0].message.content)["label"]
     return 1 if label == "CORRECT" else 0
 
 
