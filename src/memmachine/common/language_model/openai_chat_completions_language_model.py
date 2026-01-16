@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+from json_repair import repair_json
 from openai.types.chat import ChatCompletion, ChatCompletionMessageFunctionToolCall
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
@@ -259,7 +260,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                                 "call_id": tool_call.id,
                                 "function": {
                                     "name": tool_call.function.name,
-                                    "arguments": json.loads(
+                                    "arguments": repair_json(
                                         tool_call.function.arguments,
                                     ),
                                 },
@@ -270,7 +271,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                             "Unsupported tool call type: %s",
                             type(tool_call).__name__,
                         )
-        except json.JSONDecodeError as e:
+        except Exception as e:
             raise ValueError("JSON decode error") from e
 
         return (

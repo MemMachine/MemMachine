@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+from json_repair import repair_json
 from openai.types.responses import Response
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -278,13 +279,13 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     "call_id": output.call_id,
                     "function": {
                         "name": output.name,
-                        "arguments": json.loads(output.arguments),
+                        "arguments": repair_json(output.arguments),
                     },
                 }
                 for output in response.output
                 if output.type == "function_call"
             ]
-        except json.JSONDecodeError as e:
+        except Exception as e:
             raise ValueError("JSON decode error") from e
 
         return (
