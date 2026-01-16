@@ -13,7 +13,7 @@ dependencies = [
     "boto3-stubs==1.40.64",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
-    "fastmcp>=2.12.0",
+    "fastmcp>=2.14.0",
     "instructor[bedrock]>=1.12.0",
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
