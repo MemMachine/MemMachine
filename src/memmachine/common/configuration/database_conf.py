@@ -46,6 +46,20 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
             "required before Neo4j automatically creates a vector index."
         ),
     )
+    max_connection_pool_size: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of connections to maintain in the connection pool. "
+            "Internal default is 100."
+        ),
+    )
+    connection_acquisition_timeout: float | None = Field(
+        default=None,
+        description=(
+            "Maximum time in seconds to wait for a connection from the pool. "
+            "Internal default is 60.0."
+        ),
+    )
 
     def get_uri(self) -> str:
         if self.uri:
