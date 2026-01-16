@@ -273,20 +273,17 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         if response.output is None:
             return (response.output_text or "", [])
 
-        try:
-            function_calls_arguments = [
-                {
-                    "call_id": output.call_id,
-                    "function": {
-                        "name": output.name,
-                        "arguments": repair_json(output.arguments),
-                    },
-                }
-                for output in response.output
-                if output.type == "function_call"
-            ]
-        except Exception as e:
-            raise ValueError("JSON decode error") from e
+        function_calls_arguments = [
+            {
+                "call_id": output.call_id,
+                "function": {
+                    "name": output.name,
+                    "arguments": repair_json(output.arguments),
+                },
+            }
+            for output in response.output
+            if output.type == "function_call"
+        ]
 
         return (
             response.output_text,
