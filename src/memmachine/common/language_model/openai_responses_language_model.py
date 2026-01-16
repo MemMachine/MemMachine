@@ -1,7 +1,6 @@
 """OpenAI-based language model implementation."""
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any, TypeVar
@@ -273,17 +272,22 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         if response.output is None:
             return (response.output_text or "", [])
 
-        function_calls_arguments = [
-            {
-                "call_id": output.call_id,
-                "function": {
-                    "name": output.name,
-                    "arguments": repair_json(output.arguments),
-                },
-            }
-            for output in response.output
-            if output.type == "function_call"
-        ]
+        try:
+            function_calls_arguments = [
+                {
+                    "call_id": output.call_id,
+                    "function": {
+                        "name": output.name,
+                        "arguments": repair_json(output.arguments),
+                    },
+                }
+                for output in response.output
+                if output.type == "function_call"
+            ]
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "Failed to repair or parse JSON from function call arguments"
+            ) from e
 
         return (
             response.output_text,

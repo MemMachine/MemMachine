@@ -248,28 +248,33 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         )
 
         function_calls_arguments = []
-        if response.choices[0].message.tool_calls:
-            for tool_call in response.choices[0].message.tool_calls:
-                if isinstance(
-                    tool_call,
-                    ChatCompletionMessageFunctionToolCall,
-                ):
-                    function_calls_arguments.append(
-                        {
-                            "call_id": tool_call.id,
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": repair_json(
-                                    tool_call.function.arguments,
-                                ),
+        try:
+            if response.choices[0].message.tool_calls:
+                for tool_call in response.choices[0].message.tool_calls:
+                    if isinstance(
+                        tool_call,
+                        ChatCompletionMessageFunctionToolCall,
+                    ):
+                        function_calls_arguments.append(
+                            {
+                                "call_id": tool_call.id,
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": repair_json(
+                                        tool_call.function.arguments,
+                                    ),
+                                },
                             },
-                        },
-                    )
-                else:
-                    logger.info(
-                        "Unsupported tool call type: %s",
-                        type(tool_call).__name__,
-                    )
+                        )
+                    else:
+                        logger.info(
+                            "Unsupported tool call type: %s",
+                            type(tool_call).__name__,
+                        )
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "Failed to repair or parse JSON from function call arguments"
+            ) from e
 
         return (
             response.choices[0].message.content or "",
