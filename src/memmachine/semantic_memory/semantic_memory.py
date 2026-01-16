@@ -20,7 +20,10 @@ from pydantic import BaseModel, InstanceOf
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeIdT, EpisodeStorage
-from memmachine.common.errors import InvalidSetIdConfigurationError
+from memmachine.common.errors import (
+    CategoryNotFoundError,
+    InvalidSetIdConfigurationError,
+)
 from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr
 from memmachine.common.language_model import LanguageModel
 
@@ -288,8 +291,6 @@ class SemanticService:
         # Validate that the category exists
         category_names = {cat.name for cat in resources.semantic_categories}
         if category_name not in category_names:
-            from memmachine.common.errors import CategoryNotFoundError
-
             raise CategoryNotFoundError(set_id=set_id, category_name=category_name)
 
         embedding = (await resources.embedder.ingest_embed([value]))[0]
@@ -377,8 +378,6 @@ class SemanticService:
                 category_names = {cat.name for cat in resources.semantic_categories}
 
                 if category_name not in category_names:
-                    from memmachine.common.errors import CategoryNotFoundError
-
                     raise CategoryNotFoundError(
                         set_id=str_set_id, category_name=category_name
                     )

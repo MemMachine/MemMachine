@@ -424,16 +424,15 @@ class SemanticSessionManager:
 
         return org_project
 
-    @staticmethod
+    @classmethod
     def _generate_set_id(
+        cls,
         *,
         org_id: str,
         project_id: str | None = None,
         metadata: Mapping[str, JsonValue],
     ) -> SetIdT:
-        org_project = SemanticSessionManager._org_set_id(
-            org_id=org_id, project_id=project_id
-        )
+        org_project = cls._org_set_id(org_id=org_id, project_id=project_id)
 
         string_tags = [f"{k}_{v}" for k, v in metadata.items()]
 

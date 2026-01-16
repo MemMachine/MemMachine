@@ -156,12 +156,12 @@ class SetIdNotEnabledError(MemMachineError):
         self.is_org_level = is_org_level
 
         super().__init__(
-            f"Passed metadata combination not enabled for org '{self.org_id}', project '{self.project_id}', is org level group '{self.is_org_level}', and metadata '{self.metadata}'"
+            f"Passed metadata combination not enabled for org '{self.org_id}', project '{self.project_id}', as {'org' if is_org_level else 'project'} level, and metadata '{self.metadata}'"
         )
 
     def __repr__(self) -> str:
         """Return a helpful debug representation."""
-        return f"SetIdNotEnabledError('{self.org_id}', '{self.project_id}', {self.is_org_level}, {self.metadata})"
+        return f"SetIdNotEnabledError('{self.org_id}', '{self.project_id}', {'ORG_LEVEL' if self.is_org_level else 'PROJ_LEVEL'}, {self.metadata})"
 
 
 class EpisodicMemoryManagerClosedError(MemMachineError):
