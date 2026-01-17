@@ -27,7 +27,7 @@ from memmachine.common.errors import (
     RerankerNotFoundError,
 )
 from memmachine.semantic_memory.semantic_model import SemanticCategory
-from memmachine.semantic_memory.semantic_session_manager import IsolationType
+from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
 from memmachine.server.prompt.default_prompts import PREDEFINED_SEMANTIC_CATEGORIES
 
 YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | bool | None
@@ -65,6 +65,14 @@ class SemanticMemoryConf(YamlSerializableMixin):
         ...,
         description="The database to use for semantic memory",
     )
+    config_database: str = Field(
+        ...,
+        description="The config database to use for semantic memory",
+    )
+    with_config_cache: bool = Field(
+        default=True,
+        description="Whether to use a in memory cache for semantic memory config.",
+    )
     llm_model: str = Field(
         ...,
         description="The default language model to use for semantic memory",
@@ -97,17 +105,13 @@ def _read_txt(filename: str) -> str:
 class PromptConf(YamlSerializableMixin):
     """Prompt configuration for semantic memory contexts."""
 
-    profile: list[str] = Field(
-        default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
-        description="The default prompts to use for semantic user memory",
-    )
-    role: list[str] = Field(
-        default=[],
-        description="The default prompts to use for semantic role memory",
-    )
-    session: list[str] = Field(
+    default_org_categories: list[str] = Field(
         default=["profile_prompt"],
-        description="The default prompts to use for semantic session memory",
+        description="The default prompts to use for semantic organization memory",
+    )
+    default_project_categories: list[str] = Field(
+        default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
+        description="The default prompts to use for semantic project memory",
     )
     episode_summary_system_prompt_path: str = Field(
         default="",
@@ -123,7 +127,11 @@ class PromptConf(YamlSerializableMixin):
         """Return True if the prompt name is known."""
         return prompt_name in PREDEFINED_SEMANTIC_CATEGORIES
 
-    @field_validator("profile", "session", "role", check_fields=True)
+    @field_validator(
+        "default_project_categories",
+        "default_org_categories",
+        check_fields=True,
+    )
     @classmethod
     def validate_profile(cls, v: list[str]) -> list[str]:
         """Validate that provided prompts exist."""
@@ -153,18 +161,19 @@ class PromptConf(YamlSerializableMixin):
     @property
     def default_semantic_categories(
         self,
-    ) -> dict[IsolationType, list[SemanticCategory]]:
+    ) -> dict[SemanticSessionManager.SetType, list[SemanticCategory]]:
         """Build the default semantic categories for each isolation type."""
         semantic_categories = PREDEFINED_SEMANTIC_CATEGORIES
 
         return {
-            IsolationType.SESSION: [
-                semantic_categories[s_name] for s_name in self.session
+            SemanticSessionManager.SetType.OrgSet: [
+                semantic_categories[s_name] for s_name in self.default_org_categories
             ],
-            IsolationType.ROLE: [semantic_categories[s_name] for s_name in self.role],
-            IsolationType.USER: [
-                semantic_categories[s_name] for s_name in self.profile
+            SemanticSessionManager.SetType.ProjectSet: [
+                semantic_categories[s_name]
+                for s_name in self.default_project_categories
             ],
+            SemanticSessionManager.SetType.OtherSet: [],
         }
 
 

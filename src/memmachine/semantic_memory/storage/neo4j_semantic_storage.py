@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from asyncio import Lock
@@ -161,6 +162,30 @@ class Neo4jSemanticStorage(SemanticStorage):
             await self._driver.execute_query(f"DROP INDEX {index_name} IF EXISTS")
         self._vector_index_by_set.clear()
         self._set_embedding_dimensions.clear()
+
+    async def _drop_set_id_vector_index(self, set_id: SetIdT) -> None:
+        index_name = self._vector_index_name(set_id)
+        if index_name not in self._vector_index_creation_lock:
+            async with self._vector_global_lock:
+                self._vector_index_creation_lock.setdefault(index_name, Lock())
+
+        async with self._vector_index_creation_lock[index_name]:
+            self._vector_index_by_set.pop(set_id, None)
+            self._set_embedding_dimensions.pop(set_id, None)
+
+            await self._drop_index_if_named(index_name)
+            await self._driver.execute_query(
+                """
+                MATCH (s:SetEmbedding {set_id: $set_id})
+                DETACH DELETE s
+                """,
+                set_id=set_id,
+            )
+
+    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+        async with asyncio.TaskGroup() as tg:
+            for set_id in set_ids:
+                tg.create_task(self._drop_set_id_vector_index(set_id))
 
     async def add_feature(
         self,
@@ -588,6 +613,25 @@ class Neo4jSemanticStorage(SemanticStorage):
             )
 
         return list(set_ids)
+
+    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+        records, _, _ = await self._driver.execute_query(
+            """
+            MATCH (f:Feature)
+            WHERE f.set_id STARTS WITH $prefix
+            RETURN f.set_id AS set_id
+            UNION
+            MATCH (h:SetHistory)
+            WHERE h.set_id STARTS WITH $prefix
+            RETURN h.set_id AS set_id
+            """,
+            prefix=prefix,
+        )
+        return [
+            SetIdT(str(record["set_id"]))
+            for record in records
+            if record.get("set_id") is not None
+        ]
 
     async def add_history_to_set(self, set_id: str, history_id: EpisodeIdT) -> None:
         await self._driver.execute_query(

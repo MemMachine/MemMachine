@@ -60,7 +60,10 @@ class TestMemMachineLongMemEval:
 
     @staticmethod
     async def _wait_for_semantic_features(
-        memmachine: MemMachine, session_data, *, timeout_seconds: int = 1200
+        memmachine: MemMachine,
+        session_data,
+        *,
+        timeout_seconds: int = 1200,
     ) -> None:
         """Poll via the public list API until semantic memory finishes ingestion."""
 
@@ -112,8 +115,8 @@ class TestMemMachineLongMemEval:
 
             semantic_features = (result.semantic_memory or [])[:4]
             episodic_context = [
-                *result.episodic_memory.long_term_memory[:4],
-                *result.episodic_memory.short_term_memory[:4],
+                *result.episodic_memory.long_term_memory.episodes[:4],
+                *result.episodic_memory.short_term_memory.episodes[:4],
             ]
 
             system_prompt = (

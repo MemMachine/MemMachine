@@ -17,7 +17,7 @@ from memmachine.semantic_memory.semantic_llm import (
     llm_feature_update,
 )
 from memmachine.semantic_memory.semantic_model import (
-    ResourceRetriever,
+    ResourceRetrieverT,
     Resources,
     SemanticCategory,
     SemanticCommand,
@@ -43,7 +43,7 @@ class IngestionService:
 
         semantic_storage: InstanceOf[SemanticStorage]
         history_store: InstanceOf[EpisodeStorage]
-        resource_retriever: InstanceOf[ResourceRetriever]
+        resource_retriever: ResourceRetrieverT
         consolidated_threshold: int = 20
         debug_fail_loudly: bool = False
 
@@ -68,7 +68,7 @@ class IngestionService:
             raise ExceptionGroup("Failed to process set ids", errors)
 
     async def _process_single_set(self, set_id: str) -> None:  # noqa: C901
-        resources = self._resource_retriever.get_resources(set_id)
+        resources = await self._resource_retriever(set_id)
 
         history_ids = await self._semantic_storage.get_history_messages(
             set_ids=[set_id],

@@ -148,6 +148,11 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                 "Failed to connect to the database during startup, please check your configuration."
             ) from err
 
+    async def delete_all(self) -> None:
+        async with self._create_session() as session:
+            await session.execute(delete(Episode))
+            await session.commit()
+
     @validate_call
     async def add_episodes(
         self,
@@ -180,32 +185,16 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
             values_to_insert.append(entry_values)
 
-        insert_stmt = insert(Episode).returning(Episode.id)
+        insert_stmt = insert(Episode).returning(Episode)
 
         async with self._create_session() as session:
             result = await session.execute(insert_stmt, values_to_insert)
-            inserted_ids = result.scalars().all()
-            await session.commit()
-
-        int_episode_ids = [int(episode_id) for episode_id in inserted_ids]
-        if not int_episode_ids:
-            return []
-
-        select_stmt = (
-            select(Episode)
-            .where(Episode.id.in_(int_episode_ids))
-            .order_by(Episode.id.asc())
-        )
-
-        async with self._create_session() as session:
-            result = await session.execute(select_stmt)
             persisted_episodes = result.scalars().all()
 
-        episodes_by_id = {
-            episode_row.id: episode_row.to_typed_model()
-            for episode_row in persisted_episodes
-        }
-        return [episodes_by_id[episode_id] for episode_id in int_episode_ids]
+            res_episodes = [e.to_typed_model() for e in persisted_episodes]
+
+            await session.commit()
+        return res_episodes
 
     @validate_call
     async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:
