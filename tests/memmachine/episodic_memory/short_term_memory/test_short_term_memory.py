@@ -1,3 +1,7 @@
+import asyncio
+import re
+import string
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any, TypeVar
@@ -17,6 +21,7 @@ from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory.short_term_memory.short_term_memory import (
     ShortTermMemory,
+    ShortTermMemoryConsolidator,
     ShortTermMemoryParams,
 )
 
@@ -107,6 +112,13 @@ T = TypeVar("T")
 class MockLanguageModel(LanguageModel):
     """Mock implementation of LanguageModel for testing."""
 
+    @staticmethod
+    def parse_summary(text: str) -> str:
+        m = re.search(r"summary:(\w+)", text)
+        prev_summary = m.group(1) if m else ""
+        messages = re.findall(r'"([^"]*)"', text)
+        return prev_summary + "".join(message[0] for message in messages)
+
     async def generate_response(
         self,
         system_prompt: str | None = None,
@@ -115,7 +127,13 @@ class MockLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
-        return "summary", ""
+        if len(user_prompt) > 10000:
+            raise ValueError("User prompt exceeds context window")
+        if "model error" in user_prompt:
+            raise RuntimeError("Simulated model error")
+        await asyncio.sleep(0.1)
+        user_input = self.parse_summary(user_prompt)
+        return f"summary:{user_input}", ""
 
     async def generate_parsed_response(
         self,
@@ -192,14 +210,14 @@ class TestSessionMemoryPublicAPI:
 
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         assert episodes == [episode1, episode2, episode3]
-        assert summary == "summary"
+        assert summary == "summary:HW!"
 
         # New episode push out the oldest one: episode1
         episode4 = create_test_episode(content="??")
         await memory.add_episodes([episode4])
         episodes, summary = await memory.get_short_term_memory_context(query="test")
-        assert episodes == [episode3, episode4]
-        assert summary == "summary"
+        assert summary == "summary:HW!"
+        assert episodes == [episode4]
 
     async def test_clear_memory(self, memory):
         """Test clearing the memory."""
@@ -231,18 +249,100 @@ class TestSessionMemoryPublicAPI:
         await memory.add_episodes([ep1, ep2, ep3])
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         assert episodes == [ep1, ep2, ep3]
-        assert summary == "summary"
+        assert summary == "summary:abc"
         await memory.delete_episode(ep1.uid)
         await memory.delete_episode(ep2.uid)
         await memory.delete_episode(ep3.uid)
         episodes, summary = await memory.get_short_term_memory_context(query="test")
         assert episodes == []
-        assert summary == "summary"
+        assert summary == "summary:abc"
         assert len(episodes) == 0
         await memory.add_episodes([ep1, ep2, ep3])
         episodes, _ = await memory.get_short_term_memory_context(query="test")
         assert episodes == [ep1, ep2, ep3]
         assert len(episodes) == 3
+
+    async def test_summary_behavior(self, memory):
+        chars = string.digits
+        msgs = [char * 5 for char in chars]
+        start = time.time()
+        summaries = []
+        for msg in msgs:
+            ep = create_test_episode(content=msg)
+            await memory.add_episodes([ep])
+        summaries.append(await memory.get_summary())
+        duration = time.time() - start
+        sorted_summaries = [s for s in summaries if s]
+        expected = ["summary:01234567"]
+        assert sorted_summaries == expected
+        assert 0.1 <= duration < 0.2
+
+    async def test_keep_summary_if_model_error(self, memory):
+        episodes = [create_test_episode(content="a" * 100)]
+        await memory.add_episodes(episodes)
+        assert await memory.get_summary() == "summary:a"
+        episodes = [create_test_episode(content="model error " * 100)]
+        await memory.add_episodes(episodes)
+        assert await memory.get_summary() == "summary:a"
+
+    async def test_get_will_wait_for_summary(self, memory):
+        memory._max_message_len = 20
+        chars = string.digits
+        msgs = [char * 5 for char in chars]
+        start = time.time()
+        summaries = set()
+        for msg in msgs:
+            ep = create_test_episode(content=msg)
+            await memory.add_episodes([ep])
+            summaries.add(await memory.get_summary())
+        duration = time.time() - start
+        sorted_summary = sorted([s for s in summaries if s])
+        assert sorted_summary == [
+            "summary:01234",
+            "summary:0123456",
+            "summary:012345678",
+            "summary:0123456789",
+        ]
+        assert 0.4 <= duration < 0.5
+
+    @pytest.mark.asyncio
+    async def test_summary_exceed_context_window(self, memory):
+        chars = string.digits
+        msgs = [char * 2000 for char in chars]
+        start = time.time()
+        for msg in msgs:
+            ep = create_test_episode(content=msg)
+            await memory.add_episodes([ep])
+        summary = await memory.get_summary()
+        duration = time.time() - start
+        assert summary == "summary:" + string.digits
+        # because of context window limit, summary is split into 4 calls
+        assert 0.4 <= duration < 0.5
+
+    @pytest.mark.asyncio
+    async def test_summary_catch_up(self, mock_model, mock_data_manager):
+        params = ShortTermMemoryConsolidator.Params(
+            summary_user_prompt="User prompt: {episodes} {summary} {max_length}",
+            summary_system_prompt="System Prompt",
+            max_summary_length_words=100,
+            session_key="test_session",
+            model=mock_model,
+            data_manager=mock_data_manager,
+        )
+        consolidator = ShortTermMemoryConsolidator(params)
+
+        msgs = [char * 5 for char in string.digits]
+        for msg in msgs:
+            ep = create_test_episode(content=msg)
+            await consolidator.summarize([ep])
+
+        # Summarize should have returned immediately (non-blocking)
+        assert await consolidator.summary == ""
+
+        # Wait for the background worker to finish everything
+        await consolidator.wait_until_done()
+
+        assert await consolidator.summary == "summary:0123456789"
 
     async def test_close(self, memory):
         """Test closing the memory."""
@@ -267,7 +367,7 @@ class TestSessionMemoryPublicAPI:
         )
         assert len(episodes) == 3
         assert episodes == [ep1, ep2, ep3]
-        assert summary == "summary"
+        assert summary == "summary:abc"
 
         # Test with a tighter message length limit. Episodes are retrieved newest first.
         # length=7 (summary)
@@ -278,8 +378,8 @@ class TestSessionMemoryPublicAPI:
             query="test",
             max_message_length=19,
         )
-        assert len(episodes) == 2
-        assert episodes == [ep2, ep3]
+        assert len(episodes) == 1
+        assert episodes == [ep3]
 
         # Test with episode limit
         episodes, summary = await memory.get_short_term_memory_context(
