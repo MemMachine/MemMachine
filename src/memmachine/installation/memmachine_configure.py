@@ -20,7 +20,6 @@ from memmachine.installation.configuration_wizard import (
 )
 from memmachine.installation.utilities import (
     DEFAULT_NEO4J_PASSWORD,
-    JDK_DIR_NAME,
     LINUX_JDK_TAR_NAME,
     LINUX_JDK_URL,
     LINUX_NEO4J_TAR_NAME,
@@ -330,10 +329,24 @@ class WindowsEnvironment:
     @staticmethod
     def get_neo4j_env(install_dir: str) -> dict[str, str]:
         """Get environment variables for Neo4j on Windows."""
-        java_home = str(Path(install_dir, JDK_DIR_NAME).resolve())
+        install_path = Path(install_dir)
+
+        # 1. Dynamically find the JDK directory starting with 'jdk-'
+        # next() grabs the first match; returns None if nothing is found
+        jdk_path = next(install_path.glob("jdk-*"), None)
+
+        if jdk_path is None:
+            logger.error("No directory starting with 'jdk-' found in %s", install_dir)
+            # You may want to raise an error here or handle it gracefully
+            raise FileNotFoundError(f"Could not find a JDK directory in {install_dir}")
+
+        java_home = str(jdk_path.resolve())
         logger.info("Java home: %s", java_home)
+
+        # 2. Handle Neo4j directory (Assuming NEO4J_DIR_NAME is still defined or similar logic is needed)
         neo4j_home = str(Path(install_dir, NEO4J_DIR_NAME).resolve())
         logger.info("Neo4j home: %s", neo4j_home)
+
         return {
             "JAVA_HOME": java_home,
             "NEO4J_HOME": neo4j_home,
