@@ -610,30 +610,30 @@ class SemanticService:
 
         return category_id
 
-    async def add_new_category_to_org_set(
+    async def add_new_category_to_set_type(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
         category_name: str,
         prompt: str,
         description: str | None,
     ) -> CategoryIdT:
-        logger.info("Adding new category %s to org set %s", category_name, org_set_id)
+        logger.info("Adding new category %s to set type %s", category_name, set_type_id)
 
-        return await self._semantic_config_storage.create_org_set_category(
-            org_set_id=org_set_id,
+        return await self._semantic_config_storage.create_set_type_category(
+            set_type_id=set_type_id,
             category_name=category_name,
             prompt=prompt,
             description=description,
         )
 
-    async def get_org_set_categories(
-        self, *, org_set_id: str
+    async def get_set_type_categories(
+        self, *, set_type_id: str
     ) -> list[SemanticCategory]:
-        logger.debug("Getting org set categories for %s", org_set_id)
+        logger.debug("Getting set type categories for %s", set_type_id)
 
-        return await self._semantic_config_storage.get_org_set_categories(
-            org_set_id=org_set_id
+        return await self._semantic_config_storage.get_set_type_categories(
+            set_type_id=set_type_id
         )
 
     async def clone_category(

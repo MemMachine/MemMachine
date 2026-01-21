@@ -128,7 +128,7 @@ class SemanticCategory(BaseModel):
 
     id: CategoryIdT | None = None
 
-    origin_type: Literal["set_id", "org_tag_set"] | None = None
+    origin_type: Literal["set_id", "set_type"] | None = None
     origin_id: str | None = None
     inherited: bool | None = None
 
@@ -144,8 +144,8 @@ class Resources(BaseModel):
     semantic_categories: list[InstanceOf[SemanticCategory]]
 
 
-class OrgSetTypeEntry(BaseModel):
-    """Persisted entry describing an org/project set id."""
+class SetTypeEntry(BaseModel):
+    """Persisted entry describing an org/project set type."""
 
     id: str | None = None
     is_org_level: bool

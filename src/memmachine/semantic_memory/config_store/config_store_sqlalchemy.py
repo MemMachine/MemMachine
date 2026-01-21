@@ -30,9 +30,9 @@ from memmachine.common.errors import ResourceNotFoundError
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
-    OrgSetTypeEntry,
     SemanticCategory,
     SetIdT,
+    SetTypeEntry,
     StructuredSemanticPrompt,
     TagIdT,
 )
@@ -63,19 +63,19 @@ class SetIdResources(BaseSemanticConfigStore):
     )
 
 
-class SetIdOrgTagSet(BaseSemanticConfigStore):
-    """One-way mapping assigning a set_id to an org tag set.
+class SetIdSetType(BaseSemanticConfigStore):
+    """One-way mapping assigning a set_id to a set type.
 
     This mapping is "first write wins": once a `set_id` has been associated
-    with an `org_tag_set_id`, subsequent registrations should not overwrite it.
+    with a `set_type_id`, subsequent registrations should not overwrite it.
     """
 
-    __tablename__ = "semantic_config_setidresources_orgtagset"
+    __tablename__ = "semantic_config_setidresources_settype"
 
     set_id = mapped_column(String, primary_key=True, nullable=False)
-    org_tag_set_id = mapped_column(
+    set_type_id = mapped_column(
         Integer,
-        ForeignKey("org_tag_set.id", ondelete="CASCADE"),
+        ForeignKey("set_type.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -104,9 +104,9 @@ class Category(BaseSemanticConfigStore):
 
     id = mapped_column(Integer, primary_key=True, nullable=False)
     set_id = mapped_column(String, nullable=True, index=True)
-    org_tag_set_id = mapped_column(
+    set_type_id = mapped_column(
         Integer,
-        ForeignKey("org_tag_set.id", ondelete="CASCADE"),
+        ForeignKey("set_type.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
@@ -128,9 +128,9 @@ class Category(BaseSemanticConfigStore):
             origin_type = "set_id"
             origin_id = self.set_id
             inherited = False
-        elif self.org_tag_set_id is not None:
-            origin_type = "org_tag_set"
-            origin_id = str(self.org_tag_set_id)
+        elif self.set_type_id is not None:
+            origin_type = "set_type"
+            origin_id = str(self.set_type_id)
             inherited = True
         else:
             origin_type = None
@@ -151,10 +151,10 @@ class Category(BaseSemanticConfigStore):
 
     __table_args__ = (
         UniqueConstraint("set_id", "name", name="_set_id_name_uc"),
-        UniqueConstraint("org_tag_set_id", "name", name="_org_tag_set_id_name_uc"),
+        UniqueConstraint("set_type_id", "name", name="_set_type_id_name_uc"),
         CheckConstraint(
-            "(org_tag_set_id IS NOT NULL AND set_id IS NULL) OR (org_tag_set_id IS NULL AND set_id IS NOT NULL)",
-            name="_exactly_one_fk_orgtagset_vs_setid",
+            "(set_type_id IS NOT NULL AND set_id IS NULL) OR (set_type_id IS NULL AND set_id IS NOT NULL)",
+            name="_exactly_one_fk_settype_vs_setid",
         ),
     )
 
@@ -179,10 +179,10 @@ class Tag(BaseSemanticConfigStore):
     )
 
 
-class OrgTagSet(BaseSemanticConfigStore):
+class SetType(BaseSemanticConfigStore):
     """Mapping of org-level metadata tags to set ids."""
 
-    __tablename__ = "org_tag_set"
+    __tablename__ = "set_type"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     org_id: Mapped[str] = mapped_column(String, nullable=False)
@@ -201,10 +201,10 @@ class OrgTagSet(BaseSemanticConfigStore):
         ),
     )
 
-    def to_typed_model(self) -> OrgSetTypeEntry:
+    def to_typed_model(self) -> SetTypeEntry:
         tags = self.metadata_tags_sig.split(_TAG_SEP)
 
-        return OrgSetTypeEntry(
+        return SetTypeEntry(
             id=str(self.id),
             tags=tags,
             is_org_level=self.org_level_set,
@@ -238,13 +238,13 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         async with self._create_session() as session:
             result = await session.execute(delete(SetIdResources))
             result.close()
-            result = await session.execute(delete(SetIdOrgTagSet))
+            result = await session.execute(delete(SetIdSetType))
             result.close()
             result = await session.execute(delete(Category))
             result.close()
             result = await session.execute(delete(Tag))
             result.close()
-            result = await session.execute(delete(OrgTagSet))
+            result = await session.execute(delete(SetType))
             result.close()
             result = await session.execute(delete(DisabledDefaultCategories))
             result.close()
@@ -311,18 +311,16 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             local_categories_raw = res_local_categories.scalars().unique().all()
             local_categories = [c.to_typed_model() for c in local_categories_raw]
 
-            res_org_tag_set = await session.execute(
-                select(SetIdOrgTagSet.org_tag_set_id).where(
-                    SetIdOrgTagSet.set_id == set_id
-                )
+            res_set_type = await session.execute(
+                select(SetIdSetType.set_type_id).where(SetIdSetType.set_id == set_id)
             )
-            org_tag_set_id = res_org_tag_set.scalar_one_or_none()
+            set_type_id = res_set_type.scalar_one_or_none()
 
             inherited_categories: list[SemanticCategory] = []
-            if org_tag_set_id is not None:
+            if set_type_id is not None:
                 inherited_stmt = (
                     select(Category)
-                    .where(Category.org_tag_set_id == org_tag_set_id)
+                    .where(Category.set_type_id == set_type_id)
                     .options(selectinload(Category.tags))
                 )
                 res_inherited = await session.execute(inherited_stmt)
@@ -353,26 +351,26 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             disabled_categories=disabled_categories,
         )
 
-    async def register_set_id_org_set(
+    async def register_set_id_set_type(
         self,
         *,
         set_id: SetIdT,
-        org_set_id: str,
+        set_type_id: str,
     ) -> None:
-        org_set_id_int = int(org_set_id)
+        set_type_id_int = int(set_type_id)
 
         dialect_name = self._engine.dialect.name
         ins: PgInsert | SQliteInsert
         if dialect_name == "postgresql":
-            ins = pg_insert(SetIdOrgTagSet)
+            ins = pg_insert(SetIdSetType)
         elif dialect_name == "sqlite":
-            ins = sqlite_insert(SetIdOrgTagSet)
+            ins = sqlite_insert(SetIdSetType)
         else:
             raise NotImplementedError
 
         stmt = ins.values(
             set_id=set_id,
-            org_tag_set_id=org_set_id_int,
+            set_type_id=set_type_id_int,
         ).on_conflict_do_nothing(
             index_elements=["set_id"],
         )
@@ -382,22 +380,22 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             result.close()
             await session.commit()
 
-    async def create_org_set_category(
+    async def create_set_type_category(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
         category_name: str,
         prompt: str,
         description: str | None = None,
     ) -> CategoryIdT:
-        org_set_id_int = int(org_set_id)
+        set_type_id_int = int(set_type_id)
 
         stmt = (
             insert(Category)
             .values(
                 name=category_name,
                 prompt=prompt,
-                org_tag_set_id=org_set_id_int,
+                set_type_id=set_type_id_int,
                 description=description,
             )
             .returning(Category.id)
@@ -410,16 +408,16 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
         return CategoryIdT(category_id)
 
-    async def get_org_set_categories(
+    async def get_set_type_categories(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
     ) -> list[SemanticCategory]:
-        org_set_id_int = int(org_set_id)
+        set_type_id_int = int(set_type_id)
 
         stmt = (
             select(Category)
-            .where(Category.org_tag_set_id == org_set_id_int)
+            .where(Category.set_type_id == set_type_id_int)
             .options(selectinload(Category.tags))
         )
 
@@ -472,11 +470,11 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
                 return []
             if category.set_id is not None:
                 return [SetIdT(category.set_id)]
-            if category.org_tag_set_id is None:
+            if category.set_type_id is None:
                 return []
 
-            set_ids_stmt = select(SetIdOrgTagSet.set_id).where(
-                SetIdOrgTagSet.org_tag_set_id == category.org_tag_set_id
+            set_ids_stmt = select(SetIdSetType.set_id).where(
+                SetIdSetType.set_type_id == category.set_type_id
             )
             set_ids_res = await session.execute(set_ids_stmt)
             all_set_ids = [SetIdT(sid) for sid in set_ids_res.scalars().all()]
@@ -706,7 +704,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             result.close()
             await session.commit()
 
-    async def add_org_set_id(
+    async def add_set_type_id(
         self,
         *,
         org_id: str,
@@ -722,7 +720,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         tag_str = _TAG_SEP.join(cleaned_tags)
 
         stmt = (
-            insert(OrgTagSet)
+            insert(SetType)
             .values(
                 org_id=org_id,
                 org_level_set=org_level_set,
@@ -730,18 +728,18 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
                 name=name,
                 description=description,
             )
-            .returning(OrgTagSet.id)
+            .returning(SetType.id)
         )
 
         async with self._create_session() as session:
             res = await session.execute(stmt)
-            org_set_id = res.scalar_one()
+            set_type_id = res.scalar_one()
             await session.commit()
 
-        return str(org_set_id)
+        return str(set_type_id)
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]:
-        stmt = select(OrgTagSet).where(OrgTagSet.org_id == org_id)
+    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]:
+        stmt = select(SetType).where(SetType.org_id == org_id)
 
         async with self._create_session() as session:
             res = await session.execute(stmt)
@@ -751,8 +749,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
         return models
 
-    async def delete_org_set_id(self, *, org_set_id: str) -> None:
-        stmt = delete(OrgTagSet).where(OrgTagSet.id == int(org_set_id))
+    async def delete_set_type_id(self, *, set_type_id: str) -> None:
+        stmt = delete(SetType).where(SetType.id == int(set_type_id))
 
         async with self._create_session() as session:
             result = await session.execute(stmt)

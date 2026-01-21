@@ -59,7 +59,7 @@ def default_session_categories(
     profile_types,
 ):
     s_categories = {
-        SemanticSessionManager.SetType.OrgSet: session_types,
+        SemanticSessionManager.SetType.SetType: session_types,
         SemanticSessionManager.SetType.ProjectSet: profile_types,
         SemanticSessionManager.SetType.OtherSet: [],
     }

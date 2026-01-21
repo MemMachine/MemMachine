@@ -5,9 +5,9 @@ from typing import Protocol, runtime_checkable
 
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
-    OrgSetTypeEntry,
     SemanticCategory,
     SetIdT,
+    SetTypeEntry,
     TagIdT,
 )
 
@@ -43,11 +43,11 @@ class SemanticConfigStorage(Protocol):
         set_id: SetIdT,
     ) -> Config: ...
 
-    async def register_set_id_org_set(
+    async def register_set_id_set_type(
         self,
         *,
         set_id: SetIdT,
-        org_set_id: str,
+        set_type_id: str,
     ) -> None: ...
 
     @dataclass(frozen=True)
@@ -108,19 +108,19 @@ class SemanticConfigStorage(Protocol):
         category_name: str,
     ) -> None: ...
 
-    async def create_org_set_category(
+    async def create_set_type_category(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
         category_name: str,
         prompt: str,
         description: str | None = None,
     ) -> CategoryIdT: ...
 
-    async def get_org_set_categories(
+    async def get_set_type_categories(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
     ) -> list[SemanticCategory]: ...
 
     @dataclass(frozen=True)
@@ -159,7 +159,7 @@ class SemanticConfigStorage(Protocol):
         tag_id: str,
     ) -> None: ...
 
-    async def add_org_set_id(
+    async def add_set_type_id(
         self,
         *,
         org_id: str,
@@ -169,6 +169,6 @@ class SemanticConfigStorage(Protocol):
         description: str | None = None,
     ) -> str: ...
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]: ...
+    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]: ...
 
-    async def delete_org_set_id(self, *, org_set_id: str) -> None: ...
+    async def delete_set_type_id(self, *, set_type_id: str) -> None: ...

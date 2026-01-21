@@ -36,10 +36,10 @@ from memmachine.semantic_memory.config_store.config_store import SemanticConfigS
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
-    OrgSetTypeEntry,
     SemanticCategory,
     SemanticFeature,
     SetIdT,
+    SetTypeEntry,
     TagIdT,
 )
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
@@ -800,7 +800,7 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.create_org_set_type(
+        return await semantic_session.create_set_type(
             session_data=session_data,
             is_org_level=is_org_level,
             metadata_tags=metadata_tags,
@@ -867,15 +867,15 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.delete_org_set_type(
-            org_set_id=set_type_id,
+        return await semantic_session.delete_set_type(
+            set_type_id=set_type_id,
         )
 
     async def list_semantic_set_type(
         self,
         *,
         session_data: SessionData,
-    ) -> list[OrgSetTypeEntry]:
+    ) -> list[SetTypeEntry]:
         """
         List semantic set types available for the context.
 
@@ -888,7 +888,7 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.list_org_set_types(
+        return await semantic_session.list_set_types(
             session_data=session_data,
         )
 
@@ -968,7 +968,7 @@ class MemMachine:
             description=description,
         )
 
-    async def semantic_add_org_type_category(
+    async def semantic_add_set_type_category(
         self,
         *,
         set_type_id: str,
@@ -976,12 +976,12 @@ class MemMachine:
         prompt: str,
         description: str | None = None,
     ) -> CategoryIdT:
-        """Create a new semantic category on an org set type.
+        """Create a new semantic category on a set type.
 
         Categories created here are inherited by set_ids mapped to the set type.
 
         Args:
-            set_type_id: The org-set-type identifier (OrgTagSet id).
+            set_type_id: The set type identifier.
             category_name: Name of the category.
             prompt: Prompt to go with the category.
             description: Human-readable category description.
@@ -992,8 +992,8 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.add_new_org_set_category(
-            org_set_id=set_type_id,
+        return await semantic_session.add_new_set_type_category(
+            set_type_id=set_type_id,
             category_name=category_name,
             prompt=prompt,
             description=description,
@@ -1004,10 +1004,10 @@ class MemMachine:
         *,
         set_type_id: str,
     ) -> list[SemanticCategory]:
-        """List semantic categories defined on an org set type."""
+        """List semantic categories defined on a set type."""
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.list_org_set_categories(org_set_id=set_type_id)
+        return await semantic_session.list_set_type_categories(set_type_id=set_type_id)
 
     async def semantic_disable_category(
         self,

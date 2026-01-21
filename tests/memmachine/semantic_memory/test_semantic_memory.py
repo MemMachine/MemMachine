@@ -467,34 +467,34 @@ async def test_delete_category_deletes_underlying_features(
     assert features_after[0].feature_name == "other_feature"
 
 
-async def test_delete_org_set_category_deletes_inherited_features(
+async def test_delete_set_type_category_deletes_inherited_features(
     semantic_service: SemanticService,
 ):
-    """Test that deleting an org_set category deletes features from all inheriting set_ids."""
-    # Create an org set
-    org_set_id = await semantic_service._semantic_config_storage.add_org_set_id(
+    """Test that deleting a set_type category deletes features from all inheriting set_ids."""
+    # Create a set type
+    set_type_id = await semantic_service._semantic_config_storage.add_set_type_id(
         org_id="org-delete-test",
         org_level_set=False,
         metadata_tags=["repo"],
     )
 
-    # Create a category in the org set
-    category_id = await semantic_service.add_new_category_to_org_set(
-        org_set_id=org_set_id,
+    # Create a category in the set type
+    category_id = await semantic_service.add_new_category_to_set_type(
+        set_type_id=set_type_id,
         category_name="SharedCategory",
         prompt="Shared category prompt",
         description="Shared description",
     )
 
-    # Register three set_ids to this org set
+    # Register three set_ids to this set type
     set_id_1 = "set-inherit-del-1"
     set_id_2 = "set-inherit-del-2"
     set_id_3 = "set-inherit-del-3"
 
     for sid in [set_id_1, set_id_2, set_id_3]:
-        await semantic_service._semantic_config_storage.register_set_id_org_set(
+        await semantic_service._semantic_config_storage.register_set_id_set_type(
             set_id=sid,
-            org_set_id=org_set_id,
+            set_type_id=set_type_id,
         )
 
     # Add features to each set_id with the shared category
@@ -537,20 +537,20 @@ async def test_delete_org_set_category_deletes_inherited_features(
     assert len(remaining_features) == 0
 
 
-async def test_delete_org_set_category_only_deletes_non_overridden_features(
+async def test_delete_set_type_category_only_deletes_non_overridden_features(
     semantic_service: SemanticService,
 ):
-    """Test that deleting an org_set category only deletes features from non-overriding set_ids."""
-    # Create an org set
-    org_set_id = await semantic_service._semantic_config_storage.add_org_set_id(
+    """Test that deleting a set_type category only deletes features from non-overriding set_ids."""
+    # Create a set type
+    set_type_id = await semantic_service._semantic_config_storage.add_set_type_id(
         org_id="org-delete-override",
         org_level_set=False,
         metadata_tags=["repo"],
     )
 
-    # Create a category in the org set
-    org_category_id = await semantic_service.add_new_category_to_org_set(
-        org_set_id=org_set_id,
+    # Create a category in the set type
+    set_type_category_id = await semantic_service.add_new_category_to_set_type(
+        set_type_id=set_type_id,
         category_name="OverridableCategory",
         prompt="Original org prompt",
         description="Original description",
@@ -561,9 +561,9 @@ async def test_delete_org_set_category_only_deletes_non_overridden_features(
     set_id_override = "set-override-local"
 
     for sid in [set_id_inherit, set_id_override]:
-        await semantic_service._semantic_config_storage.register_set_id_org_set(
+        await semantic_service._semantic_config_storage.register_set_id_set_type(
             set_id=sid,
-            org_set_id=org_set_id,
+            set_type_id=set_type_id,
         )
 
     # Add features to both sets with the shared category
@@ -596,8 +596,8 @@ async def test_delete_org_set_category_only_deletes_non_overridden_features(
     )
     assert len(all_features_before) == 2
 
-    # Delete the org category
-    await semantic_service.delete_category(category_id=org_category_id)
+    # Delete the set type category
+    await semantic_service.delete_category(category_id=set_type_category_id)
 
     # Verify only the inherited feature is deleted
     remaining_features = await semantic_service.get_set_features(

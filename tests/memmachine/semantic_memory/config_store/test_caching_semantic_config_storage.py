@@ -10,7 +10,7 @@ class DummySemanticConfigStorage:
     def __init__(self) -> None:
         self.get_setid_config_calls = 0
         self.get_category_calls = 0
-        self.register_set_id_org_set_calls = 0
+        self.register_set_id_set_type_calls = 0
         self._configs: dict[str, SemanticConfigStorage.Config] = {}
 
     async def startup(self) -> None:
@@ -41,8 +41,8 @@ class DummySemanticConfigStorage:
         self.get_category_calls += 1
         return
 
-    async def register_set_id_org_set(self, *, set_id: str, org_set_id: str) -> None:
-        self.register_set_id_org_set_calls += 1
+    async def register_set_id_set_type(self, *, set_id: str, set_type_id: str) -> None:
+        self.register_set_id_set_type_calls += 1
         return
 
 
@@ -79,11 +79,11 @@ async def test_get_category_negative_cached() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_set_id_org_set_short_circuits() -> None:
+async def test_register_set_id_set_type_short_circuits() -> None:
     wrapped = DummySemanticConfigStorage()
     storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]
 
-    await storage.register_set_id_org_set(set_id="set-a", org_set_id="1")
-    await storage.register_set_id_org_set(set_id="set-a", org_set_id="2")
+    await storage.register_set_id_set_type(set_id="set-a", set_type_id="1")
+    await storage.register_set_id_set_type(set_id="set-a", set_type_id="2")
 
-    assert wrapped.register_set_id_org_set_calls == 1
+    assert wrapped.register_set_id_set_type_calls == 1

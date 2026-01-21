@@ -212,7 +212,7 @@ async def test_delete_feature_set_removes_filtered_entries(
     session_data,
 ):
     # Given profile and session features with distinct tags
-    org_set_id = session_manager._generate_set_id(
+    set_type_id = session_manager._generate_set_id(
         org_id=session_data.org_id,
         metadata={},
     )
@@ -223,7 +223,7 @@ async def test_delete_feature_set_removes_filtered_entries(
     )
 
     await semantic_service.add_new_feature(
-        set_id=org_set_id,
+        set_id=set_type_id,
         category_name="Profile",
         feature="favorite_color",
         value="Blue",
@@ -246,7 +246,7 @@ async def test_delete_feature_set_removes_filtered_entries(
 
     # Then profile features are cleared while session-scoped entries remain
     org_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{org_set_id}')")
+        filter_expr=parse_filter(f"set_id IN ('{set_type_id}')")
     )
     project_features = await semantic_storage.get_feature_set(
         filter_expr=parse_filter(f"set_id IN ('{project_set_id}')")
@@ -324,12 +324,12 @@ async def test_add_message_with_session_only_isolation(
         project_id=session_data.project_id,
         metadata={},
     )
-    org_set_id = mock_session_manager._generate_set_id(
+    set_type_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,
         metadata={},
     )
 
-    assert sorted(args[1]) == sorted([org_set_id, project_id])
+    assert sorted(args[1]) == sorted([set_type_id, project_id])
 
 
 async def test_search_passes_set_ids_and_filters(
@@ -351,7 +351,7 @@ async def test_search_passes_set_ids_and_filters(
     mock_semantic_service.search.assert_awaited_once()
     kwargs = mock_semantic_service.search.await_args.kwargs
 
-    org_set_id = mock_session_manager._generate_set_id(
+    set_type_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,
         metadata={},
     )
@@ -361,7 +361,7 @@ async def test_search_passes_set_ids_and_filters(
         metadata={},
     )
 
-    assert sorted(kwargs["set_ids"]) == sorted([org_set_id, session_set_id])
+    assert sorted(kwargs["set_ids"]) == sorted([set_type_id, session_set_id])
     assert kwargs["limit"] == 5
     assert kwargs["load_citations"] is True
     assert result == ["result"]
@@ -383,7 +383,7 @@ async def test_number_of_uningested_messages_delegates(
         project_id=session_data.project_id,
         metadata={},
     )
-    org_set_id = mock_session_manager._generate_set_id(
+    set_type_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,
         metadata={},
     )
@@ -391,7 +391,7 @@ async def test_number_of_uningested_messages_delegates(
     mock_semantic_service.number_of_uningested.assert_awaited_once()
     _, kwargs = mock_semantic_service.number_of_uningested.await_args
 
-    assert sorted(kwargs["set_ids"]) == sorted([org_set_id, project_set_id])
+    assert sorted(kwargs["set_ids"]) == sorted([set_type_id, project_set_id])
     assert count == 7
 
 
@@ -500,7 +500,7 @@ async def test_list_set_ids(
     )
 
     # Add user level isolation
-    await session_manager.create_org_set_type(
+    await session_manager.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=["user_id"],
@@ -511,7 +511,7 @@ async def test_list_set_ids(
     assert len(set_ids) == 3
 
     # While if we create an isolation level that isn't covered by session_data it won't be included.
-    await session_manager.create_org_set_type(
+    await session_manager.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=["other_id"],
@@ -534,8 +534,8 @@ async def test_list_set_ids_returns_set_details(
         },
     )
 
-    # Create org set types with name and description
-    await session_manager.create_org_set_type(
+    # Create set types with name and description
+    await session_manager.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=["user_id"],
@@ -543,7 +543,7 @@ async def test_list_set_ids_returns_set_details(
         description="User-specific configuration",
     )
 
-    await session_manager.create_org_set_type(
+    await session_manager.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["repo_id"],
@@ -633,16 +633,16 @@ async def test_invalid_embedder_change_with_dirty_set(
         )
 
 
-async def test_org_type_categories(
+async def test_set_type_categories(
     session_manager: SemanticSessionManager, session_data
 ):
-    org_type_id = await session_manager.create_org_set_type(
+    set_type_id = await session_manager.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["repo"],
     )
-    c_id = await session_manager.add_new_org_set_category(
-        org_set_id=org_type_id,
+    c_id = await session_manager.add_new_set_type_category(
+        set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",
         prompt="test_prompt",
@@ -654,14 +654,14 @@ async def test_org_type_categories(
         tag_description="test_tag_description",
     )
 
-    categories = await session_manager.list_org_set_categories(org_set_id=org_type_id)
+    categories = await session_manager.list_set_type_categories(set_type_id=set_type_id)
     assert len(categories) == 1
 
     assert categories[0].id == c_id
     assert categories[0].name == "test_category"
 
 
-async def test_org_type_categories_are_visible_to_children(
+async def test_set_type_categories_are_visible_to_children(
     session_manager: SemanticSessionManager,
     session_data,
 ):
@@ -673,7 +673,7 @@ async def test_org_type_categories_are_visible_to_children(
         },
     )
 
-    org_type_id = await session_manager.create_org_set_type(
+    set_type_id = await session_manager.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["user_id"],
@@ -684,8 +684,8 @@ async def test_org_type_categories_are_visible_to_children(
         set_metadata_keys=["user_id"],
     )
 
-    c_id = await session_manager.add_new_org_set_category(
-        org_set_id=org_type_id,
+    c_id = await session_manager.add_new_set_type_category(
+        set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",
         prompt="test_prompt",

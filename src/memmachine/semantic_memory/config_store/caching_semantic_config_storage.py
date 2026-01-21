@@ -6,9 +6,9 @@ from memmachine.common import rw_locks
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
-    OrgSetTypeEntry,
     SemanticCategory,
     SetIdT,
+    SetTypeEntry,
     TagIdT,
 )
 
@@ -31,14 +31,14 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         self._other_lock = rw_locks.AsyncRWLock()
 
         self._setid_config_cache: dict[SetIdT, SemanticConfigStorage.Config] = {}
-        self._registered_set_id_org_sets: set[SetIdT] = set()
+        self._registered_set_id_set_types: set[SetIdT] = set()
 
         self._category_cache: dict[
             CategoryIdT, SemanticConfigStorage.Category | None
         ] = {}
         self._tag_cache: dict[TagIdT, SemanticConfigStorage.Tag | None] = {}
-        self._org_set_categories_cache: dict[str, list[SemanticCategory]] = {}
-        self._org_set_ids_cache: dict[str, list[OrgSetTypeEntry]] = {}
+        self._set_type_categories_cache: dict[str, list[SemanticCategory]] = {}
+        self._set_type_ids_cache: dict[str, list[SetTypeEntry]] = {}
 
     async def startup(self) -> None:
         await self._wrapped.startup()
@@ -78,20 +78,22 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
             self._setid_config_cache[set_id] = config
             return config
 
-    async def register_set_id_org_set(self, *, set_id: SetIdT, org_set_id: str) -> None:
+    async def register_set_id_set_type(
+        self, *, set_id: SetIdT, set_type_id: str
+    ) -> None:
         async with self._setid_locks.write_lock(set_id):
-            if set_id in self._registered_set_id_org_sets:
+            if set_id in self._registered_set_id_set_types:
                 return
 
-            self._registered_set_id_org_sets.add(set_id)
+            self._registered_set_id_set_types.add(set_id)
 
             try:
-                await self._wrapped.register_set_id_org_set(
+                await self._wrapped.register_set_id_set_type(
                     set_id=set_id,
-                    org_set_id=org_set_id,
+                    set_type_id=set_type_id,
                 )
             except Exception:
-                self._registered_set_id_org_sets.discard(set_id)
+                self._registered_set_id_set_types.discard(set_id)
                 raise
 
             self._setid_config_cache.pop(set_id, None)
@@ -187,42 +189,44 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         )
         await self._invalidate_set_id_config(set_id)
 
-    async def create_org_set_category(
+    async def create_set_type_category(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
         category_name: str,
         prompt: str,
         description: str | None = None,
     ) -> CategoryIdT:
-        category_id = await self._wrapped.create_org_set_category(
-            org_set_id=org_set_id,
+        category_id = await self._wrapped.create_set_type_category(
+            set_type_id=set_type_id,
             category_name=category_name,
             prompt=prompt,
             description=description,
         )
 
         async with self._other_lock.write_lock():
-            self._org_set_categories_cache.pop(org_set_id, None)
+            self._set_type_categories_cache.pop(set_type_id, None)
 
         async with self._setid_locks.all_write_locks():
             self._setid_config_cache.clear()
 
         return category_id
 
-    async def get_org_set_categories(
+    async def get_set_type_categories(
         self,
         *,
-        org_set_id: str,
+        set_type_id: str,
     ) -> list[SemanticCategory]:
         async with self._other_lock.read_lock():
-            if org_set_id in self._org_set_categories_cache:
-                return self._org_set_categories_cache[org_set_id]
+            if set_type_id in self._set_type_categories_cache:
+                return self._set_type_categories_cache[set_type_id]
 
-        categories = await self._wrapped.get_org_set_categories(org_set_id=org_set_id)
+        categories = await self._wrapped.get_set_type_categories(
+            set_type_id=set_type_id
+        )
 
         async with self._other_lock.write_lock():
-            self._org_set_categories_cache[org_set_id] = categories
+            self._set_type_categories_cache[set_type_id] = categories
 
         return categories
 
@@ -276,7 +280,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         async with self._other_lock.write_lock():
             self._tag_cache.pop(tag_id, None)
 
-    async def add_org_set_id(
+    async def add_set_type_id(
         self,
         *,
         org_id: str,
@@ -285,7 +289,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         name: str | None = None,
         description: str | None = None,
     ) -> str:
-        org_set_id = await self._wrapped.add_org_set_id(
+        set_type_id = await self._wrapped.add_set_type_id(
             org_id=org_id,
             org_level_set=org_level_set,
             metadata_tags=metadata_tags,
@@ -294,43 +298,43 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         )
 
         async with self._other_lock.write_lock():
-            self._org_set_ids_cache.pop(org_id, None)
+            self._set_type_ids_cache.pop(org_id, None)
 
-        return org_set_id
+        return set_type_id
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]:
+    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]:
         async with self._other_lock.read_lock():
-            if org_id in self._org_set_ids_cache:
-                return self._org_set_ids_cache[org_id]
+            if org_id in self._set_type_ids_cache:
+                return self._set_type_ids_cache[org_id]
 
-        entries = await self._wrapped.list_org_set_ids(org_id=org_id)
+        entries = await self._wrapped.list_set_type_ids(org_id=org_id)
 
         async with self._other_lock.write_lock():
-            self._org_set_ids_cache[org_id] = entries
+            self._set_type_ids_cache[org_id] = entries
 
         return entries
 
-    async def delete_org_set_id(self, *, org_set_id: str) -> None:
-        await self._wrapped.delete_org_set_id(org_set_id=org_set_id)
+    async def delete_set_type_id(self, *, set_type_id: str) -> None:
+        await self._wrapped.delete_set_type_id(set_type_id=set_type_id)
 
         async with self._other_lock.write_lock():
-            self._org_set_categories_cache.pop(org_set_id, None)
-            self._org_set_ids_cache.clear()
+            self._set_type_categories_cache.pop(set_type_id, None)
+            self._set_type_ids_cache.clear()
 
         async with self._setid_locks.all_write_locks():
             self._setid_config_cache.clear()
-            self._registered_set_id_org_sets.clear()
+            self._registered_set_id_set_types.clear()
 
     async def _clear_all_caches(self) -> None:
         async with self._setid_locks.all_write_locks():
             self._setid_config_cache.clear()
-            self._registered_set_id_org_sets.clear()
+            self._registered_set_id_set_types.clear()
 
         async with self._other_lock.write_lock():
             self._category_cache.clear()
             self._tag_cache.clear()
-            self._org_set_categories_cache.clear()
-            self._org_set_ids_cache.clear()
+            self._set_type_categories_cache.clear()
+            self._set_type_ids_cache.clear()
 
     async def _invalidate_set_id_config(self, set_id: SetIdT) -> None:
         async with self._setid_locks.write_lock(set_id):
