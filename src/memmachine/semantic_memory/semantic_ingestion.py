@@ -90,13 +90,25 @@ class IngestionService:
         if len(history_ids) == 0:
             return
 
-        raw_messages = await asyncio.gather(
-            *[self._history_store.get_episode(h_id) for h_id in history_ids],
-        )
+        async with asyncio.TaskGroup() as tg:
+            tasks = {
+                h_id: tg.create_task(self._history_store.get_episode(h_id))
+                for h_id in history_ids
+            }
 
-        if len(raw_messages) != len([m for m in raw_messages if m is not None]):
-            raise ValueError("Failed to retrieve messages. Invalid history_ids")
+        raw_messages = [tasks[h_id].result() for h_id in history_ids]
+        none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
+        if none_h_ids:
+            logger.warning(
+                "Failed to retrieve messages. Invalid episode_ids: %s", none_h_ids
+            )
+            if self._debug_fail_loudly:
+                raise ValueError(
+                    f"Failed to retrieve messages. Invalid episode_ids: {none_h_ids}"
+                )
+
+        raw_messages = [m for m in raw_messages if m is not None]
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
         logger.info("Processing %d messages for set %s", len(messages), set_id)

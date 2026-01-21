@@ -1,7 +1,7 @@
 name: Run Python integration tests
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
 
 permissions:
@@ -21,18 +21,18 @@ jobs:
       matrix:
         # Each integration test is a separate job to allow for parallel execution
         test-paths: [
-            # Common tests
-            "tests/memmachine/common/",
-            # Episodic Memory tests
-            "tests/memmachine/episodic_memory/",
-            # Main MemMachine tests
-            "tests/memmachine/main/",
-            # Semantic Memory tests
-            "tests/memmachine/semantic_memory/",
-          ]
-        os: [ubuntu-latest, ubuntu-24.04-arm]
+          # Common tests
+          "tests/memmachine/common/",
+          # Episodic Memory tests
+          "tests/memmachine/episodic_memory/",
+          # Main MemMachine tests
+          "tests/memmachine/main/",
+          # Semantic Memory tests
+          "tests/memmachine/semantic_memory/",
+        ]
+        os: [ ubuntu-latest, ubuntu-24.04-arm ]
         # Test on the oldest and newest supported Python versions
-        python-version: ["3.12", "3.14"]
+        python-version: [ "3.12", "3.14" ]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -54,7 +54,7 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration --cov=memmachine
           else
-            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --integration
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --integration --cov=memmachine
           fi

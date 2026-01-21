@@ -236,12 +236,18 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:
-            await session.execute(delete(SetIdResources))
-            await session.execute(delete(SetIdOrgTagSet))
-            await session.execute(delete(Category))
-            await session.execute(delete(Tag))
-            await session.execute(delete(OrgTagSet))
-            await session.execute(delete(DisabledDefaultCategories))
+            result = await session.execute(delete(SetIdResources))
+            result.close()
+            result = await session.execute(delete(SetIdOrgTagSet))
+            result.close()
+            result = await session.execute(delete(Category))
+            result.close()
+            result = await session.execute(delete(Tag))
+            result.close()
+            result = await session.execute(delete(OrgTagSet))
+            result.close()
+            result = await session.execute(delete(DisabledDefaultCategories))
+            result.close()
 
             await session.commit()
 
@@ -276,7 +282,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            result.close()
             await session.commit()
 
     async def get_setid_config(
@@ -371,7 +378,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            result.close()
             await session.commit()
 
     async def create_org_set_category(
@@ -397,8 +405,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
         async with self._create_session() as session:
             res = await session.execute(stmt)
-            await session.commit()
             category_id = res.scalar_one()
+            await session.commit()
 
         return CategoryIdT(category_id)
 
@@ -504,8 +512,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
         async with self._create_session() as session:
             res = await session.execute(stmt)
-            await session.commit()
             category_id = res.scalar_one()
+            await session.commit()
 
         return CategoryIdT(category_id)
 
@@ -556,10 +564,14 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         category_id_int = int(category_id)
 
         async with self._create_session() as session:
-            await session.execute(delete(Tag).where(Tag.category_id == category_id_int))
-            await session.execute(
+            result = await session.execute(
+                delete(Tag).where(Tag.category_id == category_id_int)
+            )
+            result.close()
+            result = await session.execute(
                 delete(Category).where(Category.id == category_id_int)
             )
+            result.close()
 
             await session.commit()
 
@@ -587,7 +599,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            result.close()
             await session.commit()
 
     async def remove_disabled_category_from_setid(
@@ -602,7 +615,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            result.close()
             await session.commit()
 
     async def get_tag(
@@ -676,7 +690,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            result.close()
             await session.commit()
 
     async def delete_tag(
@@ -687,7 +702,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         tag_id_int = int(tag_id)
 
         async with self._create_session() as session:
-            await session.execute(delete(Tag).where(Tag.id == tag_id_int))
+            result = await session.execute(delete(Tag).where(Tag.id == tag_id_int))
+            result.close()
             await session.commit()
 
     async def add_org_set_id(
@@ -739,5 +755,6 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         stmt = delete(OrgTagSet).where(OrgTagSet.id == int(org_set_id))
 
         async with self._create_session() as session:
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            result.close()
             await session.commit()
