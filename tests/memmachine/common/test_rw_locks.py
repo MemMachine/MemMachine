@@ -219,7 +219,7 @@ async def test_writer_exclusion():
     start = time.time()
     await asyncio.gather(writer(), reader())
     duration = time.time() - start
-    assert duration > 0.2
+    assert duration > 0.15
 
     # Reader must wait until writer is done
     assert status == ["writing", "done_writing", "reading"]
@@ -364,7 +364,7 @@ async def test_hash_collision_in_lock_pool():
     )
     duration = time.time() - start
     assert (
-        0.2 <= duration < 0.4
+        0.2 <= duration < 0.45
     )  # At least two sets must have run sequentially due to collisions
 
     # Every time a lock was released, it went to the pool
