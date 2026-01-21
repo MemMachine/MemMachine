@@ -47,7 +47,7 @@ class BaseSemanticConfigStore(DeclarativeBase):
 class SetIdResources(BaseSemanticConfigStore):
     """Resource-level configuration associated with a set identifier."""
 
-    __tablename__ = "semantic.config.setidresources"
+    __tablename__ = "semantic_config_setidresources"
 
     set_id = mapped_column(String, primary_key=True, nullable=False)
     set_name = mapped_column(String, nullable=True)
@@ -70,7 +70,7 @@ class SetIdOrgTagSet(BaseSemanticConfigStore):
     with an `org_tag_set_id`, subsequent registrations should not overwrite it.
     """
 
-    __tablename__ = "semantic.config.setidresources.orgtagset"
+    __tablename__ = "semantic_config_setidresources_orgtagset"
 
     set_id = mapped_column(String, primary_key=True, nullable=False)
     org_tag_set_id = mapped_column(
@@ -84,12 +84,12 @@ class SetIdOrgTagSet(BaseSemanticConfigStore):
 class DisabledDefaultCategories(BaseSemanticConfigStore):
     """Default categories that are disabled for a given set."""
 
-    __tablename__ = "semantic.config.setidresources.disabledcategories"
+    __tablename__ = "semantic_config_setidresources_disabledcategories"
 
     set_id = mapped_column(
         String,
         ForeignKey(
-            "semantic.config.setidresources.set_id",
+            "semantic_config_setidresources.set_id",
             ondelete="CASCADE",
         ),
         primary_key=True,
@@ -100,7 +100,7 @@ class DisabledDefaultCategories(BaseSemanticConfigStore):
 class Category(BaseSemanticConfigStore):
     """Semantic category definition with its prompt description."""
 
-    __tablename__ = "semantic.config.category"
+    __tablename__ = "semantic_config_category"
 
     id = mapped_column(Integer, primary_key=True, nullable=False)
     set_id = mapped_column(String, nullable=True, index=True)
@@ -162,7 +162,7 @@ class Category(BaseSemanticConfigStore):
 class Tag(BaseSemanticConfigStore):
     """Individual tag that belongs to a semantic category."""
 
-    __tablename__ = "semantic.config.tag"
+    __tablename__ = "semantic_config_tag"
 
     id = mapped_column(Integer, primary_key=True, nullable=False)
     name = mapped_column(String, nullable=False)
@@ -170,7 +170,7 @@ class Tag(BaseSemanticConfigStore):
 
     category_id = mapped_column(
         Integer,
-        ForeignKey("semantic.config.category.id", ondelete="CASCADE"),
+        ForeignKey("semantic_config_category.id", ondelete="CASCADE"),
         nullable=False,
     )
     category: Mapped[Category] = relationship(
