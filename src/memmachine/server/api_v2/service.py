@@ -1,7 +1,6 @@
 """API v2 service implementations."""
 
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import Request
 from pydantic import JsonValue
@@ -11,9 +10,15 @@ from memmachine.common.api import MemoryType as MemoryTypeE
 from memmachine.common.api.spec import (
     AddMemoriesSpec,
     AddMemoryResult,
+    Episode,
+    EpisodicSearchResult,
     ListMemoriesSpec,
+    ListResult,
+    ListResultContent,
     SearchMemoriesSpec,
     SearchResult,
+    SearchResultContent,
+    SemanticFeature,
 )
 from memmachine.common.episode_store.episode_model import EpisodeEntry
 
@@ -82,11 +87,19 @@ async def _search_target_memories(
         if spec.score_threshold is not None
         else -float("inf"),
     )
-    content: dict[str, Any] = {}
+    content = SearchResultContent(
+        episodic_memory=None,
+        semantic_memory=None,
+    )
     if results.episodic_memory is not None:
-        content["episodic_memory"] = results.episodic_memory.model_dump()
+        content.episodic_memory = EpisodicSearchResult(
+            **results.episodic_memory.model_dump(mode="json")
+        )
     if results.semantic_memory is not None:
-        content["semantic_memory"] = results.semantic_memory
+        content.semantic_memory = [
+            SemanticFeature(**f.model_dump(mode="json"))
+            for f in results.semantic_memory
+        ]
     return SearchResult(
         status=0,
         content=content,
@@ -97,7 +110,7 @@ async def _list_target_memories(
     target_memories: list[MemoryTypeE],
     spec: ListMemoriesSpec,
     memmachine: MemMachine,
-) -> SearchResult:
+) -> ListResult:
     results = await memmachine.list_search(
         session_data=_SessionData(
             org_id=spec.org_id,
@@ -109,13 +122,21 @@ async def _list_target_memories(
         page_num=spec.page_num,
     )
 
-    content: dict[str, Any] = {}
+    content = ListResultContent(
+        episodic_memory=None,
+        semantic_memory=None,
+    )
     if results.episodic_memory is not None:
-        content["episodic_memory"] = results.episodic_memory
+        content.episodic_memory = [
+            Episode(**e.model_dump(mode="json")) for e in results.episodic_memory
+        ]
     if results.semantic_memory is not None:
-        content["semantic_memory"] = results.semantic_memory
+        content.semantic_memory = [
+            SemanticFeature(**f.model_dump(mode="json"))
+            for f in results.semantic_memory
+        ]
 
-    return SearchResult(
+    return ListResult(
         status=0,
         content=content,
     )

@@ -22,7 +22,6 @@ MACOS_JDK_URL_ARM64 = (
     f"https://download.oracle.com/java/21/latest/{MACOS_JDK_TAR_NAME_ARM64}"
 )
 
-JDK_DIR_NAME = "jdk-21.0.9"
 NEO4J_WINDOWS_SERVICE_NAME = "neo4j"
 
 NEO4J_GPG_KEY_URL = "https://debian.neo4j.com/neotechnology.gpg.key"
