@@ -524,6 +524,46 @@ async def test_register_set_id_org_set_is_first_write_wins(
 
 
 @pytest.mark.asyncio
+async def test_add_org_set_id_with_name_and_description(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    """Test that name and description are stored and retrieved correctly."""
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-test",
+        org_level_set=False,
+        metadata_tags=["repo", "env"],
+        name="Test Set Type",
+        description="A test set type for validation",
+    )
+
+    org_sets = await semantic_config_storage.list_org_set_ids(org_id="org-test")
+    assert len(org_sets) == 1
+    assert org_sets[0].id == org_set_id
+    assert org_sets[0].name == "Test Set Type"
+    assert org_sets[0].description == "A test set type for validation"
+    assert org_sets[0].tags == ["env", "repo"]  # Tags are sorted
+
+
+@pytest.mark.asyncio
+async def test_add_org_set_id_without_name_and_description(
+    semantic_config_storage: SemanticConfigStorageSqlAlchemy,
+):
+    """Test that name and description can be omitted."""
+    org_set_id = await semantic_config_storage.add_org_set_id(
+        org_id="org-test-2",
+        org_level_set=True,
+        metadata_tags=["project"],
+    )
+
+    org_sets = await semantic_config_storage.list_org_set_ids(org_id="org-test-2")
+    assert len(org_sets) == 1
+    assert org_sets[0].id == org_set_id
+    assert org_sets[0].name is None
+    assert org_sets[0].description is None
+    assert org_sets[0].is_org_level is True
+
+
+@pytest.mark.asyncio
 async def test_get_category_set_ids_for_set_id_category(
     semantic_config_storage: SemanticConfigStorage,
 ):

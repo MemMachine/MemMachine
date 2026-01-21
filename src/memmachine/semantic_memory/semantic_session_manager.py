@@ -49,6 +49,8 @@ class SemanticConfigStorage(Protocol):
         org_id: str,
         org_level_set: bool = False,
         metadata_tags: list[str],
+        name: str | None = None,
+        description: str | None = None,
     ) -> str: ...
 
     async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]: ...
@@ -462,6 +464,8 @@ class SemanticSessionManager:
         session_data: SessionData,
         is_org_level: bool = False,
         metadata_tags: list[str],
+        name: str | None = None,
+        description: str | None = None,
     ) -> str:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
@@ -469,6 +473,8 @@ class SemanticSessionManager:
             org_id=session_data.org_id,
             org_level_set=is_org_level,
             metadata_tags=metadata_tags,
+            name=name,
+            description=description,
         )
 
     async def delete_org_set_type(

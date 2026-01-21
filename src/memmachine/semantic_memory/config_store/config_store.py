@@ -165,6 +165,8 @@ class SemanticConfigStorage(Protocol):
         org_id: str,
         org_level_set: bool = False,
         metadata_tags: list[str],
+        name: str | None = None,
+        description: str | None = None,
     ) -> str: ...
 
     async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]: ...

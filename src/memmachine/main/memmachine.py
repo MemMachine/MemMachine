@@ -679,11 +679,11 @@ class MemMachine:
         self,
         *,
         set_id: SetIdT,
-        feature_metadata: dict[str, JsonValue] | None = None,
         category_name: str,
+        tag: str,
         feature: str,
         value: str,
-        tag: str,
+        feature_metadata: dict[str, JsonValue] | None = None,
         citations: list[EpisodeIdT] | None = None,
     ) -> FeatureIdT:
         """
@@ -780,6 +780,8 @@ class MemMachine:
         session_data: SessionData,
         is_org_level: bool,
         metadata_tags: list[str],
+        name: str | None = None,
+        description: str | None = None,
     ) -> str:
         """
         Create a new semantic set type.
@@ -788,6 +790,8 @@ class MemMachine:
             session_data: Context used to locate the project/org scope.
             is_org_level: Whether the set type is org-scoped.
             metadata_tags: Ordered list of metadata tag keys defining the set.
+            name: Optional name for the set type.
+            description: Optional description for the set type.
 
         Returns:
             The created set type ID.
@@ -799,6 +803,8 @@ class MemMachine:
             session_data=session_data,
             is_org_level=is_org_level,
             metadata_tags=metadata_tags,
+            name=name,
+            description=description,
         )
 
     async def semantic_list_set_ids(

@@ -282,11 +282,15 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         org_id: str,
         org_level_set: bool = False,
         metadata_tags: list[str],
+        name: str | None = None,
+        description: str | None = None,
     ) -> str:
         org_set_id = await self._wrapped.add_org_set_id(
             org_id=org_id,
             org_level_set=org_level_set,
             metadata_tags=metadata_tags,
+            name=name,
+            description=description,
         )
 
         async with self._other_lock.write_lock():

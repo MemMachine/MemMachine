@@ -482,6 +482,8 @@ async def test_create_and_delete_semantic_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["user_id"],
+        name="User Set Type",
+        description="A set type for user-specific data",
     )
 
     semantic_set_types = await memmachine.list_semantic_set_type(
@@ -490,6 +492,8 @@ async def test_create_and_delete_semantic_set_type(
     assert len(semantic_set_types) == 1
     assert semantic_set_types[0].tags == ["user_id"]
     assert semantic_set_types[0].is_org_level is False
+    assert semantic_set_types[0].name == "User Set Type"
+    assert semantic_set_types[0].description == "A set type for user-specific data"
 
     await memmachine.delete_semantic_set_type(semantic_set_types[0].id)
 
@@ -497,6 +501,63 @@ async def test_create_and_delete_semantic_set_type(
         session_data=session_data
     )
     assert semantic_set_types == []
+
+
+@pytest.mark.asyncio
+async def test_semantic_set_type_with_optional_fields(
+    memmachine: MemMachine, session_data
+):
+    """Test creating semantic set type with and without name/description."""
+    session_data.metadata = {
+        "work_type": "integration",
+        "user_id": 456,
+    }
+
+    # Create without name and description
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 1
+    assert semantic_set_types[0].name is None
+    assert semantic_set_types[0].description is None
+
+    # Create with only name
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=True,
+        metadata_tags=["work_type"],
+        name="Work Type Set",
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 2
+    work_type_set = next(s for s in semantic_set_types if s.is_org_level)
+    assert work_type_set.name == "Work Type Set"
+    assert work_type_set.description is None
+
+    # Create with only description
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id", "work_type"],
+        description="Combined user and work type data",
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 3
+    combined_set = next(s for s in semantic_set_types if len(s.tags) == 2)
+    assert combined_set.name is None
+    assert combined_set.description == "Combined user and work type data"
 
 
 @pytest.mark.asyncio

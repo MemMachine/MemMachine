@@ -189,6 +189,8 @@ class OrgTagSet(BaseSemanticConfigStore):
     org_level_set: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     metadata_tags_sig: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         UniqueConstraint(
@@ -206,6 +208,8 @@ class OrgTagSet(BaseSemanticConfigStore):
             id=str(self.id),
             tags=tags,
             is_org_level=self.org_level_set,
+            name=self.name,
+            description=self.description,
         )
 
 
@@ -692,6 +696,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         org_id: str,
         org_level_set: bool = False,
         metadata_tags: list[str],
+        name: str | None = None,
+        description: str | None = None,
     ) -> str:
         cleaned_tags = sorted({t.strip() for t in metadata_tags if t and t.strip()})
 
@@ -702,7 +708,11 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         stmt = (
             insert(OrgTagSet)
             .values(
-                org_id=org_id, org_level_set=org_level_set, metadata_tags_sig=tag_str
+                org_id=org_id,
+                org_level_set=org_level_set,
+                metadata_tags_sig=tag_str,
+                name=name,
+                description=description,
             )
             .returning(OrgTagSet.id)
         )

@@ -150,6 +150,8 @@ class OrgSetIdEntry(BaseModel):
     id: str | None = None
     is_org_level: bool
     tags: list[str]
+    name: str | None = None
+    description: str | None = None
 
 
 ResourceRetrieverT = Callable[[SetIdT], Awaitable[Resources]]
