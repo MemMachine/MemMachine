@@ -520,6 +520,70 @@ async def test_list_set_ids(
     assert len(set_ids) == 3
 
 
+async def test_list_set_ids_returns_set_details(
+    session_manager: SemanticSessionManager,
+    session_data,
+):
+    """Test that list_set_ids returns is_org_level, tags, name, and description."""
+    expanded_session = _SessionData(
+        org_id="test_org",
+        project_id="test_proj",
+        metadata={
+            "user_id": "test_user",
+            "repo_id": "test_repo",
+        },
+    )
+
+    # Create org set types with name and description
+    await session_manager.create_org_set_type(
+        session_data=session_data,
+        is_org_level=True,
+        metadata_tags=["user_id"],
+        name="User Settings",
+        description="User-specific configuration",
+    )
+
+    await session_manager.create_org_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["repo_id"],
+        name="Repository Data",
+        description="Repository-specific information",
+    )
+
+    # Get all set IDs
+    sets = await session_manager.list_set_ids(session_data=expanded_session)
+
+    # Should have 4 sets: 2 default (org + project) + 2 custom
+    assert len(sets) == 4
+
+    # Find the user set
+    user_set = next((s for s in sets if "user_id" in s.tags), None)
+    assert user_set is not None
+    assert user_set.is_org_level is True
+    assert user_set.tags == ["user_id"]
+    assert user_set.name == "User Settings"
+    assert user_set.description == "User-specific configuration"
+
+    # Find the repo set
+    repo_set = next((s for s in sets if "repo_id" in s.tags), None)
+    assert repo_set is not None
+    assert repo_set.is_org_level is False
+    assert repo_set.tags == ["repo_id"]
+    assert repo_set.name == "Repository Data"
+    assert repo_set.description == "Repository-specific information"
+
+    # Verify default sets have no tags
+    default_sets = [s for s in sets if len(s.tags) == 0]
+    assert len(default_sets) == 2
+
+    # One should be org level, one should be project level
+    org_level_default = next((s for s in default_sets if s.is_org_level), None)
+    project_level_default = next((s for s in default_sets if not s.is_org_level), None)
+    assert org_level_default is not None
+    assert project_level_default is not None
+
+
 async def test_configure_set(
     session_manager: SemanticSessionManager,
 ):

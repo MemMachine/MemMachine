@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from pydantic import JsonValue
+from pydantic import BaseModel, JsonValue
 
 from memmachine.common.episode_store import Episode, EpisodeIdT
 from memmachine.common.filter.filter_parser import FilterExpr
@@ -19,7 +19,7 @@ from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
-    OrgSetIdEntry,
+    OrgSetTypeEntry,
     SemanticCategory,
     SemanticFeature,
     SetIdT,
@@ -53,7 +53,7 @@ class SemanticConfigStorage(Protocol):
         description: str | None = None,
     ) -> str: ...
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]: ...
+    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]: ...
 
     async def delete_org_set_id(self, *, org_set_id: str) -> None: ...
 
@@ -326,7 +326,7 @@ class SemanticSessionManager:
         return set_ids
 
     @dataclass(frozen=True, slots=True)
-    class SetIdEntry:
+    class _SetIdEntry:
         """Resolved set_id qualifiers for a session message."""
 
         org_set_id: str
@@ -338,7 +338,7 @@ class SemanticSessionManager:
         *,
         session_data: SessionData,
         metadata: Mapping[str, JsonValue] | None = None,
-    ) -> list[SetIdEntry]:
+    ) -> list[_SetIdEntry]:
         org_set_ids = await self._semantic_config.list_org_set_ids(
             org_id=session_data.org_id
         )
@@ -355,13 +355,13 @@ class SemanticSessionManager:
             logger.debug("No relevant set ids found for metadata %s", metadata)
             return []
 
-        set_id_entries: list[SemanticSessionManager.SetIdEntry] = []
+        set_id_entries: list[SemanticSessionManager._SetIdEntry] = []
         for sid in relevant_set_ids:
             if sid.id is None:
                 continue
 
             set_id_entries.append(
-                SemanticSessionManager.SetIdEntry(
+                self._SetIdEntry(
                     org_set_id=sid.id,
                     is_org_level=sid.is_org_level,
                     tags={t: str(metadata[t]) for t in sid.tags},
@@ -488,7 +488,7 @@ class SemanticSessionManager:
         self,
         *,
         session_data: SessionData,
-    ) -> list[OrgSetIdEntry]:
+    ) -> list[OrgSetTypeEntry]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         return await self._semantic_config.list_org_set_ids(org_id=session_data.org_id)
@@ -609,15 +609,91 @@ class SemanticSessionManager:
 
         return set_id
 
-    async def list_set_ids(self, *, session_data: SessionData) -> list[SetIdT]:
+    class Set(BaseModel):
+        """Semantic memory set, containing a set of features and resources."""
+
+        id: SetIdT
+        is_org_level: bool
+        tags: list[str]
+        name: str | None = None
+        description: str | None = None
+
+    async def list_set_ids(self, *, session_data: SessionData) -> list[Set]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
-        set_ids = await self._get_set_ids_str_from_metadata(
+        set_id_entries = await self._get_set_id_entries(
             session_data=session_data,
             metadata=session_data.metadata,
         )
 
-        return set_ids
+        org_set_ids = await self._semantic_config.list_org_set_ids(
+            org_id=session_data.org_id
+        )
+        org_set_map = {sid.id: sid for sid in org_set_ids if sid.id is not None}
+
+        sets: list[SemanticSessionManager.Set] = []
+        for sid in set_id_entries:
+            set_id = self._generate_set_id(
+                org_id=session_data.org_id,
+                project_id=session_data.project_id if not sid.is_org_level else None,
+                metadata=sid.tags,
+            )
+
+            org_set_entry = org_set_map.get(sid.org_set_id)
+            sets.append(
+                SemanticSessionManager.Set(
+                    id=set_id,
+                    is_org_level=sid.is_org_level,
+                    tags=list(sid.tags.keys()),
+                    name=org_set_entry.name if org_set_entry else None,
+                    description=org_set_entry.description if org_set_entry else None,
+                )
+            )
+
+        sets.extend(
+            self._generate_default_sets(
+                org_id=session_data.org_id,
+                project_id=session_data.project_id,
+            )
+        )
+
+        return sets
+
+    @classmethod
+    def _generate_default_sets(
+        cls,
+        *,
+        org_id: str,
+        project_id: str | None,
+    ) -> Iterable[Set]:
+        sets = [
+            SemanticSessionManager.Set(
+                id=cls._generate_set_id(
+                    org_id=org_id,
+                    project_id=None,
+                    metadata={},
+                ),
+                is_org_level=True,
+                tags=[],
+                name=None,
+                description=None,
+            ),
+        ]
+
+        if project_id is not None:
+            sets.append(
+                SemanticSessionManager.Set(
+                    id=cls._generate_set_id(
+                        org_id=org_id,
+                        project_id=project_id,
+                        metadata={},
+                    ),
+                    is_org_level=False,
+                    tags=[],
+                )
+            )
+
+        return sets
 
     async def disable_category(
         self,

@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
-    OrgSetIdEntry,
+    OrgSetTypeEntry,
     SemanticCategory,
     SetIdT,
     TagIdT,
@@ -169,6 +169,6 @@ class SemanticConfigStorage(Protocol):
         description: str | None = None,
     ) -> str: ...
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]: ...
+    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]: ...
 
     async def delete_org_set_id(self, *, org_set_id: str) -> None: ...

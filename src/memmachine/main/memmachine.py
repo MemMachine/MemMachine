@@ -36,12 +36,13 @@ from memmachine.semantic_memory.config_store.config_store import SemanticConfigS
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
-    OrgSetIdEntry,
+    OrgSetTypeEntry,
     SemanticCategory,
     SemanticFeature,
     SetIdT,
     TagIdT,
 )
+from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -811,7 +812,7 @@ class MemMachine:
         self,
         *,
         session_data: SessionData,
-    ) -> list[SetIdT]:
+    ) -> list[SemanticSessionManager.Set]:
         """
         List set IDs for the given session data.
 
@@ -874,7 +875,7 @@ class MemMachine:
         self,
         *,
         session_data: SessionData,
-    ) -> list[OrgSetIdEntry]:
+    ) -> list[OrgSetTypeEntry]:
         """
         List semantic set types available for the context.
 

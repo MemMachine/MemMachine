@@ -6,7 +6,7 @@ from memmachine.common import rw_locks
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
-    OrgSetIdEntry,
+    OrgSetTypeEntry,
     SemanticCategory,
     SetIdT,
     TagIdT,
@@ -38,7 +38,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         ] = {}
         self._tag_cache: dict[TagIdT, SemanticConfigStorage.Tag | None] = {}
         self._org_set_categories_cache: dict[str, list[SemanticCategory]] = {}
-        self._org_set_ids_cache: dict[str, list[OrgSetIdEntry]] = {}
+        self._org_set_ids_cache: dict[str, list[OrgSetTypeEntry]] = {}
 
     async def startup(self) -> None:
         await self._wrapped.startup()
@@ -298,7 +298,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
 
         return org_set_id
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]:
+    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]:
         async with self._other_lock.read_lock():
             if org_id in self._org_set_ids_cache:
                 return self._org_set_ids_cache[org_id]

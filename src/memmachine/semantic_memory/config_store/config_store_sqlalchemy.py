@@ -30,7 +30,7 @@ from memmachine.common.errors import ResourceNotFoundError
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
-    OrgSetIdEntry,
+    OrgSetTypeEntry,
     SemanticCategory,
     SetIdT,
     StructuredSemanticPrompt,
@@ -201,10 +201,10 @@ class OrgTagSet(BaseSemanticConfigStore):
         ),
     )
 
-    def to_typed_model(self) -> OrgSetIdEntry:
+    def to_typed_model(self) -> OrgSetTypeEntry:
         tags = self.metadata_tags_sig.split(_TAG_SEP)
 
-        return OrgSetIdEntry(
+        return OrgSetTypeEntry(
             id=str(self.id),
             tags=tags,
             is_org_level=self.org_level_set,
@@ -724,7 +724,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
         return str(org_set_id)
 
-    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetIdEntry]:
+    async def list_org_set_ids(self, *, org_id: str) -> list[OrgSetTypeEntry]:
         stmt = select(OrgTagSet).where(OrgTagSet.org_id == org_id)
 
         async with self._create_session() as session:

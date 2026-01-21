@@ -144,7 +144,7 @@ class Resources(BaseModel):
     semantic_categories: list[InstanceOf[SemanticCategory]]
 
 
-class OrgSetIdEntry(BaseModel):
+class OrgSetTypeEntry(BaseModel):
     """Persisted entry describing an org/project set id."""
 
     id: str | None = None
