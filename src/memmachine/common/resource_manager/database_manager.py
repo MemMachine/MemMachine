@@ -113,10 +113,20 @@ class DatabaseManager:
             if not conf:
                 raise ValueError(f"Neo4j config '{name}' not found.")
 
-            driver = AsyncGraphDatabase.driver(
-                conf.get_uri(),
-                auth=(conf.user, conf.password.get_secret_value()),
-            )
+            driver_kwargs: dict[str, Any] = {
+                "uri": conf.get_uri(),
+                "auth": (conf.user, conf.password.get_secret_value()),
+            }
+            if conf.max_connection_pool_size is not None:
+                driver_kwargs["max_connection_pool_size"] = (
+                    conf.max_connection_pool_size
+                )
+            if conf.connection_acquisition_timeout is not None:
+                driver_kwargs["connection_acquisition_timeout"] = (
+                    conf.connection_acquisition_timeout
+                )
+
+            driver = AsyncGraphDatabase.driver(**driver_kwargs)
             if validate:
                 await self.validate_neo4j_driver(name, driver)
             self.neo4j_drivers[name] = driver

@@ -1,13 +1,13 @@
 """OpenAI-completions API based language model implementation."""
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+import json_repair
 from openai.types.chat import ChatCompletion, ChatCompletionMessageFunctionToolCall
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
@@ -259,7 +259,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                                 "call_id": tool_call.id,
                                 "function": {
                                     "name": tool_call.function.name,
-                                    "arguments": json.loads(
+                                    "arguments": json_repair.loads(
                                         tool_call.function.arguments,
                                     ),
                                 },
@@ -270,8 +270,10 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                             "Unsupported tool call type: %s",
                             type(tool_call).__name__,
                         )
-        except json.JSONDecodeError as e:
-            raise ValueError("JSON decode error") from e
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "Failed to repair or parse JSON from function call arguments"
+            ) from e
 
         return (
             response.choices[0].message.content or "",

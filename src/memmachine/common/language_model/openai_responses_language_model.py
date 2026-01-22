@@ -1,13 +1,13 @@
 """OpenAI-based language model implementation."""
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any, TypeVar
 from uuid import uuid4
 
 import openai
+import json_repair
 from openai.types.responses import Response
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -278,14 +278,16 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     "call_id": output.call_id,
                     "function": {
                         "name": output.name,
-                        "arguments": json.loads(output.arguments),
+                        "arguments": json_repair.loads(output.arguments),
                     },
                 }
                 for output in response.output
                 if output.type == "function_call"
             ]
-        except json.JSONDecodeError as e:
-            raise ValueError("JSON decode error") from e
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "Failed to repair or parse JSON from function call arguments"
+            ) from e
 
         return (
             response.output_text,

@@ -913,8 +913,24 @@ build_image() {
 
     # Proceed with build after validation passes
     name="${name//+/_}"
-    local scm_version=$(git describe --tags --always 2>/dev/null | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/' || echo "")
-    print_info "Building $name with GPU=$gpu (SCM_VERSION: ${scm_version:-none})"
+    
+    # Generate PEP 440 compliant version from git describe
+    # Step 1: Get git describe output (e.g., "0.2.3-12-g2b5fd82" or "v0.2.3-12-g2b5fd82")
+    local git_version=$(git describe --tags --always 2>/dev/null || echo "")
+    
+    # Step 2: Convert to PEP 440 format
+    # - Remove leading 'v' prefix if present
+    # - Convert "-12-g2b5fd82" to ".dev12+g2b5fd82" (PEP 440 compliant)
+    # - Use extended regex (-E) for better compatibility across systems
+    local scm_version=""
+    if [[ -n "$git_version" ]]; then
+        scm_version=$(echo "$git_version" | sed -E 's/^v//;s/-([0-9]+)-g([0-9a-f]+)/.dev\1+g\2/')
+    fi
+    
+    # Step 3: Ensure we have a valid version (fallback to 0.0.0 if empty)
+    scm_version="${scm_version:-0.0.0}"
+    
+    print_info "Building $name with GPU=$gpu (SCM_VERSION: $scm_version)"
     docker build --build-arg GPU=$gpu --build-arg SCM_VERSION="$scm_version" -t "$name" .
 }
 

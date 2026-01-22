@@ -251,9 +251,10 @@ def test_search_result_model():
         SearchResult()
     assert_pydantic_errors(exc_info, {"content": "missing"})
 
-    result = SearchResult(status=0, content={"key": "value"})
+    # content is a typed model now; empty payload is valid
+    result = SearchResult(status=0, content={})
     assert result.status == 0
-    assert result.content == {"key": "value"}
+    assert result.content.model_dump(mode="json", exclude_none=True) == {}
 
 
 def test_rest_error():

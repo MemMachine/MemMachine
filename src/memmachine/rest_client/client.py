@@ -5,7 +5,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any, NoReturn, Self, TypedDict
+from typing import Any, NoReturn, TypedDict
+
+# Python 3.11+ has Self in typing, Python 3.10 uses typing_extensions
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 import requests
 from requests.adapters import HTTPAdapter

@@ -1,7 +1,6 @@
 """Amazon Bedrock-based language model implementation."""
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -10,6 +9,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import instructor
+import json_repair
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -493,7 +493,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
             return None
 
         try:
-            parsed_json = json.loads(json_match.group(0))
+            parsed_json = json_repair.loads(json_match.group(0))
             return TypeAdapter(output_format).validate_python(parsed_json)
         except Exception:
             return None
