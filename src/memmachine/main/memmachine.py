@@ -462,10 +462,7 @@ class MemMachine:
         episode_storage = await self._resources.get_episode_storage()
         semantic_service = await self._resources.get_semantic_service()
 
-        tasks: list[Coroutine[Any, Any, Any]] = [
-            episode_storage.delete_episodes(episode_ids),
-            semantic_service.delete_history(episode_ids),
-        ]
+        tasks: list[Coroutine[Any, Any, Any]] = []
 
         if session_data is not None:
             episodic_memory_manager = (
@@ -477,6 +474,8 @@ class MemMachine:
                 t = episodic_session.delete_episodes(episode_ids)
                 tasks.append(t)
 
+        tasks.append(episode_storage.delete_episodes(episode_ids))
+        tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
     async def delete_features(
