@@ -267,7 +267,7 @@ async def test_generate_response_tool_call_json_repair(
     mock_tool_call_impl,
 ):
     """Test that json-repair successfully fixes invalid JSON in tool call arguments.
-    
+
     This test uses a MemMachine memory search example with multiple JSON errors
     that commonly occur in LLM outputs to verify json-repair functionality.
     """
@@ -279,7 +279,7 @@ async def test_generate_response_tool_call_json_repair(
     # - Trailing comma in array
     # - Comments in JSON (not standard)
     # - Missing closing brace (will be fixed)
-    mock_tool_call.function.arguments = '''{
+    mock_tool_call.function.arguments = """{
         query: "user preferences and history",
         "top_k": 10,
         "types": ["episodic", "semantic",],
@@ -287,7 +287,7 @@ async def test_generate_response_tool_call_json_repair(
             user_id: "user_123",
             "session_active": true,
         },
-    }'''
+    }"""
 
     mock_response = MagicMock()
     mock_response.choices[0].message.tool_calls = [mock_tool_call]
@@ -298,13 +298,12 @@ async def test_generate_response_tool_call_json_repair(
 
     lm = OpenAIChatCompletionsLanguageModel(minimal_config)
     # json-repair should automatically fix the invalid JSON
-    content, tool_calls = await lm.generate_response()
+    _content, tool_calls = await lm.generate_response()
 
     # Verify the repaired JSON is parsed correctly
     assert len(tool_calls) == 1
     assert tool_calls[0]["call_id"] == "call_123"
     assert tool_calls[0]["function"]["name"] == "search_memory"
-    
     # Verify the complex JSON structure was repaired and parsed correctly
     args = tool_calls[0]["function"]["arguments"]
     assert args["query"] == "user preferences and history"

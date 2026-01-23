@@ -5,9 +5,9 @@ import argparse
 import json
 from collections import defaultdict
 
+import json_repair
 import numpy as np
 from dotenv import load_dotenv
-import json_repair
 from openai import OpenAI
 
 load_dotenv()

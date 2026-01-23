@@ -6,8 +6,8 @@ import time
 from typing import Any, TypeVar
 from uuid import uuid4
 
-import openai
 import json_repair
+import openai
 from openai.types.chat import ChatCompletion, ChatCompletionMessageFunctionToolCall
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 

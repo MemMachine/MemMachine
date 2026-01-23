@@ -8,8 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import json_repair
+import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
 

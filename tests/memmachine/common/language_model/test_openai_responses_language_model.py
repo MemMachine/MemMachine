@@ -240,20 +240,19 @@ async def test_generate_response_tool_call_json_repair(
     mock_async_openai,
     minimal_config,
 ):
-    """Test that json-repair successfully fixes invalid JSON in tool call arguments.
-    """
+    """Test that json-repair successfully fixes invalid JSON in tool call arguments."""
     mock_tool_call = MagicMock()
     mock_tool_call.type = "function_call"
     mock_tool_call.call_id = "call_123"
     mock_tool_call.name = "create_memory_project"
-    mock_tool_call.arguments = '''{
+    mock_tool_call.arguments = """{
         project: "MemMachine",
         'description': 'Open-source memory layer for AI agents',
         "memory_types": ["episodic", "semantic",],
         "features": {
             "persistent": true,
             "cross_session": true,
-    '''
+    """
 
     mock_response = MagicMock()
     mock_response.output_text = None
@@ -265,7 +264,7 @@ async def test_generate_response_tool_call_json_repair(
 
     lm = OpenAIResponsesLanguageModel(minimal_config)
     # json-repair should automatically fix the invalid JSON
-    content, tool_calls = await lm.generate_response(
+    _content, tool_calls = await lm.generate_response(
         system_prompt="System prompt",
         user_prompt="User prompt",
     )
@@ -274,7 +273,6 @@ async def test_generate_response_tool_call_json_repair(
     assert len(tool_calls) == 1
     assert tool_calls[0]["call_id"] == "call_123"
     assert tool_calls[0]["function"]["name"] == "create_memory_project"
-    
     # Verify the complex JSON structure was repaired and parsed correctly
     args = tool_calls[0]["function"]["arguments"]
     assert args["project"] == "MemMachine"
