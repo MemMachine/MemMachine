@@ -250,28 +250,28 @@ Examples:
 0) New Financial Profile:
 Input: "Just got a raise to $95k annually. Started maxing out my 401k at $23k per year. Goal is to save $100k for a house down payment by 2026."
 Expected Output (assuming current date is 2025-01-20[Mon]):
-{{
-  "1": {{ "command": "delete", "feature": "income", "tag": "financial_profile", "author": null }},
-  "2": {{ "command": "add", "feature": "income", "value": "95000", "tag": "financial_profile", "author": null }},
-  "3": {{ "command": "add", "feature": "retirement_planning", "value": "Maxing out 401k at $23k annually", "tag": "financial_profile", "author": null }},
-  "4": {{ "command": "add", "feature": "financial_goals", "value": "[2025-01-20] Save $100k for house down payment by 2026", "tag": "financial_profile", "date": "2025-01-20", "author": null }}
+[
+  {{ "command": "delete", "feature": "income", "tag": "financial_profile", "author": null }},
+  {{ "command": "add", "feature": "income", "value": "95000", "tag": "financial_profile", "author": null }},
+  {{ "command": "add", "feature": "retirement_planning", "value": "Maxing out 401k at $23k annually", "tag": "financial_profile", "author": null }},
+  {{ "command": "add", "feature": "financial_goals", "value": "[2025-01-20] Save $100k for house down payment by 2026", "tag": "financial_profile", "date": "2025-01-20", "author": null }}
 }}
 
 1) Investment Update (existing profile):
 Input: "Bought $5k worth of VTI ETF and $2k of individual tech stocks. Sold some bonds to rebalance portfolio."
 Expected Output (assuming current date is 2025-01-20):
-{{
-  "1": {{ "command": "add", "feature": "investments", "value": "[2025-01-20] Bought $5k VTI ETF and $2k individual tech stocks", "tag": "financial_profile", "date": "2025-01-20", "author": null }},
-  "2": {{ "command": "add", "feature": "investment_strategy", "value": "Rebalancing portfolio by selling bonds to buy stocks", "tag": "financial_profile", "author": null }}
-}}
+[
+  {{ "command": "add", "feature": "investments", "value": "[2025-01-20] Bought $5k VTI ETF and $2k individual tech stocks", "tag": "financial_profile", "date": "2025-01-20", "author": null }},
+  {{ "command": "add", "feature": "investment_strategy", "value": "Rebalancing portfolio by selling bonds to buy stocks", "tag": "financial_profile", "author": null }}
+]
 
 2) Debt Payoff Milestone:
 Input: "Finally paid off my $15k student loan! Now focusing on building emergency fund to $20k."
 Expected Output (assuming current date is 2025-01-20):
-{{
-  "1": {{ "command": "add", "feature": "debts", "value": "[2025-01-20] Paid off $15k student loan completely", "tag": "financial_profile", "date": "2025-01-20", "author": null }},
-  "2": {{ "command": "add", "feature": "financial_goals", "value": "[2025-01-20] Build emergency fund to $20k", "tag": "financial_profile", "date": "2025-01-20", "author": null }}
-}}
+[
+  {{ "command": "add", "feature": "debts", "value": "[2025-01-20] Paid off $15k student loan completely", "tag": "financial_profile", "date": "2025-01-20", "author": null }},
+  {{ "command": "add", "feature": "financial_goals", "value": "[2025-01-20] Build emergency fund to $20k", "tag": "financial_profile", "date": "2025-01-20", "author": null }}
+]
 
 3) Query/Reference Input (no new financial information):
 Input: "what's my current portfolio allocation?"

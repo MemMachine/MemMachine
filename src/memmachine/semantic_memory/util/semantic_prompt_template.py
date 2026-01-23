@@ -29,105 +29,105 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
         CRITICAL: You MUST use the command format below. Do NOT create nested objects or use any other format.
 
         The following output will add a feature:
-        {
-            "0": {
+        [
+            {
                 "command": "add",
                 "tag": "Preferred Content Format",
                 "feature": "unicode_for_math",
                 "value": true
             }
-        }
+        ]
         The following will delete all values associated with the feature:
-        {
-            "0": {
+        [
+            {
                 "command": "delete",
                 "tag" : "Language Preferences",
-                "feature: "format"
+                "feature": "format"
             }
-        }
+        ]
         The following will update a feature:
-        {
-            "0": {
+        [
+            {
                 "command": "delete",
                 "tag": "Platform Behavior",
                 "feature": "prefers_detailed_responses",
                 "value": true
             },
-            "1": {
+            {
                 "command": "add",
                 "tag" : "Platform Behavior",
                 "feature": "prefers_detailed_response",
                 "value": false
             }
-        }
+        ]
 
         Example Scenarios:
         Query: "Hi! My name is Katara"
-        {
-            "0": {
+        [
+            {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "name",
                 "value": "Katara"
             }
-        }
+        ]
         Query: "I'm planning a dinner party for 8 people next weekend and want to impress my guests with something special. Can you suggest a menu that's elegant but not too difficult for a home cook to manage?"
-        {
-            "0": {
+        [
+            {
                 "command": "add",
                 "tag": "Hobbies & Interests",
                 "feature": "home_cook",
                 "value": "User cooks fancy food"
             },
-            "1":{
+            {
                 "command": "add",
                 "tag": "Financial Profile",
                 "feature": "upper_class",
                 "value": "User entertains guests at dinner parties, suggesting affluence."
             }
-        }
+        ]
         Query: my boss (for the summer) is totally washed. he forgot how to all the basics but still thinks he does
-        {
-            "0": {
+        [
+            {
                 "command": "add",
                 "tag": "Psychological Profile",
                 "feature": "work_superior_frustration",
                 "value": "User is frustrated with their boss for perceived incompetence"
             },
-            "1": {
+            {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "summer_job",
                 "value": "User is working a temporary job for the summer"
             },
-            "2": {
+            {
                 "command": "add",
                 "tag": "Communication Style",
                 "feature": "informal_speech",
                 "value": "User speaks with all lower case letters and contemporary slang terms."
             },
-            "3": {
+            {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "young_adult",
                 "value": "User is young, possibly still in college"
             }
-        }
+        ]
         Query: Can you go through my inbox and flag any urgent emails from clients, then update the project status spreadsheet with the latest deliverable dates from those emails? Also send a quick message to my manager letting her know I'll have the budget report ready by end of day tomorrow.
-        {
-            "0": {
+        [
+            {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "traditional_office_job",
                 "value": "User does clerical work, reporting to a manager"
             },
-            "1": {
+            {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "client_facing_role",
                 "value": "User handles communication of deadlines to and from clients"
             },
-            "2": {
+            {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "autonomy_at_work",
@@ -143,7 +143,7 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
         - Do not create new tags which you don't see in the example profile. However, you can and should create new features.
         - If a user asks for a summary of a report, code, or other content, that content may not necessarily be written by the user, and might not be relevant to the user's profile.
         - Do not delete anything unless a user asks you to
-        - Only return the empty object {} if the query contains absolutely no personal information about the user (e.g., asking about the weather, requesting code without personal context, etc.). Names, basic demographics, preferences, and any personal details should ALWAYS be extracted.
+        - Only return the empty list [] if the query contains absolutely no personal information about the user (e.g., asking about the weather, requesting code without personal context, etc.). Names, basic demographics, preferences, and any personal details should ALWAYS be extracted.
         - Listen to any additional instructions specific to the execution context provided underneath 'EXTRA EXTERNAL INSTRUCTIONS'
         - First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON.
         - REMEMBER: Always use the command format with "command", "tag", "feature", and "value" keys. Never use nested objects or any other format.
