@@ -9,9 +9,9 @@ from typing import Any, NoReturn, TypedDict
 
 # Python 3.11+ has Self in typing, Python 3.10 uses typing_extensions
 try:
-    from typing import Self
+    from typing import Self, Unpack
 except ImportError:
-    from typing_extensions import Self
+    from typing_extensions import Self, Unpack
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -161,7 +161,7 @@ class MemMachineClient:
         method: str,
         url: str,
         timeout: int | None = None,
-        **kwargs: RequestExtraOptions,
+        **kwargs: Unpack[RequestExtraOptions],
     ) -> requests.Response:
         """
         Make an HTTP request using the client's session.

@@ -37,10 +37,12 @@ async def episodic_memory_params_from_config(
         )
         short_term_memory = await ShortTermMemory.create(short_term_memory_params)
 
+    metrics_factory_id = config.metrics_factory_id or "prometheus"
+
     return EpisodicMemoryParams(
         session_key=config.session_key,
         metrics_factory=await resource_manager.get_metrics_factory(
-            config.metrics_factory_id,
+            metrics_factory_id,
         ),
         long_term_memory=long_term_memory,
         short_term_memory=short_term_memory,

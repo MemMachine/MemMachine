@@ -70,9 +70,9 @@ class CountCachingEpisodeStorage(EpisodeStorage):
 
     async def get_episode(
         self,
-        history_id: EpisodeIdT,
+        episode_id: EpisodeIdT,
     ) -> Episode | None:
-        return await self._wrapped.get_episode(history_id)
+        return await self._wrapped.get_episode(episode_id)
 
     async def get_episode_messages(
         self,

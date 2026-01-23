@@ -256,6 +256,15 @@ async def test_search(long_term_memory):
             producer_role="user",
             filterable_metadata={"project": "memmachine"},
         ),
+        Episode(
+            uid="episode6",
+            session_key="search_session",
+            content="I wrote this test.",
+            created_at=now + timedelta(seconds=50),
+            producer_id="Edwin",
+            producer_role="user",
+            filterable_metadata={"project": "memmachine", "length": "short"},
+        ),
     ]
     episodes += [
         Episode(
@@ -298,7 +307,7 @@ async def test_search(long_term_memory):
     )
 
     assert len(results) == 1
-    assert results[0].uid == "episode1"
+    assert results[0].uid == "episode1" or results[0].uid == "episode6"
 
     results = await long_term_memory.search(
         query="Who wrote the test?",
@@ -309,6 +318,36 @@ async def test_search(long_term_memory):
     assert len(results) == 4
     # Most relevant.
     assert "episode1" in [result.uid for result in results]
+    assert "episode6" in [result.uid for result in results]
+
+    results = await long_term_memory.search(
+        query="Who wrote the test?",
+        num_episodes_limit=4,
+        expand_context=0,
+        score_threshold=-float("inf"),
+    )
+
+    assert len(results) == 4
+    # Most relevant.
+    assert "episode1" in [result.uid for result in results]
+    assert "episode6" in [result.uid for result in results]
+
+    results = await long_term_memory.search(
+        query="Who wrote the test?",
+        num_episodes_limit=4,
+        expand_context=3,
+        score_threshold=-float("inf"),
+    )
+
+    assert len(results) == 4
+    # Most relevant.
+    assert "episode1" in [result.uid for result in results] or "episode6" in [
+        result.uid for result in results
+    ]
+    # Relevant but first result consumes entire budget.
+    assert "episode1" not in [result.uid for result in results] or "episode6" not in [
+        result.uid for result in results
+    ]
 
     results = await long_term_memory.search(
         query="Who wrote the test?",
@@ -341,9 +380,10 @@ async def test_search(long_term_memory):
         ),
     )
 
-    assert len(results) == 2
+    assert len(results) == 3
     assert "episode1" in [result.uid for result in results]
     assert "episode2" in [result.uid for result in results]
+    assert "episode6" in [result.uid for result in results]
 
 
 @pytest.mark.asyncio

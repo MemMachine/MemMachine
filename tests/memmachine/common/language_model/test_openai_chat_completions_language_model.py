@@ -261,16 +261,33 @@ async def test_generate_response_with_tool_calls(
 
 
 @pytest.mark.asyncio
-async def test_generate_response_tool_call_json_error(
+async def test_generate_response_tool_call_json_repair(
     mock_async_openai,
     minimal_config,
     mock_tool_call_impl,
 ):
-    """Test handling of invalid JSON in tool call arguments."""
+    """Test that json-repair successfully fixes invalid JSON in tool call arguments.
+
+    This test uses a MemMachine memory search example with multiple JSON errors
+    that commonly occur in LLM outputs to verify json-repair functionality.
+    """
     mock_tool_call = mock_tool_call_impl()
-    mock_tool_call.uuid = "call_123"
-    mock_tool_call.function.name = "get_weather"
-    mock_tool_call.function.arguments = '{"location": "Boston",}'
+    mock_tool_call.id = "call_123"  # Use id instead of uuid
+    mock_tool_call.function.name = "search_memory"
+    # Invalid JSON with multiple common LLM errors:
+    # - Missing quotes around keys
+    # - Trailing comma in array
+    # - Comments in JSON (not standard)
+    # - Missing closing brace (will be fixed)
+    mock_tool_call.function.arguments = """{
+        query: "user preferences and history",
+        "top_k": 10,
+        "types": ["episodic", "semantic",],
+        "filter": {
+            user_id: "user_123",
+            "session_active": true,
+        },
+    }"""
 
     mock_response = MagicMock()
     mock_response.choices[0].message.tool_calls = [mock_tool_call]
@@ -280,8 +297,20 @@ async def test_generate_response_tool_call_json_error(
     mock_client.chat.completions.create.return_value = mock_response
 
     lm = OpenAIChatCompletionsLanguageModel(minimal_config)
-    with pytest.raises(ValueError, match="JSON decode error"):
-        await lm.generate_response()
+    # json-repair should automatically fix the invalid JSON
+    _content, tool_calls = await lm.generate_response()
+
+    # Verify the repaired JSON is parsed correctly
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["call_id"] == "call_123"
+    assert tool_calls[0]["function"]["name"] == "search_memory"
+    # Verify the complex JSON structure was repaired and parsed correctly
+    args = tool_calls[0]["function"]["arguments"]
+    assert args["query"] == "user preferences and history"
+    assert args["top_k"] == 10
+    assert args["types"] == ["episodic", "semantic"]
+    assert args["filter"]["user_id"] == "user_123"
+    assert args["filter"]["session_active"] is True
 
 
 @pytest.mark.asyncio

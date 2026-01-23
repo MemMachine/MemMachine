@@ -400,6 +400,18 @@ def test_delete_episodic_memory(client, mock_memmachine):
     assert response.status_code == 404
     assert response.json()["detail"]["message"] == "Not found"
 
+    # Session does not exist
+    mock_memmachine.delete_episodes.reset_mock()
+    mock_memmachine.delete_episodes.side_effect = SessionNotFoundError(
+        "test_org/test_proj"
+    )
+    response = client.post("/api/v2/memories/episodic/delete", json=payload)
+    assert response.status_code == 404
+    assert (
+        response.json()["detail"]["message"]
+        == "Session 'test_org/test_proj' does not exist."
+    )
+
     # Error
     mock_memmachine.delete_episodes.reset_mock()
     mock_memmachine.delete_episodes.side_effect = Exception("Error")

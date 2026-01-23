@@ -7,6 +7,7 @@ operations for a specific context.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -221,11 +222,11 @@ class Memory:
         producer: str | None = None,
         produced_for: str | None = None,
         episode_type: EpisodeType | None = None,
-        memory_types: list[MemoryType] | None = None,
+        memory_types: builtins.list[MemoryType] | None = None,
         metadata: dict[str, str] | None = None,
         timestamp: datetime | None = None,
         timeout: int | None = None,
-    ) -> list[AddMemoryResult]:
+    ) -> builtins.list[AddMemoryResult]:
         """
         Add a memory episode.
 
@@ -326,6 +327,7 @@ class Memory:
         self,
         query: str,
         limit: int | None = None,
+        expand_context: int = 0,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
         timeout: int | None = None,
@@ -341,6 +343,8 @@ class Memory:
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            expand_context: The number of additional episodes to include
+                            around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
             filter_dict: Additional filters for the search (key-value pairs as strings).
                         These filters will be merged with built-in filters from metadata.
@@ -380,6 +384,7 @@ class Memory:
             project_id=self.__project_id,
             query=query,
             top_k=limit or 10,
+            expand_context=expand_context,
             score_threshold=score_threshold,
             filter=filter_str,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
@@ -523,7 +528,7 @@ class Memory:
     def delete_episodic(
         self,
         episodic_id: str = "",
-        episodic_ids: list[str] | None = None,
+        episodic_ids: builtins.list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """
@@ -571,7 +576,7 @@ class Memory:
     def delete_semantic(
         self,
         semantic_id: str = "",
-        semantic_ids: list[str] | None = None,
+        semantic_ids: builtins.list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """

@@ -347,6 +347,8 @@ async def delete_episodic_memory(
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except ResourceNotFoundError as e:
         raise RestError(code=404, message=str(e), ex=e) from e
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message=str(e), ex=e) from e
     except Exception as e:
         raise RestError(
             code=500, message="Unable to delete episodic memory", ex=e

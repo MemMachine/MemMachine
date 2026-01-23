@@ -44,6 +44,8 @@ resources:
         uri: 'bolt://localhost:7687'
         username: neo4j
         password: <YOUR_PASSWORD_HERE>
+        max_connection_pool_size: 100
+        connection_acquisition_timeout: 60.0
         range_index_creation_threshold: 10000
         vector_index_creation_threshold: 10000
     sqlite_test:

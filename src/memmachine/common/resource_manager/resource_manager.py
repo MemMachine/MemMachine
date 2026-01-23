@@ -192,7 +192,7 @@ class ResourceManagerImpl:
                     self._semantic_manager = SemanticResourceManager(
                         semantic_conf=self._conf.semantic_memory,
                         prompt_conf=self._conf.prompt,
-                        resource_manager=self,  # type: ignore[arg-type]
+                        resource_manager=self,
                         episode_storage=episode_storage,
                     )
         assert self._semantic_manager is not None

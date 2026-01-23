@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.embedder import Embedder
@@ -139,12 +139,14 @@ class LongTermMemory:
         query: str,
         *,
         num_episodes_limit: int,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         scored_episodes = await self.search_scored(
             query,
             num_episodes_limit=num_episodes_limit,
+            expand_context=expand_context,
             score_threshold=score_threshold,
             property_filter=property_filter,
         )
@@ -155,6 +157,7 @@ class LongTermMemory:
         query: str,
         *,
         num_episodes_limit: int,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> list[tuple[float, Episode]]:
@@ -162,6 +165,7 @@ class LongTermMemory:
             await self._declarative_memory.search_scored(
                 query,
                 max_num_episodes=num_episodes_limit,
+                expand_context=expand_context,
                 property_filter=LongTermMemory._sanitize_property_filter(
                     property_filter
                 ),
@@ -302,7 +306,10 @@ class LongTermMemory:
             if LongTermMemory._FILTERABLE_METADATA_NONE_FLAG
             not in declarative_memory_episode.filterable_properties
             else None,
-            metadata=declarative_memory_episode.user_metadata,
+            metadata=cast(
+                "dict[str, JsonValue] | None",
+                declarative_memory_episode.user_metadata,
+            ),
         )
 
     _MANGLE_FILTERABLE_METADATA_KEY_PREFIX = "metadata."

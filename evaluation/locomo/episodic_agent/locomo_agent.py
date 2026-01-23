@@ -81,7 +81,7 @@ async def search_memories(group_id, session_id, user_ids, agent_ids, context, qu
         ),
     )
 
-    _, episodes, _ = await memory.query_memory(query=query, limit=30)
+    _, episodes, _ = await memory.query_memory(query=query, limit=30, expand_context=3)
 
     def rename_property(property_key):
         if property_key == "source_timestamp":

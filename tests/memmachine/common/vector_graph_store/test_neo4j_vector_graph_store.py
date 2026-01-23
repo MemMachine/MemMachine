@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -733,6 +734,32 @@ async def test_search_directional_nodes(vector_graph_store):
     assert len(results) == 2
     assert results[0].properties["name"] == "Event2"
     assert results[1].properties["name"] == "Event3"
+
+    result_timestamp = (
+        results[0].properties["timestamp"].astimezone(ZoneInfo("America/Los_Angeles"))
+    )
+
+    results = await vector_graph_store.search_directional_nodes(
+        collection="Event",
+        by_properties=["timestamp"],
+        starting_at=[result_timestamp],
+        order_ascending=[False],
+        include_equal_start=False,
+        limit=1,
+    )
+    assert len(results) == 1
+    assert results[0].properties["name"] != "Event2"
+
+    results = await vector_graph_store.search_directional_nodes(
+        collection="Event",
+        by_properties=["timestamp"],
+        starting_at=[result_timestamp],
+        order_ascending=[True],
+        include_equal_start=False,
+        limit=1,
+    )
+    assert len(results) == 1
+    assert results[0].properties["name"] != "Event2"
 
     results = await vector_graph_store.search_directional_nodes(
         collection="Event",

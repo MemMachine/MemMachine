@@ -5,6 +5,7 @@ import argparse
 import json
 from collections import defaultdict
 
+import json_repair
 import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -56,7 +57,7 @@ def evaluate_llm_judge(question, gold_answer, generated_answer) -> int:
         response_format={"type": "json_object"},
         temperature=0.0,
     )
-    label = json.loads(response.choices[0].message.content)["label"]
+    label = json_repair.loads(response.choices[0].message.content)["label"]
     return 1 if label == "CORRECT" else 0
 
 

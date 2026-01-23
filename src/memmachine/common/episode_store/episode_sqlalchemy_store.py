@@ -297,11 +297,19 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         if isinstance(expr, FilterAnd):
             left = self._compile_episode_filter_expr(expr.left)
             right = self._compile_episode_filter_expr(expr.right)
+            if left is None:
+                return right
+            if right is None:
+                return left
             return and_(left, right)
 
         if isinstance(expr, FilterOr):
             left = self._compile_episode_filter_expr(expr.left)
             right = self._compile_episode_filter_expr(expr.right)
+            if left is None:
+                return right
+            if right is None:
+                return left
             return or_(left, right)
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
