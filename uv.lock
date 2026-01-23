@@ -1328,6 +1328,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json-repair"
+version = "0.55.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/74/0f39677fa7c0127129c3f1a37c94d05c30a968ba3047200e54dea375b09a/json_repair-0.55.0.tar.gz", hash = "sha256:9fafb47d92582ef4bdd3520656bdb0fcb37b46cf6aa99c1926b7895abc0a3a4b", size = 38828, upload-time = "2026-01-01T20:29:02.684Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/00/d7d6b6b3257f9b1f997a558b6f7087b8af7c0a2f525f4fbd864c267a88ab/json_repair-0.55.0-py3-none-any.whl", hash = "sha256:bcf4880f5e6ad21a0f70ab034e3d1d398c2ae9698dc5717d7015afbac77b8ed7", size = 29570, upload-time = "2026-01-01T20:29:01.042Z" },
+]
+
+[[package]]
 name = "jsonpatch"
 version = "1.33"
 source = { registry = "https://pypi.org/simple" }
@@ -1702,6 +1711,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "greenlet" },
     { name = "instructor", extra = ["bedrock"] },
+    { name = "json-repair" },
     { name = "langchain-aws" },
     { name = "memmachine-client" },
     { name = "memmachine-server" },
@@ -1751,6 +1761,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.14.0" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
+    { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
     { name = "memmachine-client", editable = "packages/client" },
     { name = "memmachine-server", editable = "packages/server" },
@@ -1817,6 +1828,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "greenlet" },
     { name = "instructor", extra = ["bedrock"] },
+    { name = "json-repair" },
     { name = "langchain-aws" },
     { name = "neo4j" },
     { name = "nltk" },
@@ -1849,6 +1861,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.14.0" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
+    { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
     { name = "neo4j", specifier = ">=5.28.2" },
     { name = "nltk", specifier = ">=3.9.1" },
