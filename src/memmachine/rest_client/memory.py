@@ -326,6 +326,7 @@ class Memory:
         self,
         query: str,
         limit: int | None = None,
+        expand_context: int = 0,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
         timeout: int | None = None,
@@ -341,6 +342,8 @@ class Memory:
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            expand_context: The number of additional episodes to include
+                            around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
             filter_dict: Additional filters for the search (key-value pairs as strings).
                         These filters will be merged with built-in filters from metadata.
@@ -380,6 +383,7 @@ class Memory:
             project_id=self.__project_id,
             query=query,
             top_k=limit or 10,
+            expand_context=expand_context,
             score_threshold=score_threshold,
             filter=filter_str,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types

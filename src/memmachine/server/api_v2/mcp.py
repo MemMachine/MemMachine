@@ -206,7 +206,12 @@ class Params(BaseModel):
         )
 
     def to_search_memories_spec(
-        self, query: str, top_k: int, *, score_threshold: float | None = None
+        self,
+        query: str,
+        top_k: int,
+        *,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
     ) -> SearchMemoriesSpec:
         """Convert to SearchMemoriesParam."""
         return SearchMemoriesSpec(
@@ -214,6 +219,7 @@ class Params(BaseModel):
             project_id=self.proj_id,
             query=query,
             top_k=top_k,
+            expand_context=expand_context,
             score_threshold=score_threshold,
             filter="",
             types=ALL_MEMORY_TYPES,

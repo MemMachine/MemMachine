@@ -93,6 +93,7 @@ async def _search_target_memories(
         target_memories=target_memories,
         search_filter=spec.filter,
         limit=spec.top_k,
+        expand_context=spec.expand_context,
         score_threshold=spec.score_threshold
         if spec.score_threshold is not None
         else -float("inf"),

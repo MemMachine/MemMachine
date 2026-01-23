@@ -139,12 +139,14 @@ class LongTermMemory:
         query: str,
         *,
         num_episodes_limit: int,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         scored_episodes = await self.search_scored(
             query,
             num_episodes_limit=num_episodes_limit,
+            expand_context=expand_context,
             score_threshold=score_threshold,
             property_filter=property_filter,
         )
@@ -155,6 +157,7 @@ class LongTermMemory:
         query: str,
         *,
         num_episodes_limit: int,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> list[tuple[float, Episode]]:
@@ -162,6 +165,7 @@ class LongTermMemory:
             await self._declarative_memory.search_scored(
                 query,
                 max_num_episodes=num_episodes_limit,
+                expand_context=expand_context,
                 property_filter=LongTermMemory._sanitize_property_filter(
                     property_filter
                 ),
