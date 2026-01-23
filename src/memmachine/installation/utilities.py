@@ -1,7 +1,6 @@
 """Utility functions and constants for MemMachine installation scripts."""
 
 from enum import Enum
-from typing import Self
 
 LINUX_JDK_TAR_NAME = "jdk-21_linux-x64_bin.tar.gz"
 LINUX_JDK_URL = f"https://download.oracle.com/java/21/latest/{LINUX_JDK_TAR_NAME}"
@@ -69,7 +68,7 @@ class ModelProvider(Enum):
     OLLAMA = "ollama"
 
     @classmethod
-    def parse(cls, raw: str) -> Self:
+    def parse(cls, raw: str) -> "ModelProvider":
         """
         Parse user-provided input (case-insensitive) and map it to a ModelProvider.
 

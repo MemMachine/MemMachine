@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.embedder import Embedder
@@ -306,7 +306,10 @@ class LongTermMemory:
             if LongTermMemory._FILTERABLE_METADATA_NONE_FLAG
             not in declarative_memory_episode.filterable_properties
             else None,
-            metadata=declarative_memory_episode.user_metadata,
+            metadata=cast(
+                "dict[str, JsonValue] | None",
+                declarative_memory_episode.user_metadata,
+            ),
         )
 
     _MANGLE_FILTERABLE_METADATA_KEY_PREFIX = "metadata."

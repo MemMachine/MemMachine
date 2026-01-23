@@ -7,6 +7,7 @@ operations for a specific context.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -221,11 +222,11 @@ class Memory:
         producer: str | None = None,
         produced_for: str | None = None,
         episode_type: EpisodeType | None = None,
-        memory_types: list[MemoryType] | None = None,
+        memory_types: builtins.list[MemoryType] | None = None,
         metadata: dict[str, str] | None = None,
         timestamp: datetime | None = None,
         timeout: int | None = None,
-    ) -> list[AddMemoryResult]:
+    ) -> builtins.list[AddMemoryResult]:
         """
         Add a memory episode.
 
@@ -527,7 +528,7 @@ class Memory:
     def delete_episodic(
         self,
         episodic_id: str = "",
-        episodic_ids: list[str] | None = None,
+        episodic_ids: builtins.list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """
@@ -575,7 +576,7 @@ class Memory:
     def delete_semantic(
         self,
         semantic_id: str = "",
-        semantic_ids: list[str] | None = None,
+        semantic_ids: builtins.list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:
         """

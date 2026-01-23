@@ -44,7 +44,7 @@ dependencies = [
 ]
 requires-python = ">= 3.12"
 authors = [
-  {name="MemMachine", email="noreply@memmachine.ai"},
+    { name = "MemMachine", email = "noreply@memmachine.ai" },
 ]
 description = "MemMachine is an open-source memory layer for AI agents, giving your creations short-term, long-term, and personalization memory, enabling them to learn, adapt, and remember."
 readme = "README.md"
@@ -80,7 +80,7 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "ruff>=0.13.2",
     "testcontainers[neo4j,postgres]>=4.13.1",
-    "ty>=0.0.1a26",
+    "ty>=0.0.11",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
@@ -200,7 +200,7 @@ exclude = []
 
 [tool.coverage.run]
 source = [
-  "src/memmachine",
+    "src/memmachine",
 ]
 
 [tool.coverage.report]

@@ -3,12 +3,17 @@
 import asyncio
 import logging
 import time
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 import json_repair
 import openai
-from openai.types.responses import Response
+from openai.types.responses import (
+    Response,
+    ResponseFunctionToolCall,
+    ResponseInputParam,
+    ToolParam,
+)
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -140,10 +145,13 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        input_prompts = [
-            {"role": "system", "content": system_prompt or ""},
-            {"role": "user", "content": user_prompt or ""},
-        ]
+        input_prompts = cast(
+            ResponseInputParam,
+            [
+                {"role": "system", "content": system_prompt or ""},
+                {"role": "user", "content": user_prompt or ""},
+            ],
+        )
 
         generate_response_call_uuid = uuid4()
 
@@ -153,8 +161,8 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             response = await self._client.with_options(
                 max_retries=max_attempts,
             ).responses.parse(
-                model=self._model,  # type: ignore[arg-type]
-                input=input_prompts,  # type: ignore[arg-type]
+                model=self._model,
+                input=input_prompts,
                 text_format=output_format,
             )
         except openai.OpenAIError as e:
@@ -176,7 +184,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         return response.output_parsed
 
-    async def generate_response(
+    async def generate_response(  # noqa: C901
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
@@ -188,14 +196,19 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        input_prompts = [
-            {"role": "system", "content": system_prompt or ""},
-            {"role": "user", "content": user_prompt or ""},
-        ]
+        input_prompts = cast(
+            ResponseInputParam,
+            [
+                {"role": "system", "content": system_prompt or ""},
+                {"role": "user", "content": user_prompt or ""},
+            ],
+        )
 
         generate_response_call_uuid = uuid4()
 
         start_time = time.monotonic()
+
+        response: Response | None = None
 
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
@@ -209,12 +222,21 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     attempt,
                     max_attempts,
                 )
-                response = await self._client.responses.create(
-                    model=self._model,
-                    input=input_prompts,
-                    tools=tools,
-                    tool_choice=tool_choice if tool_choice is not None else "auto",
-                )  # type: ignore
+                if tools is None:
+                    response = await self._client.responses.create(
+                        model=self._model,
+                        input=input_prompts,
+                    )
+                else:
+                    response = await self._client.responses.create(
+                        model=self._model,
+                        input=input_prompts,
+                        tools=cast(list[ToolParam], tools),
+                        tool_choice=cast(
+                            Any,
+                            tool_choice if tool_choice is not None else "auto",
+                        ),
+                    )
                 break
             except (
                 openai.RateLimitError,
@@ -256,6 +278,9 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 logger.exception(error_message)
                 raise ExternalServiceAPIError(error_message) from e
 
+        if response is None:
+            raise RuntimeError("OpenAI response was not generated")
+
         end_time = time.monotonic()
         logger.debug(
             "[call uuid: %s] Response generated in %.3f seconds",
@@ -272,18 +297,21 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         if response.output is None:
             return (response.output_text or "", [])
 
+        function_calls_arguments: list[dict[str, Any]] = []
         try:
-            function_calls_arguments = [
-                {
-                    "call_id": output.call_id,
-                    "function": {
-                        "name": output.name,
-                        "arguments": json_repair.loads(output.arguments),
-                    },
-                }
-                for output in response.output
-                if output.type == "function_call"
-            ]
+            for output in response.output:
+                if output.type != "function_call":
+                    continue
+                function_call = cast(ResponseFunctionToolCall, output)
+                function_calls_arguments.append(
+                    {
+                        "call_id": function_call.call_id,
+                        "function": {
+                            "name": function_call.name,
+                            "arguments": json_repair.loads(function_call.arguments),
+                        },
+                    }
+                )
         except (TypeError, ValueError) as e:
             raise ValueError(
                 "Failed to repair or parse JSON from function call arguments"
