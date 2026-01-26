@@ -1,6 +1,7 @@
 """Manager for semantic memory resources and services."""
 
 import asyncio
+from typing import cast
 
 from pydantic import InstanceOf
 
@@ -16,7 +17,7 @@ from memmachine.semantic_memory.config_store.config_store import SemanticConfigS
 from memmachine.semantic_memory.config_store.config_store_sqlalchemy import (
     SemanticConfigStorageSqlAlchemy,
 )
-from memmachine.semantic_memory.semantic_memory import SemanticService
+from memmachine.semantic_memory.semantic_memory import ResourceManager, SemanticService
 from memmachine.semantic_memory.semantic_model import (
     SemanticCategory,
     SetIdT,
@@ -128,7 +129,7 @@ class SemanticResourceManager:
             SemanticService.Params(
                 semantic_storage=semantic_storage,
                 episode_storage=episode_store,
-                resource_manager=self._resource_manager,
+                resource_manager=cast(ResourceManager, self._resource_manager),
                 default_embedder=embedder,
                 default_embedder_name=self._conf.embedding_model,
                 default_language_model=llm_model,

@@ -437,6 +437,7 @@ class MemMachine:
             session_data: Session context used to select the memory.
             query: Query string.
             limit: Optional maximum number of results.
+            expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
 
@@ -484,6 +485,7 @@ class MemMachine:
             target_memories: Which memory types to query.
             query: Query string.
             limit: Optional maximum number of results per memory.
+            expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
 

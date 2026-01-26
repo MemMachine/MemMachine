@@ -49,7 +49,7 @@ def _consolidate_errors_and_raise(possible_errors: list[Any], msg: str) -> None:
         raise ExceptionGroup(msg, errors)
 
 
-DefaultCategoryRetriever: type = Callable[[SetIdT], list[InstanceOf[SemanticCategory]]]
+DefaultCategoryRetriever = Callable[[SetIdT], list[SemanticCategory]]
 
 
 @runtime_checkable
@@ -467,7 +467,7 @@ class SemanticService:
             cfg = await self._semantic_config_storage.get_setid_config(set_id=s_id)
             return cfg.embedder_name
 
-        tasks: dict[str, asyncio.Task[str]] = {}
+        tasks: dict[str, asyncio.Task[str | None]] = {}
         async with asyncio.TaskGroup() as tg:
             for s_id in set_ids:
                 tasks[s_id] = tg.create_task(_get_embedder_name(s_id))
