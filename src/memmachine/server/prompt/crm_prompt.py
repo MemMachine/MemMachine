@@ -272,7 +272,7 @@ Expected Output (assuming current date is 2025-01-20[Mon]):
   {{ "command": "add", "feature": "status", "value": "[2025-01-20] Prepared a business proposal for a 6-month engagement to present to David.", "tag": "Allen Inst", "date": "2025-01-20", "author": null }},
   {{ "command": "add", "feature": "next_step", "value": "[2025-01-21] Present proposal to David this Tuesday.", "tag": "Allen Inst", "date": "2025-01-21", "author": null }},
   {{ "command": "add", "feature": "status", "value": "[2025-01-20] Checkpoint/restore blocked in CO/MMBatch on SmartPim pipeline.", "tag": "Allen Inst", "date": "2025-01-20", "author": null }}
-}}
+]
 
 1) Progress Update (existing profile):
 Input: "Roche update: POC approved! Starting next week. Budget confirmed at $50k."

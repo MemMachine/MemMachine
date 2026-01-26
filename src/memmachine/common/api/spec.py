@@ -613,6 +613,22 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             examples=Examples.MEMORY_TYPES,
         ),
     ]
+    user_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.USER_ID,
+            examples=Examples.USER_ID,
+        ),
+    ] = None
+    user_role: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.USER_ROLE,
+            examples=Examples.USER_ROLE,
+        ),
+    ] = None
 
 
 class ListMemoriesSpec(_WithOrgAndProj):
@@ -650,6 +666,22 @@ class ListMemoriesSpec(_WithOrgAndProj):
             examples=Examples.MEMORY_TYPE_SINGLE,
         ),
     ]
+    user_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.USER_ID,
+            examples=Examples.USER_ID,
+        ),
+    ] = None
+    user_role: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.USER_ROLE,
+            examples=Examples.USER_ROLE,
+        ),
+    ] = None
 
 
 class DeleteEpisodicMemorySpec(_WithOrgAndProj):

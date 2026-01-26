@@ -262,20 +262,30 @@ def test_add_memories_episode_type_forwarded(client, mock_memmachine):
         ],
     }
 
-    mock_memmachine.add_episodes.return_value = ["ep-1", "ep-2"]
+    # add_episodes is called once per message
+    mock_memmachine.add_episodes.side_effect = [["ep-1"], ["ep-2"]]
 
     response = client.post("/api/v2/memories", json=payload)
     assert response.status_code == 200
     assert response.json() == {"results": [{"uid": "ep-1"}, {"uid": "ep-2"}]}
 
-    mock_memmachine.add_episodes.assert_awaited_once()
-    call_kwargs = mock_memmachine.add_episodes.call_args[1]
-    assert call_kwargs["target_memories"] == ALL_MEMORY_TYPES
+    assert mock_memmachine.add_episodes.await_count == 2
 
-    episode_entries = call_kwargs["episode_entries"]
-    assert len(episode_entries) == 2
-    assert episode_entries[0].episode_type == EpisodeType.MESSAGE
-    assert episode_entries[1].episode_type is None
+    first_call_kwargs = mock_memmachine.add_episodes.call_args_list[0].kwargs
+    assert first_call_kwargs["target_memories"] == ALL_MEMORY_TYPES
+    assert first_call_kwargs["session_data"].user_id is None
+    assert first_call_kwargs["session_data"].user_role is None
+    first_episode_entries = first_call_kwargs["episode_entries"]
+    assert len(first_episode_entries) == 1
+    assert first_episode_entries[0].episode_type == EpisodeType.MESSAGE
+
+    second_call_kwargs = mock_memmachine.add_episodes.call_args_list[1].kwargs
+    assert second_call_kwargs["target_memories"] == ALL_MEMORY_TYPES
+    assert second_call_kwargs["session_data"].user_id is None
+    assert second_call_kwargs["session_data"].user_role is None
+    second_episode_entries = second_call_kwargs["episode_entries"]
+    assert len(second_episode_entries) == 1
+    assert second_episode_entries[0].episode_type is None
 
 
 def test_search_memories(client, mock_memmachine):

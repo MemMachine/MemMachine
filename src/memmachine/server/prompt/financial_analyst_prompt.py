@@ -255,7 +255,7 @@ Expected Output (assuming current date is 2025-01-20[Mon]):
   {{ "command": "add", "feature": "income", "value": "95000", "tag": "financial_profile", "author": null }},
   {{ "command": "add", "feature": "retirement_planning", "value": "Maxing out 401k at $23k annually", "tag": "financial_profile", "author": null }},
   {{ "command": "add", "feature": "financial_goals", "value": "[2025-01-20] Save $100k for house down payment by 2026", "tag": "financial_profile", "date": "2025-01-20", "author": null }}
-}}
+]
 
 1) Investment Update (existing profile):
 Input: "Bought $5k worth of VTI ETF and $2k of individual tech stocks. Sold some bonds to rebalance portfolio."

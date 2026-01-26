@@ -34,6 +34,8 @@ async def get_memmachine(request: Request) -> MemMachine:
 class _SessionData:
     org_id: str
     project_id: str
+    user_id: str | None = None
+    user_role: str | None = None
 
     @property
     def session_key(self) -> str:
@@ -41,10 +43,14 @@ class _SessionData:
 
     @property
     def user_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
+        if self.user_id is not None:
+            return f"{self.session_key}/{self.user_id}"
         return None
 
     @property
     def role_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
+        if self.user_role is not None:
+            return f"{self.session_key}/{self.user_role}"
         return None
 
     @property
@@ -57,8 +63,9 @@ async def _add_messages_to(
     spec: AddMemoriesSpec,
     memmachine: MemMachine,
 ) -> list[AddMemoryResult]:
-    episodes: list[EpisodeEntry] = [
-        EpisodeEntry(
+    ret = []
+    for message in spec.messages:
+        episode_entry = EpisodeEntry(
             content=message.content,
             producer_id=message.producer,
             produced_for_id=message.produced_for,
@@ -67,18 +74,19 @@ async def _add_messages_to(
             metadata=cast(dict[str, JsonValue], message.metadata),
             episode_type=message.episode_type,
         )
-        for message in spec.messages
-    ]
 
-    episode_ids = await memmachine.add_episodes(
-        session_data=_SessionData(
-            org_id=spec.org_id,
-            project_id=spec.project_id,
-        ),
-        episode_entries=episodes,
-        target_memories=target_memories,
-    )
-    return [AddMemoryResult(uid=e_id) for e_id in episode_ids]
+        episode_ids = await memmachine.add_episodes(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+                user_id=message.metadata.get("user_id", None),
+                user_role=message.metadata.get("user_role", None),
+            ),
+            episode_entries=[episode_entry],
+            target_memories=target_memories,
+        )
+        ret.extend([AddMemoryResult(uid=eid) for eid in episode_ids])
+    return ret
 
 
 async def _search_target_memories(
@@ -90,6 +98,8 @@ async def _search_target_memories(
         session_data=_SessionData(
             org_id=spec.org_id,
             project_id=spec.project_id,
+            user_id=spec.user_id,
+            user_role=spec.user_role,
         ),
         query=spec.query,
         target_memories=target_memories,
@@ -128,6 +138,8 @@ async def _list_target_memories(
         session_data=_SessionData(
             org_id=spec.org_id,
             project_id=spec.project_id,
+            user_id=spec.user_id,
+            user_role=spec.user_role,
         ),
         target_memories=target_memories,
         search_filter=spec.filter,
