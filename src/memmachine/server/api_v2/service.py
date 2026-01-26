@@ -1,5 +1,6 @@
 """API v2 service implementations."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import cast
 
@@ -11,6 +12,7 @@ from memmachine.common.api import MemoryType as MemoryTypeE
 from memmachine.common.api.spec import (
     AddMemoriesSpec,
     AddMemoryResult,
+    DeleteMemoriesSpec,
     Episode,
     EpisodicSearchResult,
     ListMemoriesSpec,
@@ -79,6 +81,23 @@ async def _add_messages_to(
         target_memories=target_memories,
     )
     return [AddMemoryResult(uid=e_id) for e_id in episode_ids]
+
+
+async def _delete_memories(
+    spec: DeleteMemoriesSpec,
+    memmachine: MemMachine,
+) -> None:
+    delete_episodes = memmachine.delete_episodes(
+        session_data=_SessionData(
+            org_id=spec.org_id,
+            project_id=spec.project_id,
+        ),
+        episode_ids=spec.episodic_memory_uids,
+    )
+    delete_semantics = memmachine.delete_features(
+        feature_ids=spec.semantic_memory_uids,
+    )
+    await asyncio.gather(delete_episodes, delete_semantics)
 
 
 async def _search_target_memories(
