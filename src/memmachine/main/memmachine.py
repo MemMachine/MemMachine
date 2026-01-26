@@ -426,6 +426,7 @@ class MemMachine:
         session_data: InstanceOf[SessionData],
         query: str,
         limit: int | None = None,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
@@ -456,6 +457,7 @@ class MemMachine:
             response = await episodic_session.query_memory(
                 query=query,
                 limit=limit,
+                expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=search_filter,
             )
@@ -470,6 +472,7 @@ class MemMachine:
         query: str,
         limit: int
         | None = None,  # TODO: Define if limit is per memory or is global limit
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
     ) -> SearchResponse:
@@ -498,6 +501,7 @@ class MemMachine:
                     session_data=session_data,
                     query=query,
                     limit=limit,
+                    expand_context=expand_context,
                     score_threshold=score_threshold,
                     search_filter=property_filter,
                 )
@@ -642,10 +646,7 @@ class MemMachine:
         episode_storage = await self._resources.get_episode_storage()
         semantic_service = await self._resources.get_semantic_service()
 
-        tasks: list[Coroutine[Any, Any, Any]] = [
-            episode_storage.delete_episodes(episode_ids),
-            semantic_service.delete_history(episode_ids),
-        ]
+        tasks: list[Coroutine[Any, Any, Any]] = []
 
         if session_data is not None:
             episodic_memory_manager = (
@@ -657,6 +658,8 @@ class MemMachine:
                 t = episodic_session.delete_episodes(episode_ids)
                 tasks.append(t)
 
+        tasks.append(episode_storage.delete_episodes(episode_ids))
+        tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
     async def delete_features(

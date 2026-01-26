@@ -236,16 +236,23 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
 
 
 @pytest.mark.asyncio
-async def test_generate_response_tool_call_json_error(
+async def test_generate_response_tool_call_json_repair(
     mock_async_openai,
     minimal_config,
 ):
-    """Test handling of invalid JSON in tool call arguments."""
+    """Test that json-repair successfully fixes invalid JSON in tool call arguments."""
     mock_tool_call = MagicMock()
     mock_tool_call.type = "function_call"
     mock_tool_call.call_id = "call_123"
-    mock_tool_call.name = "get_weather"
-    mock_tool_call.arguments = '{"location": "Boston",}'  # Invalid JSON
+    mock_tool_call.name = "create_memory_project"
+    mock_tool_call.arguments = """{
+        project: "MemMachine",
+        'description': 'Open-source memory layer for AI agents',
+        "memory_types": ["episodic", "semantic",],
+        "features": {
+            "persistent": true,
+            "cross_session": true,
+    """
 
     mock_response = MagicMock()
     mock_response.output_text = None
@@ -256,11 +263,23 @@ async def test_generate_response_tool_call_json_error(
     mock_client.responses.create.return_value = mock_response
 
     lm = OpenAIResponsesLanguageModel(minimal_config)
-    with pytest.raises(ValueError, match="JSON decode error"):
-        await lm.generate_response(
-            system_prompt="System prompt",
-            user_prompt="User prompt",
-        )
+    # json-repair should automatically fix the invalid JSON
+    _content, tool_calls = await lm.generate_response(
+        system_prompt="System prompt",
+        user_prompt="User prompt",
+    )
+
+    # Verify the repaired JSON is parsed correctly
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["call_id"] == "call_123"
+    assert tool_calls[0]["function"]["name"] == "create_memory_project"
+    # Verify the complex JSON structure was repaired and parsed correctly
+    args = tool_calls[0]["function"]["arguments"]
+    assert args["project"] == "MemMachine"
+    assert args["description"] == "Open-source memory layer for AI agents"
+    assert args["memory_types"] == ["episodic", "semantic"]
+    assert args["features"]["persistent"] is True
+    assert args["features"]["cross_session"] is True
 
 
 @pytest.mark.asyncio

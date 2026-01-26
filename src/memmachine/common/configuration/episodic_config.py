@@ -228,14 +228,18 @@ class EpisodicMemoryConfPartial(YamlSerializableMixin):
         ltm_other = other.long_term_memory or LongTermMemoryConfPartial()
 
         # ---- Step 3: perform merges using each component's own merge() method ----
-        stm_self.session_key = merged.session_key
-        ltm_self.session_id = merged.session_key
+        session_key = merged.session_key
+        if session_key is None:
+            raise ValueError("EpisodicMemoryConfPartial.merge() requires session_key")
+
+        stm_self.session_key = session_key
+        ltm_self.session_id = session_key
         stm_merged = stm_self.merge(stm_other)
         ltm_merged = ltm_self.merge(ltm_other)
 
         # ---- Step 4: update nested configuration in the base result ----
         return EpisodicMemoryConf(
-            session_key=merged.session_key,
+            session_key=session_key,
             metrics_factory_id=merged.metrics_factory_id
             if merged.metrics_factory_id is not None
             else "prometheus",

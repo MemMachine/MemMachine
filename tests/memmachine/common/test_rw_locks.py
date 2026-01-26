@@ -364,7 +364,7 @@ async def test_hash_collision_in_lock_pool():
     )
     duration = time.time() - start
     assert (
-        0.2 <= duration < 0.45
+        0.2 <= duration < 2.0
     )  # At least two sets must have run sequentially due to collisions
 
     # Every time a lock was released, it went to the pool

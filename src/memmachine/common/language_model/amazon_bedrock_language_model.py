@@ -1,7 +1,6 @@
 """Amazon Bedrock-based language model implementation."""
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -10,6 +9,7 @@ from typing import Any, TypeVar
 from uuid import uuid4
 
 import instructor
+import json_repair
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -280,7 +280,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 response,
                 raw_response,
             ) = await client.chat.completions.create_with_completion(**converse_kwargs)
-        except instructor.core.exceptions.InstructorRetryException as exc:  # type: ignore[attr-defined]
+        except instructor.core.exceptions.InstructorRetryException as exc:
             parsed = self._try_parse_bedrock_completion(
                 completion=getattr(exc, "last_completion", None),
                 output_format=output_format,
@@ -493,7 +493,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
             return None
 
         try:
-            parsed_json = json.loads(json_match.group(0))
+            parsed_json = json_repair.loads(json_match.group(0))
             return TypeAdapter(output_format).validate_python(parsed_json)
         except Exception:
             return None

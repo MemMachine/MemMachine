@@ -288,6 +288,7 @@ class DeclarativeMemory:
         query: str,
         *,
         max_num_episodes: int = 20,
+        expand_context: int = 0,
         property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
         """
@@ -299,6 +300,10 @@ class DeclarativeMemory:
             max_num_episodes (int):
                 The maximum number of episodes to return
                 (default: 20).
+            expand_context (int):
+                The number of additional episodes to include
+                around each matched episode for additional context
+                (default: 0).
             property_filter (FilterExpr | None):
                 Filterable property keys and values
                 to use for filtering episodes
@@ -312,6 +317,7 @@ class DeclarativeMemory:
         scored_episodes = await self.search_scored(
             query,
             max_num_episodes=max_num_episodes,
+            expand_context=expand_context,
             property_filter=property_filter,
         )
         return [episode for _, episode in scored_episodes]
@@ -321,6 +327,7 @@ class DeclarativeMemory:
         query: str,
         *,
         max_num_episodes: int = 20,
+        expand_context: int = 0,
         property_filter: FilterExpr | None = None,
     ) -> list[tuple[float, Episode]]:
         """
@@ -332,6 +339,10 @@ class DeclarativeMemory:
             max_num_episodes (int):
                 The maximum number of episodes to return
                 (default: 20).
+            expand_context (int):
+                The number of additional episodes to include
+                around each matched episode for additional context
+                (default: 0).
             property_filter (FilterExpr | None):
                 Filterable property keys and values
                 to use for filtering episodes
@@ -363,7 +374,7 @@ class DeclarativeMemory:
             ),
             query_embedding=query_embedding,
             similarity_metric=self._embedder.similarity_metric,
-            limit=100,
+            limit=max(5 * max_num_episodes, 200),
             property_filter=mangled_property_filter,
         )
 
@@ -396,9 +407,15 @@ class DeclarativeMemory:
             for source_episode_node in source_episode_nodes
         ]
 
+        expand_context = min(max(0, expand_context), max_num_episodes - 1)
+        max_backward_episodes = expand_context // 3
+        max_forward_episodes = expand_context - max_backward_episodes
+
         contextualize_episode_tasks = [
             self._contextualize_episode(
                 nuclear_episode,
+                max_backward_episodes=max_backward_episodes,
+                max_forward_episodes=max_forward_episodes,
                 mangled_property_filter=mangled_property_filter,
             )
             for nuclear_episode in nuclear_episodes
@@ -438,37 +455,44 @@ class DeclarativeMemory:
     async def _contextualize_episode(
         self,
         nuclear_episode: Episode,
-        max_backward_episodes: int = 1,
-        max_forward_episodes: int = 2,
+        max_backward_episodes: int = 0,
+        max_forward_episodes: int = 0,
         mangled_property_filter: FilterExpr | None = None,
     ) -> list[Episode]:
-        previous_episode_nodes = (
-            await self._vector_graph_store.search_directional_nodes(
-                collection=self._episode_collection,
-                by_properties=("timestamp", "uid"),
-                starting_at=(
-                    nuclear_episode.timestamp,
-                    str(nuclear_episode.uid),
-                ),
-                order_ascending=(False, False),
-                include_equal_start=False,
-                limit=max_backward_episodes,
-                property_filter=mangled_property_filter,
-            )
-        )
+        previous_episode_nodes = []
+        next_episode_nodes = []
 
-        next_episode_nodes = await self._vector_graph_store.search_directional_nodes(
-            collection=self._episode_collection,
-            by_properties=("timestamp", "uid"),
-            starting_at=(
-                nuclear_episode.timestamp,
-                str(nuclear_episode.uid),
-            ),
-            order_ascending=(True, True),
-            include_equal_start=False,
-            limit=max_forward_episodes,
-            property_filter=mangled_property_filter,
-        )
+        if max_backward_episodes > 0:
+            previous_episode_nodes = (
+                await self._vector_graph_store.search_directional_nodes(
+                    collection=self._episode_collection,
+                    by_properties=("timestamp", "uid"),
+                    starting_at=(
+                        nuclear_episode.timestamp,
+                        str(nuclear_episode.uid),
+                    ),
+                    order_ascending=(False, False),
+                    include_equal_start=False,
+                    limit=max_backward_episodes,
+                    property_filter=mangled_property_filter,
+                )
+            )
+
+        if max_forward_episodes > 0:
+            next_episode_nodes = (
+                await self._vector_graph_store.search_directional_nodes(
+                    collection=self._episode_collection,
+                    by_properties=("timestamp", "uid"),
+                    starting_at=(
+                        nuclear_episode.timestamp,
+                        str(nuclear_episode.uid),
+                    ),
+                    order_ascending=(True, True),
+                    include_equal_start=False,
+                    limit=max_forward_episodes,
+                    property_filter=mangled_property_filter,
+                )
+            )
 
         context = (
             [
@@ -507,17 +531,13 @@ class DeclarativeMemory:
         context_string = ""
 
         for episode in episode_context:
-            match episode.content_type:
-                case ContentType.MESSAGE:
-                    context_date = DeclarativeMemory._format_date(
-                        episode.timestamp.date(),
-                    )
-                    context_time = DeclarativeMemory._format_time(
-                        episode.timestamp.time(),
-                    )
-                    context_string += f"[{context_date} at {context_time}] {episode.source}: {json.dumps(episode.content)}\n"
-                case ContentType.TEXT:
-                    context_string += json.dumps(episode.content) + "\n"
+            context_date = DeclarativeMemory._format_date(
+                episode.timestamp.date(),
+            )
+            context_time = DeclarativeMemory._format_time(
+                episode.timestamp.time(),
+            )
+            context_string += f"[{context_date} at {context_time}] {episode.source}: {json.dumps(episode.content)}\n"
 
         return context_string
 

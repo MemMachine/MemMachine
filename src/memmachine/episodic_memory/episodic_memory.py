@@ -307,6 +307,7 @@ class EpisodicMemory:
         query: str,
         *,
         limit: int | None = None,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> QueryResponse | None:
@@ -322,6 +323,8 @@ class EpisodicMemory:
             limit: The maximum number of episodes to return. The limit is
                    applied to both short and long term memories. The default
                    value is 20.
+            expand_context: The number of additional episodes to include
+                            around each matched episode from long term memory.
             score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
 
@@ -344,6 +347,7 @@ class EpisodicMemory:
             ).search_scored(
                 query,
                 num_episodes_limit=search_limit,
+                expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
             )
@@ -368,6 +372,7 @@ class EpisodicMemory:
                 self._long_term_memory.search_scored(
                     query,
                     num_episodes_limit=search_limit,
+                    expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=property_filter,
                 ),
@@ -408,6 +413,7 @@ class EpisodicMemory:
         self,
         query: str,
         limit: int | None = None,
+        expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> str:
@@ -420,6 +426,8 @@ class EpisodicMemory:
         Args:
             query: The original query string.
             limit: The maximum number of episodes to include in the context.
+            expand_context: The number of additional episodes to include
+                            around each matched episode from long term memory.
             score_threshold: Minimum score to include in the context.
             property_filter: Properties to filter the search.
 
@@ -430,6 +438,7 @@ class EpisodicMemory:
         query_result = await self.query_memory(
             query,
             limit=limit,
+            expand_context=expand_context,
             score_threshold=score_threshold,
             property_filter=property_filter,
         )

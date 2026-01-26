@@ -139,7 +139,7 @@ class SentenceTransformerEmbedder(Embedder):
             end_time - start_time,
         )
 
-        chunk_embeddings = response.astype(float).tolist()
+        chunk_embeddings = np.asarray(response, dtype=float).tolist()
         inputs_chunk_embeddings = unflatten_like(
             chunk_embeddings,
             inputs_chunks,

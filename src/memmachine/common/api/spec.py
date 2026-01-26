@@ -589,6 +589,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             examples=Examples.FILTER_MEM,
         ),
     ]
+    expand_context: Annotated[
+        int,
+        Field(
+            default=0,
+            description=SpecDoc.EXPAND_CONTEXT,
+            examples=Examples.EXPAND_CONTEXT,
+        ),
+    ]
     score_threshold: Annotated[
         float | None,
         Field(

@@ -264,74 +264,74 @@ Examples:
 0) New Company Profile:
 Input: "Allen Inst.: Put together a Business proposal to present to David this Tuesday for a 6 month long engagement. Still cannot get a successful checkpoint and restore within the CO/MM Batch env on their SmartPim pipeline."
 Expected Output (assuming current date is 2025-01-20[Mon]):
-{{
-  "1": {{ "command": "delete", "feature": "company", "tag": "Allen Inst", "author": null }},
-  "2": {{ "command": "add", "feature": "company", "value": "Allen Inst", "tag": "Allen Inst", "author": null }},
-  "3": {{ "command": "add", "feature": "memverge_product", "value": "MMBatch", "tag": "Allen Inst", "author": null }},
-  "4": {{ "command": "add", "feature": "primary_contact", "value": "David", "tag": "Allen Inst", "author": null }},
-  "5": {{ "command": "add", "feature": "status", "value": "[2025-01-20] Prepared a business proposal for a 6-month engagement to present to David.", "tag": "Allen Inst", "date": "2025-01-20", "author": null }},
-  "6": {{ "command": "add", "feature": "next_step", "value": "[2025-01-21] Present proposal to David this Tuesday.", "tag": "Allen Inst", "date": "2025-01-21", "author": null }},
-  "7": {{ "command": "add", "feature": "status", "value": "[2025-01-20] Checkpoint/restore blocked in CO/MMBatch on SmartPim pipeline.", "tag": "Allen Inst", "date": "2025-01-20", "author": null }}
+[
+  {{ "command": "delete", "feature": "company", "tag": "Allen Inst", "author": null }},
+  {{ "command": "add", "feature": "company", "value": "Allen Inst", "tag": "Allen Inst", "author": null }},
+  {{ "command": "add", "feature": "memverge_product", "value": "MMBatch", "tag": "Allen Inst", "author": null }},
+  {{ "command": "add", "feature": "primary_contact", "value": "David", "tag": "Allen Inst", "author": null }},
+  {{ "command": "add", "feature": "status", "value": "[2025-01-20] Prepared a business proposal for a 6-month engagement to present to David.", "tag": "Allen Inst", "date": "2025-01-20", "author": null }},
+  {{ "command": "add", "feature": "next_step", "value": "[2025-01-21] Present proposal to David this Tuesday.", "tag": "Allen Inst", "date": "2025-01-21", "author": null }},
+  {{ "command": "add", "feature": "status", "value": "[2025-01-20] Checkpoint/restore blocked in CO/MMBatch on SmartPim pipeline.", "tag": "Allen Inst", "date": "2025-01-20", "author": null }}
 }}
 
 1) Progress Update (existing profile):
 Input: "Roche update: POC approved! Starting next week. Budget confirmed at $50k."
 Expected Output (assuming current date is 2025-01-20):
-{{
-  "1": {{ "command": "delete", "feature": "company", "tag": "Roche", "author": "Ron" }},
-  "2": {{ "command": "add", "feature": "company", "value": "Roche", "tag": "Roche", "author": "Ron" }},
-  "3": {{ "command": "delete", "feature": "sales_stage", "tag": "Roche", "author": "Ron" }},
-  "4": {{ "command": "add", "feature": "sales_stage", "value": "POC", "tag": "Roche", "author": "Ron" }},
-  "5": {{ "command": "delete", "feature": "estimated_deal_value", "tag": "Roche", "author": "Ron" }},
-  "6": {{ "command": "add", "feature": "estimated_deal_value", "value": "50000", "tag": "Roche", "author": "Ron" }},
-  "7": {{ "command": "add", "feature": "status", "value": "[2025-01-20] POC approved, starting next week", "tag": "Roche", "date": "2025-01-20", "author": "Ron" }}
-}}
+[
+  {{ "command": "delete", "feature": "company", "tag": "Roche", "author": "Ron" }},
+  {{ "command": "add", "feature": "company", "value": "Roche", "tag": "Roche", "author": "Ron" }},
+  {{ "command": "delete", "feature": "sales_stage", "tag": "Roche", "author": "Ron" }},
+  {{ "command": "add", "feature": "sales_stage", "value": "POC", "tag": "Roche", "author": "Ron" }},
+  {{ "command": "delete", "feature": "estimated_deal_value", "tag": "Roche", "author": "Ron" }},
+  {{ "command": "add", "feature": "estimated_deal_value", "value": "50000", "tag": "Roche", "author": "Ron" }},
+  {{ "command": "add", "feature": "status", "value": "[2025-01-20] POC approved, starting next week", "tag": "Roche", "date": "2025-01-20", "author": "Ron" }}
+]
 
 2) Sheet Date Format Example (Use EDTF --MM-DD):
 Input: "AMD update: 8/18: Meeting scheduled 7/8: Jing to check in with Jodie and Sai 6/3: Paused until AMD release"
 Expected Output (assuming current date is 2025-01-20):
-{{
-  "1": {{ "command": "delete", "feature": "company", "tag": "AMD", "author": "Ron" }},
-  "2": {{ "command": "add", "feature": "company", "value": "AMD", "tag": "AMD", "author": "Ron" }},
-  "3": {{ "command": "add", "feature": "status", "value": "[--08-18] Meeting scheduled", "tag": "AMD", "date": "--08-18", "author": "Ron" }},
-  "4": {{ "command": "add", "feature": "status", "value": "[--07-08] Jing to check in with Jodie and Sai", "tag": "AMD", "date": "--07-08", "author": "Ron" }},
-  "5": {{ "command": "add", "feature": "status", "value": "[--06-03] Paused until AMD release", "tag": "AMD", "date": "--06-03", "author": "Ron" }}
-}}
+[
+  {{ "command": "delete", "feature": "company", "tag": "AMD", "author": "Ron" }},
+  {{ "command": "add", "feature": "company", "value": "AMD", "tag": "AMD", "author": "Ron" }},
+  {{ "command": "add", "feature": "status", "value": "[--08-18] Meeting scheduled", "tag": "AMD", "date": "--08-18", "author": "Ron" }},
+  {{ "command": "add", "feature": "status", "value": "[--07-08] Jing to check in with Jodie and Sai", "tag": "AMD", "date": "--07-08", "author": "Ron" }},
+  {{ "command": "add", "feature": "status", "value": "[--06-03] Paused until AMD release", "tag": "AMD", "date": "--06-03", "author": "Ron" }}
+]
 
 **CRITICAL**: Notice all sheet dates use "--MM-DD" format, NOT "2025-MM-DD"!
 
 3) Relative Date Parsing (Event vs Message Date):
 Input: "2/3: Meeting with Acme arranged for next Tuesday. Demo scheduled for next week."
 Expected Output (assuming current date is 2025-01-20[Mon]):
-{{
-  "1": {{ "command": "add", "feature": "company", "value": "Acme", "tag": "Acme", "author": null }},
-  "2": {{ "command": "add", "feature": "next_step", "value": "[2025-01-28] Meeting with Acme", "tag": "Acme", "date": "2025-01-28", "author": null }},
-  "3": {{ "command": "add", "feature": "next_step", "value": "[2025-01-27] Demo scheduled", "tag": "Acme", "date": "2025-01-27", "author": null }}
-}}
+[
+  {{ "command": "add", "feature": "company", "value": "Acme", "tag": "Acme", "author": null }},
+  {{ "command": "add", "feature": "next_step", "value": "[2025-01-28] Meeting with Acme", "tag": "Acme", "date": "2025-01-28", "author": null }},
+  {{ "command": "add", "feature": "next_step", "value": "[2025-01-27] Demo scheduled", "tag": "Acme", "date": "2025-01-27", "author": null }}
+]
 
 4) Sheet Date Format and Field Classification:
 Input: "UC Berkeley Adam Yala yala@berkeley.edu 5/13: Still not willing to convert to containers 5/5: Meeting with Adam 4/28: Charles to follow up with Adam on re-engaging"
 Expected Output (assuming current date is 2025-01-20):
-{{
-  "1": {{ "command": "add", "feature": "company", "value": "UC Berkeley", "tag": "UC Berkeley", "author": null }},
-  "2": {{ "command": "add", "feature": "sales_stage", "value": "POC", "tag": "UC Berkeley", "author": null }},
-  "3": {{ "command": "add", "feature": "primary_contact", "value": "Adam Yala", "tag": "UC Berkeley", "author": null }},
-  "4": {{ "command": "add", "feature": "email", "value": "yala@berkeley.edu", "tag": "UC Berkeley", "author": null }},
-  "5": {{ "command": "add", "feature": "status", "value": "[--05-13] Still not willing to convert to containers", "tag": "UC Berkeley", "date": "--05-13", "author": null }},
-  "6": {{ "command": "add", "feature": "status", "value": "[--05-05] Meeting with Adam", "tag": "UC Berkeley", "date": "--05-05", "author": null }},
-  "7": {{ "command": "add", "feature": "next_step", "value": "[--04-28] Charles to follow up with Adam on re-engaging", "tag": "UC Berkeley", "date": "--04-28", "author": null }}
-}}
+[
+  {{ "command": "add", "feature": "company", "value": "UC Berkeley", "tag": "UC Berkeley", "author": null }},
+  {{ "command": "add", "feature": "sales_stage", "value": "POC", "tag": "UC Berkeley", "author": null }},
+  {{ "command": "add", "feature": "primary_contact", "value": "Adam Yala", "tag": "UC Berkeley", "author": null }},
+  {{ "command": "add", "feature": "email", "value": "yala@berkeley.edu", "tag": "UC Berkeley", "author": null }},
+  {{ "command": "add", "feature": "status", "value": "[--05-13] Still not willing to convert to containers", "tag": "UC Berkeley", "date": "--05-13", "author": null }},
+  {{ "command": "add", "feature": "status", "value": "[--05-05] Meeting with Adam", "tag": "UC Berkeley", "date": "--05-05", "author": null }},
+  {{ "command": "add", "feature": "next_step", "value": "[--04-28] Charles to follow up with Adam on re-engaging", "tag": "UC Berkeley", "date": "--04-28", "author": null }}
+]
 
 5) Next Step Classification Example:
 Input: "AMD POC 6/3: Paused until AMD release is ready, plan to reconnect next week 5/19: Met with Sai and reviewed roadmap"
 Expected Output (assuming current date is 2025-01-20):
-{{
-  "1": {{ "command": "add", "feature": "company", "value": "AMD", "tag": "AMD", "author": null }},
-  "2": {{ "command": "add", "feature": "sales_stage", "value": "POC", "tag": "AMD", "author": null }},
-  "3": {{ "command": "add", "feature": "status", "value": "[--06-03] Paused until AMD release is ready", "tag": "AMD", "date": "--06-03", "author": null }},
-  "4": {{ "command": "add", "feature": "next_step", "value": "[--06-03] Plan to reconnect next week", "tag": "AMD", "date": "--06-03", "author": null }},
-  "5": {{ "command": "add", "feature": "status", "value": "[--05-19] Met with Sai and reviewed roadmap", "tag": "AMD", "date": "--05-19", "author": null }}
-}}
+[
+  {{ "command": "add", "feature": "company", "value": "AMD", "tag": "AMD", "author": null }},
+  {{ "command": "add", "feature": "sales_stage", "value": "POC", "tag": "AMD", "author": null }},
+  {{ "command": "add", "feature": "status", "value": "[--06-03] Paused until AMD release is ready", "tag": "AMD", "date": "--06-03", "author": null }},
+  {{ "command": "add", "feature": "next_step", "value": "[--06-03] Plan to reconnect next week", "tag": "AMD", "date": "--06-03", "author": null }},
+  {{ "command": "add", "feature": "status", "value": "[--05-19] Met with Sai and reviewed roadmap", "tag": "AMD", "date": "--05-19", "author": null }}
+]
 
 6) Query/Reference Input (no new CRM information):
 Input: "uber info"

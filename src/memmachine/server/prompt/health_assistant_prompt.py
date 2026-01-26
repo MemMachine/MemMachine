@@ -245,81 +245,81 @@ DEFAULT_UPDATE_PROFILE_PROMPT = """
 
     To update the user's profile, you will output a JSON document containing a list of commands to be executed in sequence.
     The following output will add a feature:
-    {
-        "0": {
+    [
+        {
             "command": "add",
             "tag": "Symptoms",
             "feature": "headache",
             "value": "User reports experiencing frequent tension headaches in the afternoon"
         }
-    }
+    ]
     The following will delete all values associated with the feature:
-    {
-        "0": {
+    [
+        {
             "command": "delete",
             "tag": "Medications",
             "feature": "ibuprofen"
         }
-    }
+    ]
     And the following will update a feature:
-    {
-        "0": {
+    [
+        {
             "command": "delete",
             "tag": "Exercise",
             "feature": "frequency",
             "value": "User exercises 2-3 times per week"
         },
-        "1": {
+        {
             "command": "add",
             "tag": "Exercise",
             "feature": "frequency",
             "value": "User exercises 4-5 times per week, increased from previous routine"
         }
-    }
+    ]
 
     Example Scenarios:
     Query: "I've been having these terrible migraines for the past week, especially in the morning. I think it might be related to my new blood pressure medication. Should I be concerned?"
-    {
-        "0": {
+    [
+        {
             "command": "add",
             "tag": "Symptoms",
             "feature": "migraine",
             "value": "User experiencing frequent migraines for the past week, particularly in the morning"
         },
-        "1": {
+        {
             "command": "add",
             "tag": "Medications",
             "feature": "blood_pressure_medication",
             "value": "User recently started new blood pressure medication, possibly causing side effects"
         },
-        "2": {
+        {
             "command": "add",
             "tag": "Health Concerns",
             "feature": "medication_side_effects",
             "value": "User concerned about potential connection between new medication and migraine symptoms"
         }
-    }
+    ]
     Query: "I've been trying to follow a Mediterranean diet for my heart health, but I'm struggling with meal prep. Can you suggest some quick, heart-healthy breakfast options that I can prepare in advance?"
-    {
-        "0": {
+    [
+        {
             "command": "add",
             "tag": "Diet",
             "feature": "mediterranean_diet",
             "value": "User following Mediterranean diet for heart health"
         },
-        "1": {
+        {
             "command": "add",
             "tag": "Health Goals",
             "feature": "heart_health",
             "value": "User actively working to improve heart health through dietary changes"
         },
-        "2": {
+        {
             "command": "add",
             "tag": "Lifestyle",
             "feature": "meal_prep_challenges",
             "value": "User struggles with meal preparation and seeks convenient options"
         }
-    }
+    ]
     Further Guidelines:
     Not everything you ought to record will be explicitly stated. Make inferences.
     Reading the feature should tell you most of what you need to know. The value field is for extra detail
@@ -328,7 +328,7 @@ DEFAULT_UPDATE_PROFILE_PROMPT = """
     If you get a query that is unrelated to the current profile but you see information about the user that should go in a different tag from the example profile, then add a new section to the profile according to the format in the example
     If a user asks for a summary of a report, code, or other content, that content may not necessarily be written by the user, and might not be relevant to the user's profile.
     Sometimes information in the query might overlap with an entry already in the profile. In that case, try to delete the old entry and add back the synthesized information.
-    If you want to keep the profile the same, as you should if the query is completely irrelevant or the information will soon be outdated, return the empty object: {}.
+    If you want to keep the profile the same, as you should if the query is completely irrelevant or the information will soon be outdated, return the empty list: [].
 """
 JSON_SUFFIX = """Remember to return only a valid JSON"""
 THINK_JSON_SUFFIX = """First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON."""

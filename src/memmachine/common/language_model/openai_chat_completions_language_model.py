@@ -1,14 +1,17 @@
 """OpenAI-completions API based language model implementation."""
 
 import asyncio
-import json
 import logging
 import time
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
+import json_repair
 import openai
-from openai.types.chat import ChatCompletion, ChatCompletionMessageFunctionToolCall
+from openai.types.chat import (
+    ChatCompletion,
+    ChatCompletionMessageFunctionToolCall,
+)
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine.common.data_types import ExternalServiceAPIError
@@ -127,10 +130,13 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        input_prompts = [
-            {"role": "system", "content": system_prompt or ""},
-            {"role": "user", "content": user_prompt or ""},
-        ]
+        input_prompts = cast(
+            Any,
+            [
+                {"role": "system", "content": system_prompt or ""},
+                {"role": "user", "content": user_prompt or ""},
+            ],
+        )
 
         generate_response_call_uuid = uuid4()
 
@@ -140,8 +146,8 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             response = await self._client.with_options(
                 max_retries=max_attempts,
             ).chat.completions.parse(
-                model=self._model,  # type: ignore[arg-type]
-                messages=input_prompts,  # type: ignore[arg-type]
+                model=self._model,
+                messages=input_prompts,
                 response_format=output_format,
             )
         except openai.OpenAIError as e:
@@ -177,10 +183,13 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        input_prompts = [
-            {"role": "system", "content": system_prompt or ""},
-            {"role": "user", "content": user_prompt or ""},
-        ]
+        input_prompts = cast(
+            Any,
+            [
+                {"role": "system", "content": system_prompt or ""},
+                {"role": "user", "content": user_prompt or ""},
+            ],
+        )
         generate_response_call_uuid = uuid4()
 
         start_time = time.monotonic()
@@ -196,7 +205,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                     args["tool_choice"] = (
                         tool_choice if tool_choice is not None else "auto"
                     )
-                response = await self._client.chat.completions.create(**args)  # type: ignore
+                response = await self._client.chat.completions.create(**args)
                 break
             except (
                 openai.RateLimitError,
@@ -259,7 +268,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                                 "call_id": tool_call.id,
                                 "function": {
                                     "name": tool_call.function.name,
-                                    "arguments": json.loads(
+                                    "arguments": json_repair.loads(
                                         tool_call.function.arguments,
                                     ),
                                 },
@@ -270,8 +279,10 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                             "Unsupported tool call type: %s",
                             type(tool_call).__name__,
                         )
-        except json.JSONDecodeError as e:
-            raise ValueError("JSON decode error") from e
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                "Failed to repair or parse JSON from function call arguments"
+            ) from e
 
         return (
             response.choices[0].message.content or "",

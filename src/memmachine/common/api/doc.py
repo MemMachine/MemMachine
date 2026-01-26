@@ -192,6 +192,11 @@ class SpecDoc:
     The maximum number of memories to return in the search results.
     """
 
+    EXPAND_CONTEXT = """
+    The number of additional episodes to include around each matched
+    episode from long term memory for better context.
+    """
+
     SCORE_THRESHOLD = """
     The minimum score for a memory to be included in the search results. Defaults to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
     """
@@ -282,6 +287,7 @@ class Examples:
     RERANKER: ClassVar[list[str]] = ["bge-reranker-large", "my-custom-reranker"]
     EMBEDDER: ClassVar[list[str]] = ["bge-base-en", "my-embedder"]
     TOP_K: ClassVar[list[int]] = [5, 10, 20]
+    EXPAND_CONTEXT: ClassVar[list[int]] = [0, 3, 6]
     SCORE_THRESHOLD: ClassVar[list[float | None]] = [0.0, 0.5, None]
     QUERY: ClassVar[list[str]] = [
         "What was the user's last conversation about finance?"

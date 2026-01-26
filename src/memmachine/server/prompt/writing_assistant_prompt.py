@@ -301,9 +301,11 @@ Your task is to analyze the user's writing sample and extract specific writing s
 **OUTPUT FORMAT:**
 Return ONLY a valid JSON object with the following structure:
 
-{{"1": {{"command": "add", "feature": "tone", "value": "professional and authoritative with occasional warmth", "tag": "writing_style_email", "author": null}},
- "2": {{"command": "add", "feature": "register", "value": "formal to semi-formal, appropriate for business context", "tag": "writing_style_email", "author": null}},
- "3": {{"command": "add", "feature": "sentence_structure", "value": "varied with preference for compound sentences and clear clauses", "tag": "writing_style_email", "author": null}}}}
+[
+    {{"command": "add", "feature": "tone", "value": "professional and authoritative with occasional warmth", "tag": "writing_style_email", "author": null}},
+    {{"command": "add", "feature": "register", "value": "formal to semi-formal, appropriate for business context", "tag": "writing_style_email", "author": null}},
+    {{"command": "add", "feature": "sentence_structure", "value": "varied with preference for compound sentences and clear clauses", "tag": "writing_style_email", "author": null}}
+]
 
 Current Profile:
 {{profile}}
