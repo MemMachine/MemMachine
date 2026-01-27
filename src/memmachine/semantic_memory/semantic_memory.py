@@ -547,6 +547,13 @@ class SemanticService:
             )
             tg.create_task(self._semantic_storage.reset_set_ids(set_ids=set_ids))
 
+    async def get_set_id_category_names(self, *, set_id: SetIdT) -> list[str]:
+        logger.debug("Getting category names for set id %s", set_id)
+
+        resources = await self._set_id_resource(set_id=set_id)
+
+        return list({c.name for c in resources.semantic_categories})
+
     async def set_set_id_config(
         self,
         *,

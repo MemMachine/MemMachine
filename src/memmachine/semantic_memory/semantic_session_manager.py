@@ -506,6 +506,9 @@ class SemanticSessionManager:
             llm_name=llm_name,
         )
 
+    async def get_set_id_category_names(self, *, set_id: SetIdT) -> list[str]:
+        return await self._semantic_service.get_set_id_category_names(set_id=set_id)
+
     async def get_set_id_config(
         self,
         *,

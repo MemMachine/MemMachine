@@ -703,3 +703,38 @@ async def test_set_type_categories_are_visible_to_children(
 
     assert len(categories) == 1
     assert categories[0].id == c_id
+
+
+async def test_search_with_time_filter_str(
+    session_manager: SemanticSessionManager,
+    session_data,
+):
+    filter_str = "created_at < date('2026-01-19T01:56:41.513342Z')"
+    _ = await session_manager.search(
+        message="Find alpha info",
+        session_data=session_data,
+        search_filter=parse_filter(filter_str),
+    )
+
+    # Add features
+    set_id = await session_manager.get_set_id(
+        session_data=session_data,
+        set_metadata_keys=[],
+    )
+
+    cat_iter = await session_manager.get_set_id_category_names(set_id=set_id)
+    cat_name = next(iter(cat_iter), "test")
+
+    await session_manager.add_feature(
+        set_id=set_id,
+        category_name=cat_name,
+        feature="alpha_fact",
+        tag="alpha_tag",
+        value="alpha_value",
+    )
+
+    _ = await session_manager.search(
+        message="Find alpha info",
+        session_data=session_data,
+        search_filter=parse_filter(filter_str),
+    )
