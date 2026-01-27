@@ -301,6 +301,67 @@ async def test_consolidation_skips_small_groups(
 
 
 @pytest.mark.asyncio
+async def test_consolidation_runs_when_threshold_met(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever,
+            consolidated_threshold=3,
+        )
+    )
+
+    await semantic_storage.add_feature(
+        set_id="user-654",
+        category_name=semantic_category.name,
+        feature="pizza_crust",
+        value="thin crust",
+        tag="food",
+        embedding=np.array([1.0, -1.0]),
+    )
+    await semantic_storage.add_feature(
+        set_id="user-654",
+        category_name=semantic_category.name,
+        feature="pizza_style",
+        value="deep dish",
+        tag="food",
+        embedding=np.array([2.0, -2.0]),
+    )
+    await semantic_storage.add_feature(
+        set_id="user-654",
+        category_name=semantic_category.name,
+        feature="pizza_topping",
+        value="pepperoni",
+        tag="food",
+        embedding=np.array([3.0, -3.0]),
+    )
+
+    dedupe_mock = AsyncMock()
+    monkeypatch.setattr(ingestion_service, "_deduplicate_features", dedupe_mock)
+
+    await ingestion_service._consolidate_set_memories_if_applicable(
+        set_id="user-654",
+        resources=resources,
+    )
+
+    dedupe_mock.assert_awaited_once()
+    call = dedupe_mock.await_args_list[0]
+    memories: list[SemanticFeature] = call.kwargs["memories"]
+    assert {memory.value for memory in memories} == {
+        "thin crust",
+        "deep dish",
+        "pepperoni",
+    }
+
+
+@pytest.mark.asyncio
 async def test_deduplicate_features_merges_and_relabels(
     ingestion_service: IngestionService,
     semantic_storage: SemanticStorage,
