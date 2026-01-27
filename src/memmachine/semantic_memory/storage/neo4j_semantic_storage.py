@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from asyncio import Lock
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, LiteralString, cast
@@ -30,6 +30,7 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
+from memmachine.common.neo4j_utils import coerce_datetime_to_timestamp
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -988,8 +989,15 @@ class Neo4jSemanticStorage(SemanticStorage):
         expr: FilterExpr,
     ) -> tuple[str, dict[str, Any]]:
         if isinstance(expr, FilterComparison):
-            field_ref = self._resolve_field_reference(alias, expr.field)
-            return self._render_comparison_condition(field_ref, expr)
+            field_ref, value_adapter = self._resolve_field_reference(
+                alias,
+                expr.field,
+            )
+            return self._render_comparison_condition(
+                field_ref,
+                expr,
+                value_adapter,
+            )
         if isinstance(expr, FilterAnd):
             left_cond, left_params = self._render_filter_expr(alias, expr.left)
             right_cond, right_params = self._render_filter_expr(alias, expr.right)
@@ -1005,7 +1013,10 @@ class Neo4jSemanticStorage(SemanticStorage):
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
     def _render_comparison_condition(
-        self, field_ref: str, expr: FilterComparison
+        self,
+        field_ref: str,
+        expr: FilterComparison,
+        value_adapter: Callable[[FilterablePropertyValue], Any] | None,
     ) -> tuple[str, dict[str, Any]]:
         op = expr.op
         params: dict[str, Any] = {}
@@ -1014,13 +1025,23 @@ class Neo4jSemanticStorage(SemanticStorage):
             if not isinstance(expr.value, list):
                 raise ValueError("IN comparison requires a list of values")
             param = self._next_filter_param()
-            return f"{field_ref} IN ${param}", {param: expr.value}
+            adapted_values = (
+                [self._adapt_filter_value(v, value_adapter) for v in expr.value]
+                if value_adapter is not None
+                else expr.value
+            )
+            return f"{field_ref} IN ${param}", {param: adapted_values}
 
         if op in (">", "<", ">=", "<=", "="):
             if isinstance(expr.value, list):
                 raise ValueError(f"'{op}' comparison cannot accept list values")
             param = self._next_filter_param()
-            return f"{field_ref} {op} ${param}", {param: expr.value}
+            adapted_value = (
+                self._adapt_filter_value(expr.value, value_adapter)
+                if value_adapter is not None
+                else expr.value
+            )
+            return f"{field_ref} {op} ${param}", {param: adapted_value}
 
         if op == "is_null":
             return f"{field_ref} IS NULL", params
@@ -1030,16 +1051,34 @@ class Neo4jSemanticStorage(SemanticStorage):
 
         raise ValueError(f"Unsupported operator: {op}")
 
-    def _resolve_field_reference(self, alias: str, field: str) -> str:
+    def _resolve_field_reference(
+        self,
+        alias: str,
+        field: str,
+    ) -> tuple[str, Callable[[FilterablePropertyValue], Any] | None]:
+        if field in {"created_at", "created_at_ts"}:
+            return f"{alias}.created_at_ts", coerce_datetime_to_timestamp
+        if field in {"updated_at", "updated_at_ts"}:
+            return f"{alias}.updated_at_ts", coerce_datetime_to_timestamp
         if field.startswith(("m.", "metadata.")):
             key = field.split(".", 1)[1]
             prop_name = self._metadata_property_name(key)
-            return f"{alias}.{prop_name}"
-        return f"{alias}.{field}"
+            return f"{alias}.{prop_name}", None
+        return f"{alias}.{field}", None
 
     def _next_filter_param(self) -> str:
         self._filter_param_counter += 1
         return f"filter_param_{self._filter_param_counter}"
+
+    @staticmethod
+    def _adapt_filter_value(
+        value: FilterablePropertyValue,
+        adapter: Callable[[FilterablePropertyValue], Any] | None,
+    ) -> FilterablePropertyValue:
+        if adapter is None or value is None:
+            return value
+        adapted = adapter(value)
+        return cast(FilterablePropertyValue, adapted)
 
     async def _hydrate_vector_index_state(self) -> None:
         self._vector_index_by_set.clear()

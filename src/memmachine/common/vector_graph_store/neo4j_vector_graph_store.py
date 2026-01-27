@@ -6,7 +6,6 @@ of a vector graph store using Neo4j as the backend database.
 """
 
 import asyncio
-import datetime
 import logging
 import re
 import time
@@ -17,7 +16,6 @@ from uuid import uuid4
 
 from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
-from neo4j.time import DateTime as Neo4jDateTime
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.data_types import FilterablePropertyValue, SimilarityMetric
@@ -34,6 +32,11 @@ from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine.common.metrics_factory import MetricsFactory
+from memmachine.common.neo4j_utils import (
+    render_temporal_comparison,
+    sanitize_value_for_neo4j,
+    value_from_neo4j,
+)
 from memmachine.common.utils import async_locked
 
 from .data_types import (
@@ -894,7 +897,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 (
                     " OR ("
                     + " AND ".join(
-                        Neo4jVectorGraphStore._render_comparison(
+                        render_temporal_comparison(
                             f"n.{sanitized_by_property}",
                             "=",
                             f"$starting_at[{index}]",
@@ -940,7 +943,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 f"{'LIMIT $limit' if limit is not None else ''}"
             ),
             starting_at=[
-                Neo4jVectorGraphStore._sanitize_python_value(starting_at_value)
+                sanitize_value_for_neo4j(starting_at_value)
                 for starting_at_value in starting_at
             ],
             limit=limit,
@@ -988,7 +991,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 ]
             else:
                 relational_requirements = [
-                    Neo4jVectorGraphStore._render_comparison(
+                    render_temporal_comparison(
                         f"{entity_query_alias}.{sanitized_by_property}",
                         ">" if order_ascending[index] else "<",
                         f"${starting_at_query_parameter}[{index}]",
@@ -1005,7 +1008,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     ]
                 else:
                     relational_requirements += [
-                        Neo4jVectorGraphStore._render_comparison(
+                        render_temporal_comparison(
                             f"{entity_query_alias}.{sanitized_equal_property}",
                             "=",
                             f"${starting_at_query_parameter}[{equal_index}]",
@@ -1506,9 +1509,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         """Sanitize property names in a mapping for Neo4j storage."""
         return (
             {
-                Neo4jVectorGraphStore._sanitize_name(
-                    key
-                ): Neo4jVectorGraphStore._sanitize_python_value(value)
+                Neo4jVectorGraphStore._sanitize_name(key): sanitize_value_for_neo4j(
+                    value
+                )
                 for key, value in properties.items()
             }
             if properties is not None
@@ -1579,22 +1582,17 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
                 if is_mangled_property_name(desanitized_property_name):
                     property_name = demangle_property_name(desanitized_property_name)
-                    property_value = (
-                        Neo4jVectorGraphStore._python_value_from_neo4j_value(
-                            neo4j_property_value,
-                        )
+                    node_properties[property_name] = value_from_neo4j(
+                        neo4j_property_value,
                     )
-                    node_properties[property_name] = property_value
                 elif is_mangled_embedding_name(desanitized_property_name):
                     embedding_name = demangle_embedding_name(desanitized_property_name)
                     embedding_value = cast(
                         list[float],
-                        Neo4jVectorGraphStore._python_value_from_neo4j_value(
-                            neo4j_property_value,
-                        ),
+                        value_from_neo4j(neo4j_property_value),
                     )
                     similarity_metric = SimilarityMetric(
-                        Neo4jVectorGraphStore._python_value_from_neo4j_value(
+                        value_from_neo4j(
                             neo4j_node[
                                 Neo4jVectorGraphStore._sanitize_name(
                                     Neo4jVectorGraphStore._similarity_metric_property_name(
@@ -1618,51 +1616,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
 
         return nodes
-
-    @staticmethod
-    def _sanitize_python_value(
-        value: PropertyValue,
-    ) -> PropertyValue:
-        """
-        Convert a native Python value to a sanitized value.
-
-        Args:
-            value (PropertyValue): The Python value to convert.
-
-        Returns:
-            PropertyValue: The converted Neo4j value.
-
-        """
-        if isinstance(value, datetime.datetime):
-            # Other tzinfo types can lead to issues,
-            # so we convert to datetime.timezone.
-            utc_offset = value.utcoffset()
-            tz = datetime.timezone(utc_offset) if utc_offset is not None else None
-            return value.astimezone(tz=tz)
-        if isinstance(value, list):
-            return cast(
-                PropertyValue,
-                [Neo4jVectorGraphStore._sanitize_python_value(item) for item in value],
-            )
-        return value
-
-    @staticmethod
-    def _python_value_from_neo4j_value(
-        value: PropertyValue | Neo4jDateTime,
-    ) -> PropertyValue:
-        """
-        Convert a Neo4j value to a native Python value.
-
-        Args:
-            value (PropertyValue | Neo4jDateTime): The Neo4j value to convert.
-
-        Returns:
-            PropertyValue: The converted Python value.
-
-        """
-        if isinstance(value, Neo4jDateTime):
-            return value.to_native()
-        return value
 
     def _collect_metrics(
         self,
@@ -1721,13 +1674,16 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 str, FilterablePropertyValue | list[FilterablePropertyValue]
             ] = {}
             if expr.op in (">", "<", ">=", "<=", "=", "!=", "<>"):
-                condition = Neo4jVectorGraphStore._render_comparison(
+                condition = render_temporal_comparison(
                     left=field_ref,
                     op=expr.op,
                     right=f"${query_value_parameter}.{param_name}",
                     value=expr.value,
                 )
-                params[param_name] = expr.value
+                params[param_name] = cast(
+                    FilterablePropertyValue,
+                    sanitize_value_for_neo4j(expr.value),
+                )
             elif expr.op == "in":
                 if not isinstance(expr.value, list):
                     raise ValueError("IN comparison requires a list of values")
@@ -1735,7 +1691,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 params[param_name] = [
                     cast(
                         FilterablePropertyValue,
-                        Neo4jVectorGraphStore._sanitize_python_value(item),
+                        sanitize_value_for_neo4j(item),
                     )
                     for item in expr.value
                 ]
@@ -1765,59 +1721,3 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             condition = f"({left_cond}) OR ({right_cond})"
             return condition, left_params | right_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
-    @staticmethod
-    def _render_comparison(
-        left: str,
-        op: str,
-        right: str,
-        value: FilterablePropertyValue | list[FilterablePropertyValue],
-    ) -> str:
-        if op == "!=":
-            op = "<>"
-        if isinstance(value, list):
-            raise TypeError(f"'{op}' comparison cannot accept list values")
-        if isinstance(value, datetime.datetime):
-            if op == "=":
-                return (
-                    "("
-                    f"{left} = {right}"
-                    " OR "
-                    "("
-                    f"{left}.epochSeconds = {right}.epochSeconds"
-                    " AND "
-                    f"{left}.nanosecond = {right}.nanosecond"
-                    ")"
-                    ")"
-                )
-
-            if op == "<>":
-                return (
-                    "("
-                    f"{left} <> {right}"
-                    " AND "
-                    "("
-                    f"{left}.epochSeconds <> {right}.epochSeconds"
-                    " OR "
-                    f"{left}.nanosecond <> {right}.nanosecond"
-                    ")"
-                    ")"
-                )
-
-            return (
-                "("
-                f"{left} {op} {right}"
-                " AND "
-                "("
-                f"{left}.epochSeconds {op} {right}.epochSeconds"
-                " OR "
-                "("
-                f"{left}.epochSeconds = {right}.epochSeconds"
-                " AND "
-                f"{left}.nanosecond {op} {right}.nanosecond"
-                ")"
-                ")"
-                ")"
-            )
-
-        return f"{left} {op} {right}"
