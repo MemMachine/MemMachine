@@ -93,11 +93,11 @@ class SemanticFeature(BaseModel):
     @staticmethod
     def group_features_by_tag(
         features: list["SemanticFeature"],
-    ) -> dict[tuple[str, str], list["SemanticFeature"]]:
-        grouped_features: dict[tuple[str, str], list[SemanticFeature]] = {}
+    ) -> dict[str, list["SemanticFeature"]]:
+        grouped_features: dict[str, list[SemanticFeature]] = {}
 
         for f in features:
-            key = (f.tag, f.feature_name)
+            key = f.tag
 
             if key not in grouped_features:
                 grouped_features[key] = []

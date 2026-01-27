@@ -221,7 +221,7 @@ async def test_consolidation_groups_by_tag(
     first_feature = await semantic_storage.add_feature(
         set_id="user-456",
         category_name=semantic_category.name,
-        feature="pizza",
+        feature="pizza_crust",
         value="thin crust",
         tag="food",
         embedding=np.array([1.0, -1.0]),
@@ -229,7 +229,7 @@ async def test_consolidation_groups_by_tag(
     second_feature = await semantic_storage.add_feature(
         set_id="user-456",
         category_name=semantic_category.name,
-        feature="pizza",
+        feature="pizza_style",
         value="deep dish",
         tag="food",
         embedding=np.array([2.0, -2.0]),
@@ -252,6 +252,52 @@ async def test_consolidation_groups_by_tag(
     assert call.kwargs["set_id"] == "user-456"
     assert call.kwargs["semantic_category"] == semantic_category
     assert call.kwargs["resources"] == resources
+
+
+@pytest.mark.asyncio
+async def test_consolidation_skips_small_groups(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever,
+            consolidated_threshold=3,
+        )
+    )
+
+    await semantic_storage.add_feature(
+        set_id="user-321",
+        category_name=semantic_category.name,
+        feature="pizza_crust",
+        value="thin crust",
+        tag="food",
+        embedding=np.array([1.0, -1.0]),
+    )
+    await semantic_storage.add_feature(
+        set_id="user-321",
+        category_name=semantic_category.name,
+        feature="pizza_style",
+        value="deep dish",
+        tag="food",
+        embedding=np.array([2.0, -2.0]),
+    )
+
+    dedupe_mock = AsyncMock()
+    monkeypatch.setattr(ingestion_service, "_deduplicate_features", dedupe_mock)
+
+    await ingestion_service._consolidate_set_memories_if_applicable(
+        set_id="user-321",
+        resources=resources,
+    )
+
+    dedupe_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -259,6 +259,13 @@ class IngestionService:
                 SemanticFeature.group_features_by_tag(features).values(),
             )
 
+            if self._consolidation_threshold > 0:
+                consolidation_sections = [
+                    section
+                    for section in consolidation_sections
+                    if len(section) >= self._consolidation_threshold
+                ]
+
             await asyncio.gather(
                 *[
                     self._deduplicate_features(
