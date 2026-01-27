@@ -1028,3 +1028,163 @@ async def test_get_set_ids_with_older_than_and_min_uningested(
     )
 
     assert set_ids == ["busy_user"]
+
+
+@pytest.mark.asyncio
+async def test_filter_features_by_created_at_date(
+    semantic_storage: SemanticStorage,
+):
+    embed = np.array([1.0], dtype=float)
+
+    # Add features at different times
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="old_note",
+        tag="misc",
+        embedding=embed,
+    )
+
+    await asyncio.sleep(0.01)
+    cutoff = datetime.now(UTC)
+    await asyncio.sleep(0.01)
+
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="new_note",
+        tag="misc",
+        embedding=embed,
+    )
+
+    # Filter for features created before cutoff
+    old_features = await semantic_storage.get_feature_set(
+        filter_expr=_expr(f"created_at<date('{cutoff.isoformat()}')"),
+    )
+    assert len(old_features) == 1
+    assert old_features[0].value == "old_note"
+
+    # Filter for features created after cutoff
+    new_features = await semantic_storage.get_feature_set(
+        filter_expr=_expr(f"created_at>=date('{cutoff.isoformat()}')"),
+    )
+    assert len(new_features) == 1
+    assert new_features[0].value == "new_note"
+
+
+@pytest.mark.asyncio
+async def test_filter_features_by_created_at_with_other_filters(
+    semantic_storage: SemanticStorage,
+):
+    embed = np.array([1.0], dtype=float)
+
+    # Add features with different tags at different times
+    await semantic_storage.add_feature(
+        set_id="user1",
+        category_name="default",
+        feature="note",
+        value="user1_old",
+        tag="important",
+        embedding=embed,
+    )
+
+    await semantic_storage.add_feature(
+        set_id="user2",
+        category_name="default",
+        feature="note",
+        value="user2_old",
+        tag="misc",
+        embedding=embed,
+    )
+
+    await asyncio.sleep(0.01)
+    cutoff = datetime.now(UTC)
+    await asyncio.sleep(0.01)
+
+    await semantic_storage.add_feature(
+        set_id="user1",
+        category_name="default",
+        feature="note",
+        value="user1_new",
+        tag="important",
+        embedding=embed,
+    )
+
+    await semantic_storage.add_feature(
+        set_id="user2",
+        category_name="default",
+        feature="note",
+        value="user2_new",
+        tag="misc",
+        embedding=embed,
+    )
+
+    # Filter for user1's important features created before cutoff
+    results = await semantic_storage.get_feature_set(
+        filter_expr=_expr(
+            f"set_id='user1' AND tag='important' AND created_at<date('{cutoff.isoformat()}')"
+        ),
+    )
+    assert len(results) == 1
+    assert results[0].value == "user1_old"
+
+    # Filter for features created after cutoff
+    new_results = await semantic_storage.get_feature_set(
+        filter_expr=_expr(f"created_at>=date('{cutoff.isoformat()}')"),
+    )
+    assert len(new_results) == 2
+    assert {f.value for f in new_results} == {"user1_new", "user2_new"}
+
+
+@pytest.mark.asyncio
+async def test_filter_features_by_created_at_range(
+    semantic_storage: SemanticStorage,
+):
+    embed = np.array([1.0], dtype=float)
+
+    # Add features at three different times
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="note1",
+        tag="misc",
+        embedding=embed,
+    )
+
+    await asyncio.sleep(0.01)
+    start_time = datetime.now(UTC)
+    await asyncio.sleep(0.01)
+
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="note2",
+        tag="misc",
+        embedding=embed,
+    )
+
+    await asyncio.sleep(0.01)
+    end_time = datetime.now(UTC)
+    await asyncio.sleep(0.01)
+
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="note3",
+        tag="misc",
+        embedding=embed,
+    )
+
+    # Filter for features in the middle time range
+    results = await semantic_storage.get_feature_set(
+        filter_expr=_expr(
+            f"created_at>=date('{start_time.isoformat()}') AND created_at<date('{end_time.isoformat()}')"
+        ),
+    )
+    assert len(results) == 1
+    assert results[0].value == "note2"
