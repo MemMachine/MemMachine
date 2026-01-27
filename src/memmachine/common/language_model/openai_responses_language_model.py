@@ -191,6 +191,39 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
+    ):
+        output, function_calls_arguments, _, _ = await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+        return output, function_calls_arguments
+
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ):
+        return await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+
+    async def _generate_response(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
     ) -> tuple[str, Any]:
         """Generate a raw text response (and optional tool call)."""
         if max_attempts <= 0:
@@ -320,6 +353,8 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         return (
             response.output_text,
             function_calls_arguments,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
         )
 
     def _collect_metrics(
