@@ -3,64 +3,12 @@ import datetime
 import os
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional
 from datetime import timezone
 
-from openai_summary import OpenAISummary
 from parsers import get_parser
 from restcli import MemMachineRestClient
 from tqdm import tqdm
-
-
-def parse_time(time_str: str) -> Optional[float]:
-    """
-    Parse time string to timestamp.
-    
-    Supports:
-    - Unix timestamp (integer or float)
-    - ISO format: YYYY-MM-DDTHH:MM:SS
-    - Date only: YYYY-MM-DD (assumes 00:00:00)
-    
-    Args:
-        time_str: Time string to parse
-        
-    Returns:
-        Timestamp as float, or None if parsing fails
-    """
-    if not time_str or time_str == "0":
-        return None
-    
-    # Try as integer timestamp
-    try:
-        ts = int(time_str)
-        if ts > 0:
-            return float(ts)
-    except ValueError:
-        pass
-    
-    # Try as float timestamp
-    try:
-        ts = float(time_str)
-        if ts > 0:
-            return ts
-    except ValueError:
-        pass
-    
-    # Try ISO format with time
-    try:
-        time_obj = datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-        return time_obj.timestamp()
-    except ValueError:
-        pass
-    
-    # Try ISO format with date only
-    try:
-        time_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
-        return time_obj.timestamp()
-    except ValueError:
-        pass
-    
-    return None
+from utils import parse_time, format_timestamp_iso8601
 
 
 class MigrationHack:
@@ -131,61 +79,16 @@ class MigrationHack:
             self.conversations[conv_id] = messages
             # Dump extracted messages for this conversation
             self.parser.dump_data(messages, output_format="json", outfile=extracted_file)
-        
-        
-
-    def summarize_messages(self, summarize_every=20):
-        print("Summarizing messages...")
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise Exception(
-                "ERROR: API key not found, please set environment variable OPENAI_API_KEY",
-            )
-        openai_summary = OpenAISummary(api_key=api_key)
-
-        summarized_file_prefix = f"{self.input_file_base_name}_summarized"
-        self.summaries = {}
-        batch_num = 1
-        for conv_id in self.conversations:
-            messages = self.conversations[conv_id]
-            summarized_file = f"{summarized_file_prefix}_conv_{conv_id}.txt"
-            summarized_file = os.path.join(self.extract_dir, summarized_file)
-            if os.path.exists(summarized_file):
-                if self.verbose:
-                    print(f"Using cached summary file: {summarized_file}")
-                if conv_id not in self.summaries or self.summaries[conv_id] is None:
-                    self.summaries[conv_id] = []
-                with open(summarized_file, "r") as f:
-                    for line in f:
-                        summary = line.strip()
-                        if summary:
-                            self.summaries[conv_id].append(summary)
-            else:
-                self.summaries[conv_id] = []
-                for i in range(0, len(messages), summarize_every):
-                    batch = messages[i : i + summarize_every]
-                    batch_text = "\n".join(batch)
-                    summary = ""
-                    try:
-                        # Get summary from OpenAI
-                        response = openai_summary.summarize(batch_text)
-                        if "choices" in response and len(response["choices"]) > 0:
-                            summary = response["choices"][0]["message"]["content"]
-                        else:
-                            print(f"ERROR: No summary generated for batch {batch_num}")
-                            if self.verbose:
-                                print(f"Response: {response}")
-                    except Exception as e:
-                        print(f"ERROR: Failed to process batch {batch_num}: {e}")
-                    if summary:
-                        self.summaries[conv_id].append(summary)
-                        with open(summarized_file, "a") as f:
-                            text = summary.replace("\n", "")
-                            f.write(text + "\n")
-                    batch_num += 1
 
     def _format_message(self, message):
         """Format message for MemMachine API"""
+        # Handle string messages (text-only)
+        if isinstance(message, str):
+            return {
+                "content": message,
+            }
+        
+        # Handle dictionary messages
         formatted = {
             "content": message.get("content", ""),
         }
@@ -206,17 +109,12 @@ class MigrationHack:
             elif key == "timestamp":
                 # Convert timestamp to ISO 8601 format (UTC)
                 if isinstance(value, (int, float)):
-                    dt = datetime.datetime.fromtimestamp(value, tz=timezone.utc)
-                    formatted["timestamp"] = dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+                    formatted["timestamp"] = format_timestamp_iso8601(value)
                 else:
                     formatted["timestamp"] = value
             elif key in ["message_id", "chat_id", "chat_title"]:
                 # Move these fields to metadata
                 metadata[key] = value
-            else:
-                # Other fields can be omitted or added to metadata
-                # For now, we'll omit them unless they're useful
-                pass
         
         if metadata:
             formatted["metadata"] = metadata
@@ -227,7 +125,17 @@ class MigrationHack:
         """Process a single conversation with its own progress bar"""
         # Filter out assistant messages if user_only is enabled
         if self.user_only:
-            messages = [msg for msg in messages if msg.get("role", "").lower() != "assistant"]
+            filtered_messages = []
+            for msg in messages:
+                # String messages are always included (text-only, no role)
+                if isinstance(msg, str):
+                    filtered_messages.append(msg)
+                # Dictionary messages: include if not assistant
+                elif isinstance(msg, dict):
+                    role = msg.get("role", "")
+                    if isinstance(role, str) and role.lower() != "assistant":
+                        filtered_messages.append(msg)
+            messages = filtered_messages
         
         # Create a progress bar for this conversation
         pos = conv_id - 1
@@ -249,32 +157,30 @@ class MigrationHack:
         msg_pbar.close()
         return conv_id, len(messages)
 
-    def _dry_run(self, summary=False):
+    def _dry_run(self):
         """Print summary of what would be migrated in dry-run mode"""
-        if summary:
-            contents = getattr(self, 'summaries', {})
-            content_type = "summaries"
-        else:
-            contents = self.conversations
-            content_type = "messages"
-        
+        contents = self.conversations
         total_conversations = len(contents)
         
         # Count total items, filtering assistant messages if user_only is enabled
-        if self.user_only and not summary:
+        if self.user_only:
             total_items = 0
             for msgs in contents.values():
                 if isinstance(msgs, list):
-                    # Filter out assistant messages
+                    # Filter out assistant messages, but include all string messages
                     user_messages = []
                     for msg in msgs:
-                        if isinstance(msg, dict):
+                        # String messages (text-only) are always included
+                        if isinstance(msg, str):
+                            user_messages.append(msg)
+                        # Dictionary messages: include if not assistant
+                        elif isinstance(msg, dict):
                             role = msg.get("role", "")
                             if isinstance(role, str) and role.lower() != "assistant":
                                 user_messages.append(msg)
                     total_items += len(user_messages)
                 elif isinstance(msgs, str):
-                    # Handle string summaries (shouldn't happen when summary=False, but be safe)
+                    # Handle string messages
                     total_items += 1
                 else:
                     # Skip non-list, non-string values
@@ -285,7 +191,7 @@ class MigrationHack:
                 if isinstance(msgs, list):
                     total_items += len(msgs)
                 elif isinstance(msgs, str):
-                    # Handle string summaries
+                    # Handle string messages
                     total_items += 1
                 else:
                     # Skip non-list, non-string values
@@ -297,12 +203,12 @@ class MigrationHack:
         print(f"\nDry Run Summary:")
         print(f"  Target: {org_display}/{project_display}")
         print(f"  Conversations: {total_conversations}")
-        print(f"  Total {content_type}: {total_items}")
-        if self.user_only and not summary:
+        print(f"  Total messages: {total_items}")
+        if self.user_only:
             print(f"  Filter: User messages only (assistant messages excluded)")
         
         # Show sample payload
-        if contents and not summary:
+        if contents:
             # Get first user message from first conversation (or first message if user_only is disabled)
             first_conv_id = sorted(contents.keys())[0]
             first_messages = contents[first_conv_id]
@@ -336,10 +242,10 @@ class MigrationHack:
                     print(f"\n  Sample Payload:")
                     print(f"  {json.dumps(sample_payload, indent=2, ensure_ascii=False)}")
 
-    def add_memories(self, summary=False):
+    def add_memories(self):
         if self.dry_run:
             # In dry-run mode, just print a summary without actual processing
-            self._dry_run(summary)
+            self._dry_run()
             return
 
         print(f"Adding memories to MemMachine...")
@@ -362,13 +268,10 @@ class MigrationHack:
 
         print("Migration complete")
 
-    def migrate(self, summarize=False, summarize_every=20):
+    def migrate(self):
+        """Load conversations and add them to MemMachine"""
         self.load_and_extract()
-        
-        if summarize:
-            self.summarize_messages(summarize_every)
-        
-        self.add_memories(summarize)
+        self.add_memories()
 
 
 def get_args():

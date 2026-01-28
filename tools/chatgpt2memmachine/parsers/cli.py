@@ -6,7 +6,6 @@ from various sources (OpenAI, Locomo, etc.).
 """
 
 import argparse
-import datetime
 import json
 import os
 import sys
@@ -15,61 +14,12 @@ from typing import Any, Optional
 # Handle imports for both script execution and module import
 try:
     from . import get_parser
+    from ..utils import parse_time
 except ImportError:
     # When run as a script, add parent directory to path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from parsers import get_parser
-
-
-def parse_time(time_str: str) -> Optional[float]:
-    """
-    Parse time string to timestamp.
-    
-    Supports:
-    - Unix timestamp (integer or float)
-    - ISO format: YYYY-MM-DDTHH:MM:SS
-    - Date only: YYYY-MM-DD (assumes 00:00:00)
-    
-    Args:
-        time_str: Time string to parse
-        
-    Returns:
-        Timestamp as float, or None if parsing fails
-    """
-    if not time_str:
-        return None
-    
-    # Try as integer timestamp
-    try:
-        ts = int(time_str)
-        if ts > 0:
-            return float(ts)
-    except ValueError:
-        pass
-    
-    # Try as float timestamp
-    try:
-        ts = float(time_str)
-        if ts > 0:
-            return ts
-    except ValueError:
-        pass
-    
-    # Try ISO format with time
-    try:
-        time_obj = datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-        return time_obj.timestamp()
-    except ValueError:
-        pass
-    
-    # Try ISO format with date only
-    try:
-        time_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
-        return time_obj.timestamp()
-    except ValueError:
-        pass
-    
-    return None
+    from utils import parse_time
 
 
 def get_args():

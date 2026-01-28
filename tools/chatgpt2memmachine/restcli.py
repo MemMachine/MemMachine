@@ -5,6 +5,8 @@ from datetime import datetime
 
 import requests
 
+from utils import get_filename_safe_timestamp
+
 
 class MemMachineRestClient:
     def __init__(
@@ -18,7 +20,7 @@ class MemMachineRestClient:
         self.verbose = verbose
         if self.verbose:
             # Use a filename-safe timestamp (Windows paths cannot contain colons)
-            timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+            timestamp = get_filename_safe_timestamp()
             self.statistic_file = f"output/statistic_{timestamp}.csv"
             os.makedirs(os.path.dirname(self.statistic_file), exist_ok=True)
             with open(self.statistic_file, "w") as f:
