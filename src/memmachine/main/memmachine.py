@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Task
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Iterable
 from typing import Any, Final, Protocol, cast
 
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -817,7 +817,7 @@ class MemMachine:
         self,
         *,
         session_data: SessionData,
-    ) -> list[SemanticSessionManager.Set]:
+    ) -> Iterable[SemanticSessionManager.Set]:
         """
         List set IDs for the given session data.
 
@@ -880,7 +880,7 @@ class MemMachine:
         self,
         *,
         session_data: SessionData,
-    ) -> list[SetTypeEntry]:
+    ) -> Iterable[SetTypeEntry]:
         """
         List semantic set types available for the context.
 
@@ -1008,7 +1008,7 @@ class MemMachine:
         self,
         *,
         set_type_id: str,
-    ) -> list[SemanticCategory]:
+    ) -> Iterable[SemanticCategory]:
         """List semantic categories defined on a set type."""
         semantic_session = await self._resources.get_semantic_session_manager()
 
@@ -1042,7 +1042,7 @@ class MemMachine:
         self,
         *,
         category_id: CategoryIdT,
-    ) -> list[SetIdT]:
+    ) -> Iterable[SetIdT]:
         """
         Get the set_ids associated with a semantic category.
 
