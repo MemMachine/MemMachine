@@ -1,0 +1,187 @@
+---
+title: "Semantic Memory Design"
+description: "Architecture and operational plan for the semantic memory subsystem"
+icon: "database"
+---
+
+# Overview
+
+## Purpose
+
+This document captures the design of the Semantic Memory subsystem that
+extracts, stores, and retrieves long-lived semantic features for agents.
+
+Knowledge is extracted using an LLM, where given a set of facts and a new piece of information,
+a LLM is used to extract new facts and modify existing facts.
+Each fact is represented as a `Feature` and is modified through a set of commands.
+Through a series of `add`, `update`, and `delete` commands produced by the LLM,
+the set of features is updated.
+
+
+## Goals
+
+- Automate feature extraction and consolidation from conversational
+  history using LLM reasoning steps.
+- Allow for feature sets to be accessed by multiple users.
+- Provide CRUD and search APIs that surface curated semantic memories
+  with caching for hot sets.
+- Run ingestion in the background without blocking the calling agent and
+  surface observability hooks for backlog visibility.
+- Allow per `set_id` configuration of the LLM prompts, consolidation
+  strategy, llm, and embedder.
+- Allow for multiple storage backends.
+
+
+## Key Use Cases
+
+1. Persist semantic features for a user persona while ingesting chat
+   transcripts in near real time.
+2. Run semantic search over a persona to enrich downstream prompts,
+   allowing for personalized messages.
+3. Deduplicate overlapping memories when LLM-generated features exceed a
+   configurable threshold.
+
+## User Experience
+
+Caller passes in a new message with a `SessionData` object.
+```python
+async def ingest_message(session_data: SessionData, message: str) -> None:
+```
+
+The `SessionData` object describes the different feature sets that will ingest the message.
+Some of these feature sets may be individual to the user, while others may be shared across
+users or sessions.
+
+Later the user can retrieve knowledge from either all feature sets or a specific feature type.
+```python
+async def search(
+    session_data: SessionData,
+    query: str,
+    feature_type: str | None = None
+) -> List[SemantidMemory]:
+```
+
+Example:
+```python
+# Performs a vector search over all feature sets.
+search(session, "Create an implementation of a chat agent in Python")
+
+# Performs a vector search over a specific feature type.
+search(session, "Create an implementation of a chat agent in Python", "coding_style")
+```
+
+# High-Level Architecture
+
+```
+Agent -> SessionSemanticManager -> SemanticManager
+                                         |         ↘
+                                         |          -> SemanticStorageBase
+                                         |         ↘
+                                         |          -> Per-`set_id` config loader.
+                                         |                            ↘
+                                         |                              -> list[SemanticMemoryType]
+                                         |                              -> LanguageModel
+                                         |                              -> Embedder
+                                         ↘
+                                  Background ingestion + consolidation loop
+```
+
+## `SessionSemanticManager`
+
+`SessionSemanticManager` is the top level interface for the Semantic Memory subsystem.
+It acts as a facade for the `SemanticManager`, translating the application specific
+`SessionData` into a set of `set_id`s that will be used by the `SemanticManager`.
+
+This means that the `SessionSemanticManager` will be responsible for:
+- Allowing a single SessionData to be associated with multiple `set_id`s.
+    - Controlling data access to different feature sets.
+    - Having a single message be ingested by multiple semantic feature sets.
+
+
+## `SemanticManager`
+
+When a new message is received, the `SemanticManager` will store a reference
+in its internal storage. Then after certain triggers are met, the message
+will be ingested in the background. The `SemanticManager` will
+then invoke each `SemanticMemoryType` to update its feature set.
+
+To update a feature set, the feature set and the prompt associated with
+a `SemanticMemoryType` are sent to the `LanguageModel`. The LLM
+produces a list of `SemanticCommand`s that are applied to the feature
+set.
+
+Then when a search is being conducted with a query, the `SemanticProfileManager`
+will look up the query in the cache. If it is not found, it will invoke
+the `Embedder` to create an embedding for the query. Then it will
+invoke the `LanguageModel` to produce a list of `SemanticCommand`s that
+are applied to the feature set.
+
+`SemanticManager` will also support the configuration of the
+`SemanticMemoryType`, the `LanguageModel` prompts, and the underlying
+`Embedder` and `LanguageModel` at a per-`set_id` level.
+
+
+## Data Model
+
+- **Feature Entry** – `(set_id, memory_type, feature, value, tag, embedding, metadata,
+  citations)` tuples persisted by the storage backend. Metadata tracks
+  provenance, timestamps, and arbitrary annotations.
+- **Set Config Entry** – `(set_id, llm_model_name, embedder_name, []semantic_memory_type_names)`
+- **Semantic Commands** – structured add/delete directives returned by
+  the update prompt and validated before application.
+
+## Storage backend design
+
+Semantic memory can be backed by a variety of storage backends.
+Currently, we support Postgres with plans to support Neo4j in the near future.
+
+First-class data storage backends will have a guide on how to upgrade
+their schema without incurring any data loss.
+The current first-class backends are:
+- Postgres
+
+### Postgres
+
+For Postgres, we are using SQLAlchemy to manage the database schema.
+With SQLAlchemy, we can use Alembic to manage database migrations.
+
+### Neo4j
+
+Neo4j storage backend is planned for Semantic memory.
+
+Work will be done in investigating adding first-class support for Neo4j
+in the future.
+With the use of Neo4j-migrations[https://github.com/michael-simons/neo4j-migrations],
+or similar, we can explore supporting database schema upgrades.
+
+## Ingestion Flow
+
+1. **Message Capture** – `add_persona_message` marks the set, as specified by
+   `set_id`, as dirty for later processing to be done.
+2. **Dirty-Set Tracking** – `SemanticUpdateTrackerManager` counts
+   messages and elapsed time per set to decide when feature set updates should run.
+3. **Background Loop** – A background loop wakes on a fixed
+   interval, gathers all sets that crossed the update thresholds,
+   and processes each set concurrently.
+4. **Updating the set** – When the background loop determines a set is to be
+   updated, it will first load that set's configuration. With this configuration
+   at hand, the configuration will be used to update the feature set.
+5. **Marking Progress** – message IDs that were processed are marked as
+   ingested in storage to prevent re-processing.
+
+## Consolidation Flow
+
+- **Decide to consolidate** Asks storage for sections that
+  exceed the `consolidation_threshold` and sends them to be consolidated.
+  These sections are a combination of `set_id` and `memory_type`.
+- **Consolidate** The consolidation process is a two-step process.
+  First, the consolidation process will load the set's configuration.
+  Then, the consolidation process will load the set's feature set.
+  Finally, the consolidation process will invoke the `llm_consolidate_features`
+  function with the set's configuration and feature set.
+- **Apply consolidation** The consolidation step returns the memories to remove,
+  as well as the resulting new aggregated memories.
+  These new memories are then applied all the citations from the original memories
+  they are derived from.
+
+
