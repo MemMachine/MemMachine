@@ -15,6 +15,18 @@ from memmachine.common.configuration.mixin_confs import (
 from memmachine.common.data_types import SimilarityMetric
 
 
+def _strip_empty_strings(conf: dict) -> dict:
+    """Remove empty-string and non-positive numeric values."""
+    cleaned: dict = {}
+    for key, value in conf.items():
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (int, float)) and value <= 0:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 class AmazonBedrockEmbedderConf(YamlSerializableMixin, AWSCredentialsMixin):
     """Configuration for AmazonBedrockEmbedder."""
 
@@ -46,12 +58,11 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
     """Configuration for OpenAI embedding models."""
 
     model: str = Field(
-        default="text-embedding-3-small",
-        min_length=1,
+        default="",
         description="OpenAI Embeddings API-compatible model",
     )
     dimensions: int | None = Field(
-        default=1536,
+        default=None,
         description="Dimensionality of the embeddings; must be provided if different from the default (1536)",
         gt=0,
     )
@@ -72,12 +83,23 @@ class OpenAIEmbedderConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMix
 
     @field_validator("base_url")
     @classmethod
-    def validate_base_url(cls, v: str) -> str:
+    def validate_base_url(cls, v: str | None) -> str | None:
         """Ensure the base URL includes a scheme and host."""
+        if isinstance(v, str) and not v.strip():
+            return None
         if v is not None:
             parsed_url = urlparse(v)
             if not parsed_url.scheme or not parsed_url.netloc:
                 raise ValueError(f"Invalid base URL: base_url={v}")
+        return v
+
+    @field_validator("dimensions", mode="before")
+    @classmethod
+    def normalize_dimensions(cls, v: int | None) -> int | None:
+        if v is None:
+            return None
+        if isinstance(v, int) and v <= 0:
+            return None
         return v
 
 
@@ -183,12 +205,19 @@ class EmbeddersConf(BaseModel):
 
         for embedder_id, resource_definition in embedder.items():
             provider = resource_definition.get(cls.PROVIDER_KEY)
-            conf = resource_definition.get(cls.CONFIG_KEY, {})
+            raw_conf = resource_definition.get(cls.CONFIG_KEY, {}) or {}
+            conf = _strip_empty_strings(raw_conf)
+            if not conf:
+                continue
             if provider == cls.OPENAI_KEY:
+                if isinstance(raw_conf.get("model"), str) and not raw_conf["model"].strip():
+                    continue
                 openai_dict[embedder_id] = OpenAIEmbedderConf(**conf)
             elif provider == cls.BEDROCK_KEY:
                 amazon_bedrock_dict[embedder_id] = AmazonBedrockEmbedderConf(**conf)
             elif provider == cls.SENTENCE_TRANSFORMER_KEY:
+                if isinstance(raw_conf.get("model"), str) and not raw_conf["model"].strip():
+                    continue
                 sentence_transformer_dict[embedder_id] = (
                     SentenceTransformerEmbedderConf(**conf)
                 )

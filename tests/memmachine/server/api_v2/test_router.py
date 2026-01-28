@@ -8,6 +8,7 @@ from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
+    ModelUnavailableError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
@@ -21,6 +22,7 @@ from memmachine.server.app import MemMachineAPI
 @pytest.fixture
 def mock_memmachine():
     memmachine = AsyncMock()
+    memmachine.require_models_configured = MagicMock()
     return memmachine
 
 
@@ -250,6 +252,20 @@ def test_add_memories(client, mock_memmachine):
         assert response.json() == {"results": [{"uid": "123"}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Semantic]
+
+
+def test_memories_require_models(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    mock_memmachine.require_models_configured.side_effect = ModelUnavailableError(
+        "Chat model or embedding model is not configured."
+    )
+    response = client.post("/api/v2/memories", json=payload)
+    assert response.status_code == 503
+    assert "not configured" in response.json()["detail"]["message"]
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):
@@ -524,6 +540,49 @@ def test_health_check(client):
     assert resp_json["status"] == "healthy"
     assert resp_json["service"] == "memmachine"
     assert len(resp_json["version"]) > 0
+
+
+def test_models_endpoints(client, mock_memmachine):
+    embedder_payload = {
+        "name": "embedder_openai",
+        "provider": "openai",
+        "config": {"model": "text-embedding-3-small", "api_key": "key"},
+    }
+    response = client.post("/api/v2/models/embedders", json=embedder_payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    mock_memmachine.upsert_embedder_config.assert_awaited_once()
+
+    lm_payload = {
+        "name": "chat_openai",
+        "provider": "openai-chat-completions",
+        "config": {"model": "gpt-4.1", "api_key": "key"},
+    }
+    response = client.post("/api/v2/models/language_models", json=lm_payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    mock_memmachine.upsert_language_model_config.assert_awaited_once()
+
+    defaults_payload = {
+        "chat_model": "chat_openai",
+        "embedding_model": "embedder_openai",
+    }
+    response = client.post("/api/v2/models/defaults", json=defaults_payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    mock_memmachine.set_model_defaults.assert_awaited_once_with(
+        chat_model="chat_openai",
+        embedding_model="embedder_openai",
+    )
+
+    mock_memmachine.get_model_config.return_value = {
+        "model_registry": {},
+        "defaults": {},
+        "reindex_status": {},
+    }
+    response = client.get("/api/v2/models")
+    assert response.status_code == 200
+    assert response.json()["model_registry"] == {}
 
 
 def test_rest_error():

@@ -80,6 +80,16 @@ class SessionDataManagerSQL(SessionDataManager):
             ForeignKeyConstraint(["session_key"], ["sessions.session_key"]),
         )
 
+    class RuntimeModelConfig(Base):  # pylint: disable=too-few-public-methods
+        """ORM model for runtime model configuration overrides."""
+
+        __tablename__ = "runtime_model_config"
+        id: Mapped[IntColumn]
+        model_registry: Mapped[JSONColumn]
+        defaults: Mapped[JSONColumn]
+        reindex_status: Mapped[JSONColumn]
+        __table_args__ = (PrimaryKeyConstraint("id"),)
+
     def __init__(self, engine: AsyncEngine, schema: str | None = None) -> None:
         """Initialize with an async engine and optional schema."""
         self._engine = engine
@@ -112,7 +122,6 @@ class SessionDataManagerSQL(SessionDataManager):
         async with self._engine.begin() as conn:
             if await conn.run_sync(_check_migration_needed):
                 await self._migrate_pickle_to_json()
-                return
             await conn.run_sync(Base.metadata.create_all)
 
     async def drop_tables(self) -> None:
@@ -208,6 +217,43 @@ class SessionDataManagerSQL(SessionDataManager):
                 user_metadata=metadata,
             )
             dbsession.add(new_session)
+            await dbsession.commit()
+
+    async def get_runtime_model_config(self) -> dict[str, object] | None:
+        """Retrieve runtime model config overrides."""
+        async with self._async_session() as dbsession:
+            row = await dbsession.get(self.RuntimeModelConfig, 1)
+            if row is None:
+                return None
+            return {
+                "model_registry": row.model_registry,
+                "defaults": row.defaults,
+                "reindex_status": row.reindex_status,
+            }
+
+    async def set_runtime_model_config(
+        self,
+        *,
+        model_registry: dict[str, object],
+        defaults: dict[str, str],
+        reindex_status: dict[str, object] | None = None,
+    ) -> None:
+        """Persist runtime model config overrides."""
+        async with self._async_session() as dbsession:
+            row = await dbsession.get(self.RuntimeModelConfig, 1)
+            if row is None:
+                row = self.RuntimeModelConfig(
+                    id=1,
+                    model_registry=model_registry,
+                    defaults=defaults,
+                    reindex_status=reindex_status or {},
+                )
+                dbsession.add(row)
+            else:
+                row.model_registry = model_registry
+                row.defaults = defaults
+                if reindex_status is not None:
+                    row.reindex_status = reindex_status
             await dbsession.commit()
 
     async def delete_session(self, session_key: str) -> None:

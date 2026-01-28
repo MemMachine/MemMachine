@@ -24,6 +24,9 @@ from memmachine.common.api.spec import (
     GetProjectSpec,
     ProjectConfig,
     ProjectResponse,
+    SetModelDefaultsSpec,
+    UpsertEmbedderSpec,
+    UpsertLanguageModelSpec,
 )
 
 from .project import Project
@@ -480,6 +483,91 @@ class MemMachineClient:
                 )
                 projects.append(project)
         return projects
+
+    def upsert_embedder(
+        self,
+        *,
+        name: str,
+        provider: str,
+        config: dict[str, Any],
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
+        """Upsert an embedder configuration."""
+        if self._closed:
+            raise RuntimeError("Cannot upsert embedder: client has been closed")
+
+        url = f"{self.base_url}/api/v2/models/embedders"
+        spec = UpsertEmbedderSpec(name=name, provider=provider, config=config)
+        data = spec.model_dump(exclude_none=True)
+        try:
+            response = self.request("POST", url, json=data, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException:
+            logger.exception("Failed to upsert embedder %s", name)
+            raise
+
+    def upsert_language_model(
+        self,
+        *,
+        name: str,
+        provider: str,
+        config: dict[str, Any],
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
+        """Upsert a language model configuration."""
+        if self._closed:
+            raise RuntimeError("Cannot upsert language model: client has been closed")
+
+        url = f"{self.base_url}/api/v2/models/language_models"
+        spec = UpsertLanguageModelSpec(name=name, provider=provider, config=config)
+        data = spec.model_dump(exclude_none=True)
+        try:
+            response = self.request("POST", url, json=data, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException:
+            logger.exception("Failed to upsert language model %s", name)
+            raise
+
+    def set_model_defaults(
+        self,
+        *,
+        chat_model: str | None = None,
+        embedding_model: str | None = None,
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
+        """Set default chat/embedding models."""
+        if self._closed:
+            raise RuntimeError("Cannot set model defaults: client has been closed")
+
+        url = f"{self.base_url}/api/v2/models/defaults"
+        spec = SetModelDefaultsSpec(
+            chat_model=chat_model,
+            embedding_model=embedding_model,
+        )
+        data = spec.model_dump(exclude_none=True)
+        try:
+            response = self.request("POST", url, json=data, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException:
+            logger.exception("Failed to set model defaults")
+            raise
+
+    def get_models(self, timeout: int | None = None) -> dict[str, Any]:
+        """Get current model registry and defaults."""
+        if self._closed:
+            raise RuntimeError("Cannot get models: client has been closed")
+
+        url = f"{self.base_url}/api/v2/models"
+        try:
+            response = self.request("GET", url, timeout=timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException:
+            logger.exception("Failed to get models")
+            raise
 
     def health_check(self, timeout: int | None = None) -> dict[str, Any]:
         """

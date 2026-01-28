@@ -283,6 +283,73 @@ class ProjectConfig(BaseModel):
     ]
 
 
+class UpsertEmbedderSpec(BaseModel):
+    """Specification for upserting an embedder configuration."""
+
+    name: Annotated[
+        SafeId,
+        Field(
+            description="Embedder name",
+        ),
+    ]
+    provider: Annotated[
+        str,
+        Field(
+            description="Embedder provider identifier",
+        ),
+    ]
+    config: Annotated[
+        dict[str, Any],
+        Field(
+            default_factory=dict,
+            description="Provider-specific embedder configuration",
+        ),
+    ]
+
+
+class UpsertLanguageModelSpec(BaseModel):
+    """Specification for upserting a language model configuration."""
+
+    name: Annotated[
+        SafeId,
+        Field(
+            description="Language model name",
+        ),
+    ]
+    provider: Annotated[
+        str,
+        Field(
+            description="Language model provider identifier",
+        ),
+    ]
+    config: Annotated[
+        dict[str, Any],
+        Field(
+            default_factory=dict,
+            description="Provider-specific language model configuration",
+        ),
+    ]
+
+
+class SetModelDefaultsSpec(BaseModel):
+    """Specification for setting default chat/embedding models."""
+
+    chat_model: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Default chat model identifier",
+        ),
+    ]
+    embedding_model: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Default embedding model identifier",
+        ),
+    ]
+
+
 class CreateProjectSpec(BaseModel):
     """
     Specification model for creating a new project.

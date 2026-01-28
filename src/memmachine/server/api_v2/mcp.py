@@ -25,6 +25,7 @@ from memmachine.common.api.spec import (
     SearchResult,
 )
 from memmachine.common.configuration import Configuration
+from memmachine.common.errors import ModelUnavailableError
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemMachine
 from memmachine.server.api_v2.service import (
@@ -335,6 +336,7 @@ async def initialize_resource() -> MemMachine:
     """
     config = load_configuration()
     resource_mgr = ResourceManagerImpl(config)
+    await resource_mgr.apply_runtime_model_config()
     return MemMachine(config, resource_mgr)
 
 
@@ -433,6 +435,7 @@ async def mcp_add_memory(
             message="MemMachine is not initialized",
         )
     try:
+        mem_machine.require_models_configured()
         param = Params(
             org_id=org_id,
             proj_id=proj_id,
@@ -444,6 +447,8 @@ async def mcp_add_memory(
         )
     except Exception as e:
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        if isinstance(e, ModelUnavailableError):
+            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         logger.exception("Failed to add memory")
         return McpResponse(status=status_code, message=str(e))
     return MCP_SUCCESS
@@ -493,6 +498,7 @@ async def mcp_search_memory(
             message="MemMachine is not initialized",
         )
     try:
+        mem_machine.require_models_configured()
         param = Params(
             org_id=org_id,
             proj_id=proj_id,
@@ -504,5 +510,7 @@ async def mcp_search_memory(
         )
     except Exception as e:
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        if isinstance(e, ModelUnavailableError):
+            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         logger.exception("Failed to search memory")
         return McpResponse(status=status_code, message=str(e))

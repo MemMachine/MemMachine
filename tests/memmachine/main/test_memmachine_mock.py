@@ -81,7 +81,7 @@ def _minimal_conf(
             llm_model=None,
         ),
         long_term_memory=LongTermMemoryConfPartial(
-            vector_graph_store=None,
+            vector_graph_store="default_store",
             embedder="default-embedder",
             reranker="default-reranker",
         ),
@@ -90,6 +90,10 @@ def _minimal_conf(
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    semantic_conf = MagicMock()
+    semantic_conf.llm_model = "gpt-4.1"
+    semantic_conf.embedding_model = "default-embedder"
+    ret.semantic_memory = semantic_conf
     prompt_conf = MagicMock()
     prompt_conf.episode_summary_system_prompt = "You are a helpful assistant."
     prompt_conf.episode_summary_user_prompt = (

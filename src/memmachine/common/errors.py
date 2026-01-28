@@ -117,6 +117,11 @@ class InvalidEmbedderError(MemMachineError):
 class InvalidRerankerError(MemMachineError):
     """Exception raised for invalid reranker."""
 
+class ModelUnavailableError(MemMachineError):
+    """Error when required models are not configured."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 class EpisodicMemoryManagerClosedError(MemMachineError):
     """Exception raised when operating on a closed EpisodicMemory instance."""

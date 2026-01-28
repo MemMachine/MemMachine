@@ -103,6 +103,53 @@ Project instance representing the project
 requests.RequestException: If the request fails
     RuntimeError: If the client has been closed
 
+## Runtime Model Configuration
+
+MemMachine supports dynamic model configuration at runtime. The client exposes
+helpers for upserting embedder and language-model configs and updating defaults.
+
+### Upsert Embedder (with `dimensions`)
+
+```python
+from memmachine import MemMachineClient
+
+client = MemMachineClient(base_url="http://localhost:8080")
+
+client.upsert_embedder(
+    name="embedder-openai",
+    provider="openai",
+    config={
+        "model": "text-embedding-3-small",
+        "api_key": "YOUR_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "dimensions": 1536,
+    },
+)
+```
+
+### Upsert Language Model
+
+```python
+client.upsert_language_model(
+    name="llm-openai-chat",
+    provider="openai-chat-completions",
+    config={
+        "model": "gpt-4o-mini",
+        "api_key": "YOUR_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+    },
+)
+```
+
+### Set Defaults
+
+```python
+client.set_model_defaults(
+    chat_model="llm-openai-chat",
+    embedding_model="embedder-openai",
+)
+```
+
 ### `health_check`
 
 Check the health status of the MemMachine server.

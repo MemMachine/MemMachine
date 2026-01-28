@@ -82,3 +82,19 @@ class SessionDataManager(ABC):
     async def get_short_term_memory(self, session_key: str) -> tuple[str, int, int]:
         """Retrieve short-term memory data for a session."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def get_runtime_model_config(self) -> dict[str, object] | None:
+        """Retrieve runtime model config overrides if present."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def set_runtime_model_config(
+        self,
+        *,
+        model_registry: dict[str, object],
+        defaults: dict[str, str],
+        reindex_status: dict[str, object] | None = None,
+    ) -> None:
+        """Persist runtime model config overrides."""
+        raise NotImplementedError

@@ -19,17 +19,29 @@ from memmachine.common.language_model.amazon_bedrock_language_model import (
 DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1"
 
 
+def _strip_empty_strings(conf: dict) -> dict:
+    """Remove empty-string and non-positive numeric values."""
+    cleaned: dict = {}
+    for key, value in conf.items():
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (int, float)) and value <= 0:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 class OpenAIResponsesLanguageModelConf(
     MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
 ):
     """Configuration for OpenAI Responses-compatible models."""
 
     model: str = Field(
-        default="gpt-5-nano",
+        default="",
         description="OpenAI Responses API-compatible model",
     )
     api_key: SecretStr = Field(
-        ...,
+        default=SecretStr(""),
         description="OpenAI Responses API key for authentication, Can"
         "reference an environment variable using `$ENV` or `${ENV}` syntax ",
     )
@@ -45,8 +57,10 @@ class OpenAIResponsesLanguageModelConf(
 
     @field_validator("base_url")
     @classmethod
-    def validate_base_url(cls, v: str) -> str:
+    def validate_base_url(cls, v: str | None) -> str | None:
         """Ensure the base URL includes a scheme and host."""
+        if isinstance(v, str) and not v.strip():
+            return None
         if v is not None:
             parsed_url = urlparse(v)
             if not parsed_url.scheme or not parsed_url.netloc:
@@ -60,8 +74,7 @@ class OpenAIChatCompletionsLanguageModelConf(
     """Configuration for OpenAI Chat Completions-compatible models."""
 
     model: str = Field(
-        default="gpt-5-nano",
-        min_length=1,
+        default="",
         description="OpenAI Chat Completions API-compatible model",
     )
     base_url: str | None = Field(
@@ -77,8 +90,10 @@ class OpenAIChatCompletionsLanguageModelConf(
 
     @field_validator("base_url")
     @classmethod
-    def validate_base_url(cls, v: str) -> str:
+    def validate_base_url(cls, v: str | None) -> str | None:
         """Ensure the base URL includes a scheme and host."""
+        if isinstance(v, str) and not v.strip():
+            return None
         if v is not None:
             parsed_url = urlparse(v)
             if not parsed_url.scheme or not parsed_url.netloc:
@@ -143,6 +158,14 @@ class LanguageModelsConf(BaseModel):
         OpenAIChatCompletionsLanguageModelConf,
     ] = {}
     amazon_bedrock_language_model_confs: dict[str, AmazonBedrockLanguageModelConf] = {}
+
+    def contains_language_model(self, name: str) -> bool:
+        """Return True if a language model id is known."""
+        return (
+            name in self.openai_responses_language_model_confs
+            or name in self.openai_chat_completions_language_model_confs
+            or name in self.amazon_bedrock_language_model_confs
+        )
 
     def get_openai_responses_language_model_name(self) -> str | None:
         """Get the name of the first OpenAI Responses language model, if any."""
@@ -223,10 +246,17 @@ class LanguageModelsConf(BaseModel):
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
-            conf = resource_definition.get("config", {})
+            raw_conf = resource_definition.get("config", {}) or {}
+            conf = _strip_empty_strings(raw_conf)
+            if not conf:
+                continue
             if provider == "openai-responses":
+                if isinstance(raw_conf.get("model"), str) and not raw_conf["model"].strip():
+                    continue
                 openai_dict[lm_id] = OpenAIResponsesLanguageModelConf(**conf)
             elif provider == "openai-chat-completions":
+                if isinstance(raw_conf.get("model"), str) and not raw_conf["model"].strip():
+                    continue
                 openai_chat_completions_dict[lm_id] = (
                     OpenAIChatCompletionsLanguageModelConf(
                         **conf,

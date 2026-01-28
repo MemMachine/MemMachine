@@ -17,7 +17,11 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
-from memmachine.common.errors import ConfigurationError, SessionNotFoundError
+from memmachine.common.errors import (
+    ConfigurationError,
+    ModelUnavailableError,
+    SessionNotFoundError,
+)
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -89,46 +93,249 @@ class MemMachine:
         if self._conf.episodic_memory.short_term_memory is None:
             self._conf.episodic_memory.short_term_memory = ShortTermMemoryConfPartial()
             self._conf.episodic_memory.short_term_memory_enabled = False
-        if self._conf.episodic_memory.long_term_memory.embedder is None:
-            self._conf.episodic_memory.long_term_memory.embedder = (
-                self._conf.default_long_term_memory_embedder
-            )
-        if self._conf.episodic_memory.long_term_memory.reranker is None:
-            self._conf.episodic_memory.long_term_memory.reranker = (
-                self._conf.default_long_term_memory_reranker
-            )
-        if self._conf.episodic_memory.short_term_memory.llm_model is None:
-            self._conf.episodic_memory.short_term_memory.llm_model = "gpt-4.1"
-        if self._conf.episodic_memory.short_term_memory.summary_prompt_system is None:
+
+        default_embedder = None
+        default_reranker = None
+        try:
+            default_embedder = self._conf.default_long_term_memory_embedder
+        except Exception:
+            default_embedder = None
+        try:
+            default_reranker = self._conf.default_long_term_memory_reranker
+        except Exception:
+            default_reranker = None
+
+        if (
+            self._conf.episodic_memory.long_term_memory is not None
+            and self._conf.episodic_memory.long_term_memory_enabled
+        ):
+            if self._conf.episodic_memory.long_term_memory.embedder is None:
+                self._conf.episodic_memory.long_term_memory.embedder = default_embedder
+            if self._conf.episodic_memory.long_term_memory.reranker is None:
+                self._conf.episodic_memory.long_term_memory.reranker = default_reranker
+
+            if (
+                self._conf.episodic_memory.long_term_memory.embedder is None
+                or self._conf.episodic_memory.long_term_memory.reranker is None
+            ):
+                self._conf.episodic_memory.long_term_memory_enabled = False
+                self._conf.episodic_memory.long_term_memory = None
+
+        default_chat_model = self._conf.semantic_memory.llm_model
+        if (
+            self._conf.episodic_memory.short_term_memory is not None
+            and self._conf.episodic_memory.short_term_memory_enabled
+        ):
+            if self._conf.episodic_memory.short_term_memory.llm_model is None:
+                self._conf.episodic_memory.short_term_memory.llm_model = (
+                    default_chat_model
+                )
+            if self._conf.episodic_memory.short_term_memory.llm_model is None:
+                self._conf.episodic_memory.short_term_memory_enabled = False
+                self._conf.episodic_memory.short_term_memory = None
+        if (
+            self._conf.episodic_memory.short_term_memory is not None
+            and self._conf.episodic_memory.short_term_memory.summary_prompt_system
+            is None
+        ):
             self._conf.episodic_memory.short_term_memory.summary_prompt_system = (
                 self._conf.prompt.episode_summary_system_prompt
             )
-        if self._conf.episodic_memory.short_term_memory.summary_prompt_user is None:
+        if (
+            self._conf.episodic_memory.short_term_memory is not None
+            and self._conf.episodic_memory.short_term_memory.summary_prompt_user is None
+        ):
             self._conf.episodic_memory.short_term_memory.summary_prompt_user = (
                 self._conf.prompt.episode_summary_user_prompt
             )
-        if self._conf.episodic_memory.long_term_memory.vector_graph_store is None:
+        if (
+            self._conf.episodic_memory.long_term_memory is not None
+            and self._conf.episodic_memory.long_term_memory.vector_graph_store is None
+        ):
             self._conf.episodic_memory.long_term_memory.vector_graph_store = (
                 "default_store"
             )
+
+        if (
+            self._conf.episodic_memory.long_term_memory is None
+            and self._conf.episodic_memory.short_term_memory is None
+        ):
+            self._conf.episodic_memory.enabled = False
+
+    def models_configured(self) -> bool:
+        embedding_model = self._conf.semantic_memory.embedding_model
+        chat_model = self._conf.semantic_memory.llm_model
+        if not embedding_model or not chat_model:
+            return False
+        if not self._conf.resources.embedders.contains_embedder(embedding_model):
+            return False
+        if not self._conf.resources.language_models.contains_language_model(chat_model):
+            return False
+        return True
+
+    def require_models_configured(self) -> None:
+        if not self.models_configured():
+            raise ModelUnavailableError(
+                "Chat model or embedding model is not configured."
+            )
+
+    def apply_model_defaults(self) -> None:
+        """Apply current model defaults to episodic configuration when missing."""
+        if self._conf.episodic_memory is None:
+            self._conf.episodic_memory = EpisodicMemoryConfPartial()
+
+        if self._conf.episodic_memory.long_term_memory is None:
+            self._conf.episodic_memory.long_term_memory = LongTermMemoryConfPartial()
+            self._conf.episodic_memory.long_term_memory_enabled = True
+
+        if self._conf.episodic_memory.short_term_memory is None:
+            self._conf.episodic_memory.short_term_memory = ShortTermMemoryConfPartial()
+            self._conf.episodic_memory.short_term_memory_enabled = True
+
+        if (
+            self._conf.episodic_memory.long_term_memory is not None
+            and self._conf.episodic_memory.long_term_memory.embedder is None
+        ):
+            if self._conf.semantic_memory.embedding_model:
+                self._conf.episodic_memory.long_term_memory.embedder = (
+                    self._conf.semantic_memory.embedding_model
+                )
+
+        if (
+            self._conf.episodic_memory.long_term_memory is not None
+            and self._conf.episodic_memory.long_term_memory.reranker is None
+        ):
+            try:
+                self._conf.episodic_memory.long_term_memory.reranker = (
+                    self._conf.default_long_term_memory_reranker
+                )
+            except Exception:
+                self._conf.episodic_memory.long_term_memory.reranker = None
+
+        if (
+            self._conf.episodic_memory.short_term_memory is not None
+            and self._conf.episodic_memory.short_term_memory.llm_model is None
+        ):
+            if self._conf.semantic_memory.llm_model:
+                self._conf.episodic_memory.short_term_memory.llm_model = (
+                    self._conf.semantic_memory.llm_model
+                )
+
+        if self._conf.episodic_memory.long_term_memory is not None:
+            if (
+                self._conf.episodic_memory.long_term_memory.embedder is None
+                or self._conf.episodic_memory.long_term_memory.reranker is None
+            ):
+                self._conf.episodic_memory.long_term_memory_enabled = False
+
+        if self._conf.episodic_memory.short_term_memory is not None:
+            if self._conf.episodic_memory.short_term_memory.llm_model is None:
+                self._conf.episodic_memory.short_term_memory_enabled = False
+            if self._conf.episodic_memory.short_term_memory.summary_prompt_system is None:
+                self._conf.episodic_memory.short_term_memory.summary_prompt_system = (
+                    self._conf.prompt.episode_summary_system_prompt
+                )
+            if self._conf.episodic_memory.short_term_memory.summary_prompt_user is None:
+                self._conf.episodic_memory.short_term_memory.summary_prompt_user = (
+                    self._conf.prompt.episode_summary_user_prompt
+                )
+
+        if self._conf.episodic_memory.long_term_memory is not None:
+            if self._conf.episodic_memory.long_term_memory.vector_graph_store is None:
+                self._conf.episodic_memory.long_term_memory.vector_graph_store = (
+                    "default_store"
+                )
 
     async def start(self) -> None:
         if self._started:
             return
         self._started = True
 
-        semantic_service = await self._resources.get_semantic_service()
-        await semantic_service.start()
+        if self._conf.semantic_memory.enabled and self.models_configured():
+            semantic_service = await self._resources.get_semantic_service()
+            await semantic_service.start()
 
     async def stop(self) -> None:
         if not self._started:
             return
         self._started = False
 
-        semantic_service = await self._resources.get_semantic_service()
-        await semantic_service.stop()
+        if self._conf.semantic_memory.enabled and self.models_configured():
+            semantic_service = await self._resources.get_semantic_service()
+            await semantic_service.stop()
 
         await self._resources.close()
+
+    async def upsert_embedder_config(
+        self,
+        *,
+        name: str,
+        provider: str,
+        config: dict,
+    ) -> None:
+        """Upsert an embedder config and apply defaults."""
+        await self._resources.upsert_embedder_config(
+            name=name,
+            provider=provider,
+            config=config,
+        )
+        self.apply_model_defaults()
+
+    async def upsert_language_model_config(
+        self,
+        *,
+        name: str,
+        provider: str,
+        config: dict,
+    ) -> None:
+        """Upsert a language model config and apply defaults."""
+        await self._resources.upsert_language_model_config(
+            name=name,
+            provider=provider,
+            config=config,
+        )
+        self.apply_model_defaults()
+
+    async def set_model_defaults(
+        self,
+        *,
+        chat_model: str | None = None,
+        embedding_model: str | None = None,
+    ) -> None:
+        """Update default chat/embedding models and apply defaults."""
+        if chat_model and not self._conf.resources.language_models.contains_language_model(
+            chat_model
+        ):
+            raise ValueError(f"Unknown language model '{chat_model}'")
+        if embedding_model and not self._conf.resources.embedders.contains_embedder(
+            embedding_model
+        ):
+            raise ValueError(f"Unknown embedder '{embedding_model}'")
+        await self._resources.set_model_defaults(
+            chat_model=chat_model,
+            embedding_model=embedding_model,
+        )
+        self.apply_model_defaults()
+
+    async def get_model_config(self) -> dict[str, object]:
+        """Return model registry, defaults, and reindex status."""
+        runtime_conf = await self._resources.get_runtime_model_config()
+        model_registry = {
+            "embedders": self._conf.resources.embedders.to_yaml_dict(),
+            "language_models": self._conf.resources.language_models.to_yaml_dict(),
+        }
+        defaults = {
+            "embedding_model": self._conf.semantic_memory.embedding_model or "",
+            "chat_model": self._conf.semantic_memory.llm_model or "",
+        }
+        reindex_status = {}
+        if runtime_conf and "reindex_status" in runtime_conf:
+            reindex_status = runtime_conf.get("reindex_status", {})
+        return {
+            "model_registry": model_registry,
+            "defaults": defaults,
+            "reindex_status": reindex_status,
+        }
 
     def _with_default_episodic_memory_conf(
         self,
@@ -140,13 +347,25 @@ class MemMachine:
         try:
             if user_conf is None:
                 user_conf = EpisodicMemoryConfPartial()
+            if (
+                user_conf.short_term_memory_enabled is True
+                and user_conf.short_term_memory is None
+            ):
+                user_conf.short_term_memory = ShortTermMemoryConfPartial(
+                    llm_model=self._conf.semantic_memory.llm_model
+                )
             user_conf.session_key = session_key
             episodic_conf = user_conf.merge(self._conf.episodic_memory)
             if episodic_conf.long_term_memory is not None:
-                if episodic_conf.long_term_memory.embedder is not None:
-                    self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
-                if episodic_conf.long_term_memory.reranker is not None:
-                    self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
+                if self.models_configured():
+                    if episodic_conf.long_term_memory.embedder is not None:
+                        self._conf.check_embedder(
+                            episodic_conf.long_term_memory.embedder
+                        )
+                    if episodic_conf.long_term_memory.reranker is not None:
+                        self._conf.check_reranker(
+                            episodic_conf.long_term_memory.reranker
+                        )
         except ValidationError as e:
             logger.exception(
                 "Faield to merge configuration: %s, %s",

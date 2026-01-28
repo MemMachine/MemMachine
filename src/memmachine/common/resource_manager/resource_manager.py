@@ -8,6 +8,8 @@ from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine.common.configuration import Configuration
+from memmachine.common.configuration.embedder_conf import EmbeddersConf
+from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.mixin_confs import MetricsFactoryIdMixin
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import CountCachingEpisodeStorage, EpisodeStorage
@@ -84,6 +86,147 @@ class ResourceManagerImpl:
 
         # TODO: Build semantic storage, episodic storage, and session data storage lazily when actually used
 
+    async def apply_runtime_model_config(self) -> None:
+        """Load and merge runtime model config from storage."""
+        session_data_manager = await self.get_session_data_manager()
+        runtime_conf = await session_data_manager.get_runtime_model_config()
+        if runtime_conf is None:
+            return
+
+        model_registry = runtime_conf.get("model_registry", {})
+        defaults = runtime_conf.get("defaults", {})
+
+        embedders = model_registry.get("embedders", {})
+        language_models = model_registry.get("language_models", {})
+
+        if embedders:
+            merged = self._conf.resources.embedders.to_yaml_dict()
+            merged.update(embedders)
+            self._conf.resources.embedders = EmbeddersConf.parse(
+                {"embedders": merged}
+            )
+
+        if language_models:
+            merged = self._conf.resources.language_models.to_yaml_dict()
+            merged.update(language_models)
+            self._conf.resources.language_models = LanguageModelsConf.parse(
+                {"language_models": merged}
+            )
+
+        embedding_default = defaults.get("embedding_model")
+        chat_default = defaults.get("chat_model")
+        if embedding_default:
+            self._conf.semantic_memory.embedding_model = embedding_default
+        if chat_default:
+            self._conf.semantic_memory.llm_model = chat_default
+
+        self._refresh_model_managers()
+
+    async def get_runtime_model_config(self) -> dict[str, object] | None:
+        """Return runtime model config overrides if present."""
+        session_data_manager = await self.get_session_data_manager()
+        return await session_data_manager.get_runtime_model_config()
+
+    def _refresh_model_managers(self) -> None:
+        """Recreate model managers after configuration changes."""
+        self._embedder_manager = EmbedderManager(self._conf.resources.embedders)
+        self._model_manager = LanguageModelManager(
+            self._conf.resources.language_models,
+        )
+        self._reranker_manager = RerankerManager(
+            self._conf.resources.rerankers,
+            embedder_factory=self._embedder_manager,
+        )
+
+    async def persist_runtime_model_config(self) -> None:
+        """Persist current model registry + defaults to storage."""
+        session_data_manager = await self.get_session_data_manager()
+        model_registry = {
+            "embedders": self._conf.resources.embedders.to_yaml_dict(),
+            "language_models": self._conf.resources.language_models.to_yaml_dict(),
+        }
+        defaults = {
+            "embedding_model": self._conf.semantic_memory.embedding_model or "",
+            "chat_model": self._conf.semantic_memory.llm_model or "",
+        }
+        reindex_status = None
+        if self._semantic_manager is not None:
+            reindex_status = self._semantic_manager.get_reindex_status()
+        await session_data_manager.set_runtime_model_config(
+            model_registry=model_registry,
+            defaults=defaults,
+            reindex_status=reindex_status,
+        )
+
+    async def upsert_embedder_config(
+        self,
+        *,
+        name: str,
+        provider: str,
+        config: dict,
+        set_default_if_missing: bool = True,
+    ) -> None:
+        """Upsert an embedder config by name."""
+        merged = self._conf.resources.embedders.to_yaml_dict()
+        merged[name] = {
+            EmbeddersConf.PROVIDER_KEY: provider,
+            EmbeddersConf.CONFIG_KEY: config,
+        }
+        self._conf.resources.embedders = EmbeddersConf.parse({"embedders": merged})
+        self._refresh_model_managers()
+
+        if set_default_if_missing and not self._conf.semantic_memory.embedding_model:
+            self._conf.semantic_memory.embedding_model = name
+
+        await self.persist_runtime_model_config()
+
+    async def upsert_language_model_config(
+        self,
+        *,
+        name: str,
+        provider: str,
+        config: dict,
+        set_default_if_missing: bool = True,
+    ) -> None:
+        """Upsert a language model config by name."""
+        merged = self._conf.resources.language_models.to_yaml_dict()
+        merged[name] = {
+            LanguageModelsConf.PROVIDER_KEY: provider,
+            LanguageModelsConf.CONFIG_KEY: config,
+        }
+        self._conf.resources.language_models = LanguageModelsConf.parse(
+            {"language_models": merged}
+        )
+        self._refresh_model_managers()
+
+        if set_default_if_missing and not self._conf.semantic_memory.llm_model:
+            self._conf.semantic_memory.llm_model = name
+
+        await self.persist_runtime_model_config()
+
+    async def set_model_defaults(
+        self,
+        *,
+        chat_model: str | None = None,
+        embedding_model: str | None = None,
+    ) -> None:
+        """Update default chat/embedding models."""
+        prev_embedding_model = self._conf.semantic_memory.embedding_model
+        if chat_model is not None:
+            self._conf.semantic_memory.llm_model = chat_model
+        if embedding_model is not None:
+            self._conf.semantic_memory.embedding_model = embedding_model
+
+        if (
+            embedding_model is not None
+            and embedding_model != prev_embedding_model
+            and self._conf.semantic_memory.enabled
+        ):
+            semantic_manager = await self.get_semantic_manager()
+            semantic_manager.reset_resource_retriever()
+            await semantic_manager.schedule_reembedding()
+
+        await self.persist_runtime_model_config()
     async def close(self) -> None:
         """Close resources and clean up state."""
         tasks = []

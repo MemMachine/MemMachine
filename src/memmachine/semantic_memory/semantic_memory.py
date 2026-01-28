@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, InstanceOf
 
+from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeIdT, EpisodeStorage
 from memmachine.common.filter.filter_parser import FilterExpr
 
@@ -243,6 +244,36 @@ class SemanticService:
             metadata=metadata,
             embedding=np.array(embedding),
         )
+
+    async def reembed_all_features(
+        self,
+        *,
+        embedder: Embedder,
+        page_size: int = 500,
+    ) -> int:
+        """Recompute embeddings for all semantic features."""
+        page_num = 0
+        processed = 0
+        while True:
+            features = await self._semantic_storage.get_feature_set(
+                page_size=page_size,
+                page_num=page_num,
+                load_citations=False,
+            )
+            if not features:
+                break
+            for feature in features:
+                feature_id = feature.metadata.id
+                if feature_id is None:
+                    continue
+                embedding = (await embedder.ingest_embed([feature.value]))[0]
+                await self._semantic_storage.update_feature(
+                    feature_id=feature_id,
+                    embedding=np.array(embedding),
+                )
+                processed += 1
+            page_num += 1
+        return processed
 
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
         await self._semantic_storage.delete_history(history_ids)

@@ -65,13 +65,17 @@ class SemanticMemoryConf(YamlSerializableMixin):
         ...,
         description="The database to use for semantic memory",
     )
-    llm_model: str = Field(
-        ...,
+    llm_model: str | None = Field(
+        default=None,
         description="The default language model to use for semantic memory",
     )
-    embedding_model: str = Field(
-        ...,
+    embedding_model: str | None = Field(
+        default=None,
         description="The embedding model to use for semantic memory",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Whether semantic memory is enabled",
     )
 
     ingestion_trigger_messages: int = Field(

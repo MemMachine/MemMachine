@@ -1,12 +1,15 @@
 """Manager for semantic memory resources and services."""
 
 import asyncio
+from datetime import UTC, datetime
 
 from pydantic import InstanceOf
 
 from memmachine.common.configuration import PromptConf, SemanticMemoryConf
 from memmachine.common.episode_store import EpisodeStorage
 from memmachine.common.resource_manager import CommonResourceManager
+from memmachine.common.errors import ModelUnavailableError
+from memmachine.common.embedder import Embedder
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
     ResourceRetriever,
@@ -45,6 +48,9 @@ class SemanticResourceManager:
         ) = None
         self._semantic_service: SemanticService | None = None
         self._semantic_session_manager: SemanticSessionManager | None = None
+        self._reembed_task: asyncio.Task | None = None
+        self._reembed_status: dict[str, object] | None = None
+        self._reembed_lock = asyncio.Lock()
 
     async def close(self) -> None:
         """Stop semantic services if they were started."""
@@ -61,6 +67,11 @@ class SemanticResourceManager:
         """Return a resource retriever for semantic sessions."""
         if self._semantic_session_resource_manager is not None:
             return self._semantic_session_resource_manager
+
+        if not self._conf.enabled:
+            raise ModelUnavailableError("Semantic memory is disabled.")
+        if not self._conf.embedding_model or not self._conf.llm_model:
+            raise ModelUnavailableError("Chat model or embedding model is not configured.")
 
         semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
 
@@ -87,6 +98,46 @@ class SemanticResourceManager:
 
         self._semantic_session_resource_manager = SemanticResourceRetriever()
         return self._semantic_session_resource_manager
+
+    def reset_resource_retriever(self) -> None:
+        """Reset cached semantic resource retriever to pick up new defaults."""
+        self._semantic_session_resource_manager = None
+
+    def get_reindex_status(self) -> dict[str, object] | None:
+        """Return current reindex status snapshot."""
+        return self._reembed_status
+
+    async def _reembed_all_features(self, embedder: Embedder) -> None:
+        semantic_service = await self.get_semantic_service()
+        processed = await semantic_service.reembed_all_features(embedder=embedder)
+
+        async with self._reembed_lock:
+            if self._reembed_status is not None:
+                self._reembed_status["status"] = "completed"
+                self._reembed_status["completed_at"] = datetime.now(tz=UTC).isoformat()
+                self._reembed_status["processed"] = processed
+
+    async def schedule_reembedding(self) -> None:
+        if not self._conf.embedding_model or not self._conf.enabled:
+            return
+
+        embedder = await self._resource_manager.get_embedder(
+            self._conf.embedding_model,
+            validate=True,
+        )
+
+        async with self._reembed_lock:
+            if self._reembed_task is not None and not self._reembed_task.done():
+                self._reembed_task.cancel()
+            self._reembed_status = {
+                "status": "running",
+                "model_id": self._conf.embedding_model,
+                "started_at": datetime.now(tz=UTC).isoformat(),
+                "processed": 0,
+            }
+            self._reembed_task = asyncio.create_task(
+                self._reembed_all_features(embedder)
+            )
 
     async def _get_semantic_storage(self) -> SemanticStorage:
         database = self._conf.database

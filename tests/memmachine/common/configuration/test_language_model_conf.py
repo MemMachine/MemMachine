@@ -125,9 +125,9 @@ def test_serialize_deserialize_language_model_conf(full_model_conf):
 
 def test_missing_required_field_openai_model():
     conf_dict = {"model": "gpt-4o-mini"}
-    with pytest.raises(ValidationError) as exc_info:
-        OpenAIResponsesLanguageModelConf(**conf_dict)
-    assert "field required" in str(exc_info.value).lower()
+    conf = OpenAIResponsesLanguageModelConf(**conf_dict)
+    assert conf.model == "gpt-4o-mini"
+    assert conf.api_key.get_secret_value() == ""
 
 
 def test_invalid_base_url_in_openai_chat_completions_model():

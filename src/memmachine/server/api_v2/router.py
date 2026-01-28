@@ -27,7 +27,12 @@ from memmachine.common.api.spec import (
     RestErrorModel,
     SearchMemoriesSpec,
     SearchResult,
+    SetModelDefaultsSpec,
+    UpsertEmbedderSpec,
+    UpsertLanguageModelSpec,
 )
+from memmachine.common.configuration.embedder_conf import EmbeddersConf
+from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.api.version import get_version
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
@@ -36,6 +41,7 @@ from memmachine.common.configuration.episodic_config import (
 from memmachine.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
+    ModelUnavailableError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
@@ -144,6 +150,16 @@ class RestError(HTTPException):
 
 
 router = APIRouter()
+
+
+async def require_models_configured(
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> None:
+    """Ensure chat + embedding models are configured before memories endpoints."""
+    try:
+        memmachine.require_models_configured()
+    except ModelUnavailableError as e:
+        raise RestError(code=503, message=str(e), ex=e) from e
 
 
 @router.post("/projects", status_code=201, description=RouterDoc.CREATE_PROJECT)
@@ -272,10 +288,90 @@ async def delete_project(
         raise RestError(code=500, message="Unable to delete project", ex=e) from e
 
 
+@router.post("/models/embedders", description="Upsert embedder configuration")
+async def upsert_embedder(
+    spec: UpsertEmbedderSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> dict[str, str]:
+    """Upsert an embedder configuration."""
+    if spec.provider not in (
+        EmbeddersConf.OPENAI_KEY,
+        EmbeddersConf.BEDROCK_KEY,
+        EmbeddersConf.SENTENCE_TRANSFORMER_KEY,
+    ):
+        raise RestError(code=422, message="invalid embedder provider")
+    try:
+        await memmachine.upsert_embedder_config(
+            name=spec.name,
+            provider=spec.provider,
+            config=spec.config,
+        )
+    except ValueError as e:
+        raise RestError(code=422, message="invalid embedder config", ex=e) from e
+    except Exception as e:
+        raise RestError(code=500, message="Unable to upsert embedder", ex=e) from e
+    return {"status": "ok", "name": spec.name}
+
+
+@router.post("/models/language_models", description="Upsert language model configuration")
+async def upsert_language_model(
+    spec: UpsertLanguageModelSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> dict[str, str]:
+    """Upsert a language model configuration."""
+    if spec.provider not in (
+        LanguageModelsConf.OPENAI_RESPONSE,
+        LanguageModelsConf.OPEN_CHAT_COMPLETION,
+        LanguageModelsConf.AMAZON_BEDROCK,
+    ):
+        raise RestError(code=422, message="invalid language model provider")
+    try:
+        await memmachine.upsert_language_model_config(
+            name=spec.name,
+            provider=spec.provider,
+            config=spec.config,
+        )
+    except ValueError as e:
+        raise RestError(code=422, message="invalid language model config", ex=e) from e
+    except Exception as e:
+        raise RestError(code=500, message="Unable to upsert language model", ex=e) from e
+    return {"status": "ok", "name": spec.name}
+
+
+@router.post("/models/defaults", description="Set default chat/embedding models")
+async def set_model_defaults(
+    spec: SetModelDefaultsSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> dict[str, str]:
+    """Set default chat and embedding models."""
+    try:
+        await memmachine.set_model_defaults(
+            chat_model=spec.chat_model,
+            embedding_model=spec.embedding_model,
+        )
+    except ValueError as e:
+        raise RestError(code=422, message="invalid model default", ex=e) from e
+    except Exception as e:
+        raise RestError(code=500, message="Unable to set model defaults", ex=e) from e
+    return {"status": "ok"}
+
+
+@router.get("/models", description="Get current model registry and defaults")
+async def get_models(
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> dict[str, object]:
+    """Return current model registry, defaults, and reindex status."""
+    try:
+        return await memmachine.get_model_config()
+    except Exception as e:
+        raise RestError(code=500, message="Unable to get model config", ex=e) from e
+
+
 @router.post("/memories", description=RouterDoc.ADD_MEMORIES)
 async def add_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+    _: Annotated[None, Depends(require_models_configured)],
 ) -> AddMemoriesResponse:
     """Add memories to a project."""
     # Use types from spec if provided, otherwise use all memory types
@@ -294,6 +390,7 @@ async def add_memories(
 async def search_memories(
     spec: SearchMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+    _: Annotated[None, Depends(require_models_configured)],
 ) -> SearchResult:
     """Search memories in a project."""
     target_memories = spec.types if spec.types else ALL_MEMORY_TYPES
@@ -317,6 +414,7 @@ async def search_memories(
 async def list_memories(
     spec: ListMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+    _: Annotated[None, Depends(require_models_configured)],
 ) -> ListResult:
     """List memories in a project."""
     target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
@@ -333,6 +431,7 @@ async def list_memories(
 async def delete_episodic_memory(
     spec: DeleteEpisodicMemorySpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+    _: Annotated[None, Depends(require_models_configured)],
 ) -> None:
     """Delete episodic memories in a project."""
     try:
@@ -363,6 +462,7 @@ async def delete_episodic_memory(
 async def delete_semantic_memory(
     spec: DeleteSemanticMemorySpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+    _: Annotated[None, Depends(require_models_configured)],
 ) -> None:
     """Delete semantic memories in a project."""
     try:

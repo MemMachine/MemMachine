@@ -72,6 +72,18 @@ class MockShortTermMemoryDataManager(SessionDataManager):
             raise ValueError(f"No data for session key {session_key}")
         return self.data[session_key]
 
+    async def get_runtime_model_config(self) -> dict[str, object] | None:
+        return None
+
+    async def set_runtime_model_config(
+        self,
+        *,
+        model_registry: dict[str, object],
+        defaults: dict[str, str],
+        reindex_status: dict[str, object] | None = None,
+    ) -> None:
+        return None
+
     async def close(self):
         self.data = {}
         self.tables_created = False

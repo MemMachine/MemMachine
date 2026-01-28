@@ -232,12 +232,40 @@ class EpisodicMemoryConfPartial(YamlSerializableMixin):
         if session_key is None:
             raise ValueError("EpisodicMemoryConfPartial.merge() requires session_key")
 
-        stm_self.session_key = session_key
-        ltm_self.session_id = session_key
-        stm_merged = stm_self.merge(stm_other)
-        ltm_merged = ltm_self.merge(ltm_other)
+        stm_merged: ShortTermMemoryConf | None
+        ltm_merged: LongTermMemoryConf | None
+
+        stm_config_present = any(
+            getattr(stm_self, field) is not None for field in stm_self.model_fields
+        ) or any(
+            getattr(stm_other, field) is not None for field in stm_other.model_fields
+        )
+        ltm_config_present = any(
+            getattr(ltm_self, field) is not None for field in ltm_self.model_fields
+        ) or any(
+            getattr(ltm_other, field) is not None for field in ltm_other.model_fields
+        )
+
+        if merged.short_term_memory_enabled is False or (
+            merged.short_term_memory_enabled is None and not stm_config_present
+        ):
+            stm_merged = None
+        else:
+            stm_self.session_key = session_key
+            stm_merged = stm_self.merge(stm_other)
+
+        if merged.long_term_memory_enabled is False or (
+            merged.long_term_memory_enabled is None and not ltm_config_present
+        ):
+            ltm_merged = None
+        else:
+            ltm_self.session_id = session_key
+            ltm_merged = ltm_self.merge(ltm_other)
 
         # ---- Step 4: update nested configuration in the base result ----
+        if stm_merged is None and ltm_merged is None:
+            merged.enabled = False if merged.enabled is None else merged.enabled
+
         return EpisodicMemoryConf(
             session_key=session_key,
             metrics_factory_id=merged.metrics_factory_id
@@ -247,9 +275,9 @@ class EpisodicMemoryConfPartial(YamlSerializableMixin):
             long_term_memory=ltm_merged,
             long_term_memory_enabled=True
             if merged.long_term_memory_enabled is None and ltm_merged is not None
-            else merged.long_term_memory_enabled,
+            else (merged.long_term_memory_enabled or False),
             short_term_memory_enabled=True
             if merged.short_term_memory_enabled is None and stm_merged is not None
-            else merged.short_term_memory_enabled,
+            else (merged.short_term_memory_enabled or False),
             enabled=True if merged.enabled is None else merged.enabled,
         )

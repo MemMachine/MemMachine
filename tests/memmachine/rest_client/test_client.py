@@ -309,6 +309,46 @@ class TestMemMachineClient:
         assert client.request.call_args[0][0] == "POST"
         assert "/api/v2/projects/list" in client.request.call_args[0][1]
 
+    def test_models_endpoints(self):
+        """Test model configuration endpoints."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"status": "ok"}
+        client.request = Mock(return_value=mock_response)
+
+        result = client.upsert_embedder(
+            name="embedder_openai",
+            provider="openai",
+            config={"model": "text-embedding-3-small", "api_key": "key"},
+        )
+        assert result["status"] == "ok"
+        assert "/api/v2/models/embedders" in client.request.call_args[0][1]
+
+        result = client.upsert_language_model(
+            name="chat_openai",
+            provider="openai-chat-completions",
+            config={"model": "gpt-4.1", "api_key": "key"},
+        )
+        assert result["status"] == "ok"
+        assert "/api/v2/models/language_models" in client.request.call_args[0][1]
+
+        result = client.set_model_defaults(
+            chat_model="chat_openai",
+            embedding_model="embedder_openai",
+        )
+        assert result["status"] == "ok"
+        assert "/api/v2/models/defaults" in client.request.call_args[0][1]
+
+        mock_response.json.return_value = {
+            "model_registry": {},
+            "defaults": {},
+            "reindex_status": {},
+        }
+        result = client.get_models()
+        assert "model_registry" in result
+        assert "/api/v2/models" in client.request.call_args[0][1]
+
     def test_get_metrics_success(self):
         """Test successful metrics retrieval."""
         client = MemMachineClient(base_url="http://localhost:8080")
