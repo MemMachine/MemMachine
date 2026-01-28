@@ -91,6 +91,7 @@ class SemanticSessionManager:
 
         OrgSet = "set_type"
         ProjectSet = "project_set"
+        UserSet = "user_set"
         OtherSet = "other_set"
 
     def __init__(
@@ -111,9 +112,15 @@ class SemanticSessionManager:
     async def _add_single_episode(
         self, episode: Episode, session_data: SessionData
     ) -> None:
+        episode_metadata: dict[str, JsonValue] = (
+            dict(episode.metadata) if episode.metadata is not None else {}
+        )
+
+        episode_metadata.setdefault("producer_id", episode.producer_id)
+
         set_ids = await self._get_set_ids_str_from_metadata(
             session_data=session_data,
-            metadata=episode.metadata,
+            metadata=episode_metadata,
         )
         await self._semantic_service.add_message_to_sets(episode.uid, set_ids)
 
@@ -339,14 +346,20 @@ class SemanticSessionManager:
         session_data: SessionData,
         metadata: Mapping[str, JsonValue] | None = None,
     ) -> list[_SetIdEntry]:
+        metadata = {k: v for k, v in metadata.items()} if metadata is not None else {}
+
+        normalized_metadata: dict[str, str] = {
+            key: str(value) for key, value in metadata.items() if value is not None
+        }
+
+        if "producer_id" in normalized_metadata:
+            await self._ensure_user_set_type(org_id=session_data.org_id)
+
         set_type_ids = await self._semantic_config.list_set_type_ids(
             org_id=session_data.org_id
         )
 
-        if metadata is None:
-            metadata = {}
-
-        metadata_tags = set(metadata.keys())
+        metadata_tags = set(normalized_metadata.keys())
         relevant_set_type_ids = [
             sid for sid in set_type_ids if metadata_tags.issuperset(set(sid.tags))
         ]
@@ -364,7 +377,7 @@ class SemanticSessionManager:
                 self._SetIdEntry(
                     set_type_id=sid.id,
                     is_org_level=sid.is_org_level,
-                    tags={t: str(metadata[t]) for t in sid.tags},
+                    tags={t: normalized_metadata[t] for t in sid.tags},
                 )
             )
 
@@ -438,15 +451,33 @@ class SemanticSessionManager:
 
         string_tags = [f"{k}_{v}" for k, v in metadata.items()]
 
+        metadata_keys = set(metadata.keys())
+
         if len(string_tags) == 0:
             if project_id is not None:
                 def_type = SemanticSessionManager.SetType.ProjectSet
             else:
                 def_type = SemanticSessionManager.SetType.OrgSet
+        elif metadata_keys == {"producer_id"}:
+            def_type = SemanticSessionManager.SetType.UserSet
         else:
             def_type = SemanticSessionManager.SetType.OtherSet
 
         return f"mem_{def_type.value}_{org_project}_{len(metadata)}_{_hash_tag_list(metadata.keys())}__{'_'.join(sorted(string_tags))}"
+
+    @classmethod
+    def generate_user_set_id(
+        cls,
+        *,
+        org_id: str,
+        project_id: str | None,
+        producer_id: str,
+    ) -> SetIdT:
+        return cls._generate_set_id(
+            org_id=org_id,
+            project_id=project_id,
+            metadata={"producer_id": producer_id},
+        )
 
     @staticmethod
     def get_default_set_id_type(
@@ -457,6 +488,22 @@ class SemanticSessionManager:
                 return def_type
 
         raise RuntimeError(f"Invalid set_id: {set_id}")
+
+    async def _ensure_user_set_type(self, *, org_id: str) -> None:
+        set_types = await self._semantic_config.list_set_type_ids(org_id=org_id)
+        for set_type in set_types:
+            if set_type.is_org_level:
+                continue
+            if set(set_type.tags) == {"producer_id"}:
+                return
+
+        await self._semantic_config.add_set_type_id(
+            org_id=org_id,
+            org_level_set=False,
+            metadata_tags=["producer_id"],
+            name="User Profile",
+            description="Semantic memory scoped to producer identifiers.",
+        )
 
     async def create_set_type(
         self,
@@ -585,10 +632,17 @@ class SemanticSessionManager:
             if session_data.metadata is not None
             else {}
         )
+        normalized_metadata = {
+            key: str(value) for key, value in metadata.items() if value is not None
+        }
+
+        if "producer_id" in normalized_metadata:
+            await self._ensure_user_set_type(org_id=session_data.org_id)
+
         set_id = self._generate_set_id(
             org_id=session_data.org_id,
             project_id=session_data.project_id if not is_org_level else None,
-            metadata=metadata,
+            metadata=normalized_metadata,
         )
 
         set_type_ids = await self._semantic_config.list_set_type_ids(

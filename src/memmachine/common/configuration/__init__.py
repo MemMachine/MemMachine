@@ -113,6 +113,10 @@ class PromptConf(YamlSerializableMixin):
         default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
         description="The default prompts to use for semantic project memory",
     )
+    default_user_categories: list[str] = Field(
+        default=["profile_prompt"],
+        description="The default prompts to use for semantic user memory",
+    )
     episode_summary_system_prompt_path: str = Field(
         default="",
         description="The prompt template to use for episode summary generation - system part",
@@ -130,6 +134,7 @@ class PromptConf(YamlSerializableMixin):
     @field_validator(
         "default_project_categories",
         "default_org_categories",
+        "default_user_categories",
         check_fields=True,
     )
     @classmethod
@@ -172,6 +177,9 @@ class PromptConf(YamlSerializableMixin):
             SemanticSessionManager.SetType.ProjectSet: [
                 semantic_categories[s_name]
                 for s_name in self.default_project_categories
+            ],
+            SemanticSessionManager.SetType.UserSet: [
+                semantic_categories[s_name] for s_name in self.default_user_categories
             ],
             SemanticSessionManager.SetType.OtherSet: [],
         }
