@@ -1,5 +1,8 @@
 """Data models for representing episodes and related enumerations."""
 
+import datetime
+import json
+from collections.abc import Iterable
 from enum import Enum
 
 from pydantic import AwareDatetime, BaseModel, JsonValue
@@ -60,3 +63,43 @@ class Episode(BaseModel):
     def __hash__(self) -> int:
         """Hash an episode by its UID."""
         return hash(self.uid)
+
+
+def episodes_to_string(
+    episode_response_context: Iterable[EpisodeResponse] | Iterable[Episode],
+) -> str:
+    """Format episode response context as a string."""
+    context_string = ""
+
+    for episode_response in episode_response_context:
+        match episode_response.episode_type:
+            case EpisodeType.MESSAGE:
+                context_date = (
+                    _format_date(
+                        episode_response.created_at.date(),
+                    )
+                    if episode_response.created_at
+                    else "Unknown Date"
+                )
+                context_time = (
+                    _format_time(
+                        episode_response.created_at.time(),
+                    )
+                    if episode_response.created_at
+                    else "Unknown Time"
+                )
+                context_string += f"[{context_date} at {context_time}] {episode_response.producer_id}: {json.dumps(episode_response.content)}\n"
+            case _:
+                context_string += json.dumps(episode_response.content) + "\n"
+
+    return context_string
+
+
+def _format_date(date: datetime.date) -> str:
+    """Format the date as a string."""
+    return date.strftime("%A, %B %d, %Y")
+
+
+def _format_time(time: datetime.time) -> str:
+    """Format the time as a string."""
+    return time.strftime("%I:%M %p")

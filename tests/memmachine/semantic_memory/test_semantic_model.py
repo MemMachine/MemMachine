@@ -105,27 +105,21 @@ class TestSemanticFeatureGrouping:
     def test_group_features_by_tag(self, sample_features):
         grouped = SemanticFeature.group_features_by_tag(sample_features)
 
-        # Should have 3 unique groups: (food, favorite_pizza), (food, favorite_drink), (music, favorite_genre)
-        assert len(grouped) == 3
+        # Should have 2 unique groups: food and music
+        assert len(grouped) == 2
 
-        # Check (food, favorite_pizza) group - should include all types
-        food_pizza_key = ("food", "favorite_pizza")
-        assert food_pizza_key in grouped
-        assert len(grouped[food_pizza_key]) == 3  # pepperoni, margherita, hawaiian
-        values = {f.value for f in grouped[food_pizza_key]}
-        assert values == {"pepperoni", "margherita", "hawaiian"}
+        # Check food group - should include all food-related entries
+        food_key = "food"
+        assert food_key in grouped
+        assert len(grouped[food_key]) == 4
+        values = {f.value for f in grouped[food_key]}
+        assert values == {"pepperoni", "margherita", "hawaiian", "water"}
 
-        # Check (food, favorite_drink) group
-        food_drink_key = ("food", "favorite_drink")
-        assert food_drink_key in grouped
-        assert len(grouped[food_drink_key]) == 1
-        assert grouped[food_drink_key][0].value == "water"
-
-        # Check (music, favorite_genre) group
-        music_genre_key = ("music", "favorite_genre")
-        assert music_genre_key in grouped
-        assert len(grouped[music_genre_key]) == 1
-        assert grouped[music_genre_key][0].value == "jazz"
+        # Check music group
+        music_key = "music"
+        assert music_key in grouped
+        assert len(grouped[music_key]) == 1
+        assert grouped[music_key][0].value == "jazz"
 
     def test_group_features_by_tag_empty_list(self):
         grouped = SemanticFeature.group_features_by_tag([])
@@ -143,7 +137,7 @@ class TestSemanticFeatureGrouping:
         grouped = SemanticFeature.group_features_by_tag(features)
 
         assert len(grouped) == 1
-        key = ("color", "favorite")
+        key = "color"
         assert key in grouped
         assert len(grouped[key]) == 1
         assert grouped[key][0].value == "blue"

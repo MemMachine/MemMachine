@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import NamedTuple, Protocol
 
 from memmachine.common.data_types import FilterablePropertyValue
@@ -195,6 +196,15 @@ class _Parser:
         # If it's a string literal, return it as-is
         if tok.type == "STRING":
             return raw
+        # Check for date() function call
+        if tok.type == "IDENT" and raw.lower() == "date":
+            self._expect("LPAREN")
+            date_str_tok = self._expect("STRING")
+            self._expect("RPAREN")
+            try:
+                return datetime.fromisoformat(date_str_tok.value)
+            except ValueError as e:
+                raise FilterParseError(f"Invalid ISO format date string: {e}") from e
         # Otherwise, parse IDENT for boolean/numeric values
         upper = raw.upper()
         if upper == "TRUE":

@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 
 from memmachine.common.filter.filter_parser import (
@@ -192,10 +194,48 @@ def test_parse_filter_raises_custom_error() -> None:
     params=[
         "set_id in ('user-88') AND tag in ('writing_style')",
         "set_id in ('user-88')",
+        "created_at<date('2026-01-19T01:56:41.513342Z')",
+        "created_at < date('2026-01-19T01:56:41.513342Z')",
     ]
 )
 def valid_filters(request) -> str:
     return request.param
+
+
+def test_datetime_parsing() -> None:
+    expr = parse_filter("created_at < date('2026-01-19T01:56:41.513342Z')")
+    assert expr is not None
+    assert expr == Comparison(
+        field="created_at",
+        op="<",
+        value=datetime.datetime.fromisoformat("2026-01-19T01:56:41.513342Z"),
+    )
+
+
+def test_datetime_parsing_with_and_expression() -> None:
+    expr = parse_filter("name='test' AND created_at >= date('2025-01-01T00:00:00')")
+    assert isinstance(expr, And)
+    children = _flatten_and(expr)
+    assert children[0] == Comparison(field="name", op="=", value="test")
+    assert children[1] == Comparison(
+        field="created_at",
+        op=">=",
+        value=datetime.datetime.fromisoformat("2025-01-01T00:00:00"),
+    )
+
+
+def test_datetime_parsing_with_equality() -> None:
+    expr = parse_filter("created_at = date('2026-01-19T01:56:41Z')")
+    assert expr == Comparison(
+        field="created_at",
+        op="=",
+        value=datetime.datetime.fromisoformat("2026-01-19T01:56:41Z"),
+    )
+
+
+def test_datetime_parsing_invalid_format() -> None:
+    with pytest.raises(FilterParseError, match="Invalid ISO format date string"):
+        parse_filter("created_at<date('invalid-date')")
 
 
 def test_valid_fixtures_return(valid_filters) -> None:

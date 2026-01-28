@@ -35,9 +35,7 @@ from .doc import Examples, SpecDoc
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
-
 logger = logging.getLogger(__name__)
-
 
 # --------------------------------------------------------------------------------------
 # Client-safe DTOs
@@ -238,7 +236,6 @@ def _validate_int_compatible(v: str) -> str:
 
 
 IntCompatibleId = Annotated[str, AfterValidator(_validate_int_compatible), Field(...)]
-
 
 SafeId = Annotated[str, AfterValidator(_is_valid_name), Field(...)]
 SafeIdWithDefault = Annotated[SafeId, Field(default=DEFAULT_ORG_AND_PROJECT_ID)]
@@ -611,6 +608,28 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             default_factory=list,
             description=SpecDoc.MEMORY_TYPES,
             examples=Examples.MEMORY_TYPES,
+        ),
+    ]
+
+
+class DeleteMemoriesSpec(_WithOrgAndProj):
+    """Specification model for deleting memories."""
+
+    episodic_memory_uids: Annotated[
+        list[EpisodeIdT],
+        Field(
+            default=[],
+            description=SpecDoc.EPISODIC_IDS,
+            examples=Examples.EPISODIC_IDS,
+        ),
+    ]
+
+    semantic_memory_uids: Annotated[
+        list[FeatureIdT],
+        Field(
+            default=[],
+            description=SpecDoc.SEMANTIC_IDS,
+            examples=Examples.SEMANTIC_IDS,
         ),
     ]
 

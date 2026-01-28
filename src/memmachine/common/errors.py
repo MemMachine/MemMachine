@@ -101,6 +101,15 @@ class SessionInUseError(MemMachineError):
         return f"SessionInUseError('{self.session_key}')"
 
 
+class ShortTermMemoryClosedError(MemMachineError):
+    """Error when trying to access closed short-term memory."""
+
+    def __init__(self, session_key: str) -> None:
+        """Initialize with the session key of the closed short-term memory."""
+        self.session_key = session_key
+        super().__init__(f"Short-term memory for session '{session_key}' is closed.")
+
+
 class InvalidPasswordError(MemMachineError):
     """Error for invalid password scenarios."""
 
