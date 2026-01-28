@@ -58,6 +58,10 @@ class OpenAIEmbedderParams(BaseModel):
         default_factory=dict,
         description="Labels to attach to the collected metrics.",
     )
+    batch_size: int | None = Field(
+        None,
+        description="Batch size for embedding requests.",
+    )
 
 
 class OpenAIEmbedder(Embedder):
@@ -71,7 +75,7 @@ class OpenAIEmbedder(Embedder):
 
     def __init__(self, params: OpenAIEmbedderParams) -> None:
         """Initialize the OpenAI embedder with configuration parameters."""
-        super().__init__()
+        super().__init__(batch_size=params.batch_size)
 
         self._client = params.client
 
@@ -109,7 +113,7 @@ class OpenAIEmbedder(Embedder):
                 label_names=label_names,
             )
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
@@ -117,7 +121,7 @@ class OpenAIEmbedder(Embedder):
         """Embed the provided inputs with retries."""
         return await self._embed(inputs, max_attempts)
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[Any],
         max_attempts: int = 1,
