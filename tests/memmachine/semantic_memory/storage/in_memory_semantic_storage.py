@@ -103,6 +103,9 @@ class InMemorySemanticStorage(SemanticStorage):
                 return None
             return self._feature_to_model(entry, load_citations=load_citations)
 
+    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+        pass
+
     async def add_feature(
         self,
         *,
@@ -324,6 +327,15 @@ class InMemorySemanticStorage(SemanticStorage):
                     set_ids.append(set_id)
 
             return set_ids
+
+    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+        async with self._lock:
+            set_ids = {
+                set_id
+                for set_id in set(self._feature_ids_by_set) | set(self._set_history_map)
+                if set_id.startswith(prefix)
+            }
+            return list(set_ids)
 
     def _handle_set_change(
         self,

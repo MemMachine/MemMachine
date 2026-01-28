@@ -135,6 +135,20 @@ class AsyncRWLockPool:
         async with lock.write_lock():
             yield
 
+    @asynccontextmanager
+    async def all_write_locks(self) -> AsyncIterator[None]:
+        """Acquire write locks for all buckets.
+
+        This is useful for bulk operations like clearing a cache.
+        """
+        for lock in self._locks:
+            await lock.acquire_write()
+        try:
+            yield
+        finally:
+            for lock in reversed(self._locks):
+                lock.release_write()
+
     async def close(self) -> None:
         """
         Clear the pool.

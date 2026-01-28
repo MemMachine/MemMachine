@@ -1,4 +1,4 @@
-# ruff: noqa: D413, C901, TRY300, SIM105, PIE790, N806, ANN202, ANN204
+# ruff: noqa: C901, TRY300, SIM105, PIE790, N806, ANN202, ANN204
 """
 MemMachine-backed memory for LangChain.
 
