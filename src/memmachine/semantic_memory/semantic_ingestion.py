@@ -56,10 +56,17 @@ class IngestionService:
         self._debug_fail_loudly = params.debug_fail_loudly
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
+        async def _run(set_id: SetIdT) -> None:
+            try:
+                await self._process_single_set(set_id)
+            except Exception:
+                logger.exception("Failed to process set_id %s", set_id)
+                raise
+
         logger.info("Starting ingestion processing for set ids: %s", set_ids)
 
         results = await asyncio.gather(
-            *[self._process_single_set(set_id) for set_id in set_ids],
+            *[_run(set_id) for set_id in set_ids],
             return_exceptions=True,
         )
 
@@ -95,7 +102,11 @@ class IngestionService:
         )
 
         if len(raw_messages) != len([m for m in raw_messages if m is not None]):
-            raise ValueError("Failed to retrieve messages. Invalid history_ids")
+            raise ValueError(
+                "Failed to retrieve messages. Invalid episode_ids exist for set_id %s: %s",
+                set_id,
+                history_ids,
+            )
 
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
