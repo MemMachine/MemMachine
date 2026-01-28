@@ -408,22 +408,22 @@ project = client.get_project(org_id="my-org", project_id="chatbot-project")
 def handle_user_message(user_id: str, session_id: str, message: str):
     # Create memory context for this user/session
     memory = project.memory(user_id=user_id, session_id=session_id)
-    
+
     # Store user message
     memory.add(content=message, role="user")
-    
+
     # Search for relevant context
     context = memory.search(query=message, limit=5)
-    
+
     # Build prompt with context
     prompt = build_prompt_with_context(message, context)
-    
+
     # Get AI response (using your LLM)
     response = get_llm_response(prompt)
-    
+
     # Store assistant response
     memory.add(content=response, role="assistant")
-    
+
     return response
 ```
 
@@ -436,13 +436,13 @@ def handle_group_message(group_id: str, user_id: str, message: str):
         user_id=user_id,
         session_id=f"group-{group_id}"
     )
-    
+
     # Store message
     memory.add(content=message, role="user")
-    
+
     # Search for group context
     context = memory.search(query=message, limit=10)
-    
+
     # Process with context...
     return process_group_message(message, context)
 ```
@@ -452,7 +452,7 @@ def handle_group_message(group_id: str, user_id: str, message: str):
 ```python
 def learn_user_preference(user_id: str, preference: str, category: str):
     memory = project.memory(user_id=user_id)
-    
+
     # Store preference as semantic memory
     memory.add(
         content=preference,
@@ -463,11 +463,11 @@ def learn_user_preference(user_id: str, preference: str, category: str):
 
 def get_user_preferences(user_id: str, category: str = None):
     memory = project.memory(user_id=user_id)
-    
+
     query = f"user preferences"
     if category:
         query += f" about {category}"
-    
+
     results = memory.search(query=query, limit=20)
     return results["semantic_memory"]
 ```
@@ -636,4 +636,3 @@ When helping users integrate MemMachine:
 7. **Best Practices**: Encourage searching before responding and storing important information
 
 MemMachine enables AI applications to remember past interactions, learn user preferences, and provide personalized, context-aware responses across sessions.
-
