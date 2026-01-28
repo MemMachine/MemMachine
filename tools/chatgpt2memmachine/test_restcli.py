@@ -2,6 +2,9 @@
 
 import pytest
 
+# Disable this file from pytest collection
+pytestmark = pytest.mark.skip(reason="Manual test script, not automated pytest")
+
 from restcli import MemMachineRestClient
 
 

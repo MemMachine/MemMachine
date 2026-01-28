@@ -4,6 +4,10 @@
 # 3. uv run python3 test_migration.py                # run test
 
 import os
+import pytest
+
+# Disable this file from pytest collection
+pytestmark = pytest.mark.skip(reason="Manual test script, not automated pytest")
 
 from migration import MigrationHack
 
@@ -40,7 +44,7 @@ def test_migration(dry_run: bool = True) -> None:
         base_url=base_url,
         org_id=org_id,
         project_id=project_id,
-        input_file=input_file,
+        input=input_file,
         source=source,
         filters=filters or None,
         dry_run=dry_run,
