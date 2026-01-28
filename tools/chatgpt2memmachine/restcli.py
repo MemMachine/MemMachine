@@ -10,10 +10,7 @@ from utils import get_filename_safe_timestamp
 
 class MemMachineRestClient:
     def __init__(
-        self,
-        base_url="http://localhost:8080",
-        api_version="v2",
-        verbose=False
+        self, base_url="http://localhost:8080", api_version="v2", verbose=False
     ):
         self.base_url = base_url
         self.api_version = api_version
@@ -85,12 +82,12 @@ class MemMachineRestClient:
         end_time = time.time()
 
         latency_ms = round((end_time - start_time) * 1000, 2)
-        
+
         # Write to statistic file
         self.statistic_fp.write(
             f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms}\n",
         )
-        
+
         # Trace the request if verbose
         if self.verbose:
             self._trace_request(
@@ -136,7 +133,7 @@ class MemMachineRestClient:
         )
         end_time = time.time()
         latency_ms = round((end_time - start_time) * 1000, 2)
-        
+
         # Trace the request if verbose
         if self.verbose:
             self._trace_request(

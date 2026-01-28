@@ -18,16 +18,12 @@ class OpenAIParser(BaseParser):
         if self.verbose:
             self.logger.debug(f"Loading OpenAI input file {infile}")
         data = self.load_json(infile)
-        # Count chats in the list
-        chat_count = 0
-        for _ in data:
-            chat_count += 1
-        return chat_count
+        return len(data)
 
     def validate(self, infile: str) -> Tuple[bool, List[str], List[str]]:
         """
         Validate OpenAI chat history file structure without processing messages.
-        
+
         Returns:
             Tuple of (is_valid, errors, warnings)
         """
@@ -97,73 +93,9 @@ class OpenAIParser(BaseParser):
             total_conversation_count += 1
 
             # Validate messages in mapping
-            message_count = 0
-            valid_message_count = 0
-
-            for msg_id, chat_map in mapping.items():
-                if not isinstance(chat_map, dict):
-                    warnings.append(
-                        f"{chat_prefix}: Mapping entry '{msg_id}' is not a dictionary"
-                    )
-                    continue
-
-                # Check if message exists (can be null)
-                if "message" not in chat_map:
-                    warnings.append(
-                        f"{chat_prefix}: Mapping entry '{msg_id}' missing 'message' field"
-                    )
-                    continue
-
-                message = chat_map.get("message")
-                if message is None:
-                    # Null messages are valid (root nodes)
-                    continue
-
-                message_count += 1
-
-                if not isinstance(message, dict):
-                    errors.append(
-                        f"{chat_prefix}: Message '{msg_id}' is not a dictionary"
-                    )
-                    continue
-
-                content = message.get("content")
-                if not isinstance(content, dict):
-                    errors.append(
-                        f"{chat_prefix}: Message '{msg_id}' field 'content' is not a dictionary"
-                    )
-                    continue
-
-                if "content_type" not in content:
-                    errors.append(
-                        f"{chat_prefix}: Message '{msg_id}' missing required field 'content.content_type'"
-                    )
-                elif content.get("content_type") != "text":
-                    # Non-text content is skipped, but not an error
-                    continue
-
-                if "parts" not in content:
-                    errors.append(
-                        f"{chat_prefix}: Message '{msg_id}' missing required field 'content.parts'"
-                    )
-                elif not isinstance(content.get("parts"), list):
-                    errors.append(
-                        f"{chat_prefix}: Message '{msg_id}' field 'content.parts' is not a list"
-                    )
-                elif len(content.get("parts", [])) == 0:
-                    warnings.append(
-                        f"{chat_prefix}: Message '{msg_id}' has empty 'content.parts'"
-                    )
-                else:
-                    # Check if all parts are empty strings
-                    parts = content.get("parts", [])
-                    if all(not str(part).strip() for part in parts):
-                        warnings.append(
-                            f"{chat_prefix}: Message '{msg_id}' has 'content.parts' with only empty strings"
-                        )
-                    else:
-                        # Message has valid content structure (text type, non-empty parts)
-                        valid_message_count += 1
+            message_count, valid_message_count = self._validate_chat_messages(
+                mapping, chat_prefix, errors, warnings
+            )
 
             # Update totals
             total_message_count += message_count
@@ -189,79 +121,155 @@ class OpenAIParser(BaseParser):
         is_valid = len(errors) == 0
         return is_valid, errors, warnings
 
-    def _extract_message_from_chat_map(
-        self, chat_map: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def _validate_chat_messages(
+        self,
+        mapping: Dict[str, Any],
+        chat_prefix: str,
+        errors: List[str],
+        warnings: List[str],
+    ) -> Tuple[int, int]:
+        """Validate messages in a chat mapping and return counts."""
+        message_count = 0
+        valid_message_count = 0
+
+        for msg_id, chat_map in mapping.items():
+            if not isinstance(chat_map, dict):
+                warnings.append(
+                    f"{chat_prefix}: Mapping entry '{msg_id}' is not a dictionary"
+                )
+                continue
+
+            if "message" not in chat_map:
+                warnings.append(
+                    f"{chat_prefix}: Mapping entry '{msg_id}' missing 'message' field"
+                )
+                continue
+
+            message = chat_map.get("message")
+            if message is None:
+                continue
+
+            message_count += 1
+
+            if not isinstance(message, dict):
+                errors.append(f"{chat_prefix}: Message '{msg_id}' is not a dictionary")
+                continue
+
+            content = message.get("content")
+            if not isinstance(content, dict):
+                errors.append(
+                    f"{chat_prefix}: Message '{msg_id}' field 'content' is not a dictionary"
+                )
+                continue
+
+            content_type = content.get("content_type")
+            if not content_type:
+                errors.append(
+                    f"{chat_prefix}: Message '{msg_id}' missing required field 'content.content_type'"
+                )
+                continue
+
+            if content_type != "text":
+                continue
+
+            parts = content.get("parts", [])
+            if not parts:
+                errors.append(
+                    f"{chat_prefix}: Message '{msg_id}' missing required field 'content.parts'"
+                )
+            elif not isinstance(parts, list):
+                errors.append(
+                    f"{chat_prefix}: Message '{msg_id}' field 'content.parts' is not a list"
+                )
+            elif len(parts) == 0:
+                warnings.append(
+                    f"{chat_prefix}: Message '{msg_id}' has empty 'content.parts'"
+                )
+            elif all(not str(part).strip() for part in parts):
+                warnings.append(
+                    f"{chat_prefix}: Message '{msg_id}' has 'content.parts' with only empty strings"
+                )
+            else:
+                valid_message_count += 1
+
+        return message_count, valid_message_count
+
+    def _extract_chat_messages(
+        self, chat: Dict[str, Any], chat_title: str
+    ) -> List[Dict[str, Any]]:
         """
-        Extract message data from a chat mapping entry.
+        Extract messages from a chat and add chat metadata.
 
         Args:
-            chat_map: A single entry from chat["mapping"]
+            chat: Chat dictionary containing mapping and metadata
+            chat_title: Title of the chat
 
         Returns:
-            Dictionary with message data (role, content, timestamp, etc.) or None if invalid
+            List of message dictionaries with role, content, timestamp, and metadata
         """
-        # Validate required fields
-        if not chat_map.get("message"):
-            return None
+        chat_messages = []
+        chat_id = chat.get("id")
+        chat_create_time = chat.get("create_time")
 
-        message = chat_map["message"]
-        author = message.get("author")
-        content = message.get("content")
+        for chat_map in chat.get("mapping", {}).values():
+            message = chat_map.get("message")
+            if not message:
+                continue
 
-        if not author or not content:
-            return None
+            author = message.get("author")
+            content = message.get("content")
+            if not author or not content:
+                continue
 
-        role = author.get("role")
-        if not role:
-            return None
+            role = author.get("role")
+            if not role:
+                continue
 
-        content_type = content.get("content_type")
-        if not content_type:
-            return None
+            content_type = content.get("content_type")
+            if content_type != "text":
+                continue
 
-        # Only extract text content (skip images, code, etc.)
-        if content_type != "text":
-            return None
+            parts = content.get("parts", [])
+            if not parts:
+                continue
 
-        # Extract message parts
-        parts = content.get("parts", [])
-        if not parts:
-            return None
+            # Join text parts
+            try:
+                text_content = "".join(str(part) for part in parts if part)
+            except Exception as e:
+                self.logger.warning(f"Failed to join message parts: {e}")
+                continue
 
-        # Join text parts
-        try:
-            text_content = "".join(str(part) for part in parts if part)
-        except Exception as e:
-            self.logger.warning(f"Failed to join message parts: {e}")
-            return None
+            if not text_content.strip():
+                continue
 
-        if not text_content.strip():
-            return None
+            timestamp = message.get("create_time")
+            if not timestamp:
+                self.logger.warning(
+                    f"Message missing timestamp: {text_content[:50]}..."
+                )
+                continue
 
-        # Extract timestamp
-        timestamp = message.get("create_time")
-        if not timestamp:
-            self.logger.warning(f"Message missing timestamp: {text_content[:50]}...")
-            return None
+            # Build message data structure
+            message_data = {
+                "role": role,
+                "content": text_content,
+                "timestamp": timestamp,
+                "content_type": content_type,
+                "chat_id": chat_id,
+                "chat_title": chat_title,
+                "chat_create_time": chat_create_time,
+            }
 
-        # Build message data structure
-        message_data = {
-            "role": role,
-            "content": text_content,
-            "timestamp": timestamp,
-            "content_type": content_type,
-        }
+            # Add optional metadata
+            optional_fields = {"id": "message_id"}
+            for field, key in optional_fields.items():
+                if field in message:
+                    message_data[key] = message[field]
 
-        # Add optional metadata
-        if "id" in message:
-            message_data["message_id"] = message["id"]
-        if "model_slug" in message:
-            message_data["model"] = message["model_slug"]
-        if "status" in message:
-            message_data["status"] = message["status"]
+            chat_messages.append(message_data)
 
-        return message_data
+        return chat_messages
 
     def load(
         self,
@@ -285,7 +293,7 @@ class OpenAIParser(BaseParser):
         # Extract filter values from filters dict
         if filters is None:
             filters = {}
-        
+
         since = filters.get("since", 0) or 0
         index = filters.get("index", 0) or 0
         limit = filters.get("limit", 0) or 0
@@ -295,54 +303,31 @@ class OpenAIParser(BaseParser):
             f"Loading OpenAI chat history: since={since}, limit={limit}, index={index}, chat_title={chat_title}"
         )
 
-        # Load JSON data
         data = self.load_json(infile)
-
         messages = []
         chat_count = 0
         msg_count = 0
 
-        # Process each chat
         for chat in data:
             chat_count += 1
 
-            # Filter by conversation number
-            if index and chat_count != index:
+            # Apply filters
+            if not self._should_process_chat(
+                chat, chat_count, index, chat_title, since
+            ):
                 continue
 
-            # Filter by title
             chat_title_actual = chat.get("title", "")
-            if chat_title and chat_title.lower() != chat_title_actual.lower():
-                self.logger.debug(f"Skipping chat (title mismatch): {chat_title_actual}")
-                continue
-
-            # Filter by time
-            chat_time = chat.get("create_time")
-            if chat_time and since and self.timestamp_compare(since, chat_time) > 0:
-                self.logger.debug(f"Skipping old chat {chat_count} (time={chat_time})")
-                continue
-
             self.logger.info(f"Processing chat {chat_count}: {chat_title_actual}")
 
-            # Extract messages from this chat
-            chat_messages = []
-            for chat_map in chat.get("mapping", {}).values():
-                message_data = self._extract_message_from_chat_map(chat_map)
-                if message_data:
-                    # Add chat metadata
-                    message_data["chat_id"] = chat.get("id")
-                    message_data["chat_title"] = chat_title_actual
-                    message_data["chat_create_time"] = chat_time
-                    chat_messages.append(message_data)
-
-            # Sort messages by timestamp
+            # Extract and process messages
+            chat_messages = self._extract_chat_messages(chat, chat_title_actual)
             chat_messages.sort(key=lambda x: x.get("timestamp", 0))
 
-            # Add to results
+            # Add messages up to limit
             for msg in chat_messages:
                 messages.append(msg)
                 msg_count += 1
-
                 if limit and msg_count >= limit:
                     self.logger.info(f"Reached max messages limit: {msg_count}")
                     return messages
@@ -351,6 +336,34 @@ class OpenAIParser(BaseParser):
                 f"Finished processing chat {chat_count}: {len(chat_messages)} messages"
             )
 
-        self.logger.info(f"Total messages loaded: {len(messages)} from {chat_count} chats")
+        self.logger.info(
+            f"Total messages loaded: {len(messages)} from {chat_count} chats"
+        )
         return messages
 
+    def _should_process_chat(
+        self,
+        chat: Dict[str, Any],
+        chat_count: int,
+        index: int,
+        chat_title: Optional[str],
+        since: float,
+    ) -> bool:
+        """Check if a chat should be processed based on filters."""
+        if index and chat_count != index:
+            return False
+
+        if chat_title:
+            chat_title_actual = chat.get("title", "")
+            if chat_title.lower() != chat_title_actual.lower():
+                self.logger.debug(
+                    f"Skipping chat (title mismatch): {chat_title_actual}"
+                )
+                return False
+
+        chat_time = chat.get("create_time")
+        if chat_time and since and self.timestamp_compare(since, chat_time) > 0:
+            self.logger.debug(f"Skipping old chat {chat_count} (time={chat_time})")
+            return False
+
+        return True

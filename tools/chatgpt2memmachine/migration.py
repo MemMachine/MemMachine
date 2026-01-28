@@ -22,7 +22,7 @@ class MigrationHack:
         filters: dict | None = None,
         dry_run: bool = False,
         verbose: bool = False,
-        max_workers: int = 1
+        max_workers: int = 1,
     ):
         self.base_url = base_url
         self.verbose = verbose
@@ -61,7 +61,9 @@ class MigrationHack:
             print(f"Found {self.num_conversations} conversation(s)")
 
         for conv_id in range(1, self.num_conversations + 1):
-            extracted_file_name = f"{self.input_file_base_name}_{conv_id}_extracted.json"
+            extracted_file_name = (
+                f"{self.input_file_base_name}_{conv_id}_extracted.json"
+            )
             extracted_file = os.path.join(self.extract_dir, extracted_file_name)
             if os.path.exists(extracted_file):
                 # load from file directly
@@ -78,7 +80,9 @@ class MigrationHack:
                 print(f"Loaded {len(messages)} message(s) from conversation {conv_id}")
             self.conversations[conv_id] = messages
             # Dump extracted messages for this conversation
-            self.parser.dump_data(messages, output_format="json", outfile=extracted_file)
+            self.parser.dump_data(
+                messages, output_format="json", outfile=extracted_file
+            )
 
     def _format_message(self, message):
         """Format message for MemMachine API"""
@@ -87,14 +91,14 @@ class MigrationHack:
             return {
                 "content": message,
             }
-        
+
         # Handle dictionary messages
         formatted = {
             "content": message.get("content", ""),
         }
-        
+
         metadata = {}
-        
+
         # Iterate through all keys in the message
         for key, value in message.items():
             if key == "content":
@@ -115,10 +119,10 @@ class MigrationHack:
             elif key in ["message_id", "chat_id", "chat_title"]:
                 # Move these fields to metadata
                 metadata[key] = value
-        
+
         if metadata:
             formatted["metadata"] = metadata
-        
+
         return formatted
 
     def _process_conversation(self, conv_id, messages):
@@ -136,7 +140,7 @@ class MigrationHack:
                     if isinstance(role, str) and role.lower() != "assistant":
                         filtered_messages.append(msg)
             messages = filtered_messages
-        
+
         # Create a progress bar for this conversation
         pos = conv_id - 1
         msg_pbar = tqdm(
@@ -161,7 +165,7 @@ class MigrationHack:
         """Print summary of what would be migrated in dry-run mode"""
         contents = self.conversations
         total_conversations = len(contents)
-        
+
         # Count total items, filtering assistant messages if user_only is enabled
         if self.user_only:
             total_items = 0
@@ -196,23 +200,27 @@ class MigrationHack:
                 else:
                     # Skip non-list, non-string values
                     continue
-        
+
         org_display = self.org_id if self.org_id else "universal"
         project_display = self.project_id if self.project_id else "universal"
-        
+
         print(f"\nDry Run Summary:")
         print(f"  Target: {org_display}/{project_display}")
         print(f"  Conversations: {total_conversations}")
         print(f"  Total messages: {total_items}")
         if self.user_only:
             print(f"  Filter: User messages only (assistant messages excluded)")
-        
+
         # Show sample payload
         if contents:
             # Get first user message from first conversation (or first message if user_only is disabled)
             first_conv_id = sorted(contents.keys())[0]
             first_messages = contents[first_conv_id]
-            if first_messages and isinstance(first_messages, list) and len(first_messages) > 0:
+            if (
+                first_messages
+                and isinstance(first_messages, list)
+                and len(first_messages) > 0
+            ):
                 # Find first user message if user_only is enabled
                 sample_message = None
                 if self.user_only:
@@ -229,7 +237,7 @@ class MigrationHack:
                         if isinstance(msg, dict):
                             sample_message = msg
                             break
-                
+
                 if sample_message and isinstance(sample_message, dict):
                     formatted_sample = self._format_message(sample_message)
                     sample_payload = {
@@ -240,7 +248,9 @@ class MigrationHack:
                     if self.project_id:
                         sample_payload["project_id"] = self.project_id
                     print(f"\n  Sample Payload:")
-                    print(f"  {json.dumps(sample_payload, indent=2, ensure_ascii=False)}")
+                    print(
+                        f"  {json.dumps(sample_payload, indent=2, ensure_ascii=False)}"
+                    )
 
     def add_memories(self):
         if self.dry_run:
@@ -258,11 +268,15 @@ class MigrationHack:
                 executor.submit(self._process_conversation, conv_id, messages): conv_id
                 for conv_id, messages in contents.items()
             }
-            
-            completed_pbar = tqdm(total=len(contents), desc="Completed conversations", unit="conv")
+
+            completed_pbar = tqdm(
+                total=len(contents), desc="Completed conversations", unit="conv"
+            )
             for future in as_completed(futures):
                 conv_id, msg_count = future.result()
-                completed_pbar.set_description(f"Completed conv {conv_id} ({msg_count} msgs)")
+                completed_pbar.set_description(
+                    f"Completed conv {conv_id} ({msg_count} msgs)"
+                )
                 completed_pbar.update(1)
             completed_pbar.close()
 
@@ -291,11 +305,11 @@ Examples:
   
   # Migrate specific conversation (index 1) with verbose output
   %(prog)s -i chat.json --org-id my-org --project-id my-project --index 1 -v
-        """.strip()
+        """.strip(),
     )
-    
+
     # Core arguments
-    core_group = parser.add_argument_group('Core Arguments')
+    core_group = parser.add_argument_group("Core Arguments")
     core_group.add_argument(
         "-i",
         "--input",
@@ -318,9 +332,9 @@ Examples:
         action="store_true",
         help="Enable verbose/debug logging",
     )
-    
+
     # MemMachine configuration
-    memmachine_group = parser.add_argument_group('MemMachine Configuration')
+    memmachine_group = parser.add_argument_group("MemMachine Configuration")
     memmachine_group.add_argument(
         "--base-url",
         type=str,
@@ -339,9 +353,9 @@ Examples:
         default="",
         help="Project ID in MemMachine (optional, leave empty to use default)",
     )
-    
+
     # Filtering arguments
-    filter_group = parser.add_argument_group('Filtering Options')
+    filter_group = parser.add_argument_group("Filtering Options")
     filter_group.add_argument(
         "--since",
         metavar="TIME",
@@ -373,9 +387,9 @@ Examples:
         default=True,
         help="Only add user messages to MemMachine (exclude assistant messages)",
     )
-    
+
     # Operation modes
-    mode_group = parser.add_argument_group('Operation Modes')
+    mode_group = parser.add_argument_group("Operation Modes")
     mode_group.add_argument(
         "--dry-run",
         action="store_true",
@@ -388,9 +402,9 @@ Examples:
         default=1,
         help="Number of worker threads for parallel processing (default: 1, sequential). Set to >1 for parallel processing.",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Parse time string
     if args.since:
         parsed_time = parse_time(args.since)
@@ -401,11 +415,11 @@ Examples:
         args.since = parsed_time
     else:
         args.since = None
-    
+
     # Validate source-specific arguments
     if args.chat_title and args.source != "openai":
         parser.error("--chat-title is only supported for 'openai' source")
-    
+
     return args
 
 
@@ -435,7 +449,7 @@ if __name__ == "__main__":
         filters=filters or None,
         dry_run=args.dry_run,
         verbose=args.verbose,
-        max_workers=args.workers
+        max_workers=args.workers,
     )
 
     # Currently we always migrate full conversations without summarization

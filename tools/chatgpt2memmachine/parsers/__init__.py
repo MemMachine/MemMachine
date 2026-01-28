@@ -10,6 +10,7 @@ from .openai_parser import OpenAIParser
 
 __all__ = ["BaseParser", "LocomoParser", "OpenAIParser"]
 
+
 def get_parser(source: str, verbose: bool = False):
     """
     Get the appropriate parser for the given source.

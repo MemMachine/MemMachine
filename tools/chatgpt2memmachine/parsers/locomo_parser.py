@@ -64,15 +64,13 @@ class LocomoParser(BaseParser):
         # Extract filter values from filters dict
         if filters is None:
             filters = {}
-        
+
         since = filters.get("since", 0) or 0
         index = filters.get("index", 0) or 0
         limit = filters.get("limit", 0) or 0
 
         if self.verbose:
-            self.logger.debug(
-                f"since={since} index={index} limit={limit}"
-            )
+            self.logger.debug(f"since={since} index={index} limit={limit}")
 
         if self.verbose:
             self.logger.debug(f"Loading Locomo input file {infile}")
@@ -160,11 +158,15 @@ class LocomoParser(BaseParser):
                                 )
 
                         for message in messages:
-                            results.append({
-                                "content": message.get("text", ""),
-                                "speaker": message.get("speaker", ""),
-                                "timestamp": session_date_obj.timestamp() if session_date_obj else 0,
-                            })
+                            results.append(
+                                {
+                                    "content": message.get("text", ""),
+                                    "speaker": message.get("speaker", ""),
+                                    "timestamp": session_date_obj.timestamp()
+                                    if session_date_obj
+                                    else 0,
+                                }
+                            )
                             msg_count += 1
                             if limit and msg_count >= limit:
                                 done = True
@@ -186,4 +188,3 @@ class LocomoParser(BaseParser):
             done = True
 
         return results
-

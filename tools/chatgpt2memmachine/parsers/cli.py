@@ -25,7 +25,7 @@ except ImportError:
 def get_args():
     """
     Parse command-line arguments.
-    
+
     Key features:
     - Standard argument names (--input, --output)
     - Unified filtering arguments (--index for both sources)
@@ -50,11 +50,11 @@ Examples:
   
   # Parse specific conversation (index 1)
   %(prog)s -i chat.json -o output.json --index 1
-        """.strip()
+        """.strip(),
     )
-    
+
     # Core arguments
-    core_group = parser.add_argument_group('Core Arguments')
+    core_group = parser.add_argument_group("Core Arguments")
     core_group.add_argument(
         "-i",
         "--input",
@@ -81,9 +81,9 @@ Examples:
         action="store_true",
         help="Enable verbose/debug logging",
     )
-    
+
     # Filtering arguments
-    filter_group = parser.add_argument_group('Filtering Options')
+    filter_group = parser.add_argument_group("Filtering Options")
     filter_group.add_argument(
         "--since",
         metavar="TIME",
@@ -110,9 +110,9 @@ Examples:
         metavar="TITLE",
         help="[OpenAI only] Process only chats matching this title (case-insensitive)",
     )
-    
+
     # Operation modes
-    mode_group = parser.add_argument_group('Operation Modes')
+    mode_group = parser.add_argument_group("Operation Modes")
     mode_group.add_argument(
         "--count",
         action="store_true",
@@ -123,9 +123,9 @@ Examples:
         action="store_true",
         help="Validate file structure without processing (OpenAI source only), then exit",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Parse time string
     if args.since:
         parsed_time = parse_time(args.since)
@@ -136,14 +136,14 @@ Examples:
         args.since = parsed_time
     else:
         args.since = None
-    
+
     # Validate source-specific arguments
     if args.chat_title and args.source != "openai":
         parser.error("--chat-title is only supported for 'openai' source")
-    
+
     if args.validate and args.source != "openai":
         parser.error("--validate is only supported for 'openai' source")
-    
+
     return args
 
 
@@ -212,4 +212,3 @@ if __name__ == "__main__":
 
     # Output data as JSON
     parser.dump_data(data, output_format="json", outfile=args.output)
-

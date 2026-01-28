@@ -13,25 +13,18 @@ import sys
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    import yaml
-
-    YAML_AVAILABLE = True
-except ImportError:
-    YAML_AVAILABLE = False
-
 
 class BaseParser(ABC):
     """
     Base class for chat history parsers.
-    
+
     All parsers should inherit from this class and implement the abstract methods.
     """
 
     def __init__(self, verbose: bool = False):
         """
         Initialize the parser.
-        
+
         Args:
             verbose: Enable verbose logging
         """
@@ -40,7 +33,9 @@ class BaseParser(ABC):
 
     def _setup_logger(self) -> logging.Logger:
         """Setup logger for this parser instance."""
-        logger = logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}")
+        logger = logging.getLogger(
+            f"{self.__class__.__module__}.{self.__class__.__name__}"
+        )
         logger.setLevel(logging.DEBUG if self.verbose else logging.WARNING)
 
         if not logger.handlers:
@@ -54,11 +49,11 @@ class BaseParser(ABC):
     def timestamp_compare(ts1: Any, ts2: Any) -> int:
         """
         Compare two timestamps.
-        
+
         Args:
             ts1: First timestamp
             ts2: Second timestamp
-            
+
         Returns:
             -1 if ts1 < ts2, 1 if ts1 > ts2, 0 if equal
         """
@@ -74,10 +69,10 @@ class BaseParser(ABC):
     def timestamp_ms_to_sec(ts: Any) -> int:
         """
         Convert timestamp from milliseconds to seconds if needed.
-        
+
         Args:
             ts: Timestamp (can be in seconds or milliseconds)
-            
+
         Returns:
             Timestamp in seconds
         """
@@ -91,10 +86,10 @@ class BaseParser(ABC):
     def timestamp_to_obj(ts: Any) -> datetime.datetime:
         """
         Convert timestamp to datetime object.
-        
+
         Args:
             ts: Timestamp (seconds or milliseconds)
-            
+
         Returns:
             Datetime object
         """
@@ -104,13 +99,13 @@ class BaseParser(ABC):
     def load_json(self, infile: str) -> Any:
         """
         Load JSON data from file.
-        
+
         Args:
             infile: Path to JSON file
-            
+
         Returns:
             Parsed JSON data
-            
+
         Raises:
             FileNotFoundError: If file doesn't exist
             json.JSONDecodeError: If file is not valid JSON
@@ -129,10 +124,10 @@ class BaseParser(ABC):
     def count_conversations(self, infile: str) -> int:
         """
         Count the number of conversations in the input file.
-        
+
         Args:
             infile: Path to input file
-            
+
         Returns:
             Number of conversations
         """
@@ -146,7 +141,7 @@ class BaseParser(ABC):
     ) -> List[Any]:
         """
         Load messages from the input file.
-        
+
         Args:
             infile: Path to input file
             filters: Optional dictionary with filter parameters:
@@ -154,7 +149,7 @@ class BaseParser(ABC):
                 - index: Load only this conversation number (1-indexed, int)
                 - limit: Maximum number of messages to load (int)
                 - Additional parser-specific filter keys may be supported
-            
+
         Returns:
             List of messages (format depends on parser implementation)
         """
@@ -163,16 +158,16 @@ class BaseParser(ABC):
     def validate(self, infile: str) -> Tuple[bool, List[str], List[str]]:
         """
         Validate file structure without processing.
-        
+
         Args:
             infile: Path to input file
-            
+
         Returns:
             Tuple of (is_valid, errors, warnings)
             - is_valid: True if file can be parsed without critical errors
             - errors: List of error messages
             - warnings: List of warning messages
-            
+
         Note:
             Default implementation returns True with no errors/warnings.
             Subclasses should override this if validation is supported.
@@ -190,7 +185,7 @@ class BaseParser(ABC):
 
         Args:
             data: Data to output (list of strings or list of dicts)
-            output_format: Output format ('json', or 'yaml')
+            output_format: Output format ('json')
             outfile: Optional output file path (defaults to stdout)
         """
         if outfile:
@@ -203,8 +198,6 @@ class BaseParser(ABC):
                 # JSON output
                 json.dump(data, fp, indent=2, ensure_ascii=False)
                 fp.write("\n")
-            elif output_format == "yaml":
-                yaml.dump(data, fp, default_flow_style=False, allow_unicode=True, sort_keys=False)
             else:
                 # Text output (default)
                 for msg in data:
