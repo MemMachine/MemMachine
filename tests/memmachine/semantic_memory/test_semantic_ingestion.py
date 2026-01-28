@@ -267,7 +267,7 @@ async def test_consolidation_skips_small_groups(
         IngestionService.Params(
             semantic_storage=semantic_storage,
             history_store=episode_storage,
-            resource_retriever=resource_retriever,
+            resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=3,
         )
     )
@@ -313,7 +313,7 @@ async def test_consolidation_runs_when_threshold_met(
         IngestionService.Params(
             semantic_storage=semantic_storage,
             history_store=episode_storage,
-            resource_retriever=resource_retriever,
+            resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=3,
         )
     )
