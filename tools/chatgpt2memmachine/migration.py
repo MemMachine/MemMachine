@@ -1,138 +1,158 @@
 import argparse
 import datetime
 import os
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
+from datetime import timezone
 
 from openai_summary import OpenAISummary
-from process_chat_history import (
-    load_locomo,
-    load_openai,
-    locomo_count_conversations,
-    openai_count_conversations,
-)
+from parsers import get_parser
 from restcli import MemMachineRestClient
 from tqdm import tqdm
+
+
+def parse_time(time_str: str) -> Optional[float]:
+    """
+    Parse time string to timestamp.
+    
+    Supports:
+    - Unix timestamp (integer or float)
+    - ISO format: YYYY-MM-DDTHH:MM:SS
+    - Date only: YYYY-MM-DD (assumes 00:00:00)
+    
+    Args:
+        time_str: Time string to parse
+        
+    Returns:
+        Timestamp as float, or None if parsing fails
+    """
+    if not time_str or time_str == "0":
+        return None
+    
+    # Try as integer timestamp
+    try:
+        ts = int(time_str)
+        if ts > 0:
+            return float(ts)
+    except ValueError:
+        pass
+    
+    # Try as float timestamp
+    try:
+        ts = float(time_str)
+        if ts > 0:
+            return ts
+    except ValueError:
+        pass
+    
+    # Try ISO format with time
+    try:
+        time_obj = datetime.datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
+        return time_obj.timestamp()
+    except ValueError:
+        pass
+    
+    # Try ISO format with date only
+    try:
+        time_obj = datetime.datetime.strptime(time_str, "%Y-%m-%d")
+        return time_obj.timestamp()
+    except ValueError:
+        pass
+    
+    return None
 
 
 class MigrationHack:
     def __init__(
         self,
-        base_url="http://localhost:8080",
-        chat_history_file="data/conversations-chatgpt-sample.json",
-        chat_type="openai",
-        org_id="",
-        project_id="",
-        start_time=0,
-        max_messages=0,
-        extract_dir="extracted",
-        model=None,
-        dry_run=False,
+        base_url: str = "http://localhost:8080",
+        org_id: str = "",
+        project_id: str = "",
+        input: str = "data/conversations-chatgpt-sample.json",
+        source: str = "openai",
+        filters: dict | None = None,
+        dry_run: bool = False,
+        verbose: bool = False,
+        max_workers: int = 1
     ):
         self.base_url = base_url
+        self.verbose = verbose
         self.client = MemMachineRestClient(
             base_url=self.base_url,
-            verbose=False,
+            verbose=verbose,
         )
-        self.chat_history_file = chat_history_file
-        self.chat_type = chat_type
+        self.input_file = input
+        self.source = source
+        if filters is None:
+            self.filters = {}
+        else:
+            self.filters = filters
+        if "user_only" in self.filters:
+            self.user_only = self.filters["user_only"]
+        else:
+            self.user_only = True
+        self.parser = get_parser(self.source, self.verbose)
+        self.extract_dir = "extracted"
+        os.makedirs(self.extract_dir, exist_ok=True)
         self.org_id = org_id
         self.project_id = project_id
-        self.start_time = start_time
-        self.max_messages = max_messages
         # Extract the base filename from the chat history file path
-        self.chat_base_name = os.path.splitext(
-            os.path.basename(self.chat_history_file),
+        self.input_file_base_name = os.path.splitext(
+            os.path.basename(self.input_file),
         )[0]
-        self.extract_dir = extract_dir
-        # list of messages in conversations loaded from file
-        self.num_conversations = 0
-        self.messages = {}  # key: conversation id, value: list of messages
-        self.model = model
         self.dry_run = dry_run
-        self.api_key = os.getenv("OPENAI_API_KEY", None)
-        self.summaries = {}  # key: conversation id, value: list of summaries
+        self.max_workers = max_workers
+        self.conversations = {}
 
-    def load(self):
-        total_messages = 0
-        if self.chat_history_file is not None:
-            print(f"-> loading chat history file {self.chat_history_file}")
-            print("-> counting conversations...")
-            if self.chat_type == "locomo":
-                conv_count = locomo_count_conversations(
-                    self.chat_history_file,
-                    verbose=False,
-                )
-            elif self.chat_type == "openai":
-                conv_count = openai_count_conversations(
-                    self.chat_history_file,
-                    verbose=False,
-                )
-            else:
-                raise Exception(f"Error: Invalid chat type: {self.chat_type}")
-            print(
-                f"-> loaded {conv_count} conversations from {self.chat_type} file {self.chat_history_file}",
-            )
-            self.num_conversations = conv_count
-        # write into extract_dir
-        os.makedirs(self.extract_dir, exist_ok=True)
-        # Create the extract file name with timestamp
-        extract_file_prefix = f"{self.chat_base_name}_extracted"
+    def load_and_extract(self):
+        if self.input_file is None:
+            raise Exception("ERROR: Input file not set")
+        self.num_conversations = self.parser.count_conversations(self.input_file)
+        if not self.dry_run:
+            print(f"Found {self.num_conversations} conversation(s)")
+
         for conv_id in range(1, self.num_conversations + 1):
-            extract_file = f"{extract_file_prefix}_conv_{conv_id}.txt"
-            extract_file = os.path.join(self.extract_dir, extract_file)
-            if os.path.exists(extract_file):
-                print(f"== Extract file {extract_file} already cached, load from file")
-                messages = []
-                with open(extract_file, "r") as f:
-                    messages.extend(line.strip() for line in f)
-                self.messages[conv_id] = messages
-            else:
-                print(f"---> loading messages from conversation {conv_id}...")
-                if self.chat_type == "locomo":
-                    messages = load_locomo(
-                        self.chat_history_file,
-                        start_time=self.start_time,
-                        conv_num=conv_id,
-                        max_messages=self.max_messages,
-                        verbose=False,
-                    )
-                elif self.chat_type == "openai":
-                    messages = load_openai(
-                        self.chat_history_file,
-                        start_time=self.start_time,
-                        conv_num=conv_id,
-                        max_messages=self.max_messages,
-                        verbose=False,
-                    )
-                else:
-                    raise Exception(f"Error: Invalid chat type: {self.chat_type}")
-                print(
-                    f"---> loaded {len(messages)} messages from conversation {conv_id}",
-                )
-                total_messages += len(messages)
-                self.messages[conv_id] = messages
-                with open(extract_file, "w", encoding="utf-8") as f:
-                    # Write each message line by line to the extract file
-                    f.writelines(message + "\n" for message in self.messages[conv_id])
+            extracted_file_name = f"{self.input_file_base_name}_{conv_id}_extracted.json"
+            extracted_file = os.path.join(self.extract_dir, extracted_file_name)
+            if os.path.exists(extracted_file):
+                # load from file directly
+                with open(extracted_file, "r") as f:
+                    self.conversations[conv_id] = json.load(f)
+                continue
+            if not self.dry_run:
+                print(f"Loading conversation {conv_id}...")
+            # Build filters for this conversation (merge global filters with conv index)
+            filters = dict(self.filters or {})
+            filters["index"] = conv_id
+            messages = self.parser.load(self.input_file, filters=filters)
+            if not self.dry_run:
+                print(f"Loaded {len(messages)} message(s) from conversation {conv_id}")
+            self.conversations[conv_id] = messages
+            # Dump extracted messages for this conversation
+            self.parser.dump_data(messages, output_format="json", outfile=extracted_file)
+        
+        
 
     def summarize_messages(self, summarize_every=20):
-        print("== Summarizing messages starts")
-        if not self.api_key:
+        print("Summarizing messages...")
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
             raise Exception(
-                "Error: API key not found, please set environment variable OPENAI_API_KEY",
+                "ERROR: API key not found, please set environment variable OPENAI_API_KEY",
             )
-        openai_summary = OpenAISummary(api_key=self.api_key, model=self.model)
+        openai_summary = OpenAISummary(api_key=api_key)
 
-        summarized_file_prefix = f"{self.chat_base_name}_summarized"
+        summarized_file_prefix = f"{self.input_file_base_name}_summarized"
+        self.summaries = {}
         batch_num = 1
-        for conv_id in self.messages:
-            messages = self.messages[conv_id]
+        for conv_id in self.conversations:
+            messages = self.conversations[conv_id]
             summarized_file = f"{summarized_file_prefix}_conv_{conv_id}.txt"
             summarized_file = os.path.join(self.extract_dir, summarized_file)
             if os.path.exists(summarized_file):
-                print(
-                    f"== Summarized file {summarized_file} already cached, load from file",
-                )
+                if self.verbose:
+                    print(f"Using cached summary file: {summarized_file}")
                 if conv_id not in self.summaries or self.summaries[conv_id] is None:
                     self.summaries[conv_id] = []
                 with open(summarized_file, "r") as f:
@@ -143,7 +163,7 @@ class MigrationHack:
             else:
                 self.summaries[conv_id] = []
                 for i in range(0, len(messages), summarize_every):
-                    batch = messages[i: i + summarize_every]
+                    batch = messages[i : i + summarize_every]
                     batch_text = "\n".join(batch)
                     summary = ""
                     try:
@@ -152,20 +172,61 @@ class MigrationHack:
                         if "choices" in response and len(response["choices"]) > 0:
                             summary = response["choices"][0]["message"]["content"]
                         else:
-                            print(f"Error: No summary generated for batch {batch_num}")
-                            print(f"Response: {response}")
+                            print(f"ERROR: No summary generated for batch {batch_num}")
+                            if self.verbose:
+                                print(f"Response: {response}")
                     except Exception as e:
-                        print(f"Error processing batch {batch_num}: {e}")
+                        print(f"ERROR: Failed to process batch {batch_num}: {e}")
                     if summary:
                         self.summaries[conv_id].append(summary)
                         with open(summarized_file, "a") as f:
                             text = summary.replace("\n", "")
                             f.write(text + "\n")
                     batch_num += 1
-        print("== Summarizing messages done")
+
+    def _format_message(self, message):
+        """Format message for MemMachine API"""
+        formatted = {
+            "content": message.get("content", ""),
+        }
+        
+        metadata = {}
+        
+        # Iterate through all keys in the message
+        for key, value in message.items():
+            if key == "content":
+                # Content is already set above
+                continue
+            elif key == "role":
+                # Set both role and producer from role field
+                formatted["role"] = value
+                formatted["producer"] = value
+            elif key == "timestamp":
+                # Convert timestamp to ISO 8601 format (UTC)
+                if isinstance(value, (int, float)):
+                    dt = datetime.datetime.fromtimestamp(value, tz=timezone.utc)
+                    formatted["timestamp"] = dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+                else:
+                    formatted["timestamp"] = value
+            elif key in ["message_id", "chat_id", "chat_title"]:
+                # Move these fields to metadata
+                metadata[key] = value
+            else:
+                # Other fields can be omitted or added to metadata
+                # For now, we'll omit them unless they're useful
+                pass
+        
+        if metadata:
+            formatted["metadata"] = metadata
+        
+        return formatted
 
     def _process_conversation(self, conv_id, messages):
         """Process a single conversation with its own progress bar"""
+        # Filter out assistant messages if user_only is enabled
+        if self.user_only:
+            messages = [msg for msg in messages if msg.get("role", "").lower() != "assistant"]
+        
         # Create a progress bar for this conversation
         pos = conv_id - 1
         msg_pbar = tqdm(
@@ -176,149 +237,271 @@ class MigrationHack:
             leave=True,
         )
         for message in msg_pbar:
-            if not self.dry_run:
-                self.client.add_memory(
-                    org_id=self.org_id,
-                    project_id=self.project_id,
-                    messages=[message],
-                )
-            else:
-                print(f"Dry run: would add memory {message} to {self.org_id}/{self.project_id}")
+            formatted_message = self._format_message(message)
+            self.client.add_memory(
+                org_id=self.org_id if self.org_id else "",
+                project_id=self.project_id if self.project_id else "",
+                messages=[formatted_message],
+            )
 
         msg_pbar.close()
         return conv_id, len(messages)
 
-    def insert_memories(self, summary=False):
-        print(f"--- Inserting memories starts, summary={summary}")
+    def _dry_run(self, summary=False):
+        """Print summary of what would be migrated in dry-run mode"""
+        if summary:
+            contents = getattr(self, 'summaries', {})
+            content_type = "summaries"
+        else:
+            contents = self.conversations
+            content_type = "messages"
+        
+        total_conversations = len(contents)
+        
+        # Count total items, filtering assistant messages if user_only is enabled
+        if self.user_only and not summary:
+            total_items = sum(
+                len([msg for msg in msgs if msg.get("role", "").lower() != "assistant"])
+                for msgs in contents.values()
+            )
+        else:
+            total_items = sum(len(msgs) for msgs in contents.values())
+        
+        org_display = self.org_id if self.org_id else "universal"
+        project_display = self.project_id if self.project_id else "universal"
+        
+        print(f"\nDry Run Summary:")
+        print(f"  Target: {org_display}/{project_display}")
+        print(f"  Conversations: {total_conversations}")
+        print(f"  Total {content_type}: {total_items}")
+        if self.user_only and not summary:
+            print(f"  Filter: User messages only (assistant messages excluded)")
+        
+        # Show sample payload
+        if contents and not summary:
+            # Get first user message from first conversation (or first message if user_only is disabled)
+            first_conv_id = sorted(contents.keys())[0]
+            first_messages = contents[first_conv_id]
+            if first_messages and isinstance(first_messages, list) and len(first_messages) > 0:
+                # Find first user message if user_only is enabled
+                if self.user_only:
+                    sample_message = next(
+                        (msg for msg in first_messages if msg.get("role", "").lower() != "assistant"),
+                        None
+                    )
+                else:
+                    sample_message = first_messages[0]
+                
+                if sample_message and isinstance(sample_message, dict):
+                    formatted_sample = self._format_message(sample_message)
+                    sample_payload = {
+                        "messages": [formatted_sample],
+                    }
+                    if self.org_id:
+                        sample_payload["org_id"] = self.org_id
+                    if self.project_id:
+                        sample_payload["project_id"] = self.project_id
+                    print(f"\n  Sample Payload:")
+                    print(f"  {json.dumps(sample_payload, indent=2, ensure_ascii=False)}")
 
-        # Process conversations concurrently using ThreadPoolExecutor
-        with ThreadPoolExecutor(
-            max_workers=min(self.num_conversations, 10),
-        ) as executor:
-            if summary:
-                contents = self.summaries
-            else:
-                contents = self.messages
-            # Submit all conversation processing tasks
-            future_to_conv = {
+    def add_memories(self, summary=False):
+        if self.dry_run:
+            # In dry-run mode, just print a summary without actual processing
+            self._dry_run(summary)
+            return
+
+        print(f"Adding memories to MemMachine...")
+        contents = self.conversations
+        # Process conversations using ThreadPoolExecutor
+        # Default max_workers=1 for sequential processing
+        workers = min(self.max_workers, len(contents))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
                 executor.submit(self._process_conversation, conv_id, messages): conv_id
                 for conv_id, messages in contents.items()
             }
-
-            # Create a progress bar for completed conversations
-            completed_pbar = tqdm(
-                total=len(contents),
-                desc="Completed conversations",
-                unit="conv",
-            )
-
-            # Process completed tasks
-            for future in as_completed(future_to_conv):
+            
+            completed_pbar = tqdm(total=len(contents), desc="Completed conversations", unit="conv")
+            for future in as_completed(futures):
                 conv_id, msg_count = future.result()
-                completed_pbar.set_description(
-                    f"Completed conv {conv_id} ({msg_count} msgs)",
-                )
+                completed_pbar.set_description(f"Completed conv {conv_id} ({msg_count} msgs)")
                 completed_pbar.update(1)
-
             completed_pbar.close()
 
-        print("--- Inserting memories done")
+        print("Migration complete")
 
     def migrate(self, summarize=False, summarize_every=20):
-        print("== Loading starts")
-        self.load()
-        print("== Loading done")
+        self.load_and_extract()
+        
         if summarize:
-            print("== Summarizing starts")
             self.summarize_messages(summarize_every)
-            print("== Summarizing done")
-        print("== Migration starts")
-        self.insert_memories(summarize)
-        print("== Migration done")
+        
+        self.add_memories(summarize)
 
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description="Hackathon - Migration from ChatGPT to MemMachine",
+        description="Migrate chat history data to MemMachine",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Migrate OpenAI chat history to MemMachine
+  %(prog)s -i chat.json --org-id my-org --project-id my-project --source openai
+  
+  # Migrate with filters (only messages after date, limit to 100)
+  %(prog)s -i chat.json --org-id my-org --project-id my-project --since 2024-01-01 -l 100
+  
+  # Dry run to preview what would be migrated
+  %(prog)s -i chat.json --org-id my-org --project-id my-project --dry-run
+  
+  # Migrate specific conversation (index 1) with verbose output
+  %(prog)s -i chat.json --org-id my-org --project-id my-project --index 1 -v
+        """.strip()
     )
-    parser.add_argument(
-        "--base_url",
+    
+    # Core arguments
+    core_group = parser.add_argument_group('Core Arguments')
+    core_group.add_argument(
+        "-i",
+        "--input",
+        type=str,
+        required=True,
+        metavar="FILE",
+        help="Input chat history file (required)",
+    )
+    core_group.add_argument(
+        "-s",
+        "--source",
+        type=str,
+        choices=["openai", "locomo"],
+        default="openai",
+        help="Source format: 'openai' or 'locomo' (default: %(default)s)",
+    )
+    core_group.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose/debug logging",
+    )
+    
+    # MemMachine configuration
+    memmachine_group = parser.add_argument_group('MemMachine Configuration')
+    memmachine_group.add_argument(
+        "--base-url",
         type=str,
         default="http://localhost:8080",
-        help="Base URL of the MemMachine API",
+        help="Base URL of the MemMachine API (default: %(default)s)",
     )
-    parser.add_argument(
-        "--chat_history",
+    memmachine_group.add_argument(
+        "--org-id",
         type=str,
-        default="data/locomo10.json",
-        help="Chat history file",
+        default="",
+        help="Organization ID in MemMachine (optional, leave empty to use default)",
     )
-    parser.add_argument(
-        "--chat_type",
+    memmachine_group.add_argument(
+        "--project-id",
         type=str,
-        default="locomo",
-        help="Chat type: locomo or openai",
+        default="",
+        help="Project ID in MemMachine (optional, leave empty to use default)",
     )
-    parser.add_argument(
-        "--start_time",
-        type=str,
-        default="0",
-        help="only read messages after this time either YYYY-MM-DDTHH:MM:SS or secs since epoch",
+    
+    # Filtering arguments
+    filter_group = parser.add_argument_group('Filtering Options')
+    filter_group.add_argument(
+        "--since",
+        metavar="TIME",
+        help="Only process messages after this time. Supports: Unix timestamp, ISO format (YYYY-MM-DDTHH:MM:SS), or date (YYYY-MM-DD)",
     )
-    parser.add_argument(
-        "--max_messages",
+    filter_group.add_argument(
+        "-l",
+        "--limit",
         type=int,
+        metavar="N",
         default=0,
-        help="only read this many messages",
+        help="Maximum number of messages to process per conversation (0 = no limit, default: %(default)s)",
     )
-    parser.add_argument(
-        "--summarize",
-        default=False,
-        action="store_true",
-        help="Summarize messages",
-    )
-    parser.add_argument(
-        "--summarize_every",
+    filter_group.add_argument(
+        "--index",
         type=int,
-        default=20,
-        help="Summarize every n messages",
+        metavar="N",
+        default=0,
+        help="Process only the conversation/chat at index N (1-based, 0 = all). Works for both OpenAI and Locomo sources.",
     )
-    parser.add_argument(
-        "--dry_run",
-        default=False,
+    filter_group.add_argument(
+        "--chat-title",
+        metavar="TITLE",
+        help="[OpenAI only] Process only chats matching this title (case-insensitive)",
+    )
+    filter_group.add_argument(
+        "--user-only",
         action="store_true",
-        help="Dry run",
+        default=True,
+        help="Only add user messages to MemMachine (exclude assistant messages)",
     )
+    
+    # Operation modes
+    mode_group = parser.add_argument_group('Operation Modes')
+    mode_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Dry run mode: loads and extracts data to 'extracted' directory but does not add memories to MemMachine",
+    )
+    mode_group.add_argument(
+        "--workers",
+        type=int,
+        metavar="N",
+        default=1,
+        help="Number of worker threads for parallel processing (default: 1, sequential). Set to >1 for parallel processing.",
+    )
+    
     args = parser.parse_args()
+    
+    # Parse time string
+    if args.since:
+        parsed_time = parse_time(args.since)
+        if parsed_time is None:
+            parser.error(
+                f"Invalid time format: '{args.since}'. Use Unix timestamp, ISO format (YYYY-MM-DDTHH:MM:SS), or date (YYYY-MM-DD)"
+            )
+        args.since = parsed_time
+    else:
+        args.since = None
+    
+    # Validate source-specific arguments
+    if args.chat_title and args.source != "openai":
+        parser.error("--chat-title is only supported for 'openai' source")
+    
     return args
 
 
 if __name__ == "__main__":
     args = get_args()
-    base_url = args.base_url
-    chat_history = args.chat_history
-    chat_type = args.chat_type
-    start_time = args.start_time
-    dry_run = args.dry_run
-    try:
-        start_time = int(start_time)
-    except Exception:
-        time_format = "%Y-%m-%dT%H:%M:%S"
-        time_obj = datetime.datetime.strptime(args.start_time, time_format)
-        start_time = time_obj.timestamp()
+    args.source = args.source.lower()
 
-    max_messages = args.max_messages
-    # use summarized messages when summarize is true
-    summarize = args.summarize
-    summarize_every = args.summarize_every
+    # Build filters dict for parser
+    filters: dict = {}
+    if args.since:
+        filters["since"] = args.since
+    if args.limit and args.limit > 0:
+        filters["limit"] = args.limit
+    if args.index and args.index > 0:
+        filters["index"] = args.index
+    if args.user_only:
+        filters["user_only"] = args.user_only
+    if args.chat_title:
+        filters["chat_title"] = args.chat_title
+
     migration_hack = MigrationHack(
-        base_url=base_url,
-        chat_history_file=chat_history,
-        chat_type=chat_type,
-        start_time=start_time,
-        max_messages=max_messages,
-        dry_run=dry_run,
+        base_url=args.base_url,
+        org_id=args.org_id,
+        project_id=args.project_id,
+        input=args.input,
+        source=args.source,
+        filters=filters or None,
+        dry_run=args.dry_run,
+        verbose=args.verbose,
+        max_workers=args.workers
     )
 
-    migration_hack.migrate(summarize=summarize, summarize_every=summarize_every)
-    print("== All completed successfully")
+    # Currently we always migrate full conversations without summarization
+    migration_hack.migrate()
