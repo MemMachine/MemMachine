@@ -44,7 +44,7 @@ class LocomoParser(BaseParser):
         self,
         infile: str,
         filters: Optional[Dict[str, Any]] = None,
-    ) -> List[str]:
+    ) -> List[Dict[str, Any]]:
         """
         Load messages from Locomo chat history.
 
@@ -56,7 +56,10 @@ class LocomoParser(BaseParser):
                 - limit: Maximum number of messages to load (int)
 
         Returns:
-            List of message text strings
+            List of message dictionaries, each containing:
+            - speaker: Speaker name/identifier
+            - timestamp: Message timestamp (Unix timestamp)
+            - content: Same as text (for compatibility)
         """
         # Extract filter values from filters dict
         if filters is None:
@@ -76,7 +79,7 @@ class LocomoParser(BaseParser):
 
         data = self.load_json(infile)
 
-        lines = []
+        results = []
         conv_count = 0
         msg_count = 0
         section_count = 0
@@ -157,17 +160,15 @@ class LocomoParser(BaseParser):
                                 )
 
                         for message in messages:
-                            if "text" in message:
-                                lines.append(message["text"])
-                                msg_count += 1
-                                if limit and msg_count >= limit:
-                                    # User asked to do this many messages only
-                                    if self.verbose:
-                                        self.logger.debug(
-                                            f"Processed max messages={msg_count}"
-                                        )
-                                    done = True
-                                    break
+                            results.append({
+                                "content": message.get("text", ""),
+                                "speaker": message.get("speaker", ""),
+                                "timestamp": session_date_obj.timestamp() if session_date_obj else 0,
+                            })
+                            msg_count += 1
+                            if limit and msg_count >= limit:
+                                done = True
+                                break
 
                         if done:
                             break
@@ -184,5 +185,5 @@ class LocomoParser(BaseParser):
                 self.logger.debug(f"Loaded all sections={section_count}")
             done = True
 
-        return lines
+        return results
 

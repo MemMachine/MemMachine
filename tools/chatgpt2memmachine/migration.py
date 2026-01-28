@@ -201,6 +201,8 @@ class MigrationHack:
                 # Set both role and producer from role field
                 formatted["role"] = value
                 formatted["producer"] = value
+            elif key == "speaker":
+                formatted["producer"] = value
             elif key == "timestamp":
                 # Convert timestamp to ISO 8601 format (UTC)
                 if isinstance(value, (int, float)):
@@ -260,12 +262,34 @@ class MigrationHack:
         
         # Count total items, filtering assistant messages if user_only is enabled
         if self.user_only and not summary:
-            total_items = sum(
-                len([msg for msg in msgs if msg.get("role", "").lower() != "assistant"])
-                for msgs in contents.values()
-            )
+            total_items = 0
+            for msgs in contents.values():
+                if isinstance(msgs, list):
+                    # Filter out assistant messages
+                    user_messages = []
+                    for msg in msgs:
+                        if isinstance(msg, dict):
+                            role = msg.get("role", "")
+                            if isinstance(role, str) and role.lower() != "assistant":
+                                user_messages.append(msg)
+                    total_items += len(user_messages)
+                elif isinstance(msgs, str):
+                    # Handle string summaries (shouldn't happen when summary=False, but be safe)
+                    total_items += 1
+                else:
+                    # Skip non-list, non-string values
+                    continue
         else:
-            total_items = sum(len(msgs) for msgs in contents.values())
+            total_items = 0
+            for msgs in contents.values():
+                if isinstance(msgs, list):
+                    total_items += len(msgs)
+                elif isinstance(msgs, str):
+                    # Handle string summaries
+                    total_items += 1
+                else:
+                    # Skip non-list, non-string values
+                    continue
         
         org_display = self.org_id if self.org_id else "universal"
         project_display = self.project_id if self.project_id else "universal"
@@ -284,13 +308,21 @@ class MigrationHack:
             first_messages = contents[first_conv_id]
             if first_messages and isinstance(first_messages, list) and len(first_messages) > 0:
                 # Find first user message if user_only is enabled
+                sample_message = None
                 if self.user_only:
-                    sample_message = next(
-                        (msg for msg in first_messages if msg.get("role", "").lower() != "assistant"),
-                        None
-                    )
+                    # Filter for user messages (non-assistant)
+                    for msg in first_messages:
+                        if isinstance(msg, dict):
+                            role = msg.get("role", "")
+                            if isinstance(role, str) and role.lower() != "assistant":
+                                sample_message = msg
+                                break
                 else:
-                    sample_message = first_messages[0]
+                    # Use first message regardless of role
+                    for msg in first_messages:
+                        if isinstance(msg, dict):
+                            sample_message = msg
+                            break
                 
                 if sample_message and isinstance(sample_message, dict):
                     formatted_sample = self._format_message(sample_message)
