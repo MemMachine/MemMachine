@@ -6,7 +6,8 @@ episodic and profile memory systems.
 """
 
 from .client import MemMachineClient
+from .config import Config
 from .memory import Memory
 from .project import Project
 
-__all__ = ["MemMachineClient", "Memory", "Project"]
+__all__ = ["Config", "MemMachineClient", "Memory", "Project"]

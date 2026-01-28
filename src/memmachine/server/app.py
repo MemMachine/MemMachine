@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 class MemMachineAPI(FastAPI):
     """MemMachine API wrapper."""
 
-    def __init__(self, lifespan: Lifespan[Any] | None = None) -> None:
+    def __init__(
+        self, lifespan: Lifespan[Any] | None = None, with_config_api: bool = False
+    ) -> None:
         """Init the MemMachine API wrapper."""
         title = "MemMachine Server"
         description = "REST API server for MemMachine memory system"
@@ -53,6 +55,7 @@ class MemMachineAPI(FastAPI):
             description=description,
             lifespan=cast(Any, lifespan),
         )
+        self._with_config_api = with_config_api
         self._configure()
 
     def _configure(self) -> None:
@@ -62,7 +65,7 @@ class MemMachineAPI(FastAPI):
             self._validation_error_handler_factory(422),
         )
         self.mount("/mcp", mcp_app)
-        load_v2_api_router(self)
+        load_v2_api_router(self, with_config_api=self._with_config_api)
 
     @staticmethod
     def _validation_error_handler_factory(error_code: int) -> ExceptionHandler:
@@ -82,13 +85,23 @@ class MemMachineAPI(FastAPI):
         return cast(ExceptionHandler, handler)
 
 
-app = MemMachineAPI(lifespan=mcp_http_lifespan)
+app = MemMachineAPI(
+    lifespan=mcp_http_lifespan,
+    with_config_api=bool(os.getenv("MEMMACHINE_CONFIG_API")),
+)
 app.add_middleware(cast(type, AccessLogMiddleware))
 app.add_middleware(cast(type, RequestMetricsMiddleware))
 
 
 def start_http() -> None:
     """Run the FastAPI HTTP application using the uvicorn server."""
+    # For the single-worker case, the module-level `app` was created before
+    # main() set the env var. Include the config router explicitly here.
+    if os.getenv("MEMMACHINE_CONFIG_API"):
+        from memmachine.server.api_v2.config_router import config_router
+
+        app.include_router(config_router, prefix="/api/v2")
+
     config = load_configuration()
 
     # Determine number of workers.
@@ -151,12 +164,20 @@ def main() -> None:
         action="store_true",
         help="Show the version and exit",
     )
+    parser.add_argument(
+        "--with-config-api",
+        action="store_true",
+        help="Enable the configuration management API endpoints",
+    )
     args = parser.parse_args()
 
     # Handle --version early
     if args.version:
         sys.stdout.write(f"{get_version()}\n")
         sys.exit(0)
+
+    if args.with_config_api:
+        os.environ["MEMMACHINE_CONFIG_API"] = "1"
 
     try:
         if args.stdio:
