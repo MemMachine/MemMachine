@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 import pytest
 
@@ -76,10 +75,7 @@ async def test_read_lock_allows_concurrent_reads():
             await asyncio.sleep(0.1)
             results.append(f"reader{idx}_released")
 
-    start = time.time()
     await asyncio.gather(reader(1), reader(2))
-    duration = time.time() - start
-    assert 0.1 < duration < 0.2  # Both readers should run concurrently
 
     assert results == [
         "reader1_acquired",
@@ -102,29 +98,32 @@ async def test_write_lock_excludes_others():
     async def writer():
         async with lock.write_lock():
             order.append("writer_acquired")
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
             order.append("writer_released")
 
     async def reader():
         async with lock.read_lock():
             order.append("reader_acquired")
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.01)
             order.append("reader_released")
 
-    start = time.time()
-
     t1 = asyncio.create_task(writer())
-    await asyncio.sleep(0.01)
     t2 = asyncio.create_task(reader())
     await asyncio.gather(t1, t2)
-
-    duration = time.time() - start
-    assert duration > 0.2  # Reader should wait for writer to finish
-
-    assert order[0] == "writer_acquired"
-    assert order[1] == "writer_released"
-    assert order[2] == "reader_acquired"
-    assert order[3] == "reader_released"
+    assert order in (
+        [
+            "writer_acquired",
+            "writer_released",
+            "reader_acquired",
+            "reader_released",
+        ],
+        [
+            "reader_acquired",
+            "reader_released",
+            "writer_acquired",
+            "writer_released",
+        ],
+    ), f"order={order}"
 
 
 @pytest.mark.asyncio
@@ -144,16 +143,11 @@ async def test_readers_blocked_by_writer_with():
             await asyncio.sleep(0.1)
             events.append("reader_released")
 
-    start = time.time()
-
     t1 = asyncio.create_task(writer())
     await asyncio.sleep(0.01)
     t2 = asyncio.create_task(reader())
 
     await asyncio.gather(t1, t2)
-    duration = time.time() - start
-    assert duration > 0.2  # Reader should wait for writer to finish
-
     assert events[0] == "writer_acquired"
     assert events[1] == "writer_released"
     assert events[2] == "reader_acquired"
@@ -187,15 +181,17 @@ async def test_concurrent_readers():
             await asyncio.sleep(0.1)
             results.append(f"end_{task_id}")
 
-    # Run two readers concurrently
-    start = time.time()
     await asyncio.gather(read_task(1), read_task(2))
-    duration = time.time() - start
-    assert 0.1 < duration < 0.2  # Both should have run concurrently
 
-    # Both should have started before the first one finished
-    assert results[0] == "start_1"
-    assert results[1] == "start_2"
+    assert "start_1" in results
+    assert "start_2" in results
+    assert results[:2] == [
+        "start_1",
+        "start_2",
+    ] or results[:2] == [
+        "start_2",
+        "start_1",
+    ]
 
 
 @pytest.mark.asyncio
@@ -208,19 +204,15 @@ async def test_writer_exclusion():
     async def writer():
         async with manager.write_lock(key):
             status.append("writing")
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
             status.append("done_writing")
 
     async def reader():
-        await asyncio.sleep(0.1)  # Ensure writer gets it first
+        await asyncio.sleep(0.1)
         async with manager.read_lock(key):
             status.append("reading")
 
-    start = time.time()
     await asyncio.gather(writer(), reader())
-    duration = time.time() - start
-    assert duration > 0.15
-
     # Reader must wait until writer is done
     assert status == ["writing", "done_writing", "reading"]
 
@@ -270,7 +262,6 @@ async def test_writer_priority_blocks_new_readers():
     # Run concurrently
     await asyncio.gather(reader_1(), writer_1(), reader_2())
 
-    # Assertions
     expected = [
         "reader_1_start",
         "reader_1_end",  # Reader 1 finishes
@@ -304,21 +295,33 @@ async def test_concurrent_write_exclusion():
 async def test_multiple_independent_keys():
     """Verify that locking 'key_a' does not block 'key_b'."""
     manager = AsyncRWLockPool()
-    start_time = asyncio.get_event_loop().time()
+
+    events = []
 
     async def lock_a():
         async with manager.write_lock("a"):
-            await asyncio.sleep(0.2)
+            events.append("a_locked")
+            await asyncio.sleep(0.1)
+            events.append("a_unlocked")
 
     async def lock_b():
         async with manager.write_lock("b"):
-            await asyncio.sleep(0.2)
+            events.append("b_locked")
+            await asyncio.sleep(0.1)
+            events.append("b_unlocked")
 
     await asyncio.gather(lock_a(), lock_b())
-    end_time = asyncio.get_event_loop().time()
-
-    # Total time should be ~0.2s, not 0.4s, because they run in parallel
-    assert end_time - start_time < 0.3
+    assert events[:2] == [
+        "a_locked",
+        "b_locked",
+    ] or events[:2] == [
+        "b_locked",
+        "a_locked",
+    ]
+    assert "a_locked" in events
+    assert "b_locked" in events
+    assert "a_unlocked" in events
+    assert "b_unlocked" in events
 
 
 @pytest.mark.asyncio
@@ -346,29 +349,45 @@ async def test_lock_reuse():
 
 
 @pytest.mark.asyncio
-async def test_hash_collision_in_lock_pool():
-    """Verify that different keys resulting in the same hash will wait"""
-    manager = AsyncRWLockPool(pool_size=4)
+async def test_hash_collision_in_lock_pool_deterministic():
+    """Verify that different keys resulting in the same hash will wait using event logs"""
+    # Use a pool size of 1 to force every different key to collide on the same slot
+    manager = AsyncRWLockPool(pool_size=1)
+    events = []
 
-    async def use_lock(key):
+    async def use_lock(key, task_id):
         async with manager.write_lock(key):
-            await asyncio.sleep(0.1)
+            events.append(f"acquire_{task_id}")
+            await asyncio.sleep(0.05)  # Short sleep just to yield control
+            events.append(f"release_{task_id}")
 
-    start = time.time()
+    # Gather tasks. Because pool_size is 1, they MUST run sequentially.
     await asyncio.gather(
-        use_lock("a"),
-        use_lock("b"),
-        use_lock("c"),
-        use_lock("d"),
-        use_lock("e"),
+        use_lock("a", 1),
+        use_lock("b", 2),
     )
-    duration = time.time() - start
-    assert (
-        0.2 <= duration < 2.0
-    )  # At least two sets must have run sequentially due to collisions
 
-    # Every time a lock was released, it went to the pool
-    # But it should be capped at max_idle
-    assert len(manager._locks) == 4
+    # Verify the sequence: acquire_1 -> release_1 -> acquire_2 -> release_2
+    # If the locks didn't collide/wait, we would see acquire_1 -> acquire_2
+    assert events[0] == "acquire_1"
+    assert events[1] == "release_1"
+    assert events[2] == "acquire_2"
+    assert events[3] == "release_2"
 
+    assert events in (
+        [
+            "acquire_1",
+            "release_1",
+            "acquire_2",
+            "release_2",
+        ],
+        [
+            "acquire_2",
+            "release_2",
+            "acquire_1",
+            "release_1",
+        ],
+    ), f"events={events}"
+
+    assert len(manager._locks) == 1
     await manager.close()

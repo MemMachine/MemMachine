@@ -174,6 +174,8 @@ class EmbeddersConf(BaseModel):
         """Parse embedder config by provider and return the structured model."""
         embedder = input_dict.get("embedders", {})
 
+        if embedder is None:
+            embedder = {}
         if isinstance(embedder, cls):
             return embedder
 

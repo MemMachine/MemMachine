@@ -61,16 +61,21 @@ class EpisodeStoreConf(YamlSerializableMixin):
 class SemanticMemoryConf(YamlSerializableMixin):
     """Configuration for semantic memory defaults."""
 
-    database: str = Field(
-        ...,
+    enabled: bool = Field(
+        default=True,
+        description="Whether semantic memory is enabled. "
+        "Auto-disabled when required fields (database, llm_model, embedding_model) are empty.",
+    )
+    database: str | None = Field(
+        default=None,
         description="The database to use for semantic memory",
     )
-    llm_model: str = Field(
-        ...,
+    llm_model: str | None = Field(
+        default=None,
         description="The default language model to use for semantic memory",
     )
-    embedding_model: str = Field(
-        ...,
+    embedding_model: str | None = Field(
+        default=None,
         description="The embedding model to use for semantic memory",
     )
 
@@ -82,6 +87,22 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+
+    @model_validator(mode="after")
+    def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:
+        """Auto-disable semantic memory when required fields are missing."""
+        if self.enabled and not (
+            self.database and self.llm_model and self.embedding_model
+        ):
+            logger.warning(
+                "Semantic memory auto-disabled: missing required fields "
+                "(database=%r, llm_model=%r, embedding_model=%r).",
+                self.database,
+                self.llm_model,
+                self.embedding_model,
+            )
+            self.enabled = False
+        return self
 
 
 def _read_txt(filename: str) -> str:
@@ -250,6 +271,9 @@ class Configuration(BaseModel):
     episode_store: EpisodeStoreConf
     server: ServerConf = ServerConf()
 
+    # Path to the configuration file (set when loaded from file)
+    _config_file_path: str | None = None
+
     def check_reranker(self, reranker_name: str) -> None:
         long_term_memory = self.episodic_memory.long_term_memory
         if not reranker_name or not long_term_memory:
@@ -291,6 +315,35 @@ class Configuration(BaseModel):
         }
         return yaml.safe_dump(data, sort_keys=True)
 
+    @property
+    def config_file_path(self) -> str | None:
+        """Return the path to the configuration file, if loaded from file."""
+        return self._config_file_path
+
+    def save(self, path: str | None = None) -> None:
+        """
+        Save the configuration to a YAML file.
+
+        Args:
+            path: The file path to save to. If None, saves to the original
+                  file path from which the configuration was loaded.
+
+        Raises:
+            ValueError: If no path is provided and the configuration was not
+                        loaded from a file.
+
+        """
+        save_path = path or self._config_file_path
+        if save_path is None:
+            raise ValueError(
+                "No path provided and configuration was not loaded from a file"
+            )
+
+        config_path = Path(save_path)
+        yaml_content = self.to_yaml()
+        config_path.write_text(yaml_content, encoding="utf-8")
+        logger.info("Configuration saved to '%s'", save_path)
+
     @classmethod
     def load_yml_file(cls, config_file: str) -> Configuration:
         """Load configuration from a YAML file path."""
@@ -323,4 +376,6 @@ class Configuration(BaseModel):
 
         mapping_config = cast(dict[str, Any], yaml_config)
 
-        return Configuration(**mapping_config)
+        config = Configuration(**mapping_config)
+        config._config_file_path = config_file
+        return config

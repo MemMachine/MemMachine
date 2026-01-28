@@ -216,6 +216,9 @@ class LanguageModelsConf(BaseModel):
         """Parse language model config definitions into typed models."""
         lm = input_dict.get("language_models", {})
 
+        if lm is None:
+            lm = {}
+
         if isinstance(lm, cls):
             return lm
 
