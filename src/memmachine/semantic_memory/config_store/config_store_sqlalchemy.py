@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import Insert as SQliteInsert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -732,9 +733,27 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
-            res = await session.execute(stmt)
-            set_type_id = res.scalar_one()
-            await session.commit()
+            try:
+                res = await session.execute(stmt)
+                set_type_id = res.scalar_one()
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+
+                existing_stmt = (
+                    select(SetType.id)
+                    .where(SetType.org_id == org_id)
+                    .where(SetType.org_level_set == org_level_set)
+                    .where(SetType.metadata_tags_sig == tag_str)
+                )
+
+                existing_res = await session.execute(existing_stmt)
+                existing_id = existing_res.scalar_one_or_none()
+
+                if existing_id is None:
+                    raise
+
+                return str(existing_id)
 
         return str(set_type_id)
 
