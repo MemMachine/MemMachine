@@ -83,11 +83,6 @@ class MemMachineRestClient:
 
         latency_ms = round((end_time - start_time) * 1000, 2)
 
-        # Write to statistic file
-        self.statistic_fp.write(
-            f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms}\n",
-        )
-
         # Trace the request if verbose
         if self.verbose:
             self._trace_request(
@@ -96,6 +91,10 @@ class MemMachineRestClient:
                 payload,
                 response,
                 latency_ms,
+            )
+            # Write to statistic file
+            self.statistic_fp.write(
+                f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms}\n",
             )
 
         if response.status_code != 200:
