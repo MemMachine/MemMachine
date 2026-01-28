@@ -346,7 +346,7 @@ class SemanticSessionManager:
         session_data: SessionData,
         metadata: Mapping[str, JsonValue] | None = None,
     ) -> list[_SetIdEntry]:
-        metadata = {k: v for k, v in metadata.items()} if metadata is not None else {}
+        metadata = dict(metadata) if metadata is not None else {}
 
         normalized_metadata: dict[str, str] = {
             key: str(value) for key, value in metadata.items() if value is not None
