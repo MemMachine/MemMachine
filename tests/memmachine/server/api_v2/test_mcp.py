@@ -164,6 +164,8 @@ def patch_memmachine():
     import memmachine.server.api_v2.mcp as mcp_module
 
     mcp_module.mem_machine = Mock()
+    mcp_module.mem_machine.config = Mock(image_summarization_model="qwen_model")
+    mcp_module.mem_machine.resources = Mock()
     yield
     mcp_module.mem_machine = None  # cleanup
 
@@ -185,6 +187,38 @@ async def test_add_memory_success(mock_add, params, mcp_client):
     root = result.data
     assert root.status == 200
     assert root.message == "Success"
+
+
+@pytest.mark.asyncio
+@patch("memmachine.server.api_v2.mcp.summarize_image", new_callable=AsyncMock)
+@patch("memmachine.server.api_v2.mcp._add_messages_to", new_callable=AsyncMock)
+async def test_add_memory_with_image_success(mock_add, mock_summarize, params, mcp_client):
+    mock_summarize.return_value = "a cat on a sofa"
+
+    # base64("fake")
+    image_b64 = "ZmFrZQ=="
+
+    result = await mcp_client.call_tool(
+        name="add_memory",
+        arguments={
+            "content": "hello memory",
+            "org_id": params.org_id,
+            "proj_id": params.proj_id,
+            "user_id": params.user_id,
+            "image_base64": image_b64,
+            "image_mime_type": "image/png",
+        },
+    )
+
+    mock_summarize.assert_awaited_once()
+    mock_add.assert_awaited_once()
+    call_kwargs = mock_add.call_args.kwargs
+    spec = call_kwargs["spec"]
+    assert "[Image Summary]" in spec.messages[0].content
+    assert "a cat on a sofa" in spec.messages[0].content
+
+    assert result.data is not None
+    assert result.data.status == 200
 
 
 @pytest.mark.asyncio

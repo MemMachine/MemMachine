@@ -60,8 +60,6 @@ async def summarize_image(
 
     data_url = _to_data_url(image_bytes, mime_type)
 
-    print("Data URL:", data_url)  # Debugging line to check the data URL
-
     messages = [
         {"role": "system", "content": _IMAGE_SUMMARY_SYSTEM_PROMPT},
         {
