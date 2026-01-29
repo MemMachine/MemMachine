@@ -973,7 +973,7 @@ class MemMachine:
             description=description,
         )
 
-    async def semantic_add_set_type_category(
+    async def semantic_add_category_template(
         self,
         *,
         set_type_id: str,
@@ -997,14 +997,14 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.add_new_set_type_category(
+        return await semantic_session.add_category_template(
             set_type_id=set_type_id,
             category_name=category_name,
             prompt=prompt,
             description=description,
         )
 
-    async def semantic_list_set_type_categories(
+    async def semantic_list_category_templates(
         self,
         *,
         set_type_id: str,
@@ -1012,7 +1012,7 @@ class MemMachine:
         """List semantic categories defined on a set type."""
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.list_set_type_categories(set_type_id=set_type_id)
+        return await semantic_session.list_category_templates(set_type_id=set_type_id)
 
     async def semantic_disable_category(
         self,

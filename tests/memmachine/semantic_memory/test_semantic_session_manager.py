@@ -752,7 +752,7 @@ async def test_invalid_embedder_change_with_dirty_set(
         )
 
 
-async def test_set_type_categories(
+async def test_category_templates(
     session_manager: SemanticSessionManager, session_data
 ):
     set_type_id = await session_manager.create_set_type(
@@ -760,7 +760,7 @@ async def test_set_type_categories(
         is_org_level=False,
         metadata_tags=["repo"],
     )
-    c_id = await session_manager.add_new_set_type_category(
+    c_id = await session_manager.add_category_template(
         set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",
@@ -773,14 +773,14 @@ async def test_set_type_categories(
         tag_description="test_tag_description",
     )
 
-    categories = await session_manager.list_set_type_categories(set_type_id=set_type_id)
+    categories = await session_manager.list_category_templates(set_type_id=set_type_id)
     assert len(categories) == 1
 
     assert categories[0].id == c_id
     assert categories[0].name == "test_category"
 
 
-async def test_set_type_categories_are_visible_to_children(
+async def test_category_templates_are_visible_to_children(
     session_manager: SemanticSessionManager,
     session_data,
 ):
@@ -803,7 +803,7 @@ async def test_set_type_categories_are_visible_to_children(
         set_metadata_keys=["user_id"],
     )
 
-    c_id = await session_manager.add_new_set_type_category(
+    c_id = await session_manager.add_category_template(
         set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",

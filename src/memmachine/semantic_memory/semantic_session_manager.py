@@ -594,7 +594,7 @@ class SemanticSessionManager:
             description=description,
         )
 
-    async def add_new_set_type_category(
+    async def add_category_template(
         self,
         *,
         set_type_id: str,
@@ -609,7 +609,7 @@ class SemanticSessionManager:
             description=description,
         )
 
-    async def list_set_type_categories(
+    async def list_category_templates(
         self, *, set_type_id: str
     ) -> Iterable[SemanticCategory]:
         return await self._semantic_service.get_set_type_categories(
