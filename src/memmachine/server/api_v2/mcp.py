@@ -1,5 +1,7 @@
 """MCP tool implementations for MemMachine."""
 
+import base64
+import binascii
 import contextvars
 import logging
 import os
@@ -420,6 +422,8 @@ async def mcp_add_memory(
     org_id: str = "",
     proj_id: str = "",
     user_id: str = "",
+    image_base64: str = "",
+    image_mime_type: str = "image/jpeg",
 ) -> McpResponse:
     """
     Add a new memory for the specified user.
@@ -437,6 +441,8 @@ async def mcp_add_memory(
         proj_id: The project ID (optional, flat style).
         user_id: The unique identifier of the user (flat style).
         content: The complete context or summary to store in memory (flat style).
+        image_base64: Optional base64-encoded image bytes (no data URL prefix).
+        image_mime_type: MIME type for the uploaded image (e.g. 'image/jpeg', 'image/png').
 
     Returns:
         McpResponse indicating success or failure.
@@ -449,12 +455,26 @@ async def mcp_add_memory(
             message="MemMachine is not initialized",
         )
     try:
+        merged_content = content
+        if image_base64:
+            try:
+                image_bytes = base64.b64decode(image_base64, validate=True)
+            except (binascii.Error, ValueError) as e:
+                raise ValueError("image_base64 is not valid base64") from e
+
+            summary = await mem_machine.image_summarizer.summarize_image(
+                image_bytes=image_bytes,
+                mime_type=(image_mime_type or "image/jpeg"),
+            )
+            if summary:
+                merged_content = f"{content}\n\n[Image Summary]\n{summary}"
+
         param = Params(
             org_id=org_id,
             proj_id=proj_id,
             user_id=user_id,
         )
-        spec = param.to_add_memories_spec(content)
+        spec = param.to_add_memories_spec(merged_content)
         await _add_messages_to(
             target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=mem_machine
         )
