@@ -250,6 +250,14 @@ class Configuration(BaseModel):
     episode_store: EpisodeStoreConf
     server: ServerConf = ServerConf()
 
+    image_summarization_model: str | None = Field(
+        default=None,
+        description=(
+            "Optional language model ID (from resources.language_models) to use "
+            "for summarizing uploaded images when adding memories via multipart."
+        ),
+    )
+
     def check_reranker(self, reranker_name: str) -> None:
         long_term_memory = self.episodic_memory.long_term_memory
         if not reranker_name or not long_term_memory:
@@ -288,6 +296,7 @@ class Configuration(BaseModel):
             "resources": self.resources.to_yaml_dict(),
             "episode_store": self.episode_store.to_yaml_dict(),
             "server": self.server.to_yaml_dict(),
+            "image_summarization_model": self.image_summarization_model,
         }
         return yaml.safe_dump(data, sort_keys=True)
 

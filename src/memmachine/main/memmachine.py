@@ -76,6 +76,16 @@ class MemMachine:
         self._initialize_default_episodic_configuration()
         self._started = False
 
+    @property
+    def config(self) -> Configuration:
+        """Return the active MemMachine configuration."""
+        return self._conf
+
+    @property
+    def resources(self) -> ResourceManagerImpl:
+        """Return the resource manager used by this MemMachine instance."""
+        return self._resources
+
     def _initialize_default_episodic_configuration(self) -> None:
         # initialize the default value for episodic memory configuration
         # Can not put the logic into the data type

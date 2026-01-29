@@ -21,6 +21,8 @@ from memmachine.server.app import MemMachineAPI
 @pytest.fixture
 def mock_memmachine():
     memmachine = AsyncMock()
+    memmachine.config = MagicMock(image_summarization_model="qwen_model")
+    memmachine.resources = MagicMock()
     return memmachine
 
 
@@ -238,6 +240,7 @@ def test_add_memories(client, mock_memmachine):
         response = client.post("/api/v2/memories", json=payload)
         assert response.status_code == 200
         assert response.json() == {"results": [{"uid": "123"}]}
+
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Episodic]
 
@@ -250,6 +253,40 @@ def test_add_memories(client, mock_memmachine):
         assert response.json() == {"results": [{"uid": "123"}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Semantic]
+
+
+def test_add_memories_multipart_with_image(client):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+
+    with (
+        patch("memmachine.server.api_v2.router._add_messages_to") as mock_add_messages,
+        patch("memmachine.server.api_v2.router.summarize_image") as mock_summarize,
+    ):
+        mock_add_messages.return_value = [{"status": "ok", "uid": "123"}]
+        mock_summarize.return_value = "a cat on a sofa"
+
+        response = client.post(
+            "/api/v2/memories",
+            data={"spec": __import__("json").dumps(payload)},
+            files={"image": ("test.png", b"fake", "image/png")},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"results": [{"uid": "123"}]}
+        mock_summarize.assert_awaited_once()
+
+
+def test_add_memories_multipart_missing_spec(client):
+    response = client.post(
+        "/api/v2/memories",
+        data={},
+        files={"image": ("test.png", b"fake", "image/png")},
+    )
+    assert response.status_code == 422
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):
