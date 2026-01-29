@@ -118,6 +118,20 @@ class InvalidRerankerError(MemMachineError):
     """Exception raised for invalid reranker."""
 
 
+class ResourceNotReadyError(MemMachineError):
+    """
+    Raised when an operation requires a resource that is not ready.
+
+    This typically occurs when a resource (embedder, language model, reranker)
+    failed to initialize during startup but is required for an API operation.
+    """
+
+    def __init__(self, message: str, resource_name: str | None = None) -> None:
+        """Initialize with message and optional resource name."""
+        self.resource_name = resource_name
+        super().__init__(message)
+
+
 class EpisodicMemoryManagerClosedError(MemMachineError):
     """Exception raised when operating on a closed EpisodicMemory instance."""
 

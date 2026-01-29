@@ -1,10 +1,9 @@
 """Manager for constructing and caching reranker instances."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
 import re
-from asyncio import Lock
-from collections import defaultdict
 from collections.abc import Callable
 from typing import Protocol
 
@@ -16,6 +15,7 @@ from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.embedder import Embedder
 from memmachine.common.errors import InvalidRerankerError
 from memmachine.common.reranker import Reranker
+from memmachine.common.resource_manager.base_manager import BaseResourceManager
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class EmbedderFactory(Protocol):
         raise NotImplementedError
 
 
-class RerankerManager:
+class RerankerManager(BaseResourceManager[Reranker]):
     """Create and cache configured rerankers."""
 
     def __init__(
@@ -38,31 +38,47 @@ class RerankerManager:
         embedder_factory: InstanceOf[EmbedderFactory],
     ) -> None:
         """Store configuration and factories, initializing caches."""
+        super().__init__()
         self.conf = conf
-        self._rerankers: dict[str, Reranker] = {}
-
         self._embedder_factory: EmbedderFactory = embedder_factory
-        self._lock: Lock = Lock()
-        self._rerankers_lock: dict[str, Lock] = defaultdict(Lock)
+        # Alias for backward compatibility
+        self._rerankers = self._resources
+
+    @property
+    def _resource_type_name(self) -> str:
+        return "reranker"
+
+    def _is_configured(self, name: str) -> bool:
+        """Check if a reranker is configured."""
+        return (
+            name in self.conf.bm25
+            or name in self.conf.cohere
+            or name in self.conf.cross_encoder
+            or name in self.conf.amazon_bedrock
+            or name in self.conf.embedder
+            or name in self.conf.identity
+            or name in self.conf.rrf_hybrid
+        )
+
+    def _get_not_found_error(self, name: str) -> Exception:
+        """Return InvalidRerankerError for unknown rerankers."""
+        return InvalidRerankerError(name)
+
+    def get_all_names(self) -> set[str]:
+        """Return all configured reranker names."""
+        names = set()
+        names.update(self.conf.bm25.keys())
+        names.update(self.conf.cohere.keys())
+        names.update(self.conf.cross_encoder.keys())
+        names.update(self.conf.amazon_bedrock.keys())
+        names.update(self.conf.embedder.keys())
+        names.update(self.conf.identity.keys())
+        names.update(self.conf.rrf_hybrid.keys())
+        return names
 
     async def build_all(self) -> dict[str, Reranker]:
         """Build all configured rerankers and return the cache."""
-        names = [
-            name
-            for keys in [
-                self.conf.bm25.keys(),
-                self.conf.cohere.keys(),
-                self.conf.cross_encoder.keys(),
-                self.conf.amazon_bedrock.keys(),
-                self.conf.embedder.keys(),
-                self.conf.identity.keys(),
-                self.conf.rrf_hybrid.keys(),
-            ]
-            for name in keys
-        ]
-        tasks = [self.get_reranker(name) for name in names]
-        await asyncio.gather(*tasks)
-        return self._rerankers
+        return await self.build_all_with_error_tracking(self.get_all_names())
 
     @property
     def num_of_rerankers(self) -> int:
@@ -75,20 +91,11 @@ class RerankerManager:
 
     async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
         """Return a named reranker, building it on first access."""
-        if name in self._rerankers:
-            return self._rerankers[name]
+        return await self._get_resource_with_locking(name, validate=validate)
 
-        if name not in self._rerankers_lock:
-            async with self._lock:
-                self._rerankers_lock.setdefault(name, Lock())
-
-        async with self._rerankers_lock[name]:
-            if name in self._rerankers:
-                return self._rerankers[name]
-
-            reranker = await self._build_reranker(name, validate=validate)
-            self._rerankers[name] = reranker
-            return reranker
+    async def _build_resource(self, name: str, validate: bool = False) -> Reranker:
+        """Build a reranker by name."""
+        return await self._build_reranker(name, validate=validate)
 
     @staticmethod
     async def _validate_reranker(name: str, reranker: Reranker) -> None:
