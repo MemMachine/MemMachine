@@ -218,6 +218,10 @@ class SpecDoc:
     If empty, all available types are searched.
     """
 
+    USER_ID = "User ID used to filter memories by owner."
+
+    USER_ROLE = "User role used to filter memories by role."
+
     PAGE_SIZE = """
     The maximum number of memories to return per page. Use this for pagination.
     """
@@ -295,6 +299,8 @@ class Examples:
     FILTER_MEM: ClassVar[list[str]] = [
         "metadata.user_id=123 AND metadata.session_id=abc",
     ]
+    USER_ID: ClassVar[list[str]] = ["user_123"]
+    USER_ROLE: ClassVar[list[str]] = ["admin"]
     MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
     MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
