@@ -34,6 +34,23 @@ describe('MemMachine Client', () => {
     await expect(client.getProjects()).rejects.toThrow('Failed to get projects')
   })
 
+  it('should get metrics successfully', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const mockMetrics = 'memmachine_requests_total 42'
+    jest.spyOn(client.client, 'get').mockResolvedValue({
+      data: mockMetrics
+    })
+    const metrics = await client.getMetrics()
+    expect(metrics).toEqual(mockMetrics)
+  })
+
+  it('should handle error when getting metrics', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    jest.spyOn(client.client, 'get').mockRejectedValue(new Error('Network Error'))
+
+    await expect(client.getMetrics()).rejects.toThrow('Failed to get metrics')
+  })
+
   it('should perform health check successfully', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
     jest.spyOn(client.client, 'get').mockResolvedValue({
