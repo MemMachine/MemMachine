@@ -17,7 +17,7 @@ from memmachine.semantic_memory.semantic_llm import (
     llm_feature_update,
 )
 from memmachine.semantic_memory.semantic_model import (
-    ResourceRetriever,
+    ResourceRetrieverT,
     Resources,
     SemanticCategory,
     SemanticCommand,
@@ -43,7 +43,7 @@ class IngestionService:
 
         semantic_storage: InstanceOf[SemanticStorage]
         history_store: InstanceOf[EpisodeStorage]
-        resource_retriever: InstanceOf[ResourceRetriever]
+        resource_retriever: ResourceRetrieverT
         consolidated_threshold: int = 20
         debug_fail_loudly: bool = False
 
@@ -68,7 +68,7 @@ class IngestionService:
             raise ExceptionGroup("Failed to process set ids", errors)
 
     async def _process_single_set(self, set_id: str) -> None:  # noqa: C901
-        resources = self._resource_retriever.get_resources(set_id)
+        resources = await self._resource_retriever(set_id)
 
         history_ids = await self._semantic_storage.get_history_messages(
             set_ids=[set_id],
@@ -90,13 +90,25 @@ class IngestionService:
         if len(history_ids) == 0:
             return
 
-        raw_messages = await asyncio.gather(
-            *[self._history_store.get_episode(h_id) for h_id in history_ids],
-        )
+        async with asyncio.TaskGroup() as tg:
+            tasks = {
+                h_id: tg.create_task(self._history_store.get_episode(h_id))
+                for h_id in history_ids
+            }
 
-        if len(raw_messages) != len([m for m in raw_messages if m is not None]):
-            raise ValueError("Failed to retrieve messages. Invalid history_ids")
+        raw_messages = [tasks[h_id].result() for h_id in history_ids]
+        none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
+        if none_h_ids:
+            logger.warning(
+                "Failed to retrieve messages. Invalid episode_ids: %s", none_h_ids
+            )
+            if self._debug_fail_loudly:
+                raise ValueError(
+                    f"Failed to retrieve messages. Invalid episode_ids: {none_h_ids}"
+                )
+
+        raw_messages = [m for m in raw_messages if m is not None]
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
         logger.info("Processing %d messages for set %s", len(messages), set_id)

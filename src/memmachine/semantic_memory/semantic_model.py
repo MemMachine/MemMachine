@@ -1,8 +1,9 @@
 """Core data models for semantic memory features and retrieval."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, InstanceOf
 
@@ -13,6 +14,8 @@ from memmachine.semantic_memory.util import semantic_prompt_template
 
 SetIdT = str
 FeatureIdT = str
+CategoryIdT = str
+TagIdT = str
 
 
 class SemanticCommandType(Enum):
@@ -123,7 +126,11 @@ class SemanticPrompt(Protocol):
 class SemanticCategory(BaseModel):
     """Defines a semantic feature category, its allowed tags, and prompt strategy."""
 
-    id: int | None = None
+    id: CategoryIdT | None = None
+
+    origin_type: Literal["set_id", "set_type"] | None = None
+    origin_id: str | None = None
+    inherited: bool | None = None
 
     name: str
     prompt: InstanceOf[SemanticPrompt]
@@ -137,9 +144,14 @@ class Resources(BaseModel):
     semantic_categories: list[InstanceOf[SemanticCategory]]
 
 
-@runtime_checkable
-class ResourceRetriever(Protocol):
-    """Protocol for locating the `Resources` bundle associated with a set_id."""
+class SetTypeEntry(BaseModel):
+    """Persisted entry describing an org/project set type."""
 
-    def get_resources(self, set_id: SetIdT) -> Resources:
-        raise NotImplementedError
+    id: str | None = None
+    is_org_level: bool
+    tags: list[str]
+    name: str | None = None
+    description: str | None = None
+
+
+ResourceRetrieverT = Callable[[SetIdT], Awaitable[Resources]]

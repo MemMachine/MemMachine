@@ -86,6 +86,7 @@ def mock_resource_manager():
     )
     mock_config.semantic_memory = SemanticMemoryConf(
         database="old-db",
+        config_database="old-db",
         llm_model="old-llm",
         embedding_model="old-embedder",
     )

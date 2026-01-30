@@ -1,8 +1,8 @@
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-import numpy as np
 import pytest
 
 from memmachine import MemMachine
@@ -77,35 +77,42 @@ async def test_memmachine_list_search_paginates_episodic(
 
 
 @dataclass
-class _TempSession:
-    user_profile_id: str | None
-    session_id: str | None
-    role_profile_id: str | None
+class _Session:
     session_key: str
+    org_id: str
+    project_id: str
 
 
 @pytest.mark.asyncio
 async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine):
-    session_info = _TempSession(
-        user_profile_id="pagination-user",
-        session_id="pagination-session",
-        role_profile_id=None,
+    session_info = _Session(
         session_key="pagination-session",
+        org_id="org_pagination",
+        project_id="project_pagination",
     )
+    set_metadata = {
+        "work_type": "pagination",
+    }
     await memmachine.create_session(session_info.session_key)
+    await memmachine.create_semantic_set_type(
+        session_data=session_info,
+        is_org_level=False,
+        metadata_tags=list(set_metadata.keys()),
+    )
 
-    semantic_service = await memmachine._resources.get_semantic_service()
-    semantic_storage = semantic_service._semantic_storage
+    set_id = await memmachine.semantic_get_set_id(
+        session_data=session_info,
+        is_org_level=False,
+        metadata_tags=[],
+    )
 
-    user_set_id = f"mem_user_{session_info.user_profile_id}"
     feature_ids = [
-        await semantic_storage.add_feature(
-            set_id=user_set_id,
+        await memmachine.add_feature(
+            set_id=set_id,
             category_name="profile",
             feature="topic",
             value=f"semantic-{idx}",
             tag="facts",
-            embedding=np.array([float(idx), 1.0], dtype=float),
         )
         for idx in range(5)
     ]
@@ -142,18 +149,17 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
             "semantic-4",
         ]
     finally:
-        await semantic_storage.delete_features(feature_ids)
+        await memmachine.delete_features(feature_ids)
         await memmachine.delete_session(session_info)
 
 
 @pytest.mark.asyncio
 async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
     session_key = f"session-{uuid4()}"
-    delete_handle = _TempSession(
-        user_profile_id=session_key,
-        session_id=session_key,
-        role_profile_id=None,
+    delete_handle = _Session(
         session_key=session_key,
+        org_id=f"org-{session_key}",
+        project_id=f"project-{session_key}",
     )
     deleted = False
 
@@ -208,11 +214,10 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
         assert set(filtered) == {created_sessions[0]}
     finally:
         for key in created_sessions:
-            cleanup_session = _TempSession(
-                user_profile_id=key,
-                session_id=key,
-                role_profile_id=None,
+            cleanup_session = _Session(
                 session_key=key,
+                org_id=f"org-{key}",
+                project_id=f"project-{key}",
             )
             remaining = await memmachine.get_session(key)
             if remaining is not None:
@@ -377,24 +382,269 @@ async def test_memmachine_delete_features_removes_semantic_entries(
     memmachine: MemMachine,
     session_data,
 ):
-    semantic_service = await memmachine._resources.get_semantic_service()
-    semantic_storage = semantic_service._semantic_storage
-    user_set_id = f"mem_user_{session_data.user_profile_id}"
+    set_id = await memmachine.semantic_get_set_id(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=[],
+    )
 
-    feature_id = await semantic_storage.add_feature(
-        set_id=user_set_id,
+    feature_id = await memmachine.add_feature(
+        set_id=set_id,
         category_name="profile",
         feature="alias",
         value="integration alias",
         tag="facts",
-        embedding=np.array([0.5, 0.5], dtype=float),
     )
 
     try:
-        assert await semantic_storage.get_feature(feature_id) is not None
+        assert await memmachine.get_feature(feature_id) is not None
         await memmachine.delete_features([feature_id])
-        assert await semantic_storage.get_feature(feature_id) is None
+        assert await memmachine.get_feature(feature_id) is None
     finally:
-        leftover = await semantic_storage.get_feature(feature_id)
+        leftover = await memmachine.get_feature(feature_id)
         if leftover is not None:
             await memmachine.delete_features([feature_id])
+
+
+@pytest.mark.asyncio
+async def test_add_then_get_feature(memmachine: MemMachine, session_data):
+    set_id = await memmachine.semantic_get_set_id(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=[],
+    )
+
+    feature_id = await memmachine.add_feature(
+        set_id=set_id,
+        category_name="profile",
+        feature="alias",
+        value="integration alias",
+        tag="facts",
+    )
+
+    feature = await memmachine.get_feature(feature_id)
+
+    assert feature.value == "integration alias"
+
+
+@pytest.mark.asyncio
+async def test_add_update_get_feature(memmachine: MemMachine, session_data):
+    set_id = await memmachine.semantic_get_set_id(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=[],
+    )
+
+    feature_id = await memmachine.add_feature(
+        set_id=set_id,
+        category_name="profile",
+        feature="alias",
+        value="integration alias",
+        tag="facts",
+    )
+
+    feature = await memmachine.get_feature(feature_id)
+    assert feature.value == "integration alias"
+
+    await memmachine.update_feature(
+        feature_id=feature_id,
+        category_name="profile",
+        feature="alias",
+        value="integration alias updated",
+    )
+
+    updated_feature = await memmachine.get_feature(feature_id)
+    assert updated_feature.value == "integration alias updated"
+
+
+@pytest.mark.asyncio
+async def test_create_and_delete_semantic_set_type(
+    memmachine: MemMachine, session_data
+):
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert semantic_set_types == []
+
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+        name="User Set Type",
+        description="A set type for user-specific data",
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 1
+    assert semantic_set_types[0].tags == ["user_id"]
+    assert semantic_set_types[0].is_org_level is False
+    assert semantic_set_types[0].name == "User Set Type"
+    assert semantic_set_types[0].description == "A set type for user-specific data"
+
+    await memmachine.delete_semantic_set_type(semantic_set_types[0].id)
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert semantic_set_types == []
+
+
+@pytest.mark.asyncio
+async def test_semantic_set_type_with_optional_fields(
+    memmachine: MemMachine, session_data
+):
+    """Test creating semantic set type with and without name/description."""
+    # Create without name and description
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 1
+    assert semantic_set_types[0].name is None
+    assert semantic_set_types[0].description is None
+
+    # Create with only name
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=True,
+        metadata_tags=["work_type"],
+        name="Work Type Set",
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 2
+    work_type_set = next(s for s in semantic_set_types if s.is_org_level)
+    assert work_type_set.name == "Work Type Set"
+    assert work_type_set.description is None
+
+    # Create with only description
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id", "work_type"],
+        description="Combined user and work type data",
+    )
+
+    semantic_set_types = await memmachine.list_semantic_set_type(
+        session_data=session_data
+    )
+    assert len(semantic_set_types) == 3
+    combined_set = next(s for s in semantic_set_types if len(s.tags) == 2)
+    assert combined_set.name is None
+    assert combined_set.description == "Combined user and work type data"
+
+
+@pytest.mark.asyncio
+async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, session_data):
+    set_metadata = {
+        "work_type": "integration",
+        "user_id": "123",
+    }
+
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+    )
+
+    set_id = await memmachine.semantic_get_set_id(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+        set_metadata=set_metadata,
+    )
+
+    category_id = await memmachine.semantic_add_category(
+        set_id=set_id,
+        category_name="profile",
+        prompt="profile category",
+        description="Category for user profile",
+    )
+
+    await memmachine.semantic_add_tag_to_category(
+        category_id=category_id,
+        tag_name="alias",
+        tag_description="profile alias",
+    )
+
+    await memmachine.add_episodes(
+        session_data,
+        [
+            EpisodeEntry(
+                content="User alias is Tom",
+                producer_id="producer",
+                producer_role="user",
+                metadata={"user_id": "123"},
+            ),
+        ],
+    )
+
+    async def is_user_id_data_ingested():
+        while (  # noqa: ASYNC110
+            len(
+                [
+                    feat
+                    for feat in (
+                        await memmachine.list_search(
+                            session_data=session_data,
+                            target_memories=[MemoryType.Semantic],
+                            set_metadata=set_metadata,
+                        )
+                    ).semantic_memory
+                    if "user_id" in feat.set_id
+                ]
+            )
+            == 0
+        ):
+            await asyncio.sleep(0.1)
+
+    await asyncio.wait_for(is_user_id_data_ingested(), timeout=30.0)
+
+
+@pytest.mark.asyncio
+async def test_memmachine_semantic_add_and_get_category(
+    memmachine: MemMachine, session_data
+):
+    set_metadata = {
+        "work_type": "integration",
+        "user_id": "123",
+    }
+
+    await memmachine.create_semantic_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+    )
+
+    set_id = await memmachine.semantic_get_set_id(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=["user_id"],
+        set_metadata=set_metadata,
+    )
+
+    category_id = await memmachine.semantic_add_category(
+        set_id=set_id,
+        category_name="profile",
+        prompt="profile category",
+        description="Category for user profile",
+    )
+
+    category = await memmachine.semantic_get_category(
+        category_id=category_id,
+    )
+
+    assert category is not None
+    assert category.id == category_id
+    assert category.name == "profile"
+    assert category.prompt == "profile category"
+    assert category.description == "Category for user profile"

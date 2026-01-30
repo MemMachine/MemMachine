@@ -32,7 +32,7 @@ async def get_memmachine(request: Request) -> MemMachine:
     return request.app.state.mem_machine
 
 
-@dataclass
+@dataclass(frozen=True)
 class _SessionData:
     org_id: str
     project_id: str
@@ -40,18 +40,6 @@ class _SessionData:
     @property
     def session_key(self) -> str:
         return f"{self.org_id}/{self.project_id}"
-
-    @property
-    def user_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return None
-
-    @property
-    def role_profile_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return None
-
-    @property
-    def session_id(self) -> str | None:  # pragma: no cover - simple proxy
-        return self.session_key
 
 
 async def _add_messages_to(

@@ -148,6 +148,11 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                 "Failed to connect to the database during startup, please check your configuration."
             ) from err
 
+    async def delete_all(self) -> None:
+        async with self._create_session() as session:
+            await session.execute(delete(Episode))
+            await session.commit()
+
     @validate_call
     async def add_episodes(
         self,
