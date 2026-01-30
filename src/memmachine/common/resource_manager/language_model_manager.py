@@ -1,61 +1,146 @@
 """Builder for LanguageModel instances."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
-from asyncio import Lock
+from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
 
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.errors import InvalidLanguageModelError
 from memmachine.common.language_model.language_model import LanguageModel
+from memmachine.common.resource_manager.base_manager import BaseResourceManager
+
+if TYPE_CHECKING:
+    from memmachine.common.configuration.language_model_conf import (
+        AmazonBedrockLanguageModelConf,
+        OpenAIChatCompletionsLanguageModelConf,
+        OpenAIResponsesLanguageModelConf,
+    )
 
 logger = logging.getLogger(__name__)
 
 
-class LanguageModelManager:
+class LanguageModelManager(BaseResourceManager[LanguageModel]):
     """Create and cache configured language model instances."""
 
     def __init__(self, conf: LanguageModelsConf) -> None:
         """Store configuration and initialize caches."""
-        self._lock = Lock()
-        self._language_models_lock: dict[str, Lock] = {}
-
+        super().__init__()
         self.conf = conf
-        self._language_models: dict[str, LanguageModel] = {}
+        # Alias for backward compatibility
+        self._language_models = self._resources
+
+    @property
+    def _resource_type_name(self) -> str:
+        return "language model"
+
+    def _is_configured(self, name: str) -> bool:
+        """Check if a language model is configured."""
+        return (
+            name in self.conf.openai_responses_language_model_confs
+            or name in self.conf.openai_chat_completions_language_model_confs
+            or name in self.conf.amazon_bedrock_language_model_confs
+        )
+
+    def _get_not_found_error(self, name: str) -> Exception:
+        """Return InvalidLanguageModelError for unknown language models."""
+        return InvalidLanguageModelError(f"Language model with name {name} not found.")
+
+    def get_all_names(self) -> set[str]:
+        """Return all configured language model names."""
+        names = set()
+        names.update(self.conf.openai_responses_language_model_confs)
+        names.update(self.conf.openai_chat_completions_language_model_confs)
+        names.update(self.conf.amazon_bedrock_language_model_confs)
+        return names
 
     async def build_all(self) -> dict[str, LanguageModel]:
         """Build all configured language models and return the cache."""
-        names = set()
-        for name in self.conf.openai_responses_language_model_confs:
-            names.add(name)
-        for name in self.conf.amazon_bedrock_language_model_confs:
-            names.add(name)
-        for name in self.conf.openai_chat_completions_language_model_confs:
-            names.add(name)
-
-        await asyncio.gather(*[self.get_language_model(name) for name in names])
-
-        return self._language_models
+        return await self.build_all_with_error_tracking(self.get_all_names())
 
     async def get_language_model(
         self, name: str, validate: bool = False
     ) -> LanguageModel:
         """Return a named language model, building it on first access."""
-        if name in self._language_models:
-            return self._language_models[name]
+        return await self._get_resource_with_locking(name, validate=validate)
 
-        if name not in self._language_models_lock:
-            async with self._lock:
-                self._language_models_lock.setdefault(name, Lock())
+    async def _build_resource(self, name: str, validate: bool = False) -> LanguageModel:
+        """Build a language model by name."""
+        return await self._build_language_model(name, validate=validate)
 
-        async with self._language_models_lock[name]:
-            if name in self._language_models:
-                return self._language_models[name]
+    def remove_language_model(self, name: str) -> bool:
+        """
+        Remove a language model from the manager.
 
-            llm_model = await self._build_language_model(name, validate=validate)
-            self._language_models[name] = llm_model
-            return llm_model
+        Returns True if the model was removed, False if it wasn't found.
+        """
+        removed = self._remove_from_cache(name)
+        # Also remove from config
+        if name in self.conf.openai_responses_language_model_confs:
+            del self.conf.openai_responses_language_model_confs[name]
+            removed = True
+        if name in self.conf.openai_chat_completions_language_model_confs:
+            del self.conf.openai_chat_completions_language_model_confs[name]
+            removed = True
+        if name in self.conf.amazon_bedrock_language_model_confs:
+            del self.conf.amazon_bedrock_language_model_confs[name]
+            removed = True
+        return removed
+
+    def add_language_model_config(
+        self,
+        name: str,
+        provider: str,
+        config: OpenAIResponsesLanguageModelConf
+        | OpenAIChatCompletionsLanguageModelConf
+        | AmazonBedrockLanguageModelConf,
+    ) -> None:
+        """
+        Add a new language model configuration at runtime.
+
+        Args:
+            name: The name/id for the language model.
+            provider: The provider type ('openai-responses', 'openai-chat-completions', 'amazon-bedrock').
+            config: The provider-specific configuration object.
+
+        """
+        # Clear any previous errors for this name
+        self.clear_build_error(name)
+
+        if provider == "openai-responses":
+            from memmachine.common.configuration.language_model_conf import (
+                OpenAIResponsesLanguageModelConf,
+            )
+
+            if not isinstance(config, OpenAIResponsesLanguageModelConf):
+                raise ValueError(
+                    "Expected OpenAIResponsesLanguageModelConf for provider 'openai-responses'"
+                )
+            self.conf.openai_responses_language_model_confs[name] = config
+        elif provider == "openai-chat-completions":
+            from memmachine.common.configuration.language_model_conf import (
+                OpenAIChatCompletionsLanguageModelConf,
+            )
+
+            if not isinstance(config, OpenAIChatCompletionsLanguageModelConf):
+                raise ValueError(
+                    "Expected OpenAIChatCompletionsLanguageModelConf for provider 'openai-chat-completions'"
+                )
+            self.conf.openai_chat_completions_language_model_confs[name] = config
+        elif provider == "amazon-bedrock":
+            from memmachine.common.configuration.language_model_conf import (
+                AmazonBedrockLanguageModelConf,
+            )
+
+            if not isinstance(config, AmazonBedrockLanguageModelConf):
+                raise ValueError(
+                    "Expected AmazonBedrockLanguageModelConf for provider 'amazon-bedrock'"
+                )
+            self.conf.amazon_bedrock_language_model_confs[name] = config
+        else:
+            raise ValueError(f"Unknown language model provider: {provider}")
 
     @staticmethod
     async def _validate_language_model(

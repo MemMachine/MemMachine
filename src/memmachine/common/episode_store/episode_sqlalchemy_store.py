@@ -191,9 +191,10 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             result = await session.execute(insert_stmt, values_to_insert)
             persisted_episodes = result.scalars().all()
 
+            await session.commit()
+
             res_episodes = [e.to_typed_model() for e in persisted_episodes]
 
-            await session.commit()
         return res_episodes
 
     @validate_call

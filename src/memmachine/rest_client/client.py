@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from types import TracebackType
-from typing import Any, NoReturn, TypedDict
+from typing import TYPE_CHECKING, Any, NoReturn, TypedDict
 
 # Python 3.11+ has Self in typing, Python 3.10 uses typing_extensions
 try:
@@ -27,6 +27,9 @@ from memmachine.common.api.spec import (
 )
 
 from .project import Project
+
+if TYPE_CHECKING:
+    from .config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -540,6 +543,18 @@ class MemMachineClient:
             raise
         else:
             return response.text
+
+    def config(self) -> Config:
+        """
+        Return a Config instance for managing server configuration.
+
+        Returns:
+            Config instance bound to this client
+
+        """
+        from .config import Config
+
+        return Config(client=self)
 
     def close(self) -> None:
         """Close the client and clean up resources."""

@@ -19,6 +19,18 @@ from memmachine.common.language_model.amazon_bedrock_language_model import (
 DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1"
 
 
+def _clean_empty_lm_config(conf: dict) -> dict:
+    """Remove empty strings and None values from config."""
+    cleaned: dict = {}
+    for key, value in (conf or {}).items():
+        if isinstance(value, str) and value.strip() == "":
+            continue
+        if value is None:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 class OpenAIResponsesLanguageModelConf(
     MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
 ):
@@ -216,6 +228,9 @@ class LanguageModelsConf(BaseModel):
         """Parse language model config definitions into typed models."""
         lm = input_dict.get("language_models", {})
 
+        if lm is None:
+            lm = {}
+
         if isinstance(lm, cls):
             return lm
 
@@ -223,7 +238,7 @@ class LanguageModelsConf(BaseModel):
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
-            conf = resource_definition.get("config", {})
+            conf = _clean_empty_lm_config(resource_definition.get("config", {}))
             if provider == "openai-responses":
                 openai_dict[lm_id] = OpenAIResponsesLanguageModelConf(**conf)
             elif provider == "openai-chat-completions":

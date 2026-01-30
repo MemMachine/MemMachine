@@ -18,7 +18,10 @@ from memmachine.common.configuration.episodic_config import (
 )
 from memmachine.common.configuration.language_model_conf import LanguageModelsConf
 from memmachine.common.configuration.log_conf import LogConf
-from memmachine.common.configuration.mixin_confs import YamlSerializableMixin
+from memmachine.common.configuration.mixin_confs import (
+    ApiKeyMixin,
+    YamlSerializableMixin,
+)
 from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
@@ -34,6 +37,21 @@ YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | boo
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_openai_incomplete(conf: ApiKeyMixin) -> bool:
+    """Check if an OpenAI-based config has empty credentials and no base_url."""
+    api_key = getattr(conf, "api_key", None)
+    base_url = getattr(conf, "base_url", None)
+    if api_key is None:
+        return False
+    try:
+        api_key_value = api_key.get_secret_value()
+    except Exception:
+        return False
+    if api_key_value != "":
+        return False
+    return base_url is None or (isinstance(base_url, str) and not base_url)
 
 
 class SessionManagerConf(YamlSerializableMixin):
@@ -61,8 +79,13 @@ class EpisodeStoreConf(YamlSerializableMixin):
 class SemanticMemoryConf(YamlSerializableMixin):
     """Configuration for semantic memory defaults."""
 
-    database: str = Field(
-        ...,
+    enabled: bool = Field(
+        default=True,
+        description="Whether semantic memory is enabled. "
+        "Auto-disabled when required fields (database, llm_model, embedding_model) are empty.",
+    )
+    database: str | None = Field(
+        default=None,
         description="The database to use for semantic memory",
     )
     config_database: str = Field(
@@ -73,12 +96,12 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=True,
         description="Whether to use a in memory cache for semantic memory config.",
     )
-    llm_model: str = Field(
-        ...,
+    llm_model: str | None = Field(
+        default=None,
         description="The default language model to use for semantic memory",
     )
-    embedding_model: str = Field(
-        ...,
+    embedding_model: str | None = Field(
+        default=None,
         description="The embedding model to use for semantic memory",
     )
 
@@ -90,6 +113,22 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+
+    @model_validator(mode="after")
+    def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:
+        """Auto-disable semantic memory when required fields are missing."""
+        if self.enabled and not (
+            self.database and self.llm_model and self.embedding_model
+        ):
+            logger.warning(
+                "Semantic memory auto-disabled: missing required fields "
+                "(database=%r, llm_model=%r, embedding_model=%r).",
+                self.database,
+                self.llm_model,
+                self.embedding_model,
+            )
+            self.enabled = False
+        return self
 
 
 def _read_txt(filename: str) -> str:
@@ -267,6 +306,120 @@ class Configuration(BaseModel):
     episode_store: EpisodeStoreConf
     server: ServerConf = ServerConf()
 
+    # Path to the configuration file (set when loaded from file)
+    _config_file_path: str | None = None
+
+    @model_validator(mode="after")
+    def _auto_disable_when_openai_incomplete(self) -> Configuration:
+        """Auto-disable memory subsystems when OpenAI configs are empty."""
+        self._maybe_disable_semantic_memory()
+        self._maybe_disable_episodic_memory()
+        return self
+
+    def _maybe_disable_semantic_memory(self) -> None:
+        """Disable semantic memory if its OpenAI resources have empty credentials."""
+        if not self.semantic_memory.enabled:
+            return
+
+        embedder_id = self.semantic_memory.embedding_model
+        if (
+            embedder_id
+            and embedder_id in self.resources.embedders.openai
+            and _is_openai_incomplete(self.resources.embedders.openai[embedder_id])
+        ):
+            logger.warning(
+                "Semantic memory auto-disabled: embedding model '%s' has empty "
+                "OpenAI credentials and no base_url.",
+                embedder_id,
+            )
+            self.semantic_memory.enabled = False
+
+        lm_id = self.semantic_memory.llm_model
+        if not (self.semantic_memory.enabled and lm_id):
+            return
+
+        lms = self.resources.language_models
+        if lm_id in lms.openai_responses_language_model_confs and _is_openai_incomplete(
+            lms.openai_responses_language_model_confs[lm_id]
+        ):
+            logger.warning(
+                "Semantic memory auto-disabled: language model '%s' has empty "
+                "OpenAI credentials and no base_url.",
+                lm_id,
+            )
+            self.semantic_memory.enabled = False
+        if (
+            self.semantic_memory.enabled
+            and lm_id in lms.openai_chat_completions_language_model_confs
+            and _is_openai_incomplete(
+                lms.openai_chat_completions_language_model_confs[lm_id]
+            )
+        ):
+            logger.warning(
+                "Semantic memory auto-disabled: language model '%s' has empty "
+                "OpenAI credentials and no base_url.",
+                lm_id,
+            )
+            self.semantic_memory.enabled = False
+
+    def _maybe_disable_episodic_memory(self) -> None:
+        """Disable episodic memory subsystems if their OpenAI resources have empty credentials."""
+        em = self.episodic_memory
+        lms = self.resources.language_models
+
+        if (
+            em.long_term_memory_enabled is not False
+            and em.long_term_memory
+            and em.long_term_memory.embedder
+        ):
+            embedder_id = em.long_term_memory.embedder
+            if embedder_id in self.resources.embedders.openai and _is_openai_incomplete(
+                self.resources.embedders.openai[embedder_id]
+            ):
+                logger.warning(
+                    "Episodic long-term memory auto-disabled: embedder '%s' has empty "
+                    "OpenAI credentials and no base_url.",
+                    embedder_id,
+                )
+                em.long_term_memory_enabled = False
+
+        if (
+            em.short_term_memory_enabled is not False
+            and em.short_term_memory
+            and em.short_term_memory.llm_model
+        ):
+            lm_id = em.short_term_memory.llm_model
+            if (
+                lm_id in lms.openai_responses_language_model_confs
+                and _is_openai_incomplete(
+                    lms.openai_responses_language_model_confs[lm_id]
+                )
+            ):
+                logger.warning(
+                    "Episodic short-term memory auto-disabled: language model '%s' has "
+                    "empty OpenAI credentials and no base_url.",
+                    lm_id,
+                )
+                em.short_term_memory_enabled = False
+            if (
+                lm_id in lms.openai_chat_completions_language_model_confs
+                and _is_openai_incomplete(
+                    lms.openai_chat_completions_language_model_confs[lm_id]
+                )
+            ):
+                logger.warning(
+                    "Episodic short-term memory auto-disabled: language model '%s' has "
+                    "empty OpenAI credentials and no base_url.",
+                    lm_id,
+                )
+                em.short_term_memory_enabled = False
+
+        if (
+            em.long_term_memory_enabled is False
+            and em.short_term_memory_enabled is False
+        ):
+            em.enabled = False
+
     def check_reranker(self, reranker_name: str) -> None:
         long_term_memory = self.episodic_memory.long_term_memory
         if not reranker_name or not long_term_memory:
@@ -308,6 +461,35 @@ class Configuration(BaseModel):
         }
         return yaml.safe_dump(data, sort_keys=True)
 
+    @property
+    def config_file_path(self) -> str | None:
+        """Return the path to the configuration file, if loaded from file."""
+        return self._config_file_path
+
+    def save(self, path: str | None = None) -> None:
+        """
+        Save the configuration to a YAML file.
+
+        Args:
+            path: The file path to save to. If None, saves to the original
+                  file path from which the configuration was loaded.
+
+        Raises:
+            ValueError: If no path is provided and the configuration was not
+                        loaded from a file.
+
+        """
+        save_path = path or self._config_file_path
+        if save_path is None:
+            raise ValueError(
+                "No path provided and configuration was not loaded from a file"
+            )
+
+        config_path = Path(save_path)
+        yaml_content = self.to_yaml()
+        config_path.write_text(yaml_content, encoding="utf-8")
+        logger.info("Configuration saved to '%s'", save_path)
+
     @classmethod
     def load_yml_file(cls, config_file: str) -> Configuration:
         """Load configuration from a YAML file path."""
@@ -340,4 +522,6 @@ class Configuration(BaseModel):
 
         mapping_config = cast(dict[str, Any], yaml_config)
 
-        return Configuration(**mapping_config)
+        config = Configuration(**mapping_config)
+        config._config_file_path = config_file
+        return config

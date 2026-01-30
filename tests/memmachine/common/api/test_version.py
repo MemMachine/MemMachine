@@ -13,8 +13,11 @@ def test_get_version():
     # 0.2.2.dev93+g2b5fd8250
     pattern = re.compile(
         r"""
-        ^\d+\.\d+\.\d+           # major.minor.patch
-        (?:\.dev\d+(?:\+[a-z0-9]+)?)?   # optional .devN[+local]
+        ^\d+\.\d+\.\d+                  # major.minor.patch
+        (?:                             # optional dev release
+            \.dev\d+                    # .devN
+            (?:\+[a-z0-9]+(?:\.[a-z0-9]+)*)?  # +local(.local)*
+        )?
         $
         """,
         re.VERBOSE,

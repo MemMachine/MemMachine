@@ -136,3 +136,43 @@ async def test_invalid_neo4j_driver(invalid_resource_manager):
 async def test_invalid_relational_db_engine(invalid_resource_manager):
     with pytest.raises(Exception, match=f"SQL config '{SQLDB_ID}' failed verification"):
         _ = await invalid_resource_manager.get_sql_engine(SQLDB_ID, validate=True)
+
+
+def test_save_config_calls_configuration_save(invalid_configure, tmp_path):
+    """Test that save_config() delegates to Configuration.save()."""
+    # Set up the config file path
+    config_file = tmp_path / "test_config.yml"
+    config_file.write_text(invalid_configure.to_yaml(), encoding="utf-8")
+
+    # Reload configuration from file (so it has config_file_path set)
+    conf = Configuration.load_yml_file(str(config_file))
+    resource_manager = ResourceManagerImpl(conf)
+
+    # Call save_config
+    resource_manager.save_config()
+
+    # Verify the file was updated (it should exist and be readable)
+    assert config_file.exists()
+    reloaded = Configuration.load_yml_file(str(config_file))
+    assert reloaded == conf
+
+
+def test_save_config_with_explicit_path(invalid_configure, tmp_path):
+    """Test that save_config() can save to an explicit path."""
+    resource_manager = ResourceManagerImpl(invalid_configure)
+
+    # Save to explicit path
+    save_path = tmp_path / "explicit_config.yml"
+    resource_manager.save_config(str(save_path))
+
+    # Verify file was created
+    assert save_path.exists()
+    reloaded = Configuration.load_yml_file(str(save_path))
+    # Compare YAML output since _config_file_path differs between instances
+    assert reloaded.to_yaml() == invalid_configure.to_yaml()
+
+
+def test_resource_manager_config_property(invalid_configure):
+    """Test that config property returns the configuration."""
+    resource_manager = ResourceManagerImpl(invalid_configure)
+    assert resource_manager.config == invalid_configure

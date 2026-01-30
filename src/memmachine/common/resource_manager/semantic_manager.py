@@ -9,6 +9,7 @@ from memmachine.common.configuration import PromptConf, SemanticMemoryConf
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeStorage
 from memmachine.common.language_model import LanguageModel
+from memmachine.common.errors import ResourceNotReadyError
 from memmachine.common.resource_manager import CommonResourceManager
 from memmachine.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
@@ -63,6 +64,11 @@ class SemanticResourceManager:
 
     async def get_semantic_storage(self) -> SemanticStorage:
         database = self._conf.database
+
+        if database is None:
+            raise ResourceNotReadyError(
+                "No database configured for semantic storage.", "semantic_memory"
+            )
 
         # TODO: validate/choose based on database provider
         storage: SemanticStorage
