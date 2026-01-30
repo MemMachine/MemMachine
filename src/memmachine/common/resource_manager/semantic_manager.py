@@ -6,6 +6,7 @@ from pydantic import InstanceOf
 
 from memmachine.common.configuration import PromptConf, SemanticMemoryConf
 from memmachine.common.episode_store import EpisodeStorage
+from memmachine.common.errors import ResourceNotReadyError
 from memmachine.common.resource_manager import CommonResourceManager
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
@@ -64,6 +65,15 @@ class SemanticResourceManager:
 
         semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
 
+        if self._conf.embedding_model is None:
+            raise ResourceNotReadyError(
+                "No embedding model configured for semantic memory.", "semantic_memory"
+            )
+        if self._conf.llm_model is None:
+            raise ResourceNotReadyError(
+                "No language model configured for semantic memory.", "semantic_memory"
+            )
+
         default_embedder = await self._resource_manager.get_embedder(
             self._conf.embedding_model,
             validate=True,
@@ -90,6 +100,11 @@ class SemanticResourceManager:
 
     async def _get_semantic_storage(self) -> SemanticStorage:
         database = self._conf.database
+
+        if database is None:
+            raise ResourceNotReadyError(
+                "No database configured for semantic storage.", "semantic_memory"
+            )
 
         # TODO: validate/choose based on database provider
         storage: SemanticStorage

@@ -1,60 +1,134 @@
 """Manager for building and caching embedder instances."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
-from asyncio import Lock
+from typing import TYPE_CHECKING
 
 from memmachine.common.configuration.embedder_conf import EmbeddersConf
 from memmachine.common.embedder import Embedder
 from memmachine.common.errors import InvalidEmbedderError
+from memmachine.common.resource_manager.base_manager import BaseResourceManager
+
+if TYPE_CHECKING:
+    from memmachine.common.configuration.embedder_conf import (
+        AmazonBedrockEmbedderConf,
+        OpenAIEmbedderConf,
+        SentenceTransformerEmbedderConf,
+    )
 
 logger = logging.getLogger(__name__)
 
 
-class EmbedderManager:
+class EmbedderManager(BaseResourceManager[Embedder]):
     """Create and cache embedders defined in configuration."""
 
     def __init__(self, conf: EmbeddersConf) -> None:
         """Store embedder configuration and initialize caches."""
+        super().__init__()
         self.conf = conf
-        self._embedders: dict[str, Embedder] = {}
+        # Alias for backward compatibility
+        self._embedders = self._resources
 
-        # Lock to protect creation of per-embedder locks
-        self._lock = Lock()
-        self._embedders_lock: dict[str, Lock] = {}
+    @property
+    def _resource_type_name(self) -> str:
+        return "embedder"
 
-    async def build_all(self) -> dict[str, Embedder]:
-        """Trigger lazy initialization of all embedders concurrently."""
+    def _is_configured(self, name: str) -> bool:
+        """Check if an embedder is configured."""
+        return self.conf.contains_embedder(name)
+
+    def _get_not_found_error(self, name: str) -> Exception:
+        """Return InvalidEmbedderError for unknown embedders."""
+        return InvalidEmbedderError(name)
+
+    def get_all_names(self) -> set[str]:
+        """Return all configured embedder names."""
         names = set()
         names.update(self.conf.amazon_bedrock)
         names.update(self.conf.openai)
         names.update(self.conf.sentence_transformer)
+        return names
 
-        # Lazy initialization happens inside get_embedder
-        await asyncio.gather(*[self.get_embedder(name) for name in names])
-
-        return self._embedders
+    async def build_all(self) -> dict[str, Embedder]:
+        """Trigger lazy initialization of all embedders concurrently."""
+        return await self.build_all_with_error_tracking(self.get_all_names())
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return a named embedder, building it on first access."""
-        # Return cached if already built
-        if name in self._embedders:
-            return self._embedders[name]
+        return await self._get_resource_with_locking(name, validate=validate)
 
-        # Ensure a lock exists for this embedder
-        if name not in self._embedders_lock:
-            async with self._lock:
-                self._embedders_lock.setdefault(name, Lock())
+    async def _build_resource(self, name: str, validate: bool = False) -> Embedder:
+        """Build an embedder by name."""
+        return await self._build_embedder(name, validate=validate)
 
-        async with self._embedders_lock[name]:
-            # Double-checked locking
-            if name in self._embedders:
-                return self._embedders[name]
+    def remove_embedder(self, name: str) -> bool:
+        """
+        Remove an embedder from the manager.
 
-            # Lazy build happens here
-            embedder = await self._build_embedder(name, validate=validate)
-            self._embedders[name] = embedder
-            return embedder
+        Returns True if the embedder was removed, False if it wasn't found.
+        """
+        removed = self._remove_from_cache(name)
+        # Also remove from config
+        if name in self.conf.openai:
+            del self.conf.openai[name]
+            removed = True
+        if name in self.conf.amazon_bedrock:
+            del self.conf.amazon_bedrock[name]
+            removed = True
+        if name in self.conf.sentence_transformer:
+            del self.conf.sentence_transformer[name]
+            removed = True
+        return removed
+
+    def add_embedder_config(
+        self,
+        name: str,
+        provider: str,
+        config: AmazonBedrockEmbedderConf
+        | OpenAIEmbedderConf
+        | SentenceTransformerEmbedderConf,
+    ) -> None:
+        """
+        Add a new embedder configuration at runtime.
+
+        Args:
+            name: The name/id for the embedder.
+            provider: The provider type ('openai', 'amazon-bedrock', 'sentence-transformer').
+            config: The provider-specific configuration object.
+
+        """
+        # Clear any previous errors for this name
+        self.clear_build_error(name)
+
+        if provider == "openai":
+            from memmachine.common.configuration.embedder_conf import OpenAIEmbedderConf
+
+            if not isinstance(config, OpenAIEmbedderConf):
+                raise ValueError("Expected OpenAIEmbedderConf for provider 'openai'")
+            self.conf.openai[name] = config
+        elif provider == "amazon-bedrock":
+            from memmachine.common.configuration.embedder_conf import (
+                AmazonBedrockEmbedderConf,
+            )
+
+            if not isinstance(config, AmazonBedrockEmbedderConf):
+                raise ValueError(
+                    "Expected AmazonBedrockEmbedderConf for provider 'amazon-bedrock'"
+                )
+            self.conf.amazon_bedrock[name] = config
+        elif provider == "sentence-transformer":
+            from memmachine.common.configuration.embedder_conf import (
+                SentenceTransformerEmbedderConf,
+            )
+
+            if not isinstance(config, SentenceTransformerEmbedderConf):
+                raise ValueError(
+                    "Expected SentenceTransformerEmbedderConf for provider 'sentence-transformer'"
+                )
+            self.conf.sentence_transformer[name] = config
+        else:
+            raise ValueError(f"Unknown embedder provider: {provider}")
 
     @staticmethod
     async def _validate_embedder(name: str, embedder: Embedder) -> None:

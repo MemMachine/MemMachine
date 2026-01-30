@@ -246,3 +246,43 @@ async def test_search_memory_variants(mock_search, params, mcp_client):
     root = result.data
     assert root["status"] == 200
     assert root["content"] == content
+
+
+@pytest.mark.asyncio
+@patch("memmachine.server.api_v2.mcp._delete_memories", new_callable=AsyncMock)
+async def test_delete_memory_success(mock_delete, params, mcp_client):
+    result = await mcp_client.call_tool(
+        name="delete_memory",
+        arguments={
+            "org_id": params.org_id,
+            "proj_id": params.proj_id,
+            "episodic_memory_uids": ["episode1"],
+            "semantic_memory_uids": ["semantic1"],
+        },
+    )
+    mock_delete.assert_awaited_once()
+    assert result.data is not None
+    root = result.data
+    assert root.status == 200
+    assert root.message == "Success"
+
+
+@pytest.mark.asyncio
+@patch("memmachine.server.api_v2.mcp._delete_memories", new_callable=AsyncMock)
+async def test_delete_memory_failure(mock_delete, params, mcp_client):
+    mock_delete.side_effect = HTTPException(status_code=500, detail="Deletion failed")
+
+    result = await mcp_client.call_tool(
+        name="delete_memory",
+        arguments={
+            "org_id": params.org_id,
+            "proj_id": params.proj_id,
+            "episodic_memory_uids": ["episode1"],
+            "semantic_memory_uids": ["semantic1"],
+        },
+    )
+    mock_delete.assert_awaited_once()
+    assert result.data is not None
+    root = result.data
+    assert root.status == 422
+    assert "Deletion failed" in root.message

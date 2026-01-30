@@ -15,6 +15,20 @@ from memmachine.common.configuration.mixin_confs import (
 from memmachine.common.data_types import SimilarityMetric
 
 
+def _clean_empty_embedder_config(conf: dict) -> dict:
+    """Remove empty strings, None values, and zero dimensions from config."""
+    cleaned: dict = {}
+    for key, value in (conf or {}).items():
+        if isinstance(value, str) and value.strip() == "":
+            continue
+        if value is None:
+            continue
+        if key == "dimensions" and value == 0:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
 class AmazonBedrockEmbedderConf(YamlSerializableMixin, AWSCredentialsMixin):
     """Configuration for AmazonBedrockEmbedder."""
 
@@ -174,6 +188,8 @@ class EmbeddersConf(BaseModel):
         """Parse embedder config by provider and return the structured model."""
         embedder = input_dict.get("embedders", {})
 
+        if embedder is None:
+            embedder = {}
         if isinstance(embedder, cls):
             return embedder
 
@@ -183,7 +199,9 @@ class EmbeddersConf(BaseModel):
 
         for embedder_id, resource_definition in embedder.items():
             provider = resource_definition.get(cls.PROVIDER_KEY)
-            conf = resource_definition.get(cls.CONFIG_KEY, {})
+            conf = _clean_empty_embedder_config(
+                resource_definition.get(cls.CONFIG_KEY, {})
+            )
             if provider == cls.OPENAI_KEY:
                 openai_dict[embedder_id] = OpenAIEmbedderConf(**conf)
             elif provider == cls.BEDROCK_KEY:

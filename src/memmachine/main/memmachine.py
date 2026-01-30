@@ -17,7 +17,11 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
-from memmachine.common.errors import ConfigurationError, SessionNotFoundError
+from memmachine.common.errors import (
+    ConfigurationError,
+    ResourceNotReadyError,
+    SessionNotFoundError,
+)
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -89,46 +93,81 @@ class MemMachine:
         if self._conf.episodic_memory.short_term_memory is None:
             self._conf.episodic_memory.short_term_memory = ShortTermMemoryConfPartial()
             self._conf.episodic_memory.short_term_memory_enabled = False
-        if self._conf.episodic_memory.long_term_memory.embedder is None:
-            self._conf.episodic_memory.long_term_memory.embedder = (
-                self._conf.default_long_term_memory_embedder
-            )
-        if self._conf.episodic_memory.long_term_memory.reranker is None:
-            self._conf.episodic_memory.long_term_memory.reranker = (
-                self._conf.default_long_term_memory_reranker
-            )
-        if self._conf.episodic_memory.short_term_memory.llm_model is None:
-            self._conf.episodic_memory.short_term_memory.llm_model = "gpt-4.1"
-        if self._conf.episodic_memory.short_term_memory.summary_prompt_system is None:
-            self._conf.episodic_memory.short_term_memory.summary_prompt_system = (
-                self._conf.prompt.episode_summary_system_prompt
-            )
-        if self._conf.episodic_memory.short_term_memory.summary_prompt_user is None:
-            self._conf.episodic_memory.short_term_memory.summary_prompt_user = (
-                self._conf.prompt.episode_summary_user_prompt
-            )
-        if self._conf.episodic_memory.long_term_memory.vector_graph_store is None:
-            self._conf.episodic_memory.long_term_memory.vector_graph_store = (
-                "default_store"
-            )
+
+        # Always resolve defaults so that merge() can produce valid full
+        # configs.  _resolve_*_defaults() will gracefully disable the
+        # subsystem if required resources are missing.
+        self._resolve_ltm_defaults()
+        self._resolve_stm_defaults()
+
+    def _resolve_ltm_defaults(self) -> None:
+        """Resolve long-term memory defaults, disabling if resources are unavailable."""
+        ltm = self._conf.episodic_memory.long_term_memory
+        assert ltm is not None
+
+        if ltm.embedder is None:
+            try:
+                ltm.embedder = self._conf.default_long_term_memory_embedder
+            except (ConfigurationError, Exception):
+                logger.warning(
+                    "No default embedder configured; disabling long-term episodic memory."
+                )
+                self._conf.episodic_memory.long_term_memory_enabled = False
+                return
+
+        if ltm.reranker is None:
+            try:
+                ltm.reranker = self._conf.default_long_term_memory_reranker
+            except (ConfigurationError, Exception):
+                logger.warning(
+                    "No default reranker configured; disabling long-term episodic memory."
+                )
+                self._conf.episodic_memory.long_term_memory_enabled = False
+                return
+
+        if ltm.vector_graph_store is None:
+            ltm.vector_graph_store = "default_store"
+
+    def _resolve_stm_defaults(self) -> None:
+        """Resolve short-term memory defaults."""
+        stm = self._conf.episodic_memory.short_term_memory
+        assert stm is not None
+
+        if stm.llm_model is None:
+            stm.llm_model = "gpt-4.1"
+        if stm.summary_prompt_system is None:
+            stm.summary_prompt_system = self._conf.prompt.episode_summary_system_prompt
+        if stm.summary_prompt_user is None:
+            stm.summary_prompt_user = self._conf.prompt.episode_summary_user_prompt
 
     async def start(self) -> None:
         if self._started:
             return
         self._started = True
 
-        semantic_service = await self._resources.get_semantic_service()
-        await semantic_service.start()
+        if self._conf.semantic_memory.enabled:
+            semantic_service = await self._resources.get_semantic_service()
+            await semantic_service.start()
+        else:
+            logger.info(
+                "Semantic memory is disabled; skipping semantic service startup."
+            )
 
     async def stop(self) -> None:
         if not self._started:
             return
         self._started = False
 
-        semantic_service = await self._resources.get_semantic_service()
-        await semantic_service.stop()
+        if self._conf.semantic_memory.enabled:
+            semantic_service = await self._resources.get_semantic_service()
+            await semantic_service.stop()
 
         await self._resources.close()
+
+    @property
+    def resource_manager(self) -> ResourceManagerImpl:
+        """Return the resource manager."""
+        return self._resources
 
     def _with_default_episodic_memory_conf(
         self,
@@ -138,6 +177,8 @@ class MemMachine:
     ) -> EpisodicMemoryConf:
         # Get default prompts from config, with fallbacks
         try:
+            if not self._conf.episodic_memory.enabled:
+                raise ResourceNotReadyError("Episodic memory is disabled")
             if user_conf is None:
                 user_conf = EpisodicMemoryConfPartial()
             user_conf.session_key = session_key
@@ -156,6 +197,18 @@ class MemMachine:
             raise ConfigurationError("Failed to merge configuration") from e
         return episodic_conf
 
+    @staticmethod
+    def _disabled_episodic_conf(session_key: str) -> EpisodicMemoryConf:
+        """Return a minimal episodic config with all memory disabled."""
+        return EpisodicMemoryConf(
+            session_key=session_key,
+            long_term_memory=None,
+            short_term_memory=None,
+            long_term_memory_enabled=False,
+            short_term_memory_enabled=False,
+            enabled=False,
+        )
+
     async def create_session(
         self,
         session_key: str,
@@ -164,10 +217,13 @@ class MemMachine:
         user_conf: EpisodicMemoryConfPartial | None = None,
     ) -> SessionDataManager.SessionInfo:
         """Create a new session."""
-        episodic_memory_conf = self._with_default_episodic_memory_conf(
-            user_conf=user_conf,
-            session_key=session_key,
-        )
+        if not self._conf.episodic_memory.enabled:
+            episodic_memory_conf = self._disabled_episodic_conf(session_key)
+        else:
+            episodic_memory_conf = self._with_default_episodic_memory_conf(
+                user_conf=user_conf,
+                session_key=session_key,
+            )
 
         session_data_manager = await self._resources.get_session_data_manager()
         await session_data_manager.create_new_session(
@@ -225,11 +281,11 @@ class MemMachine:
                 semantic_memory_manager.delete_messages(session_data=session_data),
             )
 
-        tasks = [
-            _delete_episode_store(),
-            _delete_episodic_memory(),
-            _delete_semantic_memory(),
-        ]
+        tasks = [_delete_episode_store()]
+        if self._conf.episodic_memory.enabled:
+            tasks.append(_delete_episodic_memory())
+        if self._conf.semantic_memory.enabled:
+            tasks.append(_delete_semantic_memory())
 
         await asyncio.gather(*tasks)
 

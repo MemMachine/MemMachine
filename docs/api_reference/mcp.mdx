@@ -4,9 +4,9 @@ description: 'MemMachine Model Context Protocol (MCP) Tools'
 icon: 'square-binary'
 ---
 
-The MemMachine Model Context Protocol (MCP) tools provide a dedicated, simplified interface for Large Language Models (LLMs) to interact with the memory system. These endpoints are designed to be concise and perform the core functions of memory management: adding new context and searching for existing context.
+The MemMachine Model Context Protocol (MCP) tools provide a dedicated, simplified interface for Large Language Models (LLMs) to interact with the memory system. These endpoints are designed to be concise and perform the core functions of memory management: adding new context, searching for existing context, and deleting memories.
 
-These tools automatically write to both **Episodic Memory** (short-term conversation history) and **Semantic Memory** (long-term user profile and facts).
+These tools work with both **Episodic Memory** (short-term conversation history) and **Semantic Memory** (long-term user profile and facts).
 
 ## 1. `add_memory`
 
@@ -69,3 +69,33 @@ This searches both **Profile Memory** (long-term user traits and facts) and **Ep
 | `McpResponse`  | Returns an error status/message on failure (e.g., MemMachine not initialized). |
 | `422`          | Invalid or unprocessable content.                            |
 | `500`          | MemMachine is not initialized or internal error.             |
+
+## 3. `delete_memory`
+
+### Summary
+
+Delete specific memories from the user's memory store.
+
+### Description
+
+Use this to remove outdated, incorrect, or sensitive information that should no longer be retained. Specify the unique IDs of the memories to delete from episodic or semantic memory stores.
+
+**Note**: Episodic memories and semantic memories are deleted separately as they have different ID spaces. You can obtain memory IDs from the `search_memory` results.
+
+### Parameters
+
+| Name                    | Type           | Required | Description                                                  | Default                                |
+| ----------------------- | -------------- | -------- | ------------------------------------------------------------ | -------------------------------------- |
+| `episodic_memory_uids`  | `list[string]` | No       | List of episodic memory IDs to delete.                       | `[]`                                   |
+| `semantic_memory_uids`  | `list[string]` | No       | List of semantic memory IDs to delete.                       | `[]`                                   |
+| `user_id`               | `string`       | No       | The unique identifier of the user whose memories are being deleted. | `user-{mac_address}`                   |
+| `proj_id`               | `string`       | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` or `mcp-{mac_address}` |
+| `org_id`                | `string`       | No       | Organization ID.                                             | `mcp-universal`                        |
+
+### Responses
+
+| Status Code | Description                                               |
+| ----------- | --------------------------------------------------------- |
+| `200`       | Success - memories deleted.                               |
+| `422`       | Invalid or unprocessable content (e.g., invalid IDs).     |
+| `500`       | MemMachine is not initialized or internal error.          |

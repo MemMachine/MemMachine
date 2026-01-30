@@ -20,6 +20,9 @@ from starlette.types import Lifespan, Receive, Scope, Send
 
 from memmachine.common.api.spec import (
     AddMemoriesSpec,
+    DeleteMemoriesSpec,
+    EpisodeIdT,
+    FeatureIdT,
     MemoryMessage,
     SearchMemoriesSpec,
     SearchResult,
@@ -29,6 +32,7 @@ from memmachine.common.resource_manager.resource_manager import ResourceManagerI
 from memmachine.main.memmachine import ALL_MEMORY_TYPES, MemMachine
 from memmachine.server.api_v2.service import (
     _add_messages_to,
+    _delete_memories,
     _search_target_memories,
 )
 
@@ -225,6 +229,19 @@ class Params(BaseModel):
             types=ALL_MEMORY_TYPES,
         )
 
+    def to_delete_memories_spec(
+        self,
+        episodic_memory_uids: list[EpisodeIdT],
+        semantic_memory_uids: list[FeatureIdT],
+    ) -> DeleteMemoriesSpec:
+        """Convert to DeleteMemoriesSpec."""
+        return DeleteMemoriesSpec(
+            org_id=self.org_id,
+            project_id=self.proj_id,
+            episodic_memory_uids=episodic_memory_uids,
+            semantic_memory_uids=semantic_memory_uids,
+        )
+
 
 class ParamsContextMiddleware:
     """
@@ -291,7 +308,6 @@ class MemMachineFastMCP(FastMCP):
 
 mcp = MemMachineFastMCP("MemMachine")
 mcp_app = mcp.get_app("/")
-
 
 # === Globals ===
 # Global instances for memory managers, initialized during app startup.
@@ -506,3 +522,51 @@ async def mcp_search_memory(
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
         logger.exception("Failed to search memory")
         return McpResponse(status=status_code, message=str(e))
+
+
+@mcp.tool(
+    name="delete_memory",
+    description=(
+        "Delete specific memories from the user's memory store. "
+        "Use this to remove outdated, incorrect, or sensitive information "
+        "that should no longer be retained. Specify the unique IDs of the "
+        "memories to delete from episodic or semantic memory stores. Note"
+        "episodic memories and semantic memories are deleted separately. "
+        "They have different ID spaces."
+        "\n\n**Parameters**: Supports flat style with org_id, proj_id, "
+        "semantic_ids, and episodic_ids."
+    ),
+)
+async def mcp_delete_memory(
+    org_id: str = "",
+    proj_id: str = "",
+    episodic_memory_uids: list[EpisodeIdT] | None = None,
+    semantic_memory_uids: list[FeatureIdT] | None = None,
+) -> McpResponse:
+    """Delete specific memories from the user's memory store."""
+    if semantic_memory_uids is None:
+        semantic_memory_uids = []
+    if episodic_memory_uids is None:
+        episodic_memory_uids = []
+    global mem_machine
+    if mem_machine is None:
+        return McpResponse(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="MemMachine is not initialized",
+        )
+    try:
+        param = Params(
+            org_id=org_id,
+            proj_id=proj_id,
+        )
+        spec = param.to_delete_memories_spec(
+            episodic_memory_uids=episodic_memory_uids,
+            semantic_memory_uids=semantic_memory_uids,
+        )
+        await _delete_memories(spec, mem_machine)
+    except Exception as e:
+        status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        logger.exception("Failed to delete memory")
+        return McpResponse(status=status_code, message=str(e))
+    else:
+        return MCP_SUCCESS
