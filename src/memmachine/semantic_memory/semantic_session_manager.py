@@ -83,9 +83,6 @@ class SemanticSessionManager:
         @property
         def project_id(self) -> str: ...
 
-        @property
-        def metadata(self) -> Mapping[str, JsonValue] | None: ...
-
     class SetType(Enum):
         """Default set_id prefixes used by `SemanticSessionManager`."""
 
@@ -178,6 +175,7 @@ class SemanticSessionManager:
         message: str,
         session_data: SessionData,
         *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
         min_distance: float | None = None,
         limit: int | None = None,
         load_citations: bool = False,
@@ -187,7 +185,7 @@ class SemanticSessionManager:
 
         set_ids = await self._get_set_ids_str_from_metadata(
             session_data=session_data,
-            metadata=session_data.metadata,
+            metadata=set_metadata,
         )
 
         return await self._semantic_service.search(
@@ -202,12 +200,14 @@ class SemanticSessionManager:
     async def number_of_uningested_messages(
         self,
         session_data: SessionData,
+        *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
     ) -> int:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         set_ids = await self._get_set_ids_str_from_metadata(
             session_data=session_data,
-            metadata=session_data.metadata,
+            metadata=set_metadata,
         )
 
         return await self._semantic_service.number_of_uningested(
@@ -277,6 +277,7 @@ class SemanticSessionManager:
         self,
         session_data: SessionData,
         *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
         search_filter: FilterExpr | None = None,
         page_size: int | None = None,
         page_num: int | None = None,
@@ -286,7 +287,7 @@ class SemanticSessionManager:
 
         set_ids = await self._get_set_ids_str_from_metadata(
             session_data=session_data,
-            metadata=session_data.metadata,
+            metadata=set_metadata,
         )
 
         return await self._semantic_service.get_set_features(
@@ -301,13 +302,14 @@ class SemanticSessionManager:
         self,
         session_data: SessionData,
         *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> None:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         set_ids = await self._get_set_ids_str_from_metadata(
             session_data=session_data,
-            metadata=session_data.metadata,
+            metadata=set_metadata,
         )
 
         await self._semantic_service.delete_feature_set(
@@ -621,13 +623,14 @@ class SemanticSessionManager:
         *,
         session_data: SessionData,
         set_metadata_keys: list[str],
+        set_metadata: Mapping[str, JsonValue] | None = None,
         is_org_level: bool = False,
     ) -> SetIdT:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         metadata = (
-            {key: session_data.metadata.get(key) for key in set_metadata_keys}
-            if session_data.metadata is not None
+            {key: set_metadata.get(key) for key in set_metadata_keys}
+            if set_metadata is not None
             else {}
         )
         normalized_metadata = {
@@ -677,10 +680,11 @@ class SemanticSessionManager:
         self,
         *,
         session_data: SessionData,
+        set_metadata: Mapping[str, JsonValue] | None = None,
     ) -> Iterable[Set]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
-        normalized_metadata = self._normalize_metadata(session_data.metadata)
+        normalized_metadata = self._normalize_metadata(set_metadata)
 
         set_type_ids = await self._semantic_config.list_set_type_ids(
             org_id=session_data.org_id
@@ -690,7 +694,7 @@ class SemanticSessionManager:
         sets: dict[str, SemanticSessionManager.Set] = {}
         async for sid in self._get_set_id_entries(
             session_data=session_data,
-            metadata=session_data.metadata,
+            metadata=set_metadata,
         ):
             set_id = self._generate_set_id(
                 org_id=session_data.org_id,
@@ -723,9 +727,12 @@ class SemanticSessionManager:
         self,
         *,
         session_data: SessionData,
+        set_metadata: Mapping[str, JsonValue] | None = None,
     ) -> Iterable[Set]:
         """Backward compatible alias preserving list semantics."""
-        return await self.list_sets(session_data=session_data)
+        return await self.list_sets(
+            session_data=session_data, set_metadata=set_metadata
+        )
 
     @classmethod
     def _generate_default_sets(

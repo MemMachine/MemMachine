@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
-from pydantic import JsonValue
 
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeStorage
 from memmachine.common.errors import InvalidSetIdConfigurationError
@@ -28,7 +27,6 @@ pytestmark = pytest.mark.asyncio
 class _SessionData:
     org_id: str
     project_id: str
-    metadata: dict[str, JsonValue] | None = None
 
 
 @pytest.fixture
@@ -505,10 +503,10 @@ async def test_list_set_ids(
     expanded_session = _SessionData(
         org_id="test_org",
         project_id="test_proj",
-        metadata={
-            "user_id": "test_user",
-        },
     )
+    set_metadata = {
+        "user_id": "test_user",
+    }
 
     # Add user level isolation
     await session_manager.create_set_type(
@@ -518,7 +516,10 @@ async def test_list_set_ids(
     )
 
     # Since session contains user_id it should apear on the list
-    set_ids = await session_manager.list_sets(session_data=expanded_session)
+    set_ids = await session_manager.list_sets(
+        session_data=expanded_session,
+        set_metadata=set_metadata,
+    )
     assert len(set_ids) == 3
 
     # While if we create an isolation level that isn't covered by session_data it won't be included.
@@ -527,7 +528,10 @@ async def test_list_set_ids(
         is_org_level=True,
         metadata_tags=["other_id"],
     )
-    set_ids = await session_manager.list_sets(session_data=expanded_session)
+    set_ids = await session_manager.list_sets(
+        session_data=expanded_session,
+        set_metadata=set_metadata,
+    )
     assert len(set_ids) == 3
 
 
@@ -539,11 +543,11 @@ async def test_list_set_ids_returns_set_details(
     expanded_session = _SessionData(
         org_id="test_org",
         project_id="test_proj",
-        metadata={
-            "user_id": "test_user",
-            "repo_id": "test_repo",
-        },
     )
+    set_metadata = {
+        "user_id": "test_user",
+        "repo_id": "test_repo",
+    }
 
     # Create set types with name and description
     await session_manager.create_set_type(
@@ -563,7 +567,10 @@ async def test_list_set_ids_returns_set_details(
     )
 
     # Get all set IDs
-    sets = await session_manager.list_sets(session_data=expanded_session)
+    sets = await session_manager.list_sets(
+        session_data=expanded_session,
+        set_metadata=set_metadata,
+    )
 
     # Should have 4 sets: 2 default (org + project) + 2 custom
     assert len(sets) == 4
@@ -630,10 +637,13 @@ async def test_user_default_set_requires_producer_metadata_and_is_configurable(
     user_session = _SessionData(
         org_id=session_data.org_id,
         project_id=session_data.project_id,
-        metadata={"producer_id": "user-123"},
     )
+    set_metadata = {"producer_id": "user-123"}
 
-    sets_with_user = await session_manager.list_sets(session_data=user_session)
+    sets_with_user = await session_manager.list_sets(
+        session_data=user_session,
+        set_metadata=set_metadata,
+    )
 
     unique_sets = {s.id: s for s in sets_with_user}
     assert len(unique_sets) == 3
@@ -787,10 +797,10 @@ async def test_category_templates_are_visible_to_children(
     expanded_session = _SessionData(
         org_id="test_org",
         project_id="test_proj",
-        metadata={
-            "user_id": "test_user",
-        },
     )
+    set_metadata = {
+        "user_id": "test_user",
+    }
 
     set_type_id = await session_manager.create_set_type(
         session_data=session_data,
@@ -801,6 +811,7 @@ async def test_category_templates_are_visible_to_children(
         session_data=expanded_session,
         is_org_level=False,
         set_metadata_keys=["user_id"],
+        set_metadata=set_metadata,
     )
 
     c_id = await session_manager.add_category_template(

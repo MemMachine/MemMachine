@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Task
-from collections.abc import Coroutine, Iterable
+from collections.abc import Coroutine, Iterable, Mapping
 from typing import Any, Final, Protocol, cast
 
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -54,7 +54,7 @@ class MemMachine:
     """MemMachine class."""
 
     class SessionData(Protocol):
-        """Protocol describing session-scoped metadata used by memories."""
+        """Protocol describing session-scoped context used by memories."""
 
         @property
         def org_id(self) -> str: ...
@@ -64,9 +64,6 @@ class MemMachine:
 
         @property
         def session_key(self) -> str: ...
-
-        @property
-        def metadata(self) -> dict[str, JsonValue] | None: ...
 
     def __init__(
         self, conf: Configuration, resources: ResourceManagerImpl | None = None
@@ -470,6 +467,7 @@ class MemMachine:
         session_data: InstanceOf[SessionData],
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
+        set_metadata: Mapping[str, JsonValue] | None = None,
         query: str,
         limit: int
         | None = None,  # TODO: Define if limit is per memory or is global limit
@@ -483,6 +481,7 @@ class MemMachine:
         Args:
             session_data: Session context used to route the search.
             target_memories: Which memory types to query.
+            set_metadata: Optional metadata tags used to select semantic sets.
             query: Query string.
             limit: Optional maximum number of results per memory.
             expand_context: Number of surrounding episodes to return with each match.
@@ -515,6 +514,7 @@ class MemMachine:
                 semantic_session.search(
                     message=query,
                     session_data=session_data,
+                    set_metadata=set_metadata,
                     limit=limit,
                     search_filter=property_filter,
                 )
@@ -536,6 +536,7 @@ class MemMachine:
         session_data: InstanceOf[SessionData],
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
+        set_metadata: Mapping[str, JsonValue] | None = None,
         search_filter: str | None = None,
         page_size: int | None = None,
         page_num: int | None = None,
@@ -546,6 +547,7 @@ class MemMachine:
         Args:
             session_data: Session context used to route the query.
             target_memories: Which memory types to query.
+            set_metadata: Optional metadata tags used to select semantic sets.
             search_filter: Optional filter string applied to the query.
             page_size: Optional page size.
             page_num: Optional 1-based page number.
@@ -583,6 +585,7 @@ class MemMachine:
             semantic_task = asyncio.create_task(
                 semantic_session.get_set_features(
                     session_data=session_data,
+                    set_metadata=set_metadata,
                     search_filter=search_filter_expr,
                     page_size=page_size,
                     page_num=page_num,
@@ -794,6 +797,7 @@ class MemMachine:
 
         Args:
             session_data: Context used to locate the project/org scope.
+            set_metadata: Optional metadata tags used to select semantic sets.
             is_org_level: Whether the set type is org-scoped.
             metadata_tags: Ordered list of metadata tag keys defining the set.
             name: Optional name for the set type.
@@ -817,6 +821,7 @@ class MemMachine:
         self,
         *,
         session_data: SessionData,
+        set_metadata: Mapping[str, JsonValue] | None = None,
     ) -> Iterable[SemanticSessionManager.Set]:
         """
         List set IDs for the given session data.
@@ -830,7 +835,10 @@ class MemMachine:
         """
         semantic_session = await self._resources.get_semantic_session_manager()
 
-        return await semantic_session.list_set_ids(session_data=session_data)
+        return await semantic_session.list_set_ids(
+            session_data=session_data,
+            set_metadata=set_metadata,
+        )
 
     async def semantic_get_set_id(
         self,
@@ -838,6 +846,7 @@ class MemMachine:
         session_data: SessionData,
         is_org_level: bool,
         metadata_tags: list[str],
+        set_metadata: Mapping[str, JsonValue] | None = None,
     ) -> SetIdT:
         """
         Retrieve the set ID for a given set type and metadata tags.
@@ -846,6 +855,7 @@ class MemMachine:
             session_data: Context used to locate the project/org scope.
             is_org_level: Whether the set is org-scoped (vs project-scoped).
             metadata_tags: Ordered list of metadata tag keys defining the set.
+            set_metadata: Optional metadata tags used to select semantic sets.
 
         Returns:
             The set ID.
@@ -857,6 +867,7 @@ class MemMachine:
             session_data=session_data,
             is_org_level=is_org_level,
             set_metadata_keys=metadata_tags,
+            set_metadata=set_metadata,
         )
 
     async def delete_semantic_set_type(self, set_type_id: str) -> None:

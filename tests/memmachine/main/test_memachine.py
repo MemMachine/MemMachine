@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from pydantic import JsonValue
 
 from memmachine import MemMachine
 from memmachine.common.episode_store import EpisodeEntry
@@ -82,7 +81,6 @@ class _Session:
     session_key: str
     org_id: str
     project_id: str
-    metadata: dict[str, JsonValue] | None
 
 
 @pytest.mark.asyncio
@@ -91,15 +89,15 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
         session_key="pagination-session",
         org_id="org_pagination",
         project_id="project_pagination",
-        metadata={
-            "work_type": "pagination",
-        },
     )
+    set_metadata = {
+        "work_type": "pagination",
+    }
     await memmachine.create_session(session_info.session_key)
     await memmachine.create_semantic_set_type(
         session_data=session_info,
         is_org_level=False,
-        metadata_tags=list(session_info.metadata.keys()),
+        metadata_tags=list(set_metadata.keys()),
     )
 
     set_id = await memmachine.semantic_get_set_id(
@@ -162,10 +160,6 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
         session_key=session_key,
         org_id=f"org-{session_key}",
         project_id=f"project-{session_key}",
-        metadata={
-            "work_type": "integration",
-            "session": f"test-{session_key}",
-        },
     )
     deleted = False
 
@@ -224,7 +218,6 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
                 session_key=key,
                 org_id=f"org-{key}",
                 project_id=f"project-{key}",
-                metadata={},
             )
             remaining = await memmachine.get_session(key)
             if remaining is not None:
@@ -468,11 +461,6 @@ async def test_add_update_get_feature(memmachine: MemMachine, session_data):
 async def test_create_and_delete_semantic_set_type(
     memmachine: MemMachine, session_data
 ):
-    session_data.metadata = {
-        "work_type": "integration",
-        "user_id": 123,
-    }
-
     semantic_set_types = await memmachine.list_semantic_set_type(
         session_data=session_data
     )
@@ -508,11 +496,6 @@ async def test_semantic_set_type_with_optional_fields(
     memmachine: MemMachine, session_data
 ):
     """Test creating semantic set type with and without name/description."""
-    session_data.metadata = {
-        "work_type": "integration",
-        "user_id": 456,
-    }
-
     # Create without name and description
     await memmachine.create_semantic_set_type(
         session_data=session_data,
@@ -562,7 +545,7 @@ async def test_semantic_set_type_with_optional_fields(
 
 @pytest.mark.asyncio
 async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, session_data):
-    session_data.metadata = {
+    set_metadata = {
         "work_type": "integration",
         "user_id": "123",
     }
@@ -577,6 +560,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["user_id"],
+        set_metadata=set_metadata,
     )
 
     category_id = await memmachine.semantic_add_category(
@@ -613,6 +597,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
                         await memmachine.list_search(
                             session_data=session_data,
                             target_memories=[MemoryType.Semantic],
+                            set_metadata=set_metadata,
                         )
                     ).semantic_memory
                     if "user_id" in feat.set_id
@@ -629,7 +614,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
 async def test_memmachine_semantic_add_and_get_category(
     memmachine: MemMachine, session_data
 ):
-    session_data.metadata = {
+    set_metadata = {
         "work_type": "integration",
         "user_id": "123",
     }
@@ -644,6 +629,7 @@ async def test_memmachine_semantic_add_and_get_category(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["user_id"],
+        set_metadata=set_metadata,
     )
 
     category_id = await memmachine.semantic_add_category(

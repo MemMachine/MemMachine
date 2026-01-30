@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from pydantic import JsonValue
 
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeEntry, EpisodeStorage
@@ -78,12 +77,10 @@ def basic_session_data():
     class _SessionData:
         org_id: str
         project_id: str
-        metadata: dict[str, JsonValue] | None = None
 
     return _SessionData(
         org_id="test_org",
         project_id="test_project",
-        metadata={},
     )
 
 

@@ -5,9 +5,11 @@ from unittest.mock import create_autospec
 import pytest
 import pytest_asyncio
 from neo4j import AsyncGraphDatabase
+from neo4j.exceptions import ServiceUnavailable
 from sqlalchemy import StaticPool
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from testcontainers.core.waiting_utils import wait_container_is_ready
 from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
 
@@ -345,9 +347,15 @@ def neo4j_container(pytestconfig):
     if not pytestconfig.getoption("--integration"):
         pytest.skip("need --integration option to start Neo4j container")
 
+    class _Neo4jContainer(Neo4jContainer):
+        @wait_container_is_ready(ServiceUnavailable)
+        def _connect(self) -> None:
+            with self.get_driver() as driver:
+                driver.verify_connectivity()
+
     username = "neo4j"
     password = "password"
-    with Neo4jContainer(
+    with _Neo4jContainer(
         image="neo4j:5.23",
         username=username,
         password=password,
