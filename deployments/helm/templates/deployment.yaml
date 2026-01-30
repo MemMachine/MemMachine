@@ -1,0 +1,189 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "memmachine.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "memmachine.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "memmachine.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "memmachine.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- end }}
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: {{ include "memmachine.image" (dict "image" .Values.postgres.image) }}
+          imagePullPolicy: {{ or .Values.postgres.image.pullPolicy .Values.global.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.postgres.port }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.postgres.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with .Values.postgres.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: memmachine-postgres-data
+              mountPath: {{ .Values.postgres.persistence.mountPath }}
+        - name: neo4j
+          image: {{ include "memmachine.image" (dict "image" .Values.neo4j.image) }}
+          imagePullPolicy: {{ or .Values.neo4j.image.pullPolicy .Values.global.image.pullPolicy }}
+          ports:
+            - name: neo4j-http
+              containerPort: {{ .Values.neo4j.ports.http }}
+              protocol: TCP
+            - name: neo4j-https
+              containerPort: {{ .Values.neo4j.ports.https }}
+              protocol: TCP
+            - name: neo4j-bolt
+              containerPort: {{ .Values.neo4j.ports.bolt }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.neo4j.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- with .Values.neo4j.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: memmachine-neo4j-data
+              mountPath: {{ .Values.neo4j.persistence.mounts.data }}
+            - name: memmachine-neo4j-logs
+              mountPath: {{ .Values.neo4j.persistence.mounts.logs }}
+            - name: memmachine-neo4j-import
+              mountPath: {{ .Values.neo4j.persistence.mounts.import }}
+            - name: memmachine-neo4j-plugins
+              mountPath: {{ .Values.neo4j.persistence.mounts.plugins }}
+        - name: memmachine
+          image: {{ include "memmachine.image" (dict "image" .Values.image) }}
+          imagePullPolicy: {{ or .Values.image.pullPolicy .Values.global.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: MEMORY_CONFIG
+              value: "/app/configuration.yml"
+            - name: MEMMACHINE_CONFIG_API
+              value: "1"
+            - name: HOST
+              value: "0.0.0.0"
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: memmachine-config
+              mountPath: /app/configuration.yml
+              subPath: configuration.yml
+              readOnly: true
+            {{- if .Values.persistence.enabled }}
+            - name: memmachine-data
+              mountPath: {{ .Values.persistence.mountPath }}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: memmachine-config
+          configMap:
+            name: {{ include "memmachine.fullname" . }}-config
+        {{- if .Values.persistence.enabled }}
+        - name: memmachine-data
+          persistentVolumeClaim:
+            claimName: {{ include "memmachine.fullname" . }}
+        {{- end }}
+        {{- if .Values.postgres.persistence.enabled }}
+        - name: memmachine-postgres-data
+          persistentVolumeClaim:
+            claimName: {{ include "memmachine.fullname" . }}-postgres
+        {{- else }}
+        - name: memmachine-postgres-data
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.neo4j.persistence.enabled }}
+        - name: memmachine-neo4j-data
+          persistentVolumeClaim:
+            claimName: {{ include "memmachine.fullname" . }}-neo4j-data
+        - name: memmachine-neo4j-logs
+          persistentVolumeClaim:
+            claimName: {{ include "memmachine.fullname" . }}-neo4j-logs
+        - name: memmachine-neo4j-import
+          persistentVolumeClaim:
+            claimName: {{ include "memmachine.fullname" . }}-neo4j-import
+        - name: memmachine-neo4j-plugins
+          persistentVolumeClaim:
+            claimName: {{ include "memmachine.fullname" . }}-neo4j-plugins
+        {{- else }}
+        - name: memmachine-neo4j-data
+          emptyDir: {}
+        - name: memmachine-neo4j-logs
+          emptyDir: {}
+        - name: memmachine-neo4j-import
+          emptyDir: {}
+        - name: memmachine-neo4j-plugins
+          emptyDir: {}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
