@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from memmachine.common.api.spec import SearchResult
 from memmachine.rest_client.client import MemMachineClient
+from memmachine.rest_client.langgraph import MemMachineTools
 from memmachine.rest_client.project import Project
 
 
@@ -1024,3 +1025,75 @@ class TestMemMachineIntegration:
                 project_id=unique_test_ids["project_id"],
             )
         assert exc_info.value.response.status_code == 404
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not check_server_available(),
+    reason="MemMachine server not available. Start server or set MEMORY_BACKEND_URL",
+)
+class TestMemMachineToolsIntegration:
+    """Integration tests for MemMachineTools."""
+
+    @pytest.fixture
+    def unique_test_ids(self):
+        """Generate unique test IDs for test isolation."""
+        test_id = str(uuid4())[:8]
+        return {
+            "org_id": f"test_org_{test_id}",
+            "project_id": f"test_project_{test_id}",
+            "user_id": f"test_user_{test_id}",
+            "agent_id": f"test_agent_{test_id}",
+            "session_id": f"test_session_{test_id}",
+            "group_id": f"test_group_{test_id}",
+        }
+
+    @pytest.fixture
+    def tools(self, unique_test_ids):
+        """Create a MemMachineTools instance."""
+        t = MemMachineTools(
+            base_url=TEST_BASE_URL,
+            org_id=unique_test_ids["org_id"],
+            project_id=unique_test_ids["project_id"],
+            user_id=unique_test_ids["user_id"],
+            agent_id=unique_test_ids["agent_id"],
+            group_id=unique_test_ids["group_id"],
+            session_id=unique_test_ids["session_id"],
+        )
+        yield t
+        t.close()
+
+    def test_add_and_search_round_trip(self, tools):
+        """Test adding a memory then searching for it via MemMachineTools."""
+        add_result = tools.add_memory(content="I love hiking in the mountains")
+        assert add_result["status"] == "success"
+        assert len(add_result["uids"]) > 0
+
+        search_result = tools.search_memory(query="hiking mountains")
+        assert search_result["status"] == "success"
+        results = search_result["results"]
+        # Should have found something in episodic or semantic memory
+        episodic = results.get("episodic_memory")
+        semantic = results.get("semantic_memory", [])
+        long_term_memory = episodic.get("long_term_memory", {}).get("episodes", [])
+        short_term_memory = episodic.get("short_term_memory", {}).get("episodes", {})
+        has_episodic = len(long_term_memory) > 0 or len(short_term_memory) > 0
+        assert has_episodic or len(semantic) > 0
+        # check that at least one result is relevant
+        found_relevant = False
+        for episode in long_term_memory + short_term_memory:
+            if "hiking" in episode.get("content", "").lower():
+                found_relevant = True
+                break
+        assert found_relevant
+
+    def test_get_context(self, tools, unique_test_ids):
+        """Test get_context returns the expected context dict."""
+        context = tools.get_context()
+        assert context["org_id"] == unique_test_ids["org_id"]
+        assert context["project_id"] == unique_test_ids["project_id"]
+        metadata = context["metadata"]
+        assert metadata.get("user_id") == unique_test_ids["user_id"]
+        assert metadata.get("agent_id") == unique_test_ids["agent_id"]
+        assert metadata.get("group_id") == unique_test_ids["group_id"]
+        assert metadata.get("session_id") == unique_test_ids["session_id"]

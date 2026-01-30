@@ -8,7 +8,7 @@ to enable AI agents with persistent memory capabilities.
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from memmachine import MemMachineClient
+from memmachine.rest_client.client import MemMachineClient
 
 if TYPE_CHECKING:
     from memmachine.rest_client.memory import Memory
@@ -54,6 +54,43 @@ class MemMachineTools:
         self.user_id = user_id
         self.session_id = session_id
 
+    def _build_metadata(
+        self,
+        group_id: str | None = None,
+        agent_id: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, str]:
+        """
+        Build metadata dict from context fields, using overrides or instance defaults.
+
+        Args:
+            group_id: Group ID override
+            agent_id: Agent ID override
+            user_id: User ID override
+            session_id: Session ID override
+
+        Returns:
+            Metadata dictionary with non-None values
+
+        """
+        metadata: dict[str, str] = {}
+        resolved_group_id = group_id or self.group_id
+        resolved_agent_id = agent_id or self.agent_id
+        resolved_user_id = user_id or self.user_id
+        resolved_session_id = session_id or self.session_id
+
+        if resolved_group_id:
+            metadata["group_id"] = resolved_group_id
+        if resolved_agent_id:
+            metadata["agent_id"] = resolved_agent_id
+        if resolved_user_id:
+            metadata["user_id"] = resolved_user_id
+        if resolved_session_id:
+            metadata["session_id"] = resolved_session_id
+
+        return metadata
+
     def get_memory(
         self,
         org_id: str | None = None,
@@ -84,12 +121,14 @@ class MemMachineTools:
             project_id=project_id or self.project_id,
         )
 
-        return project.memory(
-            group_id=group_id or self.group_id,
-            agent_id=agent_id or self.agent_id,
-            user_id=user_id or self.user_id,
-            session_id=session_id or self.session_id,
+        metadata = self._build_metadata(
+            group_id=group_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            session_id=session_id,
         )
+
+        return project.memory(metadata=metadata)
 
     def add_memory(
         self,
@@ -101,8 +140,7 @@ class MemMachineTools:
         agent_id: str | None = None,
         group_id: str | None = None,
         session_id: str | None = None,
-        episode_type: str = "text",
-        metadata: dict[str, Any] | None = None,
+        metadata: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """
         Add a memory to MemMachine.
@@ -120,7 +158,6 @@ class MemMachineTools:
             agent_id: Agent ID (overrides default, stored in metadata)
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
-            episode_type: Type of episode (default: "text", stored in metadata)
             metadata: Additional metadata for the episode
 
         Returns:
@@ -131,17 +168,17 @@ class MemMachineTools:
             memory = self.get_memory(
                 org_id, project_id, user_id, agent_id, group_id, session_id
             )
-            success = memory.add(
+            results = memory.add(
                 content=content,
                 role=role,
-                episode_type=episode_type,
                 metadata=metadata or {},
             )
-            if success:
+            if results:
                 return {
                     "status": "success",
                     "message": f"Memory added successfully: {content[:50]}...",
                     "content": content,
+                    "uids": [r.uid for r in results],
                 }
         except Exception:
             return {
@@ -163,9 +200,9 @@ class MemMachineTools:
         agent_id: str | None = None,
         group_id: str | None = None,
         session_id: str | None = None,
-        limit: int = 5,
+        limit: int = 20,
         score_threshold: float | None = None,
-        filter_dict: dict[str, Any] | None = None,
+        filter_dict: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """
         Search for memories in MemMachine.
@@ -184,7 +221,7 @@ class MemMachineTools:
             agent_id: Agent ID (overrides default, stored in metadata)
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
-            limit: Maximum number of results to return (default: 5)
+            limit: Maximum number of results to return (default: 20)
             score_threshold: Minimum score to include in results
             filter_dict: Additional filters for the search
 
@@ -196,7 +233,7 @@ class MemMachineTools:
             memory = self.get_memory(
                 org_id, project_id, user_id, agent_id, group_id, session_id
             )
-            results = memory.search(
+            result = memory.search(
                 query=query,
                 limit=limit,
                 score_threshold=score_threshold,
@@ -204,29 +241,25 @@ class MemMachineTools:
             )
 
             # Format results for easier consumption
-            # v2 API returns "semantic_memory" instead of "profile_memory"
-            formatted_results = {
+            # result is a SearchResult Pydantic model with .content (SearchResultContent)
+            formatted_results: dict[str, Any] = {
                 "query": query,
                 "episodic_memory": [],
-                "profile_memory": [],
+                "semantic_memory": [],
             }
 
-            if results:
+            if result.content:
                 # Extract episodic memories
-                if results.get("episodic_memory"):
-                    episodic = results["episodic_memory"]
-                    if isinstance(episodic, list) and episodic:
-                        if isinstance(episodic[0], list):
-                            formatted_results["episodic_memory"] = episodic[0]
-                        else:
-                            formatted_results["episodic_memory"] = episodic
+                if result.content.episodic_memory is not None:
+                    episodic = result.content.episodic_memory
+                    # EpisodicSearchResult - serialize to dict for downstream use
+                    formatted_results["episodic_memory"] = episodic.model_dump()
 
-                # Extract profile/semantic memories (v2 API uses "semantic_memory")
-                if "profile_memory" in results:
-                    formatted_results["profile_memory"] = results["profile_memory"]
-                elif "semantic_memory" in results:
-                    # Map semantic_memory to profile_memory for backward compatibility
-                    formatted_results["profile_memory"] = results["semantic_memory"]
+                # Extract semantic memories
+                if result.content.semantic_memory is not None:
+                    formatted_results["semantic_memory"] = [
+                        feat.model_dump() for feat in result.content.semantic_memory
+                    ]
 
             return {
                 "status": "success",
@@ -252,16 +285,33 @@ class MemMachineTools:
         """
         summary_parts = []
 
-        episodic_memories = results.get("episodic_memory", [])
+        episodic_memories = results.get("episodic_memory")
         if episodic_memories:
-            summary_parts.append(f"Found {len(episodic_memories)} episodic memories:")
-            for i, mem in enumerate(episodic_memories[:3], 1):  # Show top 3
-                content = mem.get("content", "") if isinstance(mem, dict) else str(mem)
-                summary_parts.append(f"  {i}. {content[:100]}...")
+            if isinstance(episodic_memories, dict):
+                # EpisodicSearchResult dumped as dict
+                episodes = episodic_memories.get("episodes", [])
+                if episodes:
+                    summary_parts.append(f"Found {len(episodes)} episodic memories:")
+                    for i, mem in enumerate(episodes[:3], 1):
+                        content = (
+                            mem.get("content", "")
+                            if isinstance(mem, dict)
+                            else str(mem)
+                        )
+                        summary_parts.append(f"  {i}. {content[:100]}...")
+            elif isinstance(episodic_memories, list) and episodic_memories:
+                summary_parts.append(
+                    f"Found {len(episodic_memories)} episodic memories:"
+                )
+                for i, mem in enumerate(episodic_memories[:3], 1):
+                    content = (
+                        mem.get("content", "") if isinstance(mem, dict) else str(mem)
+                    )
+                    summary_parts.append(f"  {i}. {content[:100]}...")
 
-        profile_memories = results.get("profile_memory", [])
-        if profile_memories:
-            summary_parts.append(f"Found {len(profile_memories)} profile memories")
+        semantic_memories = results.get("semantic_memory", [])
+        if semantic_memories:
+            summary_parts.append(f"Found {len(semantic_memories)} semantic memories")
 
         if not summary_parts:
             return "No relevant memories found."
@@ -361,7 +411,7 @@ def create_search_memory_tool(
     def search_memory_tool(
         query: str,
         user_id: str | None = None,
-        limit: int = 5,
+        limit: int = 20,
     ) -> dict[str, Any]:
         """
         Tool to search memories in MemMachine.
