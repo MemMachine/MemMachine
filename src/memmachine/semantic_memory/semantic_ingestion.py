@@ -103,9 +103,8 @@ class IngestionService:
 
         if len(raw_messages) != len([m for m in raw_messages if m is not None]):
             raise ValueError(
-                "Failed to retrieve messages. Invalid episode_ids exist for set_id %s: %s",
-                set_id,
-                history_ids,
+                "Failed to retrieve messages. Invalid episode_ids exist for set_id "
+                f"{set_id}: {history_ids}"
             )
 
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
@@ -122,8 +121,7 @@ class IngestionService:
                     )
 
                     raise ValueError(
-                        "Message ID is None for message %s",
-                        message.model_dump(),
+                        f"Message ID is None for message {message.model_dump()}"
                     )
 
                 filter_expr = And(
