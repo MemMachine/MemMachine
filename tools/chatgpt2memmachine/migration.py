@@ -60,7 +60,25 @@ class MigrationHack:
         if not self.dry_run:
             print(f"Found {self.num_conversations} conversation(s)")
 
-        for conv_id in range(1, self.num_conversations + 1):
+        # Check if user specified a specific conversation index
+        user_index = self.filters.get("index", 0) if self.filters else 0
+        
+        # Determine which conversations to process
+        if user_index and user_index > 0:
+            # User specified a specific conversation, only process that one
+            if self.verbose:
+                print(f"DEBUG: User specified conversation index: {user_index}")
+            if user_index > self.num_conversations:
+                raise Exception(
+                    f"ERROR: Conversation index {user_index} is out of range. "
+                    f"File contains {self.num_conversations} conversation(s)."
+                )
+            conv_ids_to_process = [user_index]
+        else:
+            # Process all conversations
+            conv_ids_to_process = list(range(1, self.num_conversations + 1))
+
+        for conv_id in conv_ids_to_process:
             extracted_file_name = (
                 f"{self.input_file_base_name}_{conv_id}_extracted.json"
             )
