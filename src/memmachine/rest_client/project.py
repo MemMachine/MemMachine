@@ -141,7 +141,7 @@ class Project:
         if self.client.closed:
             raise RuntimeError("Cannot delete project: client has been closed")
 
-        url = f"{self.client.base_url}/api/v2/projects/delete"
+        url = self.client._build_api_url("/api/v2/projects/delete")
         spec = DeleteProjectSpec(org_id=self.org_id, project_id=self.project_id)
         data = spec.model_dump(exclude_none=True)
 
@@ -172,7 +172,7 @@ class Project:
         if self.client.closed:
             raise RuntimeError("Cannot refresh project: client has been closed")
 
-        url = f"{self.client.base_url}/api/v2/projects/get"
+        url = self.client._build_api_url("/api/v2/projects/get")
         spec = GetProjectSpec(org_id=self.org_id, project_id=self.project_id)
         data = spec.model_dump(exclude_none=True)
 
@@ -210,7 +210,7 @@ class Project:
         if self.client.closed:
             raise RuntimeError("Cannot get episode count: client has been closed")
 
-        url = f"{self.client.base_url}/api/v2/projects/episode_count/get"
+        url = self.client._build_api_url("/api/v2/projects/episode_count/get")
         spec = GetProjectSpec(org_id=self.org_id, project_id=self.project_id)
         data = spec.model_dump(exclude_none=True)
 
