@@ -828,6 +828,7 @@ class MemMachine:
 
         Args:
             session_data: Context used to locate the project/org scope.
+            set_metadata: Metadata tags used to select semantic sets.
 
         Returns:
             List of set IDs matching the session data criteria.
