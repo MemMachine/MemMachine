@@ -8,8 +8,8 @@ from pydantic import InstanceOf
 from memmachine.common.configuration import PromptConf, SemanticMemoryConf
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeStorage
-from memmachine.common.language_model import LanguageModel
 from memmachine.common.errors import ResourceNotReadyError
+from memmachine.common.language_model import LanguageModel
 from memmachine.common.resource_manager import CommonResourceManager
 from memmachine.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
@@ -102,14 +102,32 @@ class SemanticResourceManager:
 
         return storage
 
-    async def _get_default_embedder(self) -> Embedder:
+    def _get_default_embedder_name(self) -> str:
         embedder = self._conf.embedding_model
-        return await self._resource_manager.get_embedder(embedder, validate=True)
+        if not embedder:
+            raise ResourceNotReadyError(
+                "No embedding model configured for semantic memory.",
+                "semantic_memory",
+            )
+        return embedder
+
+    def _get_default_language_model_name(self) -> str:
+        language_model = self._conf.llm_model
+        if not language_model:
+            raise ResourceNotReadyError(
+                "No language model configured for semantic memory.",
+                "semantic_memory",
+            )
+        return language_model
+
+    async def _get_default_embedder(self) -> Embedder:
+        embedder_name = self._get_default_embedder_name()
+        return await self._resource_manager.get_embedder(embedder_name, validate=True)
 
     async def _get_default_language_model(self) -> LanguageModel:
-        language_model = self._conf.llm_model
+        language_model_name = self._get_default_language_model_name()
         return await self._resource_manager.get_language_model(
-            language_model, validate=True
+            language_model_name, validate=True
         )
 
     async def get_semantic_service(self) -> SemanticService:
@@ -126,6 +144,7 @@ class SemanticResourceManager:
             def_type = SemanticSessionManager.get_default_set_id_type(set_id)
             return semantic_categories_by_isolation[def_type]
 
+        embedder_name = self._get_default_embedder_name()
         embedder = await self._get_default_embedder()
         llm_model = await self._get_default_language_model()
 
@@ -137,7 +156,7 @@ class SemanticResourceManager:
                 episode_storage=episode_store,
                 resource_manager=cast(ResourceManager, self._resource_manager),
                 default_embedder=embedder,
-                default_embedder_name=self._conf.embedding_model,
+                default_embedder_name=embedder_name,
                 default_language_model=llm_model,
                 default_category_retriever=get_default_categories,
                 semantic_config_storage=config_store,
