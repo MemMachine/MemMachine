@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
-from pydantic import JsonValue
 
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeStorage
 from memmachine.common.errors import InvalidSetIdConfigurationError
@@ -28,7 +27,6 @@ pytestmark = pytest.mark.asyncio
 class _SessionData:
     org_id: str
     project_id: str
-    metadata: dict[str, JsonValue] | None = None
 
 
 @pytest.fixture
@@ -288,12 +286,18 @@ async def test_add_message_uses_all_isolations(
         metadata={},
     )
 
+    user_set_id = mock_session_manager._generate_set_id(
+        org_id=session_data.org_id,
+        project_id=None,
+        metadata={"producer_id": "profile_id"},
+    )
+
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
     assert kwargs == {}
 
     assert args[0] == history_id
-    assert set(args[1]) == {profile_id, session_id}
+    assert set(args[1]) == {profile_id, session_id, user_set_id}
 
 
 async def test_add_message_with_session_only_isolation(
@@ -329,7 +333,12 @@ async def test_add_message_with_session_only_isolation(
         metadata={},
     )
 
-    assert sorted(args[1]) == sorted([set_type_id, project_id])
+    user_set_id = mock_session_manager._generate_set_id(
+        org_id=session_data.org_id,
+        project_id=None,
+        metadata={"producer_id": "profile_id"},
+    )
+    assert sorted(args[1]) == sorted([set_type_id, project_id, user_set_id])
 
 
 async def test_search_passes_set_ids_and_filters(
@@ -488,16 +497,16 @@ async def test_list_set_ids(
     session_data,
 ):
     # Default org has 2 ids. Org level and project level set.
-    set_ids = await session_manager.list_set_ids(session_data=session_data)
+    set_ids = await session_manager.list_sets(session_data=session_data)
     assert len(set_ids) == 2
 
     expanded_session = _SessionData(
         org_id="test_org",
         project_id="test_proj",
-        metadata={
-            "user_id": "test_user",
-        },
     )
+    set_metadata = {
+        "user_id": "test_user",
+    }
 
     # Add user level isolation
     await session_manager.create_set_type(
@@ -507,7 +516,10 @@ async def test_list_set_ids(
     )
 
     # Since session contains user_id it should apear on the list
-    set_ids = await session_manager.list_set_ids(session_data=expanded_session)
+    set_ids = await session_manager.list_sets(
+        session_data=expanded_session,
+        set_metadata=set_metadata,
+    )
     assert len(set_ids) == 3
 
     # While if we create an isolation level that isn't covered by session_data it won't be included.
@@ -516,7 +528,10 @@ async def test_list_set_ids(
         is_org_level=True,
         metadata_tags=["other_id"],
     )
-    set_ids = await session_manager.list_set_ids(session_data=expanded_session)
+    set_ids = await session_manager.list_sets(
+        session_data=expanded_session,
+        set_metadata=set_metadata,
+    )
     assert len(set_ids) == 3
 
 
@@ -528,11 +543,11 @@ async def test_list_set_ids_returns_set_details(
     expanded_session = _SessionData(
         org_id="test_org",
         project_id="test_proj",
-        metadata={
-            "user_id": "test_user",
-            "repo_id": "test_repo",
-        },
     )
+    set_metadata = {
+        "user_id": "test_user",
+        "repo_id": "test_repo",
+    }
 
     # Create set types with name and description
     await session_manager.create_set_type(
@@ -552,7 +567,10 @@ async def test_list_set_ids_returns_set_details(
     )
 
     # Get all set IDs
-    sets = await session_manager.list_set_ids(session_data=expanded_session)
+    sets = await session_manager.list_sets(
+        session_data=expanded_session,
+        set_metadata=set_metadata,
+    )
 
     # Should have 4 sets: 2 default (org + project) + 2 custom
     assert len(sets) == 4
@@ -582,6 +600,117 @@ async def test_list_set_ids_returns_set_details(
     project_level_default = next((s for s in default_sets if not s.is_org_level), None)
     assert org_level_default is not None
     assert project_level_default is not None
+
+
+async def test_default_sets_are_configurable(
+    session_manager: SemanticSessionManager, session_data
+):
+    sets = await session_manager.list_sets(session_data=session_data)
+
+    assert len(sets) == 2
+    org_set = next(s for s in sets if s.is_org_level)
+    project_set = next(s for s in sets if not s.is_org_level)
+
+    await session_manager.configure_set(
+        set_id=org_set.id,
+        llm_name="llm-org",
+    )
+    await session_manager.configure_set(
+        set_id=project_set.id,
+        llm_name="llm-project",
+    )
+
+    org_config = await session_manager.get_set_id_config(set_id=org_set.id)
+    project_config = await session_manager.get_set_id_config(set_id=project_set.id)
+
+    assert org_config.llm_name == "llm-org"
+    assert project_config.llm_name == "llm-project"
+
+
+async def test_user_default_set_requires_producer_metadata_and_is_configurable(
+    session_manager: SemanticSessionManager,
+    session_data,
+):
+    base_sets = list(await session_manager.list_sets(session_data=session_data))
+    assert len(base_sets) == 2
+
+    user_session = _SessionData(
+        org_id=session_data.org_id,
+        project_id=session_data.project_id,
+    )
+    set_metadata = {"producer_id": "user-123"}
+
+    sets_with_user = await session_manager.list_sets(
+        session_data=user_session,
+        set_metadata=set_metadata,
+    )
+
+    unique_sets = {s.id: s for s in sets_with_user}
+    assert len(unique_sets) == 3
+
+    user_set = next(s for s in unique_sets.values() if s.tags == ["producer_id"])
+    assert user_set.is_org_level is True
+
+    expected_user_id = SemanticSessionManager.generate_user_set_id(
+        org_id=user_session.org_id,
+        producer_id="user-123",
+    )
+    assert user_set.id == expected_user_id
+
+    await session_manager.configure_set(
+        set_id=user_set.id,
+        llm_name="llm-user",
+    )
+
+    user_config = await session_manager.get_set_id_config(set_id=user_set.id)
+    assert user_config.llm_name == "llm-user"
+
+
+async def test_list_sets_deduplicates_default_overrides(
+    session_manager: SemanticSessionManager,
+    session_data,
+):
+    base_set_ids = {
+        SemanticSessionManager._generate_set_id(
+            org_id=session_data.org_id,
+            project_id=None,
+            metadata={},
+        ),
+        SemanticSessionManager._generate_set_id(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            metadata={},
+        ),
+    }
+
+    base_sets = await session_manager.list_sets(session_data=session_data)
+    assert {s.id for s in base_sets} == base_set_ids
+
+    await session_manager.create_set_type(
+        session_data=session_data,
+        is_org_level=True,
+        metadata_tags=[],
+        name="Custom Org",
+        description="Overrides default org set",
+    )
+
+    await session_manager.create_set_type(
+        session_data=session_data,
+        is_org_level=False,
+        metadata_tags=[],
+        name="Custom Project",
+        description="Overrides default project set",
+    )
+
+    deduped_sets = await session_manager.list_sets(session_data=session_data)
+    assert len(deduped_sets) == 2
+    assert {s.id for s in deduped_sets} == base_set_ids
+
+    org_set = next(s for s in deduped_sets if s.is_org_level)
+    project_set = next(s for s in deduped_sets if not s.is_org_level)
+
+    assert org_set.tags == []
+    assert project_set.tags == []
 
 
 async def test_configure_set(
@@ -633,7 +762,7 @@ async def test_invalid_embedder_change_with_dirty_set(
         )
 
 
-async def test_set_type_categories(
+async def test_category_templates(
     session_manager: SemanticSessionManager, session_data
 ):
     set_type_id = await session_manager.create_set_type(
@@ -641,7 +770,7 @@ async def test_set_type_categories(
         is_org_level=False,
         metadata_tags=["repo"],
     )
-    c_id = await session_manager.add_new_set_type_category(
+    c_id = await session_manager.add_category_template(
         set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",
@@ -654,24 +783,24 @@ async def test_set_type_categories(
         tag_description="test_tag_description",
     )
 
-    categories = await session_manager.list_set_type_categories(set_type_id=set_type_id)
+    categories = await session_manager.list_category_templates(set_type_id=set_type_id)
     assert len(categories) == 1
 
     assert categories[0].id == c_id
     assert categories[0].name == "test_category"
 
 
-async def test_set_type_categories_are_visible_to_children(
+async def test_category_templates_are_visible_to_children(
     session_manager: SemanticSessionManager,
     session_data,
 ):
     expanded_session = _SessionData(
         org_id="test_org",
         project_id="test_proj",
-        metadata={
-            "user_id": "test_user",
-        },
     )
+    set_metadata = {
+        "user_id": "test_user",
+    }
 
     set_type_id = await session_manager.create_set_type(
         session_data=session_data,
@@ -682,9 +811,10 @@ async def test_set_type_categories_are_visible_to_children(
         session_data=expanded_session,
         is_org_level=False,
         set_metadata_keys=["user_id"],
+        set_metadata=set_metadata,
     )
 
-    c_id = await session_manager.add_new_set_type_category(
+    c_id = await session_manager.add_category_template(
         set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",

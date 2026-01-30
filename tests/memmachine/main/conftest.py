@@ -5,7 +5,6 @@ from urllib.parse import urlparse
 
 import pytest
 import pytest_asyncio
-from pydantic import JsonValue
 
 from memmachine import MemMachine, setup_nltk
 from memmachine.common.configuration import (
@@ -292,13 +291,11 @@ async def session_data(memmachine: MemMachine):
         org_id: str
         project_id: str
         session_key: str
-        metadata: dict[str, JsonValue] | None = None
 
     s_data = _SessionData(
         session_key="test_session",
         org_id="test_org",
         project_id="test_proj",
-        metadata={},
     )
     semantic_session: SemanticSessionManager = (
         await memmachine._resources.get_semantic_session_manager()

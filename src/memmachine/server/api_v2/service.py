@@ -36,7 +36,6 @@ async def get_memmachine(request: Request) -> MemMachine:
 class _SessionData:
     org_id: str
     project_id: str
-    metadata: dict[str, JsonValue] | None = None
 
     @property
     def session_key(self) -> str:
