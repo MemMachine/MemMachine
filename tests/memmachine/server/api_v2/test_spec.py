@@ -198,6 +198,12 @@ def test_search_memories_spec():
     assert spec.query == "Find this"
     assert spec.filter == ""
     assert spec.types == []
+    assert spec.user_id is None
+    assert spec.user_role is None
+
+    spec = SearchMemoriesSpec(query="Find this", user_id="user_123", user_role="admin")
+    assert spec.user_id == "user_123"
+    assert spec.user_role == "admin"
 
 
 def test_list_memories_spec():
@@ -208,6 +214,12 @@ def test_list_memories_spec():
     assert spec.page_num == 0
     assert spec.filter == ""
     assert spec.type is None
+    assert spec.user_id is None
+    assert spec.user_role is None
+
+    spec = ListMemoriesSpec(user_id="user_123", user_role="admin")
+    assert spec.user_id == "user_123"
+    assert spec.user_role == "admin"
 
 
 def test_delete_episodic_memory_spec():
