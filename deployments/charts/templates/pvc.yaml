@@ -1,0 +1,108 @@
+{{- if .Values.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memmachine.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass }}
+  {{- end }}
+---
+{{- end -}}
+{{- if .Values.postgres.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memmachine.fullname" . }}-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.postgres.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.postgres.persistence.size }}
+  {{- if .Values.postgres.persistence.storageClass }}
+  storageClassName: {{ .Values.postgres.persistence.storageClass }}
+  {{- end }}
+---
+{{- end -}}
+{{- if .Values.neo4j.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memmachine.fullname" . }}-neo4j-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.neo4j.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.neo4j.persistence.size }}
+  {{- if .Values.neo4j.persistence.storageClass }}
+  storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memmachine.fullname" . }}-neo4j-logs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.neo4j.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.neo4j.persistence.size }}
+  {{- if .Values.neo4j.persistence.storageClass }}
+  storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memmachine.fullname" . }}-neo4j-import
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.neo4j.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.neo4j.persistence.size }}
+  {{- if .Values.neo4j.persistence.storageClass }}
+  storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memmachine.fullname" . }}-neo4j-plugins
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.neo4j.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.neo4j.persistence.size }}
+  {{- if .Values.neo4j.persistence.storageClass }}
+  storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+  {{- end }}
+---
+{{- end -}}
