@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from memmachine.common.episode_store import CountCachingEpisodeStorage, EpisodeStorage
+from memmachine.common.episode_store import (
+    CountCachingEpisodeStorage,
+    EpisodeEntry,
+    EpisodeStorage,
+)
 from memmachine.common.filter.filter_parser import Comparison
 
 
@@ -51,12 +55,13 @@ async def test_mutations_invalidate_cache(wrapped_store):
     assert second == 1
     assert wrapped_store.get_episode_messages_count.await_count == 1
 
-    await storage.add_episodes("abc", [{"msg": "x"}])
+    entry = EpisodeEntry(content="x", producer_id="tester", producer_role="user")
+    await storage.add_episodes("abc", [entry])
 
     updated = await storage.get_episode_messages_count(filter_expr=session_filter)
     assert updated == 2
     assert wrapped_store.get_episode_messages_count.await_count == 1
-    wrapped_store.add_episodes.assert_awaited_once_with("abc", [{"msg": "x"}])
+    wrapped_store.add_episodes.assert_awaited_once_with("abc", [entry])
 
 
 @pytest.mark.asyncio
@@ -74,7 +79,7 @@ async def test_deletes_clear_cached_counts(wrapped_store):
         filter_expr=session_filter
     )
 
-    await storage.delete_episodes([1, 2])
+    await storage.delete_episodes(["1", "2"])
     after_delete_ids = await storage.get_episode_messages_count(
         filter_expr=session_filter
     )
@@ -87,7 +92,7 @@ async def test_deletes_clear_cached_counts(wrapped_store):
         start_time=None,
         end_time=None,
     )
-    wrapped_store.delete_episodes.assert_awaited_once_with([1, 2])
+    wrapped_store.delete_episodes.assert_awaited_once_with(["1", "2"])
 
 
 @pytest.mark.asyncio

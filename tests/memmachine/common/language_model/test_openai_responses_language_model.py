@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import openai
 import pytest
 from pydantic import ValidationError
@@ -354,7 +355,8 @@ async def test_generate_response_fail_after_max_retries(
 ):
     """Test that an IOError is raised after max_attempts are exhausted."""
     mock_client = mock_async_openai.return_value
-    mock_client.responses.create.side_effect = openai.APITimeoutError(None)
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    mock_client.responses.create.side_effect = openai.APITimeoutError(request)
 
     lm = OpenAIResponsesLanguageModel(minimal_config)
     with pytest.raises(ExternalServiceAPIError):

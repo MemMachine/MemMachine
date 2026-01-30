@@ -2,6 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import pytest
 import pytest_asyncio
@@ -14,6 +15,7 @@ from memmachine.common.language_model.openai_responses_language_model import (
 )
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_memory import (
+    ResourceManager,
     SemanticService,
 )
 from memmachine.semantic_memory.semantic_model import (
@@ -112,7 +114,7 @@ async def semantic_service(
             default_embedder_name="default_embedder",
             default_language_model=llm_model,
             default_category_retriever=default_session_categories,
-            resource_manager=_ResourceManager(),
+            resource_manager=cast(ResourceManager, _ResourceManager()),
         ),
     )
     await mem.start()
@@ -166,9 +168,11 @@ class TestLongMemEvalIngestion:
         question_str: str,
         llm_model: OpenAIResponsesLanguageModel,
     ):
-        semantic_search_resp = await semantic_memory.search(
-            message=question_str,
-            session_data=session_data,
+        semantic_search_resp = list(
+            await semantic_memory.search(
+                message=question_str,
+                session_data=session_data,
+            )
         )
         semantic_search_resp = semantic_search_resp[:4]
 

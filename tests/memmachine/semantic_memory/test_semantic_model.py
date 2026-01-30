@@ -236,6 +236,7 @@ class TestSemanticFeature:
         assert feature.feature_name == "favorite_meal"
         assert feature.value == "pasta"
         assert feature.metadata.id == "a789"
+        assert feature.metadata.citations is not None
         assert len(feature.metadata.citations) == 1
         assert feature.metadata.citations[0] == "456aw3w"
         assert feature.metadata.other == {"confidence": 0.95}

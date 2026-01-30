@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 import yaml
 from pydantic import SecretStr, ValidationError
@@ -124,14 +126,14 @@ def test_serialize_deserialize_language_model_conf(full_model_conf):
 
 
 def test_missing_required_field_openai_model():
-    conf_dict = {"model": "gpt-4o-mini"}
+    conf_dict: dict[str, Any] = {"model": "gpt-4o-mini"}
     with pytest.raises(ValidationError) as exc_info:
         OpenAIResponsesLanguageModelConf(**conf_dict)
     assert "field required" in str(exc_info.value).lower()
 
 
 def test_invalid_base_url_in_openai_chat_completions_model():
-    conf_dict = {
+    conf_dict: dict[str, Any] = {
         "model": "llama3",
         "api_key": "EMPTY",
         "base_url": "invalid-url",
@@ -166,6 +168,8 @@ def test_read_aws_keys_from_env(monkeypatch, aws_model_conf):
     aws_model_conf["config"]["aws_access_key_id"] = "${MY_KEY_ID}"
     aws_model_conf["config"]["aws_secret_access_key"] = ""
     conf = AmazonBedrockLanguageModelConf(**aws_model_conf["config"])
+    assert conf.aws_access_key_id is not None
+    assert conf.aws_secret_access_key is not None
     assert conf.aws_access_key_id.get_secret_value() == "my-key-id"
     assert conf.aws_secret_access_key.get_secret_value() == "access-key"
     assert conf.aws_session_token is None

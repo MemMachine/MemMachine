@@ -136,8 +136,8 @@ def _assert_schema_equivalence(
         for column, column_meta in sqlalchemy_columns.items():
             migrated_meta = migrated_columns[column]
 
-            assert normalize_type(migrated_meta["type"]) == normalize_type(
-                column_meta["type"],
+            assert normalize_type(str(migrated_meta["type"])) == normalize_type(
+                str(column_meta["type"]),
             ), f"Type mismatch for {table_name}.{column}"
 
             if not column_meta["nullable"]:
@@ -174,9 +174,15 @@ def get_index_column_sets(
     table_name: str,
 ) -> set[tuple[str, ...]]:
     indexes = inspector.get_indexes(table_name)
-    return {
-        tuple(index["column_names"]) for index in indexes if index.get("column_names")
-    }
+    index_sets: set[tuple[str, ...]] = set()
+    for index in indexes:
+        column_names = index.get("column_names")
+        if not column_names:
+            continue
+        normalized = tuple(name for name in column_names if name is not None)
+        if normalized:
+            index_sets.add(normalized)
+    return index_sets
 
 
 def normalize_type(type_name: str) -> str:

@@ -79,7 +79,7 @@ def test_unflatten_like():
     with pytest.raises(
         TypeError, match=r"All elements in template_list must be lists."
     ):
-        result = unflatten_like(flat_list, template)
+        result = unflatten_like(flat_list, template)  # type: ignore[arg-type]
 
     flat_list = [1, 2, 3]
     template = [[], [0, 0]]

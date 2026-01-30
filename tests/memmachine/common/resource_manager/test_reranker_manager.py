@@ -1,19 +1,23 @@
-from unittest.mock import AsyncMock
-
 import pytest
 from pydantic import SecretStr
+from typing import cast
 
 from memmachine.common.configuration.reranker_conf import (
     AmazonBedrockRerankerConf,
     BM25RerankerConf,
     CohereRerankerConf,
     CrossEncoderRerankerConf,
+    IdentityRerankerConf,
     RerankersConf,
     RRFHybridRerankerConf,
 )
+from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.embedder import Embedder
 from memmachine.common.errors import InvalidRerankerError
-from memmachine.common.resource_manager.reranker_manager import RerankerManager
+from memmachine.common.resource_manager.reranker_manager import (
+    EmbedderFactory,
+    RerankerManager,
+)
 
 
 @pytest.fixture
@@ -24,7 +28,7 @@ def mock_conf():
                 reranker_ids=["bm_ranker_id", "ce_ranker_id", "id_ranker_id"],
             ),
         },
-        identity={"id_ranker_id": {}},
+        identity={"id_ranker_id": IdentityRerankerConf()},
         bm25={"bm_ranker_id": BM25RerankerConf(tokenizer="simple")},
         cohere={
             "cohere_reranker_id": CohereRerankerConf(
@@ -49,15 +53,45 @@ def mock_conf():
     return conf
 
 
+class FakeEmbedder(Embedder):
+    async def ingest_embed(
+        self,
+        inputs: list[object],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
+        return []
+
+    async def search_embed(
+        self,
+        queries: list[object],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
+        return []
+
+    @property
+    def model_id(self) -> str:
+        return "fake"
+
+    @property
+    def dimensions(self) -> int:
+        return 0
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        return SimilarityMetric.COSINE
+
+
 class FakeEmbedderFactory:
-    @staticmethod
-    async def get_embedder(_: str) -> Embedder:
-        return AsyncMock()
+    async def get_embedder(self, _: str) -> Embedder:
+        return FakeEmbedder()
 
 
 @pytest.fixture
 def reranker_manager(mock_conf):
-    return RerankerManager(conf=mock_conf, embedder_factory=FakeEmbedderFactory())
+    return RerankerManager(
+        conf=mock_conf,
+        embedder_factory=cast(EmbedderFactory, FakeEmbedderFactory()),
+    )
 
 
 @pytest.mark.asyncio

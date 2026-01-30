@@ -77,6 +77,8 @@ def test_update_episodic_memory_conf(
     )
 
     updated = specific.merge(base)
+    assert updated.long_term_memory is not None
+    assert updated.short_term_memory is not None
     assert updated.long_term_memory.embedder == "embedder_v2"
     assert updated.long_term_memory.reranker == "reranker_v1"
     assert updated.short_term_memory.session_key == "session_123"

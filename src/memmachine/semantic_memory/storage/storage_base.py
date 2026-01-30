@@ -20,6 +20,8 @@ from memmachine.semantic_memory.semantic_model import (
 class SemanticStorage(ABC):
     """Base class for semantic storage backends."""
 
+    backend_name: str | None = None
+
     @abstractmethod
     async def startup(self) -> None:
         """Initialize the semantic storage connection."""

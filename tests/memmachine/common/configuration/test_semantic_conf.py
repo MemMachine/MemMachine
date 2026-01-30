@@ -1,10 +1,11 @@
 from datetime import timedelta
+from typing import Any
 
 from memmachine.common.configuration import SemanticMemoryConf
 
 
 def test_semantic_config_with_ingestion_triggers():
-    raw_conf = {
+    raw_conf: dict[str, Any] = {
         "database": "database",
         "llm_model": "llm",
         "embedding_model": "embedding",
@@ -18,7 +19,7 @@ def test_semantic_config_with_ingestion_triggers():
 
 
 def test_semantic_config_timedelta_float():
-    raw_conf = {
+    raw_conf: dict[str, Any] = {
         "database": "database",
         "llm_model": "llm",
         "embedding_model": "embedding",

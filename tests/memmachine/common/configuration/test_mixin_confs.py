@@ -214,6 +214,8 @@ def test_default_to_env_key_and_secret(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-secret-key")
     mixin = AWSCredentialsMixin()
+    assert mixin.aws_access_key_id is not None
+    assert mixin.aws_secret_access_key is not None
     assert mixin.aws_access_key_id.get_secret_value() == "env-access-key"
     assert mixin.aws_secret_access_key.get_secret_value() == "env-secret-key"
     assert mixin.aws_session_token is None
@@ -227,6 +229,9 @@ def test_resolve_aws_credentials_from_env(monkeypatch):
         aws_access_key_id=SecretStr("$MY_API_KEY"),
         aws_secret_access_key=SecretStr("${MY_PASSWORD}"),
     )
+    assert mixin.aws_access_key_id is not None
+    assert mixin.aws_secret_access_key is not None
+    assert mixin.aws_session_token is not None
     assert mixin.aws_access_key_id.get_secret_value() == "my-api-key"
     assert mixin.aws_secret_access_key.get_secret_value() == "my-password"
     assert mixin.aws_session_token.get_secret_value() == "my-token"

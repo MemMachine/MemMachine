@@ -46,4 +46,4 @@ jobs:
         run: uv lock --refresh && git diff --exit-code
 
       - name: Test with python ${{ matrix.python-version }}
-        run: uv run --frozen --all-extras ty check src
+        run: uv run --frozen --all-extras ty check src tests

@@ -2,7 +2,12 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import openai
+from openai.types import chat as openai_chat
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    Function as ToolCallFunction,
+)
 import pytest
 from pydantic import ValidationError
 
@@ -48,13 +53,21 @@ def mock_metrics_factory():
 def mock_tool_call_impl():
     """Fixture for a mocked tool call."""
 
-    class MockToolCall(
-        MagicMock,
-        openai.types.chat.ChatCompletionMessageFunctionToolCall,
-    ):
-        pass
+    def _factory(
+        call_id: str,
+        name: str,
+        arguments: str,
+    ) -> openai_chat.ChatCompletionMessageFunctionToolCall:
+        return openai_chat.ChatCompletionMessageFunctionToolCall(
+            id=call_id,
+            function=ToolCallFunction(
+                name=name,
+                arguments=arguments,
+            ),
+            type="function",
+        )
 
-    return MockToolCall()
+    return _factory
 
 
 @pytest.fixture
@@ -224,10 +237,11 @@ async def test_generate_response_with_tool_calls(
     mock_tool_call_impl,
 ):
     """Test a successful call that returns tool calls."""
-    mock_tool_call = mock_tool_call_impl()
-    mock_tool_call.id = "call_123"
-    mock_tool_call.function.name = "get_weather"
-    mock_tool_call.function.arguments = '{"location": "Boston"}'
+    mock_tool_call = mock_tool_call_impl(
+        "call_123",
+        "get_weather",
+        '{"location": "Boston"}',
+    )
 
     invalid_mock_tool_call = MagicMock()
     invalid_mock_tool_call.id = "invalid_call_123"
@@ -271,15 +285,10 @@ async def test_generate_response_tool_call_json_repair(
     This test uses a MemMachine memory search example with multiple JSON errors
     that commonly occur in LLM outputs to verify json-repair functionality.
     """
-    mock_tool_call = mock_tool_call_impl()
-    mock_tool_call.id = "call_123"  # Use id instead of uuid
-    mock_tool_call.function.name = "search_memory"
-    # Invalid JSON with multiple common LLM errors:
-    # - Missing quotes around keys
-    # - Trailing comma in array
-    # - Comments in JSON (not standard)
-    # - Missing closing brace (will be fixed)
-    mock_tool_call.function.arguments = """{
+    mock_tool_call = mock_tool_call_impl(
+        "call_123",  # Use id instead of uuid
+        "search_memory",
+        """{
         query: "user preferences and history",
         "top_k": 10,
         "types": ["episodic", "semantic",],
@@ -287,8 +296,13 @@ async def test_generate_response_tool_call_json_repair(
             user_id: "user_123",
             "session_active": true,
         },
-    }"""
-
+    }""",
+    )
+    # Invalid JSON with multiple common LLM errors:
+    # - Missing quotes around keys
+    # - Trailing comma in array
+    # - Comments in JSON (not standard)
+    # - Missing closing brace (will be fixed)
     mock_response = MagicMock()
     mock_response.choices[0].message.tool_calls = [mock_tool_call]
     mock_response.usage = None
@@ -385,7 +399,8 @@ async def test_generate_response_fail_after_max_retries(
 ):
     """Test that an IOError is raised after max_attempts are exhausted."""
     mock_client = mock_async_openai.return_value
-    mock_client.chat.completions.create.side_effect = openai.APITimeoutError(None)
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    mock_client.chat.completions.create.side_effect = openai.APITimeoutError(request)
 
     lm = OpenAIChatCompletionsLanguageModel(minimal_config)
     with pytest.raises(ExternalServiceAPIError, match=r"max attempts"):

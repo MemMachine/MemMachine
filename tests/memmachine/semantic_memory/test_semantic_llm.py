@@ -15,7 +15,7 @@ from memmachine.semantic_memory.semantic_model import (
 
 
 @pytest.fixture
-def magic_mock_llm_model():
+def magic_mock_llm_model() -> MagicMock:
     mock = MagicMock(spec=LanguageModel)
     mock.generate_parsed_response = AsyncMock()
     return mock
@@ -41,7 +41,7 @@ def basic_features():
 
 @pytest.mark.asyncio
 async def test_empty_update_response(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     # Given an empty LLM response from the prompt
@@ -60,7 +60,7 @@ async def test_empty_update_response(
 
 @pytest.mark.asyncio
 async def test_single_command_update_response(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     # Given a single LLM response from the prompt
@@ -84,7 +84,7 @@ async def test_single_command_update_response(
 
     assert commands == [
         SemanticCommand(
-            command="add",
+            command=SemanticCommandType.ADD,
             tag="car",
             feature="favorite_car_color",
             value="blue",
@@ -94,7 +94,7 @@ async def test_single_command_update_response(
 
 @pytest.mark.asyncio
 async def test_multiple_commands_update_response(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     magic_mock_llm_model.generate_parsed_response.return_value = {
@@ -130,7 +130,7 @@ async def test_multiple_commands_update_response(
 
 @pytest.mark.asyncio
 async def test_empty_consolidate_response(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     magic_mock_llm_model.generate_parsed_response.return_value = {
@@ -151,7 +151,7 @@ async def test_empty_consolidate_response(
 
 @pytest.mark.asyncio
 async def test_no_action_consolidate_response(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     magic_mock_llm_model.generate_parsed_response.return_value = {
@@ -172,7 +172,7 @@ async def test_no_action_consolidate_response(
 
 @pytest.mark.asyncio
 async def test_consolidate_with_valid_memories(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     magic_mock_llm_model.generate_parsed_response.return_value = {
@@ -206,7 +206,7 @@ async def test_consolidate_with_valid_memories(
 
 @pytest.mark.asyncio
 async def test_llm_feature_update_handles_model_api_error(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     from memmachine.common.data_types import ExternalServiceAPIError
@@ -227,7 +227,7 @@ async def test_llm_feature_update_handles_model_api_error(
 
 @pytest.mark.asyncio
 async def test_llm_feature_update_with_delete_command(
-    magic_mock_llm_model: LanguageModel,
+    magic_mock_llm_model: MagicMock,
     basic_features: list[SemanticFeature],
 ):
     magic_mock_llm_model.generate_parsed_response.return_value = {

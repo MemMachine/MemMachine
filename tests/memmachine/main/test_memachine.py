@@ -60,15 +60,21 @@ async def test_memmachine_list_search_paginates_episodic(
             page_num=2,
         )
 
-        assert [episode.content for episode in first_page.episodic_memory] == [
+        episodic_memory = first_page.episodic_memory
+        assert episodic_memory is not None
+        assert [episode.content for episode in episodic_memory] == [
             "episode-0",
             "episode-1",
         ]
-        assert [episode.content for episode in second_page.episodic_memory] == [
+        episodic_memory = second_page.episodic_memory
+        assert episodic_memory is not None
+        assert [episode.content for episode in episodic_memory] == [
             "episode-2",
             "episode-3",
         ]
-        assert [episode.content for episode in final_page.episodic_memory] == [
+        episodic_memory = final_page.episodic_memory
+        assert episodic_memory is not None
+        assert [episode.content for episode in episodic_memory] == [
             "episode-4",
         ]
     finally:
@@ -137,15 +143,21 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
             page_num=2,
         )
 
-        assert [feature.value for feature in first_page.semantic_memory] == [
+        semantic_memory = first_page.semantic_memory
+        assert semantic_memory is not None
+        assert [feature.value for feature in semantic_memory] == [
             "semantic-0",
             "semantic-1",
         ]
-        assert [feature.value for feature in second_page.semantic_memory] == [
+        semantic_memory = second_page.semantic_memory
+        assert semantic_memory is not None
+        assert [feature.value for feature in semantic_memory] == [
             "semantic-2",
             "semantic-3",
         ]
-        assert [feature.value for feature in final_page.semantic_memory] == [
+        semantic_memory = final_page.semantic_memory
+        assert semantic_memory is not None
+        assert [feature.value for feature in semantic_memory] == [
             "semantic-4",
         ]
     finally:
@@ -423,7 +435,7 @@ async def test_add_then_get_feature(memmachine: MemMachine, session_data):
     )
 
     feature = await memmachine.get_feature(feature_id)
-
+    assert feature is not None
     assert feature.value == "integration alias"
 
 
@@ -444,6 +456,7 @@ async def test_add_update_get_feature(memmachine: MemMachine, session_data):
     )
 
     feature = await memmachine.get_feature(feature_id)
+    assert feature is not None
     assert feature.value == "integration alias"
 
     await memmachine.update_feature(
@@ -454,6 +467,7 @@ async def test_add_update_get_feature(memmachine: MemMachine, session_data):
     )
 
     updated_feature = await memmachine.get_feature(feature_id)
+    assert updated_feature is not None
     assert updated_feature.value == "integration alias updated"
 
 
@@ -461,8 +475,8 @@ async def test_add_update_get_feature(memmachine: MemMachine, session_data):
 async def test_create_and_delete_semantic_set_type(
     memmachine: MemMachine, session_data
 ):
-    semantic_set_types = await memmachine.list_semantic_set_type(
-        session_data=session_data
+    semantic_set_types = list(
+        await memmachine.list_semantic_set_type(session_data=session_data)
     )
     assert semantic_set_types == []
 
@@ -474,8 +488,8 @@ async def test_create_and_delete_semantic_set_type(
         description="A set type for user-specific data",
     )
 
-    semantic_set_types = await memmachine.list_semantic_set_type(
-        session_data=session_data
+    semantic_set_types = list(
+        await memmachine.list_semantic_set_type(session_data=session_data)
     )
     assert len(semantic_set_types) == 1
     assert semantic_set_types[0].tags == ["user_id"]
@@ -483,10 +497,12 @@ async def test_create_and_delete_semantic_set_type(
     assert semantic_set_types[0].name == "User Set Type"
     assert semantic_set_types[0].description == "A set type for user-specific data"
 
-    await memmachine.delete_semantic_set_type(semantic_set_types[0].id)
+    set_type_id = semantic_set_types[0].id
+    assert set_type_id is not None
+    await memmachine.delete_semantic_set_type(set_type_id)
 
-    semantic_set_types = await memmachine.list_semantic_set_type(
-        session_data=session_data
+    semantic_set_types = list(
+        await memmachine.list_semantic_set_type(session_data=session_data)
     )
     assert semantic_set_types == []
 
@@ -503,8 +519,8 @@ async def test_semantic_set_type_with_optional_fields(
         metadata_tags=["user_id"],
     )
 
-    semantic_set_types = await memmachine.list_semantic_set_type(
-        session_data=session_data
+    semantic_set_types = list(
+        await memmachine.list_semantic_set_type(session_data=session_data)
     )
     assert len(semantic_set_types) == 1
     assert semantic_set_types[0].name is None
@@ -518,8 +534,8 @@ async def test_semantic_set_type_with_optional_fields(
         name="Work Type Set",
     )
 
-    semantic_set_types = await memmachine.list_semantic_set_type(
-        session_data=session_data
+    semantic_set_types = list(
+        await memmachine.list_semantic_set_type(session_data=session_data)
     )
     assert len(semantic_set_types) == 2
     work_type_set = next(s for s in semantic_set_types if s.is_org_level)
@@ -534,8 +550,8 @@ async def test_semantic_set_type_with_optional_fields(
         description="Combined user and work type data",
     )
 
-    semantic_set_types = await memmachine.list_semantic_set_type(
-        session_data=session_data
+    semantic_set_types = list(
+        await memmachine.list_semantic_set_type(session_data=session_data)
     )
     assert len(semantic_set_types) == 3
     combined_set = next(s for s in semantic_set_types if len(s.tags) == 2)
@@ -589,22 +605,21 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
     )
 
     async def is_user_id_data_ingested():
-        while (  # noqa: ASYNC110
-            len(
-                [
-                    feat
-                    for feat in (
+        while True:
+            search_response =
                         await memmachine.list_search(
                             session_data=session_data,
                             target_memories=[MemoryType.Semantic],
                             set_metadata=set_metadata,
                         )
-                    ).semantic_memory
-                    if "user_id" in feat.set_id
-                ]
-            )
-            == 0
-        ):
+                    semantic_memory = search_response.semantic_memory or []
+            user_id_features = [
+                feat
+                for feat in semantic_memory
+                if feat.set_id and "user_id" in feat.set_id
+            ]
+            if user_id_features:
+                break
             await asyncio.sleep(0.1)
 
     await asyncio.wait_for(is_user_id_data_ingested(), timeout=30.0)

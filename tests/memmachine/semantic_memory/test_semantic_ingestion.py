@@ -1,5 +1,6 @@
 """Tests for the ingestion service using the in-memory semantic storage."""
 
+from typing import cast
 from unittest.mock import AsyncMock
 
 import numpy as np
@@ -18,6 +19,7 @@ from memmachine.semantic_memory.semantic_model import (
     Resources,
     SemanticCategory,
     SemanticCommand,
+    SemanticCommandType,
     SemanticFeature,
     SemanticPrompt,
 )
@@ -149,13 +151,13 @@ async def test_process_single_set_applies_commands(
 
     commands = [
         SemanticCommand(
-            command="add",
+            command=SemanticCommandType.ADD,
             feature="favorite_car",
             tag="car",
             value="blue",
         ),
         SemanticCommand(
-            command="delete",
+            command=SemanticCommandType.DELETE,
             feature="favorite_motorcycle",
             tag="bike",
             value="",
@@ -448,4 +450,5 @@ async def test_deduplicate_features_merges_and_relabels(
     assert consolidated.feature_name == "pizza"
     assert consolidated.metadata.citations is not None
     assert list(consolidated.metadata.citations) == [drop_history]
-    assert resources.embedder.ingest_calls == [["consolidated pizza"]]
+    embedder = cast(MockEmbedder, resources.embedder)
+    assert embedder.ingest_calls == [["consolidated pizza"]]

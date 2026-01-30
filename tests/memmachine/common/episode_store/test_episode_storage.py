@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from pydantic import JsonValue
 
 from memmachine.common.episode_store import (
     EpisodeEntry,
@@ -30,7 +31,7 @@ async def create_history_entry(
     producer_id: str | None = None,
     producer_role: str | None = None,
     produced_for_id: str | None = None,
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, JsonValue] | None = None,
     created_at: datetime | None = None,
     episode_type: EpisodeType | None = None,
 ) -> EpisodeIdT:
@@ -70,6 +71,7 @@ async def timestamped_history(episode_storage: EpisodeStorage):
     )
 
     message = await episode_storage.get_episode(history_id)
+    assert message is not None
 
     yield (message, before, after)
 
@@ -92,6 +94,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
     assert type(history_id) is EpisodeIdT
 
     history = await episode_storage.get_episode(history_id)
+    assert history is not None
     assert history.uid == history_id
     assert history.metadata == {"role": "user"}
     assert history.content == "hello"

@@ -550,6 +550,7 @@ async def test_add_feature_with_citations(
         feature_id=feature_id,
         load_citations=True,
     )
+    assert after_citations_features is not None
     assert after_citations_features.metadata.citations is not None
     assert all(
         c_id in citations for c_id in after_citations_features.metadata.citations
@@ -568,12 +569,15 @@ async def test_get_feature_without_citations(
         feature_id=feature_id,
         load_citations=False,
     )
+    assert without_citations is not None
     assert without_citations.metadata.citations is None
 
     with_citations = await semantic_storage.get_feature(
         feature_id=feature_id,
         load_citations=True,
     )
+    assert with_citations is not None
+    assert with_citations.metadata.citations is not None
     assert len(with_citations.metadata.citations) == len(citations)
 
 
@@ -914,7 +918,7 @@ async def test_complex_semantic_search_and_citations(
     assert len(filtered) == 1
     assert filtered[0].value == "ai"
 
-    history_id_set: set[int] = set()
+    history_id_set: set[EpisodeIdT] = set()
     for entry in results:
         if entry.metadata.citations is not None:
             for citation in entry.metadata.citations:

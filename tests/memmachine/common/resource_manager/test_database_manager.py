@@ -1,3 +1,4 @@
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -105,10 +106,11 @@ async def test_build_and_validate_sqlite():
 @pytest.mark.asyncio
 async def test_build_all_without_validation(mock_conf):
     builder = DatabaseManager(mock_conf)
-    builder._build_neo4j = AsyncMock()
-    builder._build_sql_engines = AsyncMock()
-    builder._validate_neo4j_drivers = AsyncMock()
-    builder._validate_sql_engines = AsyncMock()
+    builder_any = cast(Any, builder)
+    builder_any._build_neo4j = AsyncMock()
+    builder_any._build_sql_engines = AsyncMock()
+    builder_any._validate_neo4j_drivers = AsyncMock()
+    builder_any._validate_sql_engines = AsyncMock()
 
     await builder.build_all(validate=False)
 

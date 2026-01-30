@@ -20,7 +20,6 @@ from memmachine.common.session_manager.session_data_manager_sql_impl import (
 @pytest.fixture
 def mock_metrics_factory():
     """Fixture for a mocked MetricsFactory."""
-    global MockMetricsFactory
 
     class MockMetricsFactory(MetricsFactory):
         def __init__(self):

@@ -154,10 +154,12 @@ async def test_search_returns_relevant_features(
     )
 
     # When searching with an alpha-focused query
-    matches = await session_manager.search(
-        message="Why does alpha stay calm?",
-        session_data=session_data,
-        min_distance=0.5,
+    matches = list(
+        await session_manager.search(
+            message="Why does alpha stay calm?",
+            session_data=session_data,
+            min_distance=0.5,
+        )
     )
 
     # Then only the alpha feature is returned and embedder search was invoked
@@ -497,7 +499,7 @@ async def test_list_set_ids(
     session_data,
 ):
     # Default org has 2 ids. Org level and project level set.
-    set_ids = await session_manager.list_sets(session_data=session_data)
+    set_ids = list(await session_manager.list_sets(session_data=session_data))
     assert len(set_ids) == 2
 
     expanded_session = _SessionData(
@@ -516,10 +518,10 @@ async def test_list_set_ids(
     )
 
     # Since session contains user_id it should apear on the list
-    set_ids = await session_manager.list_sets(
+    set_ids = list(await session_manager.list_sets(
         session_data=expanded_session,
         set_metadata=set_metadata,
-    )
+    ))
     assert len(set_ids) == 3
 
     # While if we create an isolation level that isn't covered by session_data it won't be included.
@@ -528,10 +530,10 @@ async def test_list_set_ids(
         is_org_level=True,
         metadata_tags=["other_id"],
     )
-    set_ids = await session_manager.list_sets(
+    set_ids = list(await session_manager.list_sets(
         session_data=expanded_session,
         set_metadata=set_metadata,
-    )
+    ))
     assert len(set_ids) == 3
 
 
@@ -567,10 +569,10 @@ async def test_list_set_ids_returns_set_details(
     )
 
     # Get all set IDs
-    sets = await session_manager.list_sets(
+    sets = list(await session_manager.list_sets(
         session_data=expanded_session,
         set_metadata=set_metadata,
-    )
+    ))
 
     # Should have 4 sets: 2 default (org + project) + 2 custom
     assert len(sets) == 4
@@ -605,7 +607,7 @@ async def test_list_set_ids_returns_set_details(
 async def test_default_sets_are_configurable(
     session_manager: SemanticSessionManager, session_data
 ):
-    sets = await session_manager.list_sets(session_data=session_data)
+    sets = list(await session_manager.list_sets(session_data=session_data))
 
     assert len(sets) == 2
     org_set = next(s for s in sets if s.is_org_level)
@@ -622,6 +624,8 @@ async def test_default_sets_are_configurable(
 
     org_config = await session_manager.get_set_id_config(set_id=org_set.id)
     project_config = await session_manager.get_set_id_config(set_id=project_set.id)
+    assert org_config is not None
+    assert project_config is not None
 
     assert org_config.llm_name == "llm-org"
     assert project_config.llm_name == "llm-project"
@@ -640,10 +644,10 @@ async def test_user_default_set_requires_producer_metadata_and_is_configurable(
     )
     set_metadata = {"producer_id": "user-123"}
 
-    sets_with_user = await session_manager.list_sets(
+    sets_with_user = list(await session_manager.list_sets(
         session_data=user_session,
         set_metadata=set_metadata,
-    )
+    ))
 
     unique_sets = {s.id: s for s in sets_with_user}
     assert len(unique_sets) == 3
@@ -663,6 +667,7 @@ async def test_user_default_set_requires_producer_metadata_and_is_configurable(
     )
 
     user_config = await session_manager.get_set_id_config(set_id=user_set.id)
+    assert user_config is not None
     assert user_config.llm_name == "llm-user"
 
 
@@ -683,7 +688,7 @@ async def test_list_sets_deduplicates_default_overrides(
         ),
     }
 
-    base_sets = await session_manager.list_sets(session_data=session_data)
+    base_sets = list(await session_manager.list_sets(session_data=session_data))
     assert {s.id for s in base_sets} == base_set_ids
 
     await session_manager.create_set_type(
@@ -702,7 +707,7 @@ async def test_list_sets_deduplicates_default_overrides(
         description="Overrides default project set",
     )
 
-    deduped_sets = await session_manager.list_sets(session_data=session_data)
+    deduped_sets = list(await session_manager.list_sets(session_data=session_data))
     assert len(deduped_sets) == 2
     assert {s.id for s in deduped_sets} == base_set_ids
 
@@ -725,6 +730,7 @@ async def test_configure_set(
     )
 
     config = await session_manager.get_set_id_config(set_id=set_id)
+    assert config is not None
 
     assert config.llm_name == "test_llm"
     assert config.embedder_name == "test_embedder"
@@ -783,7 +789,9 @@ async def test_category_templates(
         tag_description="test_tag_description",
     )
 
-    categories = await session_manager.list_category_templates(set_type_id=set_type_id)
+    categories = list(
+        await session_manager.list_category_templates(set_type_id=set_type_id)
+    )
     assert len(categories) == 1
 
     assert categories[0].id == c_id
@@ -828,6 +836,7 @@ async def test_category_templates_are_visible_to_children(
     )
 
     config = await session_manager.get_set_id_config(set_id=set_id)
+    assert config is not None
 
     categories = config.categories
 

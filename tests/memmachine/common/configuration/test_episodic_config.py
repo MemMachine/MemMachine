@@ -29,5 +29,6 @@ def test_episodic_config_to_yaml(episodic_memory_conf):
     conf_cp = EpisodicMemoryConfPartial(**yaml.safe_load(yaml_str))
     assert conf_cp == conf
     assert conf_cp.long_term_memory == conf.long_term_memory
+    assert conf_cp.short_term_memory is not None
     assert conf_cp.short_term_memory.llm_model == "my_model"
     assert conf_cp.short_term_memory == conf.short_term_memory

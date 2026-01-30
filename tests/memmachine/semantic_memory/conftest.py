@@ -83,7 +83,7 @@ async def semantic_service(
         episode_storage=episode_storage,
         semantic_config_storage=semantic_config_storage,
         feature_update_interval_sec=0.05,
-        feature_update_message_limit=10,
+        uningested_message_limit=10,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
         default_embedder_name="default_embedder",
