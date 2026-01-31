@@ -52,6 +52,7 @@ class MigrationHack:
         self.dry_run = dry_run
         self.max_workers = max_workers
         self.conversations = {}
+        self.total_messages = 0
 
     def load_and_extract(self):
         if self.input_file is None:
@@ -87,20 +88,37 @@ class MigrationHack:
                 # load from file directly
                 with open(extracted_file, "r") as f:
                     self.conversations[conv_id] = json.load(f)
-                continue
-            if not self.dry_run:
-                print(f"Loading conversation {conv_id}...")
-            # Build filters for this conversation (merge global filters with conv index)
-            filters = dict(self.filters or {})
-            filters["index"] = conv_id
-            messages = self.parser.load(self.input_file, filters=filters)
-            if not self.dry_run:
-                print(f"Loaded {len(messages)} message(s) from conversation {conv_id}")
-            self.conversations[conv_id] = messages
-            # Dump extracted messages for this conversation
-            self.parser.dump_data(
-                messages, output_format="json", outfile=extracted_file
-            )
+            else:
+                if not self.dry_run:
+                    print(f"Loading conversation {conv_id}...")
+                # Build filters for this conversation (merge global filters with conv index)
+                filters = dict(self.filters or {})
+                filters["index"] = conv_id
+                messages = self.parser.load(self.input_file, filters=filters)
+                if not self.dry_run:
+                    print(f"Loaded {len(messages)} message(s) from conversation {conv_id}")
+                self.conversations[conv_id] = messages
+                # Dump extracted messages for this conversation
+                self.parser.dump_data(
+                    messages, output_format="json", outfile=extracted_file
+                )
+            
+            # Count messages for this conversation (applying user_only filter if enabled)
+            messages = self.conversations[conv_id]
+            if isinstance(messages, list):
+                if self.user_only:
+                    # Apply same filtering as _process_conversation
+                    for msg in messages:
+                        if isinstance(msg, str):
+                            self.total_messages += 1
+                        elif isinstance(msg, dict):
+                            role = msg.get("role", "")
+                            if isinstance(role, str) and role.lower() != "assistant":
+                                self.total_messages += 1
+                else:
+                    self.total_messages += len(messages)
+            elif isinstance(messages, str):
+                self.total_messages += 1
 
     def _format_message(self, message):
         """Format message for MemMachine API"""
@@ -281,6 +299,19 @@ class MigrationHack:
         # Process conversations using ThreadPoolExecutor
         # Default max_workers=1 for sequential processing
         workers = min(self.max_workers, len(contents))
+        
+        # Warn user if using sequential processing with many messages
+        if workers <= 1 and self.total_messages > 1000:
+            print(
+                f"WARNING: Processing {self.total_messages} messages with {workers} worker(s) (sequential). "
+                f"Consider setting --workers to larger value to speed up migration."
+            )
+            response = input("Do you want to continue? (yes/no): ").strip().lower()
+            if response not in ["yes", "y"]:
+                print("Exiting. Please adjust --workers and try again.")
+                return
+            
+        
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(self._process_conversation, conv_id, messages): conv_id
