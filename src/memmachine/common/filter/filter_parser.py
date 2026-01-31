@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import NamedTuple, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from memmachine.common.data_types import FilterablePropertyValue
 
@@ -21,7 +21,7 @@ class Comparison(FilterExpr):
     """Filter comparison of a field against a value or list of values."""
 
     field: str
-    op: str  # "=", "in", ">", "<", ">=", "<=", "is_null", "is_not_null"
+    op: str  # "=", "!=", "in", ">", "<", ">=", "<=", "is_null", "is_not_null"
     value: FilterablePropertyValue | list[FilterablePropertyValue]
 
 
@@ -53,11 +53,11 @@ _OP_PRECEDENCE = {
     "AND": 2,
 }
 
-
 _TOKEN_SPEC = [
     ("LPAREN", r"\("),
     ("RPAREN", r"\)"),
     ("COMMA", r","),
+    ("NE", r"!=|<>"),
     ("GE", r">="),
     ("LE", r"<="),
     ("EQ", r"="),
@@ -160,12 +160,18 @@ class _Parser:
         field_tok = self._expect("IDENT")
         field = field_tok.value
 
-        op_tok = self._accept("EQ", "GE", "LE", "GT", "LT")
+        op_tok = self._accept("EQ", "NE", "GE", "LE", "GT", "LT")
         if op_tok:
-            # field =/>=/>/</<= value
             value = self._parse_value()
-            op = {"EQ": "=", "GE": ">=", "LE": "<=", "GT": ">", "LT": "<"}[op_tok.type]
-            return Comparison(field=field, op=op, value=value)
+            op_map = {
+                "EQ": "=",
+                "NE": "!=",
+                "GE": ">=",
+                "LE": "<=",
+                "GT": ">",
+                "LT": "<",
+            }
+            return Comparison(field=field, op=op_map[op_tok.type], value=value)
 
         if self._accept("IN"):
             self._expect("LPAREN")
@@ -174,6 +180,9 @@ class _Parser:
             while self._accept("COMMA"):
                 values.append(self._parse_value())
             self._expect("RPAREN")
+
+            self._validate_list_types(values)
+
             return Comparison(field=field, op="in", value=values)
 
         if self._accept("IS"):
@@ -187,16 +196,44 @@ class _Parser:
             return Comparison(field=field, op=op, value=None)
 
         raise FilterParseError(
-            f"Expected comparison operator (=, IN, >, <, >=, <=, IS) after field {field}"
+            f"Expected comparison operator (=, !=, IN, >, <, >=, <=, IS) after field {field}"
         )
+
+    def _validate_list_types(self, values: list[Any]) -> None:
+        """
+        Enforce Design Notes constraints:
+        - Supported list types: list[int], list[string]
+        - Unsupported list types: list[bool], list[float], list[datetime], list[Union]
+        """
+        if not values:
+            return
+
+        first_type = type(values[0])
+
+        # Check 1: Allowed types (int or str only)
+        # Note: 'bool' is a subclass of 'int' in Python, so we must explicitly exclude bool.
+        if first_type is bool:
+            raise FilterParseError("Lists of booleans are not supported in IN clauses.")
+
+        if first_type not in (int, str):
+            raise FilterParseError(
+                f"IN clause only supports integers or strings. Found: {first_type.__name__}"
+            )
+
+        # Check 2: Homogeneity (No mixed types / list[Union])
+        for v in values:
+            if type(v) is not first_type:
+                raise FilterParseError(
+                    f"IN clause lists must be homogeneous. Expected {first_type.__name__}, but found {type(v).__name__}."
+                )
 
     def _parse_value(self) -> FilterablePropertyValue:
         tok = self._expect("IDENT", "STRING")
         raw = tok.value
-        # If it's a string literal, return it as-is
+
         if tok.type == "STRING":
             return raw
-        # Check for date() function call
+
         if tok.type == "IDENT" and raw.lower() == "date":
             self._expect("LPAREN")
             date_str_tok = self._expect("STRING")
@@ -205,7 +242,7 @@ class _Parser:
                 return datetime.fromisoformat(date_str_tok.value)
             except ValueError as e:
                 raise FilterParseError(f"Invalid ISO format date string: {e}") from e
-        # Otherwise, parse IDENT for boolean/numeric values
+
         upper = raw.upper()
         if upper == "TRUE":
             return True
@@ -215,6 +252,8 @@ class _Parser:
             return int(raw)
         if _looks_like_float(raw):
             return float(raw)
+
+        # Fallback for unquoted strings that aren't keywords
         return raw
 
 
