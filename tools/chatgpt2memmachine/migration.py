@@ -53,6 +53,7 @@ class MigrationHack:
         self.max_workers = max_workers
         self.conversations = {}
         self.total_messages = 0
+        self.batch_size = 5  # Number of messages to send per API call
 
     def load_and_extract(self):
         if self.input_file is None:
@@ -162,7 +163,7 @@ class MigrationHack:
         return formatted
 
     def _process_conversation(self, conv_id, messages):
-        """Process a single conversation with its own progress bar"""
+        """Process a single conversation with batching support"""
         # Filter out assistant messages if user_only is enabled
         if self.user_only:
             filtered_messages = []
@@ -177,24 +178,36 @@ class MigrationHack:
                         filtered_messages.append(msg)
             messages = filtered_messages
 
-        # Create a progress bar for this conversation
-        pos = conv_id - 1
-        msg_pbar = tqdm(
-            messages,
-            desc=f"Conv {conv_id}",
-            unit="msg",
-            position=pos,
-            leave=True,
-        )
-        for message in msg_pbar:
-            formatted_message = self._format_message(message)
+        # Format all messages first
+        formatted_messages = [self._format_message(msg) for msg in messages]
+
+        # Create progress bar only if not verbose (to avoid messing up console output)
+        msg_pbar = None
+        if not self.verbose:
+            pos = conv_id - 1
+            msg_pbar = tqdm(
+                total=len(formatted_messages),
+                desc=f"Conv {conv_id}",
+                unit="msg",
+                position=pos,
+                leave=True,
+            )
+
+        # Process messages in batches
+        for i in range(0, len(formatted_messages), self.batch_size):
+            batch = formatted_messages[i : i + self.batch_size]
             self.client.add_memory(
                 org_id=self.org_id if self.org_id else "",
                 project_id=self.project_id if self.project_id else "",
-                messages=[formatted_message],
+                messages=batch,
             )
+            # Update progress bar if it exists
+            if msg_pbar:
+                msg_pbar.update(len(batch))
 
-        msg_pbar.close()
+        # Close progress bar if it was created
+        if msg_pbar:
+            msg_pbar.close()
         return conv_id, len(messages)
 
     def _dry_run(self):
@@ -202,40 +215,9 @@ class MigrationHack:
         contents = self.conversations
         total_conversations = len(contents)
 
-        # Count total items, filtering assistant messages if user_only is enabled
-        if self.user_only:
-            total_items = 0
-            for msgs in contents.values():
-                if isinstance(msgs, list):
-                    # Filter out assistant messages, but include all string messages
-                    user_messages = []
-                    for msg in msgs:
-                        # String messages (text-only) are always included
-                        if isinstance(msg, str):
-                            user_messages.append(msg)
-                        # Dictionary messages: include if not assistant
-                        elif isinstance(msg, dict):
-                            role = msg.get("role", "")
-                            if isinstance(role, str) and role.lower() != "assistant":
-                                user_messages.append(msg)
-                    total_items += len(user_messages)
-                elif isinstance(msgs, str):
-                    # Handle string messages
-                    total_items += 1
-                else:
-                    # Skip non-list, non-string values
-                    continue
-        else:
-            total_items = 0
-            for msgs in contents.values():
-                if isinstance(msgs, list):
-                    total_items += len(msgs)
-                elif isinstance(msgs, str):
-                    # Handle string messages
-                    total_items += 1
-                else:
-                    # Skip non-list, non-string values
-                    continue
+        # Use the total_messages already calculated during load_and_extract
+        # This ensures consistency and avoids duplicate counting logic
+        filtered_items = self.total_messages
 
         org_display = self.org_id if self.org_id else "universal"
         project_display = self.project_id if self.project_id else "universal"
@@ -243,9 +225,11 @@ class MigrationHack:
         print(f"\nDry Run Summary:")
         print(f"  Target: {org_display}/{project_display}")
         print(f"  Conversations: {total_conversations}")
-        print(f"  Total messages: {total_items}")
         if self.user_only:
+            print(f"  Total messages: {filtered_items} (filtered)")
             print(f"  Filter: User messages only (assistant messages excluded)")
+        else:
+            print(f"  Total messages: {filtered_items}")
 
         # Show sample payload
         if contents:
@@ -318,16 +302,24 @@ class MigrationHack:
                 for conv_id, messages in contents.items()
             }
 
-            completed_pbar = tqdm(
-                total=len(contents), desc="Completed conversations", unit="conv"
-            )
-            for future in as_completed(futures):
-                conv_id, msg_count = future.result()
-                completed_pbar.set_description(
-                    f"Completed conv {conv_id} ({msg_count} msgs)"
+            if self.verbose:
+                # In verbose mode, skip progress bar to avoid messing up console output
+                for future in as_completed(futures):
+                    conv_id, msg_count = future.result()
+                    if not self.dry_run:
+                        print(f"Completed conversation {conv_id} ({msg_count} messages)")
+            else:
+                # Use progress bar when not verbose
+                completed_pbar = tqdm(
+                    total=len(contents), desc="Completed conversations", unit="conv"
                 )
-                completed_pbar.update(1)
-            completed_pbar.close()
+                for future in as_completed(futures):
+                    conv_id, msg_count = future.result()
+                    completed_pbar.set_description(
+                        f"Completed conv {conv_id} ({msg_count} msgs)"
+                    )
+                    completed_pbar.update(1)
+                completed_pbar.close()
 
         print("Migration complete")
 

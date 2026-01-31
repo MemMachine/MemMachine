@@ -21,7 +21,7 @@ class MemMachineRestClient:
             self.statistic_file = f"output/statistic_{timestamp}.csv"
             os.makedirs(os.path.dirname(self.statistic_file), exist_ok=True)
             with open(self.statistic_file, "w") as f:
-                f.write("timestamp,method,url,latency_ms\n")
+                f.write("timestamp,method,url,latency_ms,response_code\n")
             self.statistic_fp = open(self.statistic_file, "a")
         else:
             self.statistic_fp = None
@@ -93,8 +93,9 @@ class MemMachineRestClient:
                 latency_ms,
             )
             # Write to statistic file
+            response_code = response.status_code if response is not None else ""
             self.statistic_fp.write(
-                f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms}\n",
+                f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms},{response_code}\n",
             )
 
         if response.status_code != 200:
@@ -143,8 +144,9 @@ class MemMachineRestClient:
                 latency_ms,
             )
             # Write to statistic file
+            response_code = response.status_code if response is not None else ""
             self.statistic_fp.write(
-                f"{datetime.now().isoformat()},POST,{search_memory_endpoint},{latency_ms}\n",
+                f"{datetime.now().isoformat()},POST,{search_memory_endpoint},{latency_ms},{response_code}\n",
             )
 
         if response.status_code != 200:
