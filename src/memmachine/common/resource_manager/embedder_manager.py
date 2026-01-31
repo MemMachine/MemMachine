@@ -185,6 +185,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             similarity_metric=conf.similarity_metric,
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
+            batch_size=conf.batch_size,
         )
         return AmazonBedrockEmbedder(params)
 
@@ -211,6 +212,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             metrics_factory=conf.get_metrics_factory(),
             user_metrics_labels=conf.user_metrics_labels,
+            batch_size=conf.batch_size,
         )
         return OpenAIEmbedder(params)
 
@@ -231,5 +233,6 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             model_name=model_name,
             sentence_transformer=sentence_transformer,
             max_input_length=conf.max_input_length,
+            batch_size=conf.batch_size,
         )
         return SentenceTransformerEmbedder(params)

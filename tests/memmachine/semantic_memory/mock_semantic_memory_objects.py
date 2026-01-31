@@ -171,14 +171,15 @@ class MockSemanticStorage(SemanticStorage):
 
 
 class MockEmbedder(Embedder):
-    def __init__(self):
+    def __init__(self, batch_size: int | None = None):
+        super().__init__(batch_size=batch_size)
         self.ingest_calls: list[list[str]] = []
 
-    async def ingest_embed(self, inputs: list[Any], max_attempts: int = 1):
+    async def _ingest_embed(self, inputs: list[Any], max_attempts: int = 1):
         self.ingest_calls.append(list(inputs))
         return [[float(len(value)), float(len(value)) * -1] for value in inputs]
 
-    async def search_embed(self, queries: list[Any], max_attempts: int = 1):
+    async def _search_embed(self, queries: list[Any], max_attempts: int = 1):
         raise NotImplementedError
 
     @property
