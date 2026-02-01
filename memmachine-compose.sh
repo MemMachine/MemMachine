@@ -15,13 +15,6 @@ NC='\033[0m' # No Color
 
 is_first_run=false
 
-# Use docker-compose or docker compose based on what's available
-if command -v docker-compose &> /dev/null; then
-    COMPOSE_CMD="docker-compose"
-else
-    COMPOSE_CMD="docker compose"
-fi
-
 ## Function to run a command with a timeout
 timeout() {
     local duration=$1
@@ -92,14 +85,19 @@ escape_for_sed() {
     echo "$cleaned" | sed 's/&/\\&/g'
 }
 
-# Check if Docker is installed
-check_docker() {
+# Find docker compose available
+find_docker_compose() {
     if ! command -v docker &> /dev/null; then
         print_error "Docker is not installed. Please install Docker first."
         exit 1
     fi
     
-    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    # Use docker compose or docker-compose based on what's available
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        COMPOSE_CMD="docker-compose"
+    else
         print_error "Docker Compose is not installed. Please install Docker Compose first."
         exit 1
     fi
@@ -841,10 +839,10 @@ show_service_info() {
     echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
     echo ""
     echo "Useful Commands:"
-    echo "  📋 View logs: docker-compose logs -f"
-    echo "  🛑 Stop services: docker-compose down"
-    echo "  🔄 Restart: docker-compose restart"
-    echo "  🧹 Clean up: docker-compose down -v"
+    echo "  📋 View logs: ${COMPOSE_CMD} logs -f"
+    echo "  🛑 Stop services: ${COMPOSE_CMD} down"
+    echo "  🔄 Restart: ${COMPOSE_CMD} restart"
+    echo "  🧹 Clean up: ${COMPOSE_CMD} down -v"
     echo ""
 }
 
@@ -940,7 +938,7 @@ main() {
     echo "===================================="
     echo ""
     
-    check_docker
+    find_docker_compose
     check_env_file
     check_config_file
     set_provider_api_keys
