@@ -133,7 +133,7 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "feature": "autonomy_at_work",
                 "value": "User sets their own deadlines and subtasks."
             }
-        }
+        ]
         Further Guidelines:
         - Not everything you ought to record will be explicitly stated. Make inferences.
         - If you are less confident about a particular entry, you should still include it, but make sure that the language you use (briefly) expresses this uncertainty in the value field
