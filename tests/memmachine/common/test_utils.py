@@ -4,6 +4,7 @@ from memmachine.common.utils import (
     chunk_text,
     chunk_text_balanced,
     cluster_texts,
+    extract_sentences,
     unflatten_like,
 )
 
@@ -167,3 +168,62 @@ def test_cluster_texts():
         ["hijklmnop"],
         ["qrs", "tuv", "wx", "yz"],
     ]
+
+
+def test_extract_sentences():
+    text = ""
+    assert extract_sentences(text) == set()
+
+    text = " \t\n"
+    assert extract_sentences(text) == set()
+
+    text = "This is the first sentence. Here is the second sentence! And is this the third sentence? Yes, it is"
+    sentences = extract_sentences(text)
+    expected_sentences = {
+        "This is the first sentence.",
+        "Here is the second sentence!",
+        "And is this the third sentence?",
+        "Yes, it is",
+    }
+    assert sentences == expected_sentences
+
+    text = "No punctuation here"
+    sentences = extract_sentences(text)
+    expected_sentences = {"No punctuation here"}
+    assert sentences == expected_sentences
+
+    text = "这是第一句\u3002这是第二句\uff01这是第三句\uff1f是的"
+    sentences = extract_sentences(text)
+    expected_sentences = {
+        "这是第一句\u3002",
+        "这是第二句\uff01",
+        "这是第三句\uff1f",
+        "是的",
+    }
+    assert sentences == expected_sentences
+
+    text = "Mixed languages. 这是中文句子\uff01Here is another one?"
+    sentences = extract_sentences(text)
+    expected_sentences = {
+        "Mixed languages.",
+        "这是中文句子\uff01",
+        "Here is another one?",
+    }
+    assert sentences == expected_sentences
+
+    text = "Repeated sentence. Repeated sentence. Unique sentence."
+    sentences = extract_sentences(text)
+    expected_sentences = {
+        "Repeated sentence.",
+        "Unique sentence.",
+    }
+    assert sentences == expected_sentences
+
+    text = "This is shocking?!?\uff01!\uff1f! And so is this?\uff1f\uff1f?!?\uff01!"
+    sentences = extract_sentences(text)
+    expected_sentences = {
+        "This is shocking",
+        "And so is this",
+    }
+    for sentence in expected_sentences:
+        assert any(sentence in s for s in sentences)

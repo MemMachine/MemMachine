@@ -8,7 +8,6 @@ from collections.abc import Iterable
 from typing import cast
 from uuid import uuid4
 
-from nltk import sent_tokenize
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.embedder.embedder import Embedder
@@ -25,6 +24,7 @@ from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine.common.reranker.reranker import Reranker
+from memmachine.common.utils import extract_sentences
 from memmachine.common.vector_graph_store import Edge, Node, VectorGraphStore
 
 from .data_types import (
@@ -247,11 +247,7 @@ class DeclarativeMemory:
                         ),
                     ]
 
-                sentences = {
-                    sentence
-                    for line in episode.content.strip().splitlines()
-                    for sentence in sent_tokenize(line.strip())
-                }
+                sentences = extract_sentences(episode.content)
 
                 return [
                     Derivative(
