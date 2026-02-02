@@ -306,6 +306,7 @@ class OpenAIParser(BaseParser):
         data = self.load_json(infile)
         messages = []
         chat_count = 0
+        processed_chat_count = 0
         msg_count = 0
 
         for chat in data:
@@ -317,6 +318,7 @@ class OpenAIParser(BaseParser):
             ):
                 continue
 
+            processed_chat_count += 1
             chat_title_actual = chat.get("title", "")
             self.logger.info(f"Processing chat {chat_count}: {chat_title_actual}")
 
@@ -337,7 +339,7 @@ class OpenAIParser(BaseParser):
             )
 
         self.logger.info(
-            f"Total messages loaded: {len(messages)} from {chat_count} chats"
+            f"Total messages loaded: {len(messages)} from {processed_chat_count} chat(s)"
         )
         return messages
 

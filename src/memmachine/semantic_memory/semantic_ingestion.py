@@ -56,10 +56,17 @@ class IngestionService:
         self._debug_fail_loudly = params.debug_fail_loudly
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
+        async def _run(set_id: SetIdT) -> None:
+            try:
+                await self._process_single_set(set_id)
+            except Exception:
+                logger.exception("Failed to process set_id %s", set_id)
+                raise
+
         logger.info("Starting ingestion processing for set ids: %s", set_ids)
 
         results = await asyncio.gather(
-            *[self._process_single_set(set_id) for set_id in set_ids],
+            *[_run(set_id) for set_id in set_ids],
             return_exceptions=True,
         )
 
@@ -99,14 +106,11 @@ class IngestionService:
         raw_messages = [tasks[h_id].result() for h_id in history_ids]
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
-        if none_h_ids:
-            logger.warning(
-                "Failed to retrieve messages. Invalid episode_ids: %s", none_h_ids
+        if len(none_h_ids) != 0:
+            raise ValueError(
+                "Failed to retrieve messages. Invalid episode_ids exist for set_id "
+                f"{set_id}: {none_h_ids}"
             )
-            if self._debug_fail_loudly:
-                raise ValueError(
-                    f"Failed to retrieve messages. Invalid episode_ids: {none_h_ids}"
-                )
 
         raw_messages = [m for m in raw_messages if m is not None]
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
@@ -123,8 +127,7 @@ class IngestionService:
                     )
 
                     raise ValueError(
-                        "Message ID is None for message %s",
-                        message.model_dump(),
+                        f"Message ID is None for message {message.model_dump()}"
                     )
 
                 filter_expr = And(
