@@ -101,10 +101,11 @@ def test_install_in_windows(mock_input, mock_wizard):
     mock_input.side_effect = [
         "y",  # Confirm installation
     ]
-    installer = WindowsInstaller(MockWindowsEnvironment())
+    environment = MockWindowsEnvironment()
+    installer = WindowsInstaller(environment)
     installer.install_dir = MOCK_INSTALL_DIR
     installer.install()
-    assert installer.environment.neo4j_installed
+    assert environment.neo4j_installed
     assert Path(MOCK_INSTALL_DIR).exists()
     assert not (Path(MOCK_INSTALL_DIR) / WINDOWS_JDK_ZIP_NAME).exists()
     assert not Path(MOCK_INSTALL_DIR, WINDOWS_NEO4J_ZIP_NAME).exists()
@@ -123,7 +124,7 @@ def test_install_in_windows_default_dir(mock_input, monkeypatch, mock_wizard):
     environment.expected_install_dir = str(neo4j_path)
     installer = WindowsInstaller(environment)
     installer.install()
-    assert installer.environment.neo4j_installed
+    assert environment.neo4j_installed
     assert neo4j_path.exists()
     assert not Path(
         MOCK_LOCALDATA_DIR, "MemMachine", "Neo4j", WINDOWS_JDK_ZIP_NAME
@@ -139,16 +140,18 @@ def test_use_custom_neo4j(mock_input, mock_wizard):
     mock_input.side_effect = [
         "n",  # do not install neo4j
     ]
-    installer = WindowsInstaller(MockWindowsEnvironment())
+    environment = MockWindowsEnvironment()
+    installer = WindowsInstaller(environment)
     installer.install()
-    assert not installer.environment.neo4j_installed
+    assert not environment.neo4j_installed
 
 
 def test_install_in_windows_neo4j_preinstalled(mock_wizard):
-    installer = WindowsInstaller(MockWindowsEnvironment())
-    installer.environment.neo4j_preinstalled = True
+    environment = MockWindowsEnvironment()
+    installer = WindowsInstaller(environment)
+    environment.neo4j_preinstalled = True
     installer.install()
-    assert not installer.environment.neo4j_installed
+    assert not environment.neo4j_installed
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
@@ -210,7 +213,7 @@ def test_install_in_macos_neo4j_preinstalled(mock_wizard):
     environment.neo4j_preinstalled = True
     installer = MacosInstaller(environment)
     installer.install()
-    assert not installer.environment.neo4j_started
+    assert not environment.neo4j_started
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 

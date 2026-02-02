@@ -22,7 +22,7 @@ from memmachine.episodic_memory.short_term_memory.short_term_memory import (
 
 def create_test_episode(**kwargs):
     """Helper function to create a valid Episode for testing."""
-    defaults = {
+    defaults: dict[str, object] = {
         "uid": str(uuid4()),
         "session_key": "test_session",
         "sequence_num": 1,
@@ -32,7 +32,7 @@ def create_test_episode(**kwargs):
         "producer_role": "user",
     }
     defaults.update(kwargs)
-    return Episode(**defaults)
+    return Episode.model_validate(defaults)
 
 
 @pytest.fixture

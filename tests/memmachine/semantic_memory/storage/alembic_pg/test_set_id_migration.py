@@ -18,6 +18,7 @@ from memmachine.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
 
 pytestmark = pytest.mark.integration
 
+assert storage_mod.__file__ is not None
 _SCRIPT_LOCATION = Path(storage_mod.__file__).parent / "alembic_pg"
 _VERSIONS_LOCATION = _SCRIPT_LOCATION / "versions"
 

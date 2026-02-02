@@ -606,13 +606,12 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
 
     async def is_user_id_data_ingested():
         while True:
-            search_response =
-                        await memmachine.list_search(
-                            session_data=session_data,
-                            target_memories=[MemoryType.Semantic],
-                            set_metadata=set_metadata,
-                        )
-                    semantic_memory = search_response.semantic_memory or []
+            search_response = await memmachine.list_search(
+                session_data=session_data,
+                target_memories=[MemoryType.Semantic],
+                set_metadata=set_metadata,
+            )
+            semantic_memory = search_response.semantic_memory or []
             user_id_features = [
                 feat
                 for feat in semantic_memory

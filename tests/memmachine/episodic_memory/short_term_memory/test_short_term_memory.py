@@ -4,7 +4,7 @@ import string
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import pytest
 import pytest_asyncio
@@ -12,10 +12,8 @@ import pytest_asyncio
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConf,
 )
-from memmachine.common.episode_store import (
-    ContentType,
-    Episode,
-)
+from memmachine.common.api import EpisodeType
+from memmachine.common.episode_store import ContentType, Episode
 from memmachine.common.filter.filter_parser import parse_filter
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
@@ -32,17 +30,17 @@ def create_test_episode(**kwargs):
         "uid": str(uuid.uuid4()),
         "sequence_num": 1,
         "session_key": "session1",
-        "episode_type": "message",
+        "episode_type": EpisodeType.MESSAGE,
         "content_type": ContentType.STRING,
         "content": "default content",
         "created_at": datetime.now(tz=UTC),
         "producer_id": "user1",
         "producer_role": "user",
         "produced_for_id": None,
-        "user_metadata": None,
+        "metadata": None,
     }
     defaults.update(kwargs)
-    return Episode(**defaults)
+    return Episode.model_validate(defaults)
 
 
 class MockShortTermMemoryDataManager(SessionDataManager):
@@ -62,10 +60,10 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         self,
         session_key: str,
         summary: str,
-        seq: int,
-        num: int,
-    ):
-        self.data[session_key] = (summary, seq, num)
+        last_seq: int,
+        episode_num: int,
+    ) -> None:
+        self.data[session_key] = (summary, last_seq, episode_num)
 
     async def get_short_term_memory(self, session_key: str) -> tuple[str, int, int]:
         if session_key not in self.data:
@@ -127,12 +125,13 @@ class MockLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
-        if len(user_prompt) > 10000:
+        prompt = user_prompt or ""
+        if len(prompt) > 10000:
             raise ValueError("User prompt exceeds context window")
-        if "model error" in user_prompt:
+        if "model error" in prompt:
             raise RuntimeError("Simulated model error")
         await asyncio.sleep(0.1)
-        user_input = self.parse_summary(user_prompt)
+        user_input = self.parse_summary(prompt)
         return f"summary:{user_input}", ""
 
     async def generate_parsed_response(
@@ -142,7 +141,7 @@ class MockLanguageModel(LanguageModel):
         user_prompt: str | None = None,
         max_attempts: int = 1,
     ) -> T:
-        return "summary"
+        return cast(T, "summary")
 
 
 @pytest.fixture

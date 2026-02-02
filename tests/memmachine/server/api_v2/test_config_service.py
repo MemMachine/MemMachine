@@ -224,8 +224,8 @@ def memory_resource_manager():
 
 def test_update_episodic_ltm_embedder(memory_resource_manager):
     """Test updating the long-term memory embedder."""
-    spec = UpdateEpisodicMemorySpec(
-        long_term_memory=UpdateLongTermMemorySpec(embedder="new-embedder"),
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {"long_term_memory": {"embedder": "new-embedder"}}
     )
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(spec, None)
@@ -240,12 +240,14 @@ def test_update_episodic_ltm_embedder(memory_resource_manager):
 
 def test_update_episodic_ltm_multiple_fields(memory_resource_manager):
     """Test updating multiple long-term memory fields."""
-    spec = UpdateEpisodicMemorySpec(
-        long_term_memory=UpdateLongTermMemorySpec(
-            embedder="new-embedder",
-            reranker="new-reranker",
-            vector_graph_store="new-store",
-        ),
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {
+            "long_term_memory": {
+                "embedder": "new-embedder",
+                "reranker": "new-reranker",
+                "vector_graph_store": "new-store",
+            }
+        }
     )
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(spec, None)
@@ -262,8 +264,8 @@ def test_update_episodic_ltm_multiple_fields(memory_resource_manager):
 
 def test_update_episodic_stm_llm_model(memory_resource_manager):
     """Test updating the short-term memory LLM model."""
-    spec = UpdateEpisodicMemorySpec(
-        short_term_memory=UpdateShortTermMemorySpec(llm_model="new-llm"),
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {"short_term_memory": {"llm_model": "new-llm"}}
     )
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(spec, None)
@@ -276,10 +278,12 @@ def test_update_episodic_stm_llm_model(memory_resource_manager):
 
 def test_update_episodic_enabled_flags(memory_resource_manager):
     """Test updating episodic memory enabled flags."""
-    spec = UpdateEpisodicMemorySpec(
-        long_term_memory_enabled=False,
-        short_term_memory_enabled=False,
-        enabled=False,
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {
+            "long_term_memory_enabled": False,
+            "short_term_memory_enabled": False,
+            "enabled": False,
+        }
     )
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(spec, None)
@@ -293,10 +297,12 @@ def test_update_episodic_enabled_flags(memory_resource_manager):
 
 def test_update_semantic_memory_fields(memory_resource_manager):
     """Test updating semantic memory fields."""
-    spec = UpdateSemanticMemorySpec(
-        database="new-db",
-        llm_model="new-llm",
-        embedding_model="new-embedder",
+    spec = UpdateSemanticMemorySpec.model_validate(
+        {
+            "database": "new-db",
+            "llm_model": "new-llm",
+            "embedding_model": "new-embedder",
+        }
     )
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(None, spec)
@@ -311,9 +317,8 @@ def test_update_semantic_memory_fields(memory_resource_manager):
 
 def test_update_semantic_ingestion_settings(memory_resource_manager):
     """Test updating semantic memory ingestion settings."""
-    spec = UpdateSemanticMemorySpec(
-        ingestion_trigger_messages=10,
-        ingestion_trigger_age_seconds=600,
+    spec = UpdateSemanticMemorySpec.model_validate(
+        {"ingestion_trigger_messages": 10, "ingestion_trigger_age_seconds": 600}
     )
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(None, spec)
@@ -327,10 +332,10 @@ def test_update_semantic_ingestion_settings(memory_resource_manager):
 
 def test_update_both_episodic_and_semantic(memory_resource_manager):
     """Test updating both memory sections in one call."""
-    episodic_spec = UpdateEpisodicMemorySpec(
-        long_term_memory=UpdateLongTermMemorySpec(embedder="new-embedder"),
+    episodic_spec = UpdateEpisodicMemorySpec.model_validate(
+        {"long_term_memory": {"embedder": "new-embedder"}}
     )
-    semantic_spec = UpdateSemanticMemorySpec(llm_model="new-llm")
+    semantic_spec = UpdateSemanticMemorySpec.model_validate({"llm_model": "new-llm"})
 
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(episodic_spec, semantic_spec)
@@ -343,7 +348,7 @@ def test_update_both_episodic_and_semantic(memory_resource_manager):
 def test_update_no_changes(memory_resource_manager):
     """Test that no-op updates return appropriate message."""
     # All fields are None (no actual changes)
-    episodic_spec = UpdateEpisodicMemorySpec()
+    episodic_spec = UpdateEpisodicMemorySpec.model_validate({})
     service = ConfigService(memory_resource_manager)
     message = service.update_memory_config(episodic_spec, None)
 
@@ -355,8 +360,8 @@ def test_update_ltm_creates_partial_when_none(memory_resource_manager):
     """Test that LTM update creates a partial config when none exists."""
     memory_resource_manager.config.episodic_memory = EpisodicMemoryConfPartial()
 
-    spec = UpdateEpisodicMemorySpec(
-        long_term_memory=UpdateLongTermMemorySpec(embedder="brand-new-embedder"),
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {"long_term_memory": {"embedder": "brand-new-embedder"}}
     )
     service = ConfigService(memory_resource_manager)
     service.update_memory_config(spec, None)
@@ -370,8 +375,8 @@ def test_update_stm_creates_partial_when_none(memory_resource_manager):
     """Test that STM update creates a partial config when none exists."""
     memory_resource_manager.config.episodic_memory = EpisodicMemoryConfPartial()
 
-    spec = UpdateEpisodicMemorySpec(
-        short_term_memory=UpdateShortTermMemorySpec(llm_model="brand-new-model"),
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {"short_term_memory": {"llm_model": "brand-new-model"}}
     )
     service = ConfigService(memory_resource_manager)
     service.update_memory_config(spec, None)

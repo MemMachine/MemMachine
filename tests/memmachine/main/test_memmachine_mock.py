@@ -28,8 +28,12 @@ from memmachine.semantic_memory.semantic_model import SemanticFeature
 class DummySessionData:
     """Simple SessionData implementation for tests."""
 
-    def __init__(self, session_key: str) -> None:
+    def __init__(
+        self, session_key: str, org_id: str = "org", project_id: str = "project"
+    ) -> None:
         self._session_key = session_key
+        self._org_id = org_id
+        self._project_id = project_id
 
     @property
     def session_id(self) -> str:  # pragma: no cover - trivial accessor
@@ -38,6 +42,14 @@ class DummySessionData:
     @property
     def session_key(self) -> str:  # pragma: no cover - trivial accessor
         return self._session_key
+
+    @property
+    def org_id(self) -> str:  # pragma: no cover - trivial accessor
+        return self._org_id
+
+    @property
+    def project_id(self) -> str:  # pragma: no cover - trivial accessor
+        return self._project_id
 
 
 @pytest.mark.asyncio
@@ -149,6 +161,8 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     conf = memmachine._with_default_episodic_memory_conf(session_key="session-1")
 
     assert conf.session_key == "session-1"
+    assert conf.long_term_memory is not None
+    assert conf.short_term_memory is not None
     assert conf.long_term_memory.embedder == "default-embedder"
     assert conf.long_term_memory.reranker == "default-reranker"
     assert conf.long_term_memory.vector_graph_store == "default_store"

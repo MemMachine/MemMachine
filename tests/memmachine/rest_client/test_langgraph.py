@@ -323,7 +323,7 @@ class TestFactoryFunctions:
         mock_memory.add.return_value = [mock_result]
 
         add_fn = create_add_memory_tool(tools)
-        result = add_fn(content="test content")
+        result = add_fn("test content", None, None)
 
         assert result["status"] == "success"
         assert result["uids"] == ["uid-1"]
@@ -335,7 +335,7 @@ class TestFactoryFunctions:
         mock_memory.add.return_value = [mock_result]
 
         add_fn = create_add_memory_tool(tools)
-        result = add_fn(content="content", user_id="u1")
+        result = add_fn("content", "u1", None)
 
         assert result["status"] == "success"
 
@@ -350,7 +350,7 @@ class TestFactoryFunctions:
         mock_memory.search.return_value = mock_search_result
 
         search_fn = create_search_memory_tool(tools)
-        result = search_fn(query="hello")
+        result = search_fn("hello", None, 20)
 
         assert result["status"] == "success"
 
@@ -365,7 +365,7 @@ class TestFactoryFunctions:
         mock_memory.search.return_value = mock_search_result
 
         search_fn = create_search_memory_tool(tools)
-        search_fn(query="hello", limit=10)
+        search_fn("hello", None, 10)
 
         mock_memory.search.assert_called_once_with(
             query="hello", limit=10, score_threshold=None, filter_dict=None

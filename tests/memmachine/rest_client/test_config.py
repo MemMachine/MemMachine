@@ -98,8 +98,8 @@ class TestConfig:
             {"success": True, "message": "Memory configuration updated"}
         )
         result = config.update_memory_config(
-            episodic_memory=UpdateEpisodicMemorySpec(enabled=False),
-            semantic_memory=UpdateSemanticMemorySpec(enabled=True),
+            episodic_memory=UpdateEpisodicMemorySpec.model_validate({"enabled": False}),
+            semantic_memory=UpdateSemanticMemorySpec.model_validate({"enabled": True}),
         )
         assert isinstance(result, UpdateMemoryConfigResponse)
         assert result.success is True

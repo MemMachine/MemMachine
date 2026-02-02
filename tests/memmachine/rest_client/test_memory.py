@@ -1,5 +1,6 @@
 """Unit tests for Memory class (v2 API)."""
 
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -62,12 +63,12 @@ class TestMemory:
     def test_init_missing_org_id_raises_error(self, mock_client):
         """Test that missing org_id raises TypeError."""
         with pytest.raises(TypeError, match=r"missing.*required.*argument.*org_id"):
-            Memory(client=mock_client, project_id="test_project")
+            Memory(client=mock_client, project_id="test_project")  # type: ignore[call-arg]
 
     def test_init_missing_project_id_raises_error(self, mock_client):
         """Test that missing project_id raises TypeError."""
         with pytest.raises(TypeError, match=r"missing.*required.*argument.*project_id"):
-            Memory(client=mock_client, org_id="test_org")
+            Memory(client=mock_client, org_id="test_org")  # type: ignore[call-arg]
 
     def test_init_with_string_ids(self, mock_client):
         """Test Memory initialization with string IDs."""
@@ -468,19 +469,21 @@ class TestMemory:
 
         # Test with integer value
         with pytest.raises(TypeError, match="All filter_dict values must be strings"):
-            memory._dict_to_filter_string({"rating": 5})
+            memory._dict_to_filter_string(cast(dict[str, str], {"rating": 5}))
 
         # Test with None value
         with pytest.raises(TypeError, match="All filter_dict values must be strings"):
-            memory._dict_to_filter_string({"deleted_at": None})
+            memory._dict_to_filter_string(cast(dict[str, str], {"deleted_at": None}))
 
         # Test with list value
         with pytest.raises(TypeError, match="All filter_dict values must be strings"):
-            memory._dict_to_filter_string({"tags": ["tag1", "tag2"]})
+            memory._dict_to_filter_string(
+                cast(dict[str, str], {"tags": ["tag1", "tag2"]})
+            )
 
         # Test with boolean value
         with pytest.raises(TypeError, match="All filter_dict values must be strings"):
-            memory._dict_to_filter_string({"active": True})
+            memory._dict_to_filter_string(cast(dict[str, str], {"active": True}))
 
     def test_dict_to_filter_string_with_non_string_key(self, mock_client):
         """Test _dict_to_filter_string raises TypeError for non-string keys."""
@@ -492,7 +495,7 @@ class TestMemory:
 
         # Test with integer key
         with pytest.raises(TypeError, match="All filter_dict keys must be strings"):
-            memory._dict_to_filter_string({123: "value"})
+            memory._dict_to_filter_string(cast(dict[str, str], {123: "value"}))
 
     def test_get_default_filter_dict_with_all_fields(self, mock_client):
         """Test get_default_filter_dict with all context fields set."""
@@ -520,7 +523,10 @@ class TestMemory:
             client=mock_client,
             org_id="test_org",
             project_id="test_project",
-            metadata={"user_id": "user1", "agent_id": None, "session_id": "session1"},
+            metadata=cast(
+                dict[str, str],
+                {"user_id": "user1", "agent_id": None, "session_id": "session1"},
+            ),
         )
 
         default_filters = memory.get_default_filter_dict()

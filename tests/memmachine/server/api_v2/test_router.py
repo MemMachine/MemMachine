@@ -1,9 +1,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from datetime import UTC, datetime
+from typing import cast
+
 import pytest
 from fastapi.testclient import TestClient
 
-from memmachine.common.api.spec import Episode, SearchResult
+from memmachine.common.api.spec import ContentType, Episode, SearchResult
 from memmachine.common.episode_store.episode_model import EpisodeType
 from memmachine.common.errors import (
     ConfigurationError,
@@ -288,18 +291,20 @@ def test_search_memories(client, mock_memmachine):
     with patch(
         "memmachine.server.api_v2.router._search_target_memories"
     ) as mock_search:
-        mock_search.return_value = SearchResult(
-            status=0,
-            content={
-                "episodic_memory": {
-                    "long_term_memory": {"episodes": []},
-                    "short_term_memory": {
-                        "episodes": [],
-                        "episode_summary": [],
+        mock_search.return_value = SearchResult.model_validate(
+            {
+                "status": 0,
+                "content": {
+                    "episodic_memory": {
+                        "long_term_memory": {"episodes": []},
+                        "short_term_memory": {
+                            "episodes": [],
+                            "episode_summary": [],
+                        },
                     },
+                    "semantic_memory": [],
                 },
-                "semantic_memory": [],
-            },
+            }
         )
 
         # Success
@@ -350,13 +355,13 @@ def test_list_memories(client, mock_memmachine):
             uid="1",
             content="mem1",
             session_key="test_org/test_proj",
-            created_at="2025-01-01T00:00:00Z",
+            created_at=datetime(2025, 1, 1, tzinfo=UTC),
             producer_id="user",
             producer_role="user",
             produced_for_id=None,
             sequence_num=0,
-            episode_type="message",
-            content_type="string",
+            episode_type=EpisodeType.MESSAGE,
+            content_type=ContentType.STRING,
             filterable_metadata=None,
             metadata=None,
         )
@@ -530,8 +535,10 @@ def test_rest_error():
     err = RestError(422, "sample", RuntimeError("for test"))
     assert err.status_code == 422
     assert isinstance(err.detail, dict)
-    assert err.detail["message"] == "sample"
-    assert err.detail["code"] == 422
+    detail = cast(dict[str, object], err.detail)
+    assert detail["message"] == "sample"
+    assert detail["code"] == 422
+    assert err.payload is not None
     assert err.payload.exception == "RuntimeError"
     assert err.payload.internal_error == "for test"
     assert err.payload.trace == "RuntimeError: for test"

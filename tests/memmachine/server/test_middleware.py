@@ -1,6 +1,7 @@
 """Tests for server middleware components."""
 
 import logging
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -40,7 +41,7 @@ class FakeMetricsFactory:
 @pytest.fixture
 def app_with_access_log():
     app = FastAPI()
-    app.add_middleware(AccessLogMiddleware)
+    app.add_middleware(cast(Any, AccessLogMiddleware))
 
     @app.get("/ping")
     async def ping():
@@ -82,7 +83,7 @@ def app_with_metrics(monkeypatch, fake_metrics_factory):
         lambda self: fake_metrics_factory,
     )
 
-    app.add_middleware(RequestMetricsMiddleware)
+    app.add_middleware(cast(Any, RequestMetricsMiddleware))
 
     @app.get("/items/{item_id}")
     async def get_item(item_id: int):
@@ -123,7 +124,7 @@ def app_with_error(monkeypatch, fake_metrics_factory):
         lambda self: fake_metrics_factory,
     )
 
-    app.add_middleware(RequestMetricsMiddleware)
+    app.add_middleware(cast(Any, RequestMetricsMiddleware))
 
     @app.get("/boom")
     async def boom():

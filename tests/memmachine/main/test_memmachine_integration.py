@@ -217,6 +217,7 @@ class TestMemMachineLongMemEval:
         class ExtendedSessionData:
             org_id: str
             project_id: str
+            session_key: str
 
         set_metadata = {
             "user_id": "test_user",
@@ -225,12 +226,15 @@ class TestMemMachineLongMemEval:
         extended_session = ExtendedSessionData(
             org_id=session_data.org_id,
             project_id=session_data.project_id,
+            session_key=session_data.session_key,
         )
 
         # Get all set IDs
-        sets = await memmachine.semantic_list_set_ids(
-            session_data=extended_session,
-            set_metadata=set_metadata,
+        sets = list(
+            await memmachine.semantic_list_set_ids(
+                session_data=extended_session,
+                set_metadata=set_metadata,
+            )
         )
 
         # Should have 4 sets: 2 default (org + project) + 2 custom
