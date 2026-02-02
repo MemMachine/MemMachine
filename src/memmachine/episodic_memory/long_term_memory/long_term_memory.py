@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import AttributeValue
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import ContentType, Episode, EpisodeType
 from memmachine.common.filter.filter_parser import (
@@ -102,7 +102,7 @@ class LongTermMemory:
                 ),
                 content=episode.content,
                 filterable_properties=cast(
-                    dict[str, FilterablePropertyValue],
+                    dict[str, AttributeValue],
                     {
                         key: value
                         for key, value in {

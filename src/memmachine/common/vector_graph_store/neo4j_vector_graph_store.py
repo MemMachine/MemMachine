@@ -18,7 +18,7 @@ from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import FilterablePropertyValue, SimilarityMetric
+from memmachine.common.data_types import AttributeValue, FilterValue, SimilarityMetric
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -1639,12 +1639,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         entity_query_alias: str,
         query_value_parameter: str,
         property_filter: FilterExpr | None,
-    ) -> tuple[str, dict[str, FilterablePropertyValue | list[FilterablePropertyValue]]]:
+    ) -> tuple[str, dict[str, FilterValue | None]]:
         if property_filter is None:
             query_filter_string = "TRUE"
-            query_filter_params: dict[
-                str, FilterablePropertyValue | list[FilterablePropertyValue]
-            ] = {}
+            query_filter_params: dict[str, FilterValue | None] = {}
         else:
             query_filter_string, query_filter_params = (
                 Neo4jVectorGraphStore._render_filter_expr(
@@ -1661,7 +1659,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         entity_query_alias: str,
         query_value_parameter: str,
         expr: FilterExpr,
-    ) -> tuple[str, dict[str, FilterablePropertyValue | list[FilterablePropertyValue]]]:
+    ) -> tuple[str, dict[str, FilterValue | None]]:
         if isinstance(expr, FilterComparison):
             field_ref = f"{entity_query_alias}.{
                 Neo4jVectorGraphStore._sanitize_name(mangle_property_name(expr.field))
@@ -1670,9 +1668,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 f"filter_expr_param_{uuid4()}"
             )
 
-            params: dict[
-                str, FilterablePropertyValue | list[FilterablePropertyValue]
-            ] = {}
+            params: dict[str, FilterValue | None] = {}
             if expr.op in (">", "<", ">=", "<=", "=", "!=", "<>"):
                 condition = render_temporal_comparison(
                     left=field_ref,
@@ -1681,7 +1677,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     value=expr.value,
                 )
                 params[param_name] = cast(
-                    FilterablePropertyValue,
+                    "AttributeValue",
                     sanitize_value_for_neo4j(expr.value),
                 )
             elif expr.op == "in":
@@ -1690,7 +1686,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
                 params[param_name] = [
                     cast(
-                        FilterablePropertyValue,
+                        "AttributeValue",
                         sanitize_value_for_neo4j(item),
                     )
                     for item in expr.value

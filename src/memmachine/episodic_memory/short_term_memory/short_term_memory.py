@@ -20,8 +20,9 @@ from pydantic import BaseModel, Field, InstanceOf, field_validator
 
 from memmachine.common import rw_locks
 from memmachine.common.data_types import (
+    AttributeValue,
     ExternalServiceAPIError,
-    FilterablePropertyValue,
+    FilterValue,
 )
 from memmachine.common.episode_store import Episode
 from memmachine.common.episode_store.episode_model import episodes_to_string
@@ -266,8 +267,8 @@ class ShortTermMemory:
 
     @staticmethod
     def _safe_compare(
-        a: FilterablePropertyValue,
-        b: FilterablePropertyValue | list[FilterablePropertyValue],
+        a: AttributeValue | None,
+        b: FilterValue | None,
         op: str,
     ) -> bool:
         """Safely compare two filterable property values."""
@@ -306,7 +307,7 @@ class ShortTermMemory:
                 return False
 
     def _do_comparison(
-        self, comp: Comparison, value: FilterablePropertyValue | None
+        self, comp: Comparison, value: AttributeValue | None
     ) -> bool:
         """Do comparison for a single comparison expression."""
         match comp.op:
@@ -366,12 +367,13 @@ class ShortTermMemory:
                     return False
                 if key not in episode.metadata:
                     return False
-                if not isinstance(
-                    episode.metadata[key], get_args(FilterablePropertyValue)
-                ):
+                metadata_value = episode.metadata[key]
+                if metadata_value is None:
+                    return self._do_comparison(filters, None)
+                if not isinstance(metadata_value, get_args(AttributeValue)):
                     return False
                 return self._do_comparison(
-                    filters, cast(FilterablePropertyValue, episode.metadata[key])
+                    filters, cast("AttributeValue", metadata_value)
                 )
             logger.warning("Unsupported filter field: %s", filters.field)
             return False

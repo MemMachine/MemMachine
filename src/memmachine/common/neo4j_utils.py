@@ -7,7 +7,7 @@ from typing import TypeVar
 
 from neo4j.time import DateTime as _Neo4jDateTime
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import AttributeValue
 from memmachine.common.vector_graph_store.data_types import PropertyValue
 
 TScalar = TypeVar("TScalar", bound=object)
@@ -40,7 +40,7 @@ def render_temporal_comparison(
     left: str,
     op: str,
     right: str,
-    value: FilterablePropertyValue | list[FilterablePropertyValue],
+    value: AttributeValue | None,
 ) -> str:
     """Render a Cypher comparison clause that is safe for temporal values."""
     if op == "!=":
@@ -94,8 +94,8 @@ def render_temporal_comparison(
 
 
 def coerce_datetime_to_timestamp(
-    value: FilterablePropertyValue,
-) -> FilterablePropertyValue:
+    value: AttributeValue,
+) -> AttributeValue:
     """Convert filter values into epoch timestamps when appropriate."""
     if isinstance(value, _dt.datetime):
         return value.timestamp()

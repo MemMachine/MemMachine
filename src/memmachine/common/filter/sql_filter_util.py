@@ -6,14 +6,14 @@ from typing import Any
 from sqlalchemy import ColumnElement
 from sqlalchemy.orm import InstrumentedAttribute, MappedColumn
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import AttributeValue, FilterValue
 from memmachine.common.filter.filter_parser import Comparison
 
 logger = logging.getLogger(__name__)
 
 
 def _normalize_metadata_value(
-    value: FilterablePropertyValue | list[FilterablePropertyValue],
+    value: AttributeValue | None,
 ) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -21,16 +21,16 @@ def _normalize_metadata_value(
 
 
 def _ensure_scalar_value(
-    value: FilterablePropertyValue | list[FilterablePropertyValue], op: str
-) -> FilterablePropertyValue:
+    value: FilterValue | None, op: str
+) -> AttributeValue | None:
     if isinstance(value, list):
         raise TypeError(f"'{op}' comparison cannot accept list values")
     return value
 
 
 def _ensure_list_value(
-    value: FilterablePropertyValue | list[FilterablePropertyValue],
-) -> list[FilterablePropertyValue]:
+    value: FilterValue | None,
+) -> list[int] | list[str]:
     if not isinstance(value, list):
         raise TypeError("IN comparison requires a list of values")
     return value

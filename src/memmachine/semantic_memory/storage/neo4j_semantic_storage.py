@@ -16,7 +16,7 @@ from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import AttributeValue
 from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.errors import InvalidArgumentError
 from memmachine.common.filter.filter_parser import (
@@ -807,7 +807,7 @@ class Neo4jSemanticStorage(SemanticStorage):
 
     @staticmethod
     def _normalize_metadata_property_value(
-        value: FilterablePropertyValue,
+        value: AttributeValue,
     ) -> bool | int | float | str:
         if isinstance(value, bool):
             return value
@@ -1060,7 +1060,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         field_ref: str,
         expr: FilterComparison,
-        value_adapter: Callable[[FilterablePropertyValue], Any] | None,
+        value_adapter: Callable[[AttributeValue], Any] | None,
     ) -> tuple[str, dict[str, Any]]:
         op = expr.op
         params: dict[str, Any] = {}
@@ -1099,7 +1099,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         alias: str,
         field: str,
-    ) -> tuple[str, Callable[[FilterablePropertyValue], Any] | None]:
+    ) -> tuple[str, Callable[[AttributeValue], Any] | None]:
         if field in {"created_at", "created_at_ts"}:
             return f"{alias}.created_at_ts", coerce_datetime_to_timestamp
         if field in {"updated_at", "updated_at_ts"}:
@@ -1116,13 +1116,13 @@ class Neo4jSemanticStorage(SemanticStorage):
 
     @staticmethod
     def _adapt_filter_value(
-        value: FilterablePropertyValue,
-        adapter: Callable[[FilterablePropertyValue], Any] | None,
-    ) -> FilterablePropertyValue:
+        value: AttributeValue | None,
+        adapter: Callable[[AttributeValue], Any] | None,
+    ) -> AttributeValue | None:
         if adapter is None or value is None:
             return value
         adapted = adapter(value)
-        return cast(FilterablePropertyValue, adapted)
+        return cast("AttributeValue", adapted)
 
     async def _hydrate_vector_index_state(self) -> None:
         self._vector_index_by_set.clear()

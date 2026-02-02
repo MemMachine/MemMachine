@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import NamedTuple, Protocol
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import AttributeValue, FilterValue
 
 
 class FilterParseError(ValueError):
@@ -22,7 +22,7 @@ class Comparison(FilterExpr):
 
     field: str
     op: str  # "=", "in", ">", "<", ">=", "<=", "is_null", "is_not_null"
-    value: FilterablePropertyValue | list[FilterablePropertyValue]
+    value: FilterValue | None
 
 
 @dataclass(frozen=True)
@@ -169,7 +169,7 @@ class _Parser:
 
         if self._accept("IN"):
             self._expect("LPAREN")
-            values: list[FilterablePropertyValue] = []
+            values: list[AttributeValue] = []
             values.append(self._parse_value())
             while self._accept("COMMA"):
                 values.append(self._parse_value())
@@ -190,7 +190,7 @@ class _Parser:
             f"Expected comparison operator (=, IN, >, <, >=, <=, IS) after field {field}"
         )
 
-    def _parse_value(self) -> FilterablePropertyValue:
+    def _parse_value(self) -> AttributeValue:
         tok = self._expect("IDENT", "STRING")
         raw = tok.value
         # If it's a string literal, return it as-is
@@ -238,7 +238,7 @@ def parse_filter(spec: str | None) -> FilterExpr | None:
 
 def to_property_filter(
     expr: FilterExpr | None,
-) -> dict[str, FilterablePropertyValue] | None:
+) -> dict[str, AttributeValue | None] | None:
     """Convert a filter expression into a legacy equality mapping."""
     if expr is None:
         return None
@@ -247,7 +247,7 @@ def to_property_filter(
     if not comparisons:
         return None
 
-    property_filter: dict[str, FilterablePropertyValue] = {}
+    property_filter: dict[str, AttributeValue | None] = {}
     for comp in comparisons:
         if comp.op != "=":
             op_name = "IN" if comp.op == "in" else comp.op

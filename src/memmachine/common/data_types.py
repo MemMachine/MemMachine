@@ -3,7 +3,9 @@
 from datetime import datetime
 from enum import Enum
 
-FilterablePropertyValue = bool | int | float | str | datetime | None
+AttributeValue = bool | int | float | str | datetime
+
+FilterValue = bool | int | float | str | datetime | list[int] | list[str]
 
 
 class SimilarityMetric(Enum):

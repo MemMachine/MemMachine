@@ -17,7 +17,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 import numpy as np
 from pydantic import BaseModel, InstanceOf
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import FilterValue
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeIdT, EpisodeStorage
 from memmachine.common.errors import (
@@ -71,7 +71,7 @@ def _with_has_set_ids(
     set_expr = Comparison(
         field="set_id",
         op="in",
-        value=cast(list[FilterablePropertyValue], list(set_ids)),
+        value=cast(list[FilterValue], list(set_ids)),
     )
 
     if filter_expr is None:
