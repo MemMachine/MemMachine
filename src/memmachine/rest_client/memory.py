@@ -8,8 +8,11 @@ operations for a specific context.
 from __future__ import annotations
 
 import builtins
+import io
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -74,6 +77,10 @@ class Memory:
 
         # Search memories (filters based on metadata are automatically applied)
         results = memory.search("What do I like to eat?")
+
+        # Add memory with an image (server summarizes image and appends to content)
+        memory.add("Screenshot of the dashboard", image="/path/to/screenshot.png")
+        memory.add("Photo from meeting", image=open("meeting.jpg", "rb"), image_mime_type="image/jpeg")
         ```
 
     """
@@ -226,9 +233,14 @@ class Memory:
         metadata: dict[str, str] | None = None,
         timestamp: datetime | None = None,
         timeout: int | None = None,
+        image: bytes | str | Path | None = None,
+        image_mime_type: str | None = None,
     ) -> builtins.list[AddMemoryResult]:
         """
         Add a memory episode.
+
+        Optionally attach an image: the server will summarize it with a vision
+        model and append the summary to the message content before storing.
 
         Args:
             content: The content to store in memory
@@ -240,6 +252,13 @@ class Memory:
             metadata: Additional metadata for the episode
             timestamp: Optional timestamp for the memory. If not provided, server will use current UTC time.
             timeout: Request timeout in seconds (uses client default if not provided)
+            image: Optional image to attach. Can be raw bytes, a file path (str or Path),
+                   or a file-like object with a read() method. When provided, the server
+                   summarizes the image and appends it to content (requires server config
+                   image_summarization_model).
+            image_mime_type: MIME type for the image (e.g. "image/jpeg", "image/png").
+                             Used when image is bytes or a file-like; ignored when image
+                             is a path (guessed from extension). Defaults to "image/jpeg".
 
         Returns:
             List of AddMemoryResult objects containing UID results from the server.
@@ -248,6 +267,8 @@ class Memory:
         Raises:
             requests.RequestException: If the request fails
             RuntimeError: If the client has been closed
+            FileNotFoundError: If image is a path that does not exist
+            TypeError: If image has an unsupported type
 
         """
         if memory_types is None:
@@ -290,12 +311,28 @@ class Memory:
             )
             v2_data = spec.model_dump(mode="json", exclude_unset=True)
 
-            response = self.client.request(
-                "POST",
-                f"{self.client.base_url}/api/v2/memories",
-                json=v2_data,
-                timeout=timeout,
-            )
+            image_payload = self._normalize_image(image, image_mime_type)
+            if image_payload is not None:
+                image_bytes, mime_type = image_payload
+                # Multipart: spec as form field, image as file (server requires exactly one message)
+                data = {"spec": json.dumps(v2_data)}
+                files = {
+                    "image": ("image", io.BytesIO(image_bytes), mime_type),
+                }
+                response = self.client.request(
+                    "POST",
+                    f"{self.client.base_url}/api/v2/memories",
+                    data=data,
+                    files=files,
+                    timeout=timeout,
+                )
+            else:
+                response = self.client.request(
+                    "POST",
+                    f"{self.client.base_url}/api/v2/memories",
+                    json=v2_data,
+                    timeout=timeout,
+                )
             response.raise_for_status()
             response_data = response.json()
 
@@ -649,6 +686,41 @@ class Memory:
                 default_filter[f"metadata.{key}"] = value
 
         return default_filter
+
+    def _normalize_image(
+        self,
+        image: bytes | str | Path | None,
+        image_mime_type: str | None,
+    ) -> tuple[bytes, str] | None:
+        """Normalize image input to (bytes, mime_type). Returns None if image is None."""
+        if image is None:
+            return None
+        mime = (image_mime_type or "").strip() or "image/jpeg"
+        if isinstance(image, bytes):
+            return (image, mime)
+        if isinstance(image, (str, Path)):
+            path = Path(image)
+            if not path.is_file():
+                raise FileNotFoundError(f"Image file not found: {path}")
+            raw = path.read_bytes()
+            if not (image_mime_type or "").strip():
+                suffix = path.suffix.lower()
+                mime = {
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".gif": "image/gif",
+                    ".webp": "image/webp",
+                }.get(suffix, "image/jpeg")
+            return (raw, mime)
+        if hasattr(image, "read"):
+            raw = image.read()
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+            return (raw, mime)
+        raise TypeError(
+            "image must be None, bytes, a file path (str | Path), or a file-like object"
+        )
 
     def _dict_to_filter_string(self, filter_dict: dict[str, str]) -> str:
         """

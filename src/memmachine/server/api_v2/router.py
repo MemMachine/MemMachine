@@ -160,10 +160,11 @@ router = APIRouter()
 
 async def _parse_add_memories_request(
     request: Request,
-    spec: Annotated[str | None, Form()] = None,
     image: Annotated[UploadFile | None, File()] = None,
+    spec: Annotated[str | None, Form()] = None,
 ) -> tuple[AddMemoriesSpec, UploadFile | None]:
-    """Parse AddMemories request from either JSON body or multipart form-data."""
+    """Parse AddMemories request from either JSON body or multipart form-data (spec + image).
+    File() before Form() so FastAPI correctly parses multipart when both are present."""
     content_type = request.headers.get("content-type", "")
 
     if spec is not None:

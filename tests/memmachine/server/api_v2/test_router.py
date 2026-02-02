@@ -256,6 +256,7 @@ def test_add_memories(client, mock_memmachine):
 
 
 def test_add_memories_multipart_with_image(client):
+    """POST /api/v2/memories supports image via multipart (spec + image); same endpoint as JSON."""
     payload = {
         "org_id": "test_org",
         "project_id": "test_proj",
@@ -281,12 +282,34 @@ def test_add_memories_multipart_with_image(client):
 
 
 def test_add_memories_multipart_missing_spec(client):
+    """Multipart without 'spec' field returns 422."""
     response = client.post(
         "/api/v2/memories",
         data={},
         files={"image": ("test.png", b"fake", "image/png")},
     )
     assert response.status_code == 422
+
+
+def test_add_memories_multipart_image_requires_single_message(client):
+    """When image is present, spec must have exactly one message; otherwise 422."""
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [
+            {"role": "user", "content": "first"},
+            {"role": "user", "content": "second"},
+        ],
+    }
+    response = client.post(
+        "/api/v2/memories",
+        data={"spec": __import__("json").dumps(payload)},
+        files={"image": ("test.png", b"fake", "image/png")},
+    )
+    assert response.status_code == 422
+    detail = response.json().get("detail")
+    msg = detail.get("message", detail) if isinstance(detail, dict) else detail
+    assert "exactly 1" in str(msg)
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):

@@ -1,5 +1,6 @@
 """Unit tests for Memory class (v2 API)."""
 
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -328,6 +329,74 @@ class TestMemory:
 
         with pytest.raises(RuntimeError, match="client has been closed"):
             memory.add("Content")
+
+    def test_add_with_image_sends_multipart(self, mock_client):
+        """Add with image sends multipart (spec + image) to POST /api/v2/memories (same endpoint as JSON)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "memory_123"}]}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"user_id": "user1"},
+        )
+        image_bytes = b"\x89PNG\r\n\x1a\n"
+        result = memory.add(
+            "Screenshot of the dashboard",
+            image=image_bytes,
+            image_mime_type="image/png",
+        )
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].uid == "memory_123"
+        mock_client.request.assert_called_once()
+        call_kw = mock_client.request.call_args[1]
+        assert "json" not in call_kw
+        assert "data" in call_kw
+        assert "files" in call_kw
+        spec = json.loads(call_kw["data"]["spec"])
+        assert spec["org_id"] == "test_org"
+        assert spec["project_id"] == "test_project"
+        assert len(spec["messages"]) == 1
+        assert spec["messages"][0]["content"] == "Screenshot of the dashboard"
+        file_tuple = call_kw["files"]["image"]
+        assert file_tuple[0] == "image"
+        assert file_tuple[2] == "image/png"
+        assert file_tuple[1].read() == image_bytes
+
+    def test_add_with_image_path_guesses_mime(self, mock_client, tmp_path):
+        """Test adding memory with image file path guesses MIME from extension."""
+        (tmp_path / "photo.png").write_bytes(b"fake png")
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"results": [{"uid": "mem_1"}]}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="o",
+            project_id="p",
+        )
+        memory.add("Photo", image=str(tmp_path / "photo.png"))
+
+        call_kw = mock_client.request.call_args[1]
+        assert call_kw["files"]["image"][2] == "image/png"
+
+    def test_add_with_image_invalid_type_raises(self, mock_client):
+        """Test add with invalid image type raises TypeError."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        with pytest.raises(TypeError, match="image must be"):
+            memory.add("Text", image=123)
 
     def test_search_success(self, mock_client):
         """Test successful memory search with v2 API format."""
