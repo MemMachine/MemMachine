@@ -269,7 +269,6 @@ async def test_legacy_set_ids_are_transformed(sqlalchemy_pg_engine: AsyncEngine)
 
     expected_user_set_id = SemanticSessionManager.generate_user_set_id(
         org_id="acme",
-        project_id="project-x",
         producer_id="alice",
     )
 

@@ -28,6 +28,8 @@ ROLE_PREFIX = "mem_role_"
 
 
 class ResolvedContext(NamedTuple):
+    """Resolved identifiers for a legacy set id."""
+
     org_id: str | None
     project_id: str | None
     producer_id: str | None
@@ -36,9 +38,12 @@ class ResolvedContext(NamedTuple):
 
 
 class ContextAccumulator:
+    """Collects context values linked to a legacy set id."""
+
     __slots__ = ("producer_ids", "producer_roles", "session_keys")
 
     def __init__(self) -> None:
+        """Initialize empty context sets."""
         self.session_keys: set[str] = set()
         self.producer_ids: set[str] = set()
         self.producer_roles: set[str] = set()
@@ -334,11 +339,11 @@ def _fetch_episode_rows(
         chunk = id_list[start : start + chunk_size]
         stmt = sa.select(episodes_table).where(episodes_table.c.id.in_(chunk))
         for row in conn.execute(stmt):
-            history_id = int(row.id)  # type: ignore[union-attr]
+            history_id = int(row.id)
             results[history_id] = {
-                "session_key": row.session_key,  # type: ignore[union-attr]
-                "producer_id": row.producer_id,  # type: ignore[union-attr]
-                "producer_role": row.producer_role,  # type: ignore[union-attr]
+                "session_key": row.session_key,
+                "producer_id": row.producer_id,
+                "producer_role": row.producer_role,
             }
 
     return results
@@ -363,7 +368,7 @@ def _build_migration_plan(
                 )
             new_id = _generate_set_id(
                 org_id=context.org_id,
-                project_id=context.project_id,
+                project_id=None,
                 metadata={"producer_id": context.producer_id},
             )
         elif set_id.startswith(ROLE_PREFIX):
@@ -534,7 +539,7 @@ def _update_config_settype(
 def _ensure_user_set_type(conn: sa.Connection, org_id: str) -> int:
     stmt = sa.text(
         "SELECT id FROM set_type "
-        "WHERE org_id = :org_id AND org_level_set = FALSE "
+        "WHERE org_id = :org_id AND org_level_set = TRUE "
         "AND metadata_tags_sig = :sig"
     )
 
@@ -544,7 +549,7 @@ def _ensure_user_set_type(conn: sa.Connection, org_id: str) -> int:
 
     insert_stmt = sa.text(
         "INSERT INTO set_type (org_id, org_level_set, metadata_tags_sig, name, description) "
-        "VALUES (:org_id, FALSE, :sig, :name, :description) RETURNING id"
+        "VALUES (:org_id, TRUE, :sig, :name, :description) RETURNING id"
     )
 
     result = conn.execute(
@@ -566,9 +571,10 @@ def _migrate_legacy_set_ids(conn: sa.Connection) -> None:
 
 
 def upgrade() -> None:
+    """Run the legacy set id migration."""
     conn = op.get_bind()
     _migrate_legacy_set_ids(conn)
 
 
 def downgrade() -> None:
-    pass
+    """Downgrade is a no-op for this migration."""
