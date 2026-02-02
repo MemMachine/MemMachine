@@ -335,6 +335,10 @@ you MUST actively use MemMachine MCP on EVERY Question
 11. If something went wrong, you will see an error message popup when you start Claude Desktop App.
 You can also check the logs by clicking on `View Logs` button in the `Developer` tab.
 
+<Note>
+**Performance Tip:** If you have a large number of memories stored and experience slow response times (e.g., 1-2 minutes), consider using a faster LLM model. The workflow is: MemMachine first retrieves relevant information locally, then the LLM generates the response. When using slower models like Claude Sonnet, this generation step can become a bottleneck. Switching to a faster model (e.g., Claude Haiku) can reduce response times significantly (from minutes to seconds).
+</Note>
+
 12. Now we can go back to the main screen and start a new conversation. You can say something like "I like Disneyland"
 and Claude should be able to remember that in the next conversation.  You may need to allow the model to call MCP for
 the first time.
