@@ -1,6 +1,7 @@
+from typing import cast
+
 import pytest
 from pydantic import SecretStr
-from typing import cast
 
 from memmachine.common.configuration.reranker_conf import (
     AmazonBedrockRerankerConf,

@@ -8,9 +8,7 @@ import pytest
 from memmachine.common.api.config_spec import (
     ResourceStatus,
     UpdateEpisodicMemorySpec,
-    UpdateLongTermMemorySpec,
     UpdateSemanticMemorySpec,
-    UpdateShortTermMemorySpec,
 )
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,

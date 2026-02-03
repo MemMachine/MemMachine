@@ -9,10 +9,10 @@ from typing import Any, TypeVar, cast
 import pytest
 import pytest_asyncio
 
+from memmachine.common.api import EpisodeType
 from memmachine.common.configuration.episodic_config import (
     EpisodicMemoryConf,
 )
-from memmachine.common.api import EpisodeType
 from memmachine.common.episode_store import ContentType, Episode
 from memmachine.common.filter.filter_parser import parse_filter
 from memmachine.common.language_model import LanguageModel

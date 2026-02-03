@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import openai
+import pytest
 from openai.types import chat as openai_chat
 from openai.types.chat.chat_completion_message_function_tool_call import (
     Function as ToolCallFunction,
 )
-import pytest
 from pydantic import ValidationError
 
 from memmachine.common.data_types import ExternalServiceAPIError

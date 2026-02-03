@@ -1,7 +1,6 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 from datetime import UTC, datetime
 from typing import cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient

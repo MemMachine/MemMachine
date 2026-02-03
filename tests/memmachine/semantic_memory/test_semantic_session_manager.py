@@ -518,10 +518,12 @@ async def test_list_set_ids(
     )
 
     # Since session contains user_id it should apear on the list
-    set_ids = list(await session_manager.list_sets(
-        session_data=expanded_session,
-        set_metadata=set_metadata,
-    ))
+    set_ids = list(
+        await session_manager.list_sets(
+            session_data=expanded_session,
+            set_metadata=set_metadata,
+        )
+    )
     assert len(set_ids) == 3
 
     # While if we create an isolation level that isn't covered by session_data it won't be included.
@@ -530,10 +532,12 @@ async def test_list_set_ids(
         is_org_level=True,
         metadata_tags=["other_id"],
     )
-    set_ids = list(await session_manager.list_sets(
-        session_data=expanded_session,
-        set_metadata=set_metadata,
-    ))
+    set_ids = list(
+        await session_manager.list_sets(
+            session_data=expanded_session,
+            set_metadata=set_metadata,
+        )
+    )
     assert len(set_ids) == 3
 
 
@@ -569,10 +573,12 @@ async def test_list_set_ids_returns_set_details(
     )
 
     # Get all set IDs
-    sets = list(await session_manager.list_sets(
-        session_data=expanded_session,
-        set_metadata=set_metadata,
-    ))
+    sets = list(
+        await session_manager.list_sets(
+            session_data=expanded_session,
+            set_metadata=set_metadata,
+        )
+    )
 
     # Should have 4 sets: 2 default (org + project) + 2 custom
     assert len(sets) == 4
@@ -644,10 +650,12 @@ async def test_user_default_set_requires_producer_metadata_and_is_configurable(
     )
     set_metadata = {"producer_id": "user-123"}
 
-    sets_with_user = list(await session_manager.list_sets(
-        session_data=user_session,
-        set_metadata=set_metadata,
-    ))
+    sets_with_user = list(
+        await session_manager.list_sets(
+            session_data=user_session,
+            set_metadata=set_metadata,
+        )
+    )
 
     unique_sets = {s.id: s for s in sets_with_user}
     assert len(unique_sets) == 3
