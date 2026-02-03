@@ -55,14 +55,16 @@ class MigrationHack:
         os.makedirs(self.extract_dir, exist_ok=True)
         self.output_dir = "output"
         os.makedirs(self.output_dir, exist_ok=True)
-        
+
         # Load message IDs from previous run if retry_failed or resume is enabled
         # Store as (conv_id, message_id) tuples for efficient filtering
         self.success_message_ids: set[tuple[int, str]] = set()
         self.error_message_ids: set[tuple[int, str]] = set()
         if self.retry_failed or self.resume:
             if not run_id:
-                raise ValueError("--run-id is required when using --retry-failed or --resume")
+                raise ValueError(
+                    "--run-id is required when using --retry-failed or --resume"
+                )
             self._load_previous_run_ids()
         if self.verbose:
             self.rest_client = MemMachineRestClient(
@@ -108,24 +110,28 @@ class MigrationHack:
 
     def _load_previous_run_ids(self):
         """Load message IDs from success and error files of a previous run.
-        
+
         Files are expected to be in format: conv_id:message_id
         For backward compatibility, also supports message_id-only format.
         """
         success_file = os.path.join(self.output_dir, f"success_{self.run_id}.txt")
         errors_file = os.path.join(self.output_dir, f"errors_{self.run_id}.txt")
-        
+
         if self.resume:
             self.success_message_ids = load_run_id_file(success_file)
             if self.verbose:
-                print(f"Loaded {len(self.success_message_ids)} successful message records from previous run")
+                print(
+                    f"Loaded {len(self.success_message_ids)} successful message records from previous run"
+                )
             if len(self.success_message_ids) == 0:
                 print(f"WARNING: No successful message IDs found in {success_file}")
-        
+
         if self.retry_failed:
             self.error_message_ids = load_run_id_file(errors_file)
             if self.verbose:
-                print(f"Loaded {len(self.error_message_ids)} failed message records from previous run")
+                print(
+                    f"Loaded {len(self.error_message_ids)} failed message records from previous run"
+                )
             if len(self.error_message_ids) == 0:
                 print(f"WARNING: No failed message IDs found in {errors_file}")
 
@@ -155,22 +161,28 @@ class MigrationHack:
         else:
             # Process all conversations
             conv_ids_to_process = list(range(1, self.num_conversations + 1))
-        
+
         # Different behavior for retry_failed vs resume:
         # - retry_failed: Only load conversations that have failed messages (optimize at conversation level)
         # - resume: Load all conversations, filter at message level (skip successful ones)
         if self.retry_failed and conv_ids_to_process:
             # Only process conversations that have failed messages
             relevant_conv_ids = {conv_id for conv_id, _ in self.error_message_ids}
-            conv_ids_to_process = [cid for cid in conv_ids_to_process if cid in relevant_conv_ids]
+            conv_ids_to_process = [
+                cid for cid in conv_ids_to_process if cid in relevant_conv_ids
+            ]
             if self.verbose and conv_ids_to_process:
-                print(f"Optimized: Processing {len(conv_ids_to_process)} conversation(s) with failed messages")
+                print(
+                    f"Optimized: Processing {len(conv_ids_to_process)} conversation(s) with failed messages"
+                )
             elif self.verbose:
                 print(f"WARNING: No conversations found with failed messages")
         elif self.resume:
             # Resume: Load all conversations normally, filtering will happen at message level
             if self.verbose:
-                print(f"Resume mode: Loading all conversations, will skip messages from success file")
+                print(
+                    f"Resume mode: Loading all conversations, will skip messages from success file"
+                )
 
         for conv_id in conv_ids_to_process:
             extracted_file_name = (
@@ -202,7 +214,7 @@ class MigrationHack:
                 self.total_messages += len(messages)
             elif isinstance(messages, str):
                 self.total_messages += 1
-        
+
         # Update stats with total messages count
         self.stats["total_messages"] = self.total_messages
 
@@ -249,14 +261,16 @@ class MigrationHack:
 
     def _log_message_ids(self, conv_id, message_ids, success=True, error_msg=None):
         """Log message IDs to success or error file.
-        
+
         Args:
             conv_id: Conversation ID
             message_ids: List of message IDs to log
             success: If True, log to success file; if False, log to error file
             error_msg: Optional error message to include in error file
         """
-        filename = f"success_{self.run_id}.txt" if success else f"errors_{self.run_id}.txt"
+        filename = (
+            f"success_{self.run_id}.txt" if success else f"errors_{self.run_id}.txt"
+        )
         filepath = os.path.join(self.output_dir, filename)
         with open(filepath, "a") as f:
             for msg_id in message_ids:
@@ -273,7 +287,9 @@ class MigrationHack:
         chat_title = filters.get("chat_title", "")
         user_only = filters.get("user_only", False)
 
-        print(f"Filtering messages: since={since}, limit={limit}, chat_title={chat_title}, user_only={user_only}")
+        print(
+            f"Filtering messages: since={since}, limit={limit}, chat_title={chat_title}, user_only={user_only}"
+        )
         filtered = []
         for msg in messages:
             # String messages are always included (text-only, no role)
@@ -303,7 +319,7 @@ class MigrationHack:
         """Process a single conversation with batching support"""
         # Format all messages first
         formatted_messages = [self._format_message(msg) for msg in messages]
-        
+
         # Filter messages based on retry_failed or resume flags
         # Behavior differs:
         # - retry_failed: Only process messages that are in errors_*.txt (only retry failed ones)
@@ -319,10 +335,10 @@ class MigrationHack:
                     if self.verbose:
                         skipped_count += 1
                     continue
-                
+
                 # Match by exact (conv_id, message_id) tuple
                 key = (conv_id, msg_id)
-                
+
                 if self.retry_failed:
                     # retry_failed: Only process messages that are in the error file
                     should_include = key in self.error_message_ids
@@ -331,17 +347,21 @@ class MigrationHack:
                     should_include = key not in self.success_message_ids
                 else:
                     should_include = True
-                
+
                 if should_include:
                     filtered_formatted.append(msg)
                 else:
                     skipped_count += 1
             formatted_messages = filtered_formatted
             if self.verbose and skipped_count > 0:
-                print(f"Filtered {skipped_count} message(s) based on previous run results")
+                print(
+                    f"Filtered {skipped_count} message(s) based on previous run results"
+                )
             if len(formatted_messages) == 0:
                 if self.verbose:
-                    print(f"No messages to process after filtering (original: {original_count} messages)")
+                    print(
+                        f"No messages to process after filtering (original: {original_count} messages)"
+                    )
                 return conv_id, 0
 
         # Create progress bar only if not verbose (to avoid messing up console output)
@@ -359,7 +379,9 @@ class MigrationHack:
         # Process messages in batches
         for i in range(0, len(formatted_messages), self.batch_size):
             batch = formatted_messages[i : i + self.batch_size]
-            message_ids = [msg.get("metadata", {}).get("message_id", "") for msg in batch]
+            message_ids = [
+                msg.get("metadata", {}).get("message_id", "") for msg in batch
+            ]
             try:
                 self.rest_client.add_memory(
                     org_id=self.org_id if self.org_id else "",
@@ -371,11 +393,15 @@ class MigrationHack:
                 self.stats["successful_messages"] += len(batch)
             except Exception as e:
                 error_msg = str(e)
-                print(f"Error adding memory with message ids: [{','.join(message_ids)}]")
+                print(
+                    f"Error adding memory with message ids: [{','.join(message_ids)}]"
+                )
                 if self.verbose:
                     print(f"  Error details: {error_msg}")
                 # Log the error request into run-specific errors file
-                self._log_message_ids(conv_id, message_ids, success=False, error_msg=error_msg)
+                self._log_message_ids(
+                    conv_id, message_ids, success=False, error_msg=error_msg
+                )
                 self.stats["failed_messages"] += len(batch)
             # Update progress bar if it exists
             if msg_pbar:
@@ -441,7 +467,9 @@ class MigrationHack:
             self._update_final_stats()
             # Write statistics even in dry-run mode
             self._write_statistics()
-            print(f"\nStatistics saved to: {os.path.join(self.output_dir, f'migration_stats_{self.run_id}.json')}")
+            print(
+                f"\nStatistics saved to: {os.path.join(self.output_dir, f'migration_stats_{self.run_id}.json')}"
+            )
             return
 
         print(f"Adding memories to MemMachine...")
@@ -474,7 +502,9 @@ class MigrationHack:
             else:
                 # Use progress bar when not verbose
                 completed_pbar = tqdm(
-                    total=len(self.conversations), desc="Completed conversations", unit="conv"
+                    total=len(self.conversations),
+                    desc="Completed conversations",
+                    unit="conv",
                 )
                 for future in as_completed(futures):
                     conv_id, msg_count = future.result()
@@ -486,13 +516,15 @@ class MigrationHack:
 
         # Update final statistics
         self._update_final_stats()
-        
+
         # Write statistics to file
         self._write_statistics()
-        
+
         print("Migration complete")
         print(f"Run ID: {self.run_id}")
-        print(f"Statistics saved to: {os.path.join(self.output_dir, f'migration_stats_{self.run_id}.json')}")
+        print(
+            f"Statistics saved to: {os.path.join(self.output_dir, f'migration_stats_{self.run_id}.json')}"
+        )
 
     def _update_final_stats(self):
         """Update final statistics with end time and duration."""
@@ -503,7 +535,9 @@ class MigrationHack:
 
     def _write_statistics(self):
         """Write migration statistics to a JSON file."""
-        stats_file = os.path.join(self.output_dir, f"migration_stats_{self.run_id}.json")
+        stats_file = os.path.join(
+            self.output_dir, f"migration_stats_{self.run_id}.json"
+        )
         with open(stats_file, "w") as f:
             json.dump(self.stats, f, indent=2, ensure_ascii=False)
 
@@ -664,7 +698,7 @@ Examples:
     # Validate source-specific arguments
     if args.chat_title and args.source != "openai":
         parser.error("--chat-title is only supported for 'openai' source")
-    
+
     # Validate retry/resume arguments
     if (args.retry_failed or args.resume) and not args.run_id:
         parser.error("--run-id is required when using --retry-failed or --resume")

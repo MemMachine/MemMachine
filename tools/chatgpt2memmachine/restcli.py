@@ -10,7 +10,11 @@ from utils import get_filename_safe_timestamp
 
 class MemMachineRestClient:
     def __init__(
-        self, base_url="http://localhost:8080", api_version="v2", verbose=False, run_id=None
+        self,
+        base_url="http://localhost:8080",
+        api_version="v2",
+        verbose=False,
+        run_id=None,
     ):
         self.base_url = base_url
         self.api_version = api_version

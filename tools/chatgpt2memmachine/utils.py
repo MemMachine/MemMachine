@@ -88,32 +88,32 @@ def get_filename_safe_timestamp() -> str:
 def parse_run_id_line(line: str) -> Optional[tuple[int, str]]:
     """
     Parse a line from success/error file into (conv_id, message_id) tuple.
-    
+
     Expected format: conv_id:message_id
     Lines that don't match this format are skipped.
-    
+
     Args:
         line: Line from success/error file
-        
+
     Returns:
         Tuple of (conv_id, message_id) or None if line doesn't match expected format
     """
     line = line.strip()
     if not line or line.startswith("Error:"):
         return None
-    
+
     # Parse format: conv_id:message_id
     if ":" not in line:
         return None
-    
+
     parts = line.split(":", 1)
     if len(parts) != 2:
         return None
-    
+
     conv_id_str, msg_id = parts
     if not msg_id:  # message_id cannot be empty
         return None
-    
+
     try:
         conv_id = int(conv_id_str)
         return (conv_id, msg_id)
@@ -124,21 +124,21 @@ def parse_run_id_line(line: str) -> Optional[tuple[int, str]]:
 def load_run_id_file(filepath: str) -> set[tuple[int, str]]:
     """
     Load message IDs from a run ID file (success or error file).
-    
+
     Args:
         filepath: Path to the file to load
-        
+
     Returns:
         Set of (conv_id, message_id) tuples
     """
     result = set()
     if not os.path.exists(filepath):
         return result
-    
+
     with open(filepath, "r") as f:
         for line in f:
             parsed = parse_run_id_line(line)
             if parsed:
                 result.add(parsed)
-    
+
     return result
