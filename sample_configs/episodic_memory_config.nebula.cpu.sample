@@ -1,0 +1,161 @@
+logging:
+  path: mem-machine.log
+  level: info #| debug | error
+
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: nebula_storage  # Using NebulaGraph
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+prompt:
+  session:
+  - profile_prompt
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: <YOUR_PASSWORD_HERE>
+        db_name: postgres
+        pool_size: 5
+        max_overflow: 10
+
+    # NebulaGraph Enterprise 5.0 Configuration
+    nebula_storage:
+      provider: nebula_graph
+      config:
+        # NebulaGraph connection settings
+        hosts:
+          - "127.0.0.1:9669"  # Can specify multiple hosts for HA
+        username: root
+        password: <YOUR_NEBULA_PASSWORD>
+        space_name: memmachine
+
+        # Index creation thresholds (optional - defaults shown)
+        range_index_creation_threshold: 10000
+        vector_index_creation_threshold: 10000
+
+        # Force exact similarity search (optional - default: false)
+        # Set to true to disable ANN and always use exact search
+        force_exact_similarity_search: false
+
+        # Vector index tuning (optional - defaults shown)
+        # Choose between "IVF" (balanced) or "HNSW" (higher accuracy)
+        ann_index_type: "IVF"
+
+        # IVF (Inverted File Index) parameters
+        # Higher values = better accuracy but slower indexing
+        ivf_nlist: 256        # Number of clusters (default: 256)
+        ivf_nprobe: 8         # Clusters to search at query time (default: 8)
+
+        # HNSW (Hierarchical Navigable Small World) parameters
+        # Use these if ann_index_type is "HNSW"
+        hnsw_max_degree: 16        # Max neighbors per node (default: 16)
+        hnsw_ef_construction: 200  # Build quality (default: 200)
+        hnsw_ef_search: 40         # Search quality (default: 40)
+
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
+
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+    aws_embedder_id:
+      provider: 'amazon-bedrock'
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.titan-embed-text-v2:0"
+        similarity_metric: "cosine"
+    ollama_embedder:
+      provider: openai
+      config:
+        model: "nomic-embed-text"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+        dimensions: 768
+    openai_compatible_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-v4"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+    aws_model:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "openai.gpt-oss-20b-1:0"
+    ollama_model:
+      provider: openai-chat-completions
+      config:
+        model: "llama3"
+        api_key: "EMPTY"
+        base_url: "http://host.docker.internal:11434/v1"
+    openai_compatible_model:
+      provider: openai-chat-completions
+      config:
+        model: "qwen-flash"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"
+    cohere_reranker_id:
+      provider: "cohere"
+      config:
+        cohere_key: <COHERE_API_KEY>
+        model: "rerank-english-v3.0"
+    aws_reranker_id:
+      provider: "amazon-bedrock"
+      config:
+        region: "us-west-2"
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: "amazon.rerank-v1:0"

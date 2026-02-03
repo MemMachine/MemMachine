@@ -1,9 +1,9 @@
-"""Manage database engines for SQL and Neo4j backends."""
+"""Manage database engines for SQL, Neo4j, and NebulaGraph backends."""
 
 import asyncio
 import logging
 from asyncio import Lock
-from typing import Any, Self
+from typing import Any, Self, TYPE_CHECKING
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
@@ -17,6 +17,12 @@ from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStoreParams,
 )
 
+# TYPE_CHECKING is True only when type checkers (mypy, pyright) run, False at runtime.
+# This allows type hints without requiring nebulagraph_python to be installed
+# unless NebulaGraph is actually used. The actual import happens at use site.
+if TYPE_CHECKING:
+    from nebulagraph_python.client import NebulaAsyncClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,10 +35,15 @@ class DatabaseManager:
         self.graph_stores: dict[str, VectorGraphStore] = {}
         self.sql_engines: dict[str, AsyncEngine] = {}
         self.neo4j_drivers: dict[str, AsyncDriver] = {}
+        # String annotation "NebulaAsyncClient" (forward reference) because the type
+        # is only imported under TYPE_CHECKING and doesn't exist at runtime.
+        # Type checkers see it, but runtime treats it as a string literal.
+        self.nebula_clients: dict[str, "NebulaAsyncClient"] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
         self._sql_locks: dict[str, Lock] = {}
+        self._nebula_locks: dict[str, Lock] = {}
 
     async def build_all(self, validate: bool = False) -> Self:
         """Optionally eagerly initialize all backends."""
@@ -44,14 +55,19 @@ class DatabaseManager:
             self.async_get_sql_engine(name, validate=validate)
             for name in self.conf.relational_db_confs
         ]
+        nebula_tasks = [
+            self.async_get_nebula_client(name, validate=validate)
+            for name in self.conf.nebula_graph_confs
+        ]
         # Lazy build will occur in get_* calls, but build_all can trigger them
-        tasks = neo4j_tasks + relation_db_tasks
+        tasks = neo4j_tasks + relation_db_tasks + nebula_tasks
         await asyncio.gather(*tasks)
 
         if validate:
             await asyncio.gather(
                 self._validate_neo4j_drivers(),
                 self._validate_sql_engines(),
+                self._validate_nebula_clients(),
             )
 
         return self
@@ -64,12 +80,16 @@ class DatabaseManager:
                 tasks.append(self._close_async_driver(name, driver))
             for name, engine in self.sql_engines.items():
                 tasks.append(self._close_async_engine(name, engine))
+            for name, client in self.nebula_clients.items():
+                tasks.append(self._close_nebula_client(name, client))
             await asyncio.gather(*tasks)
             self.graph_stores.clear()
             self.neo4j_drivers.clear()
             self.sql_engines.clear()
+            self.nebula_clients.clear()
             self._neo4j_locks.clear()
             self._sql_locks.clear()
+            self._nebula_locks.clear()
 
     @staticmethod
     async def _close_async_driver(name: str, driver: AsyncDriver) -> None:
@@ -152,9 +172,21 @@ class DatabaseManager:
         return asyncio.run(self.async_get_neo4j_driver(name, validate=True))
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
-        """Return a vector graph store, initializing driver lazily if needed."""
-        await self.async_get_neo4j_driver(name, validate=True)
-        return self.graph_stores[name]
+        """Return a vector graph store, auto-detecting Neo4j or NebulaGraph backend."""
+        # Check if it's a Neo4j configuration
+        if name in self.conf.neo4j_confs:
+            await self.async_get_neo4j_driver(name, validate=True)
+            return self.graph_stores[name]
+
+        # Check if it's a NebulaGraph configuration
+        if name in self.conf.nebula_graph_confs:
+            await self.async_get_nebula_client(name, validate=True)
+            return self.graph_stores[name]
+
+        # Not found in either
+        raise ValueError(
+            f"VectorGraphStore '{name}' not found in neo4j_confs or nebula_graph_confs"
+        )
 
     @staticmethod
     async def validate_neo4j_driver(name: str, driver: AsyncDriver) -> None:
@@ -254,3 +286,155 @@ class DatabaseManager:
         """Validate connectivity for each SQL engine."""
         for name, engine in self.sql_engines.items():
             await self.validate_sql_engine(name, engine)
+
+    # --- NebulaGraph ---
+
+    @staticmethod
+    async def _close_nebula_client(name: str, client: "NebulaAsyncClient") -> None:
+        try:
+            await client.close()
+        except Exception as ex:
+            logger.warning("Error closing NebulaGraph client '%s': %s", name, ex)
+
+    async def async_get_nebula_client(
+        self, name: str, validate: bool = False
+    ) -> "NebulaAsyncClient":
+        """Return a NebulaGraph async client, creating it if necessary (lazy)."""
+        if name not in self._nebula_locks:
+            async with self._lock:
+                self._nebula_locks.setdefault(name, Lock())
+
+        async with self._nebula_locks[name]:
+            if name in self.nebula_clients:
+                return self.nebula_clients[name]
+
+            conf = self.conf.nebula_graph_confs.get(name)
+            if not conf:
+                raise ValueError(f"NebulaGraph config '{name}' not found.")
+
+            # Import at use site (not at module level) to make nebulagraph_python
+            # an optional dependency - only required if NebulaGraph is actually used.
+            # This avoids ImportError for users who only use Neo4j/PostgreSQL.
+            from nebulagraph_python.client import (
+                NebulaAsyncClient,
+                SessionConfig,
+                SessionPoolConfig,
+            )
+
+            # Create session config
+            session_config = SessionConfig(
+                schema=conf.schema_name,
+                graph=conf.graph_name,
+            )
+
+            # Create session pool config
+            session_pool_config = SessionPoolConfig(
+                size=conf.session_pool_size,
+                wait_timeout=conf.session_pool_wait_timeout
+                if conf.session_pool_wait_timeout > 0
+                else None,
+            )
+
+            # Connect to NebulaGraph
+            client = await NebulaAsyncClient.connect(
+                hosts=conf.get_hosts(),
+                username=conf.username,
+                password=conf.password.get_secret_value(),
+                session_config=session_config,
+                session_pool_config=session_pool_config,
+            )
+
+            # Initialize schema, graph type, and graph
+            try:
+                # Create schema if not exists
+                await client.execute(f"CREATE SCHEMA IF NOT EXISTS {conf.schema_name}")
+                logger.info(f"Ensured schema exists: {conf.schema_name}")
+
+                # Set session to the schema
+                await client.execute(f"SESSION SET SCHEMA {conf.schema_name}")
+
+                # Create empty graph type if not exists
+                graph_type_name = "memmachine_type"
+                await client.execute(
+                    f"CREATE GRAPH TYPE IF NOT EXISTS {graph_type_name} AS {{}}"
+                )
+                logger.info(f"Ensured graph type exists: {graph_type_name}")
+
+                # Create graph based on the graph type
+                await client.execute(
+                    f"CREATE GRAPH IF NOT EXISTS {conf.graph_name} TYPED {graph_type_name}"
+                )
+                logger.info(f"Ensured graph exists: {conf.graph_name}")
+
+                # Set session to the graph
+                await client.execute(f"SESSION SET GRAPH {conf.graph_name}")
+
+            except Exception as e:
+                await client.close()
+                raise ValueError(
+                    f"Failed to initialize NebulaGraph schema/graph for '{name}': {e}"
+                ) from e
+
+            if validate:
+                await self.validate_nebula_client(name, client)
+
+            self.nebula_clients[name] = client
+
+            # Create and store VectorGraphStore
+            # Import here to avoid circular dependency
+            from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
+                NebulaGraphVectorGraphStore,
+                NebulaGraphVectorGraphStoreParams,
+            )
+
+            params_kwargs: dict[str, Any] = {
+                "client": client,
+                "schema_name": conf.schema_name,
+                "graph_name": conf.graph_name,
+                "force_exact_similarity_search": conf.force_exact_similarity_search,
+                "ann_index_type": conf.ann_index_type,
+                "ivf_nlist": conf.ivf_nlist,
+                "ivf_nprobe": conf.ivf_nprobe,
+                "hnsw_max_degree": conf.hnsw_max_degree,
+                "hnsw_ef_construction": conf.hnsw_ef_construction,
+                "hnsw_ef_search": conf.hnsw_ef_search,
+            }
+            if conf.range_index_creation_threshold is not None:
+                params_kwargs["range_index_creation_threshold"] = (
+                    conf.range_index_creation_threshold
+                )
+            if conf.vector_index_creation_threshold is not None:
+                params_kwargs["vector_index_creation_threshold"] = (
+                    conf.vector_index_creation_threshold
+                )
+
+            params = NebulaGraphVectorGraphStoreParams(**params_kwargs)
+            self.graph_stores[name] = NebulaGraphVectorGraphStore(params)
+
+            return client
+
+    @staticmethod
+    async def validate_nebula_client(name: str, client: "NebulaAsyncClient") -> None:
+        """Validate connectivity to a NebulaGraph instance."""
+        try:
+            logger.info("Validating NebulaGraph client '%s'", name)
+            result = await client.execute("RETURN 1 AS ok")
+            row = result.one()
+            ok_value = row["ok"].cast_primitive()
+            logger.info("NebulaGraph client '%s' validated successfully", name)
+        except Exception as e:
+            await client.close()
+            raise ValueError(
+                f"NebulaGraph config '{name}' failed verification: {e}",
+            ) from e
+
+        if ok_value != 1:
+            await client.close()
+            raise ValueError(
+                f"Verification failed for NebulaGraph config '{name}'",
+            )
+
+    async def _validate_nebula_clients(self) -> None:
+        """Validate connectivity to each NebulaGraph instance."""
+        for name, client in self.nebula_clients.items():
+            await self.validate_nebula_client(name, client)
