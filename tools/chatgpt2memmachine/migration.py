@@ -178,30 +178,28 @@ class MigrationHack:
             )
             extracted_file = os.path.join(self.extract_dir, extracted_file_name)
             if os.path.exists(extracted_file):
-                # load from file directly
+                # load from file directly and filter
                 with open(extracted_file, "r") as f:
-                    self.conversations[conv_id] = json.load(f)
+                    messages = json.load(f)
+                # load from file directly and filter
+                filtered = self._filter_messages(messages, self.filters)
+                self.conversations[conv_id] = filtered
             else:
-                if not self.dry_run:
-                    print(f"Loading conversation {conv_id}...")
                 # Build filters for this conversation (merge global filters with conv index)
                 filters = {**(self.filters or {}), "index": conv_id}
+                # load messages from source, filters are applied at this level
                 messages = self.parser.load(self.input_file, filters=filters)
-                if not self.dry_run:
-                    print(
-                        f"Loaded {len(messages)} message(s) from conversation {conv_id}"
-                    )
                 self.conversations[conv_id] = messages
-                # Dump extracted messages for this conversation
-                self.parser.dump_data(
-                    messages, output_format="json", outfile=extracted_file
-                )
+                # Dump extracted messages for this conversation (skip in dry-run mode)
+                if not self.dry_run:
+                    self.parser.dump_data(
+                        messages, output_format="json", outfile=extracted_file
+                    )
 
-            # Count messages for this conversation (applying user_only filter if enabled)
+            # Count messages for this conversation
             messages = self.conversations[conv_id]
             if isinstance(messages, list):
-                filtered = self._filter_user_only_messages(messages)
-                self.total_messages += len(filtered)
+                self.total_messages += len(messages)
             elif isinstance(messages, str):
                 self.total_messages += 1
         
@@ -266,28 +264,43 @@ class MigrationHack:
             if not success and error_msg and self.verbose:
                 f.write(f"  Error: {error_msg}\n")
 
-    def _filter_user_only_messages(self, messages):
+    def _filter_messages(self, messages, filters: dict | None = None):
         """Filter out assistant messages if user_only is enabled."""
-        if not self.user_only:
-            return messages
-        
+        if filters is None:
+            filters = {}
+        since = filters.get("since", 0) or 0
+        limit = filters.get("limit", 0) or 0
+        chat_title = filters.get("chat_title", "")
+        user_only = filters.get("user_only", False)
+
+        print(f"Filtering messages: since={since}, limit={limit}, chat_title={chat_title}, user_only={user_only}")
         filtered = []
         for msg in messages:
             # String messages are always included (text-only, no role)
             if isinstance(msg, str):
                 filtered.append(msg)
-            # Dictionary messages: include if not assistant
-            elif isinstance(msg, dict):
-                role = msg.get("role", "")
-                if isinstance(role, str) and role.lower() != "assistant":
-                    filtered.append(msg)
+                continue
+            # not a dictionary, skip
+            elif not isinstance(msg, dict):
+                continue
+            # check if the message is after the since timestamp
+            if since and msg.get("timestamp", 0) < since:
+                continue
+            # check if the message is before the limit
+            if limit and len(filtered) >= limit:
+                break
+            # check if the message is a assistant message and user_only is enabled
+            if user_only and msg.get("role", "") == "assistant":
+                continue
+            # check if the message is a chat title message and chat_title is not empty
+            if chat_title and msg.get("chat_title", "") != chat_title:
+                continue
+            filtered.append(msg)
+        print(f"Total messages: {len(messages)}, filtered messages: {len(filtered)}")
         return filtered
 
     def _process_conversation(self, conv_id, messages):
         """Process a single conversation with batching support"""
-        # Filter out assistant messages if user_only is enabled
-        messages = self._filter_user_only_messages(messages)
-
         # Format all messages first
         formatted_messages = [self._format_message(msg) for msg in messages]
         
@@ -378,10 +391,6 @@ class MigrationHack:
         contents = self.conversations
         total_conversations = len(contents)
 
-        # Use the total_messages already calculated during load_and_extract
-        # This ensures consistency and avoids duplicate counting logic
-        filtered_items = self.total_messages
-
         org_display = self.org_id if self.org_id else "universal"
         project_display = self.project_id if self.project_id else "universal"
 
@@ -389,11 +398,7 @@ class MigrationHack:
         print(f"  Run ID: {self.run_id}")
         print(f"  Target: {org_display}/{project_display}")
         print(f"  Conversations: {total_conversations}")
-        if self.user_only:
-            print(f"  Total messages: {filtered_items} (filtered)")
-            print(f"  Filter: User messages only (assistant messages excluded)")
-        else:
-            print(f"  Total messages: {filtered_items}")
+        print(f"  Total messages: {self.total_messages}")
 
         # Show sample payload
         if contents:
@@ -405,10 +410,8 @@ class MigrationHack:
                 and isinstance(first_messages, list)
                 and len(first_messages) > 0
             ):
-                # Find first user message if user_only is enabled
-                filtered_messages = self._filter_user_only_messages(first_messages)
                 sample_message = None
-                for msg in filtered_messages:
+                for msg in first_messages:
                     if isinstance(msg, dict):
                         sample_message = msg
                         break
