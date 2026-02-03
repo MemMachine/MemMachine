@@ -378,9 +378,10 @@ class MigrationHack:
         # Process messages in batches
         for i in range(0, len(formatted_messages), self.batch_size):
             batch = formatted_messages[i : i + self.batch_size]
-            message_ids = [
-                msg.get("metadata", {}).get("message_id", "") for msg in batch
-            ]
+            if self.source == "openai":
+                message_ids = [
+                    msg.get("metadata", {}).get("message_id", "") for msg in batch
+                ]
             try:
                 self.rest_client.add_memory(
                     org_id=self.org_id if self.org_id else "",
@@ -388,7 +389,8 @@ class MigrationHack:
                     messages=batch,
                 )
                 # Log the success request into run-specific success file
-                self._log_message_ids(conv_id, message_ids, success=True)
+                if self.source == "openai":
+                    self._log_message_ids(conv_id, message_ids, success=True)
                 self.stats["successful_messages"] += len(batch)
             except Exception as e:
                 error_msg = str(e)
@@ -398,9 +400,10 @@ class MigrationHack:
                 if self.verbose:
                     print(f"  Error details: {error_msg}")
                 # Log the error request into run-specific errors file
-                self._log_message_ids(
-                    conv_id, message_ids, success=False, error_msg=error_msg
-                )
+                if self.source == "openai":
+                    self._log_message_ids(
+                        conv_id, message_ids, success=False, error_msg=error_msg
+                    )
                 self.stats["failed_messages"] += len(batch)
             # Update progress bar if it exists
             if msg_pbar:
@@ -699,6 +702,11 @@ Examples:
         parser.error("--chat-title is only supported for 'openai' source")
 
     # Validate retry/resume arguments
+    if (args.retry_failed or args.resume) and args.source != "openai":
+        parser.error(
+            "--retry-failed and --resume are only supported for 'openai' source. "
+            "These features require message_id tracking which is only available in OpenAI format."
+        )
     if (args.retry_failed or args.resume) and not args.run_id:
         parser.error("--run-id is required when using --retry-failed or --resume")
     if args.retry_failed and args.resume:
