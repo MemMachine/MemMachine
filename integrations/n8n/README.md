@@ -66,18 +66,20 @@ The Main Node provides two actions: Store a message and Enrich with context.
 
   **Parameters**
 
-  | Parameter      | Type    | Default | Description                                                         |
-  | -------------- | ------- | ------- | ------------------------------------------------------------------- |
-  | orgId          | string  | -       | **Required.** Unique organization identifier.                       |
-  | projectId      | string  | -       | **Required.** Unique project identifier.                            |
-  | producer       | string  | -       | **Required.** Who created this message.                             |
-  | producedFor    | string  | -       | **Required.** Intended recipient of the message.                    |
-  | episodeContent | string  | -       | **Required.** The message content to store.                         |
-  | episodeType    | options | dialog  | Type of episode. Possible options: dialog, summary, or observation. |
-  | metadata       | json    | {}      | Additional metadata to associate with the message.                  |
-  | groupId        | string  | default | **Required.** Unique group identifier.                              |
-  | agentId        | string  | -       | **Required.** Unique AI agent identifier.                           |
-  | userId         | string  | user_v1 | **Required.** Unique user identifier.                               |
+  | Parameter      | Type         | Default                  | Description                                                           |
+  | -------------- | ------------ | ------------------------ | --------------------------------------------------------------------- |
+  | orgId          | string       | -                        | **Required.** Unique organization identifier.                         |
+  | projectId      | string       | -                        | **Required.** Unique project identifier.                              |
+  | types          | multiOptions | ['episodic', 'semantic'] | **Required.** Memory types to use.                                    |
+  | producer       | string       | -                        | **Required.** Who created this message.                               |
+  | producedFor    | string       | -                        | **Required.** Intended recipient of the message.                      |
+  | episodeContent | string       | -                        | **Required.** The message content to store.                           |
+  | episodeType    | options      | ''                       | Type of episode. Possible value: 'message' (leave empty for default). |
+  | metadata       | json         | {}                       | Additional metadata to associate with the message.                    |
+  | sessionId      | string       | -                        | **Required.** Unique session identifier.                              |
+  | groupId        | string       | default                  | **Required.** Unique group identifier.                                |
+  | agentId        | string       | -                        | **Required.** Unique AI agent identifier.                             |
+  | userId         | string       | user_v1                  | **Required.** Unique user identifier.                                 |
 
   **Output**
 
@@ -97,19 +99,22 @@ The Main Node provides two actions: Store a message and Enrich with context.
 
   **Parameters**
 
-  | Parameter       | Type    | Default            | Description                                                                |
-  | --------------- | ------- | ------------------ | -------------------------------------------------------------------------- |
-  | orgId           | string  | -                  | **Required.** Unique organization identifier.                              |
-  | projectId       | string  | -                  | **Required.** Unique project identifier.                                   |
-  | query           | string  | -                  | **Required.** Natural language query used to search for relevant memories. |
-  | limit           | number  | 50                 | Maximum number of results to return.                                       |
-  | filterBySession | boolean | true               | Whether to restrict results to the current session context.                |
-  | filter          | json    | {}                 | Additional JSON filter to further refine memory search results.            |
-  | groupId         | string  | default            | **Required.** Unique group identifier.                                     |
-  | agentId         | string  | -                  | **Required.** Unique AI agent identifier.                                  |
-  | userId          | string  | user_v1            | **Required.** Unique user identifier.                                      |
-  | enableTemplate  | boolean | true               | Whether to render a formatted context template using categorized memories. |
-  | contextTemplate | string  | `default template` | Markdown template for formatting the memory context.                       |
+  | Parameter       | Type         | Default                  | Description                                                                |
+  | --------------- | ------------ | ------------------------ | -------------------------------------------------------------------------- |
+  | orgId           | string       | -                        | **Required.** Unique organization identifier.                              |
+  | projectId       | string       | -                        | **Required.** Unique project identifier.                                   |
+  | types           | multiOptions | ['episodic', 'semantic'] | **Required.** Memory types to use.                                         |
+  | query           | string       | -                        | **Required.** Natural language query used to search for relevant memories. |
+  | limit           | number       | 50                       | Maximum number of results to return.                                       |
+  | filter          | string       | -                        | Filter expression to refine memory search results.                         |
+  | expandContext   | number       | 0                        | Number of extra episodes to include for context.                           |
+  | scoreThreshold  | number       | -                        | Minimum relevance score required to include a memory.                      |
+  | sessionId       | string       | -                        | **Required.** Unique session identifier.                                   |
+  | groupId         | string       | default                  | **Required.** Unique group identifier.                                     |
+  | agentId         | string       | -                        | **Required.** Unique AI agent identifier.                                  |
+  | userId          | string       | user_v1                  | **Required.** Unique user identifier.                                      |
+  | enableTemplate  | boolean      | true                     | Whether to render a formatted context template using categorized memories. |
+  | contextTemplate | string       | `default template`       | Markdown template for formatting the memory context.                       |
 
   > `default template` refers to the system’s built-in context template. Users may override it with a custom template.
 
