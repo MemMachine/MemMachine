@@ -193,8 +193,8 @@ You don't need to explicitly ask Claude to use these tools—they're integrated 
 - Check file permissions on your configuration file
 - Verify the path to `memmachine-mcp-stdio` is correct
 
-**Slow responses with large memory stores:**
-If you have a large number of memories stored and experience slow response times (e.g., 1-2 minutes), consider using a faster LLM model. The workflow is: MemMachine first retrieves relevant information locally, then the LLM generates the response. When using slower models like Claude Sonnet, this generation step can become a bottleneck. Switching to a faster model (e.g., Claude Haiku) can reduce response times significantly (from minutes to seconds).
+**Model Recommendation:**
+We recommend using Claude Haiku as your default model. It offers faster responses and lower cost while providing good quality for most use cases. Since MemMachine handles memory retrieval, the LLM mainly generates responses from the provided context—Haiku handles this well. Consider using Sonnet only when you need complex reasoning or synthesis across many memories.
 
 **Getting logs:**
 You can check the MCP server output by viewing:
