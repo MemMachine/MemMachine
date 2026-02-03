@@ -202,11 +202,10 @@ class MigrationHack:
                 # load messages from source, filters are applied at this level
                 messages = self.parser.load(self.input_file, filters=filters)
                 self.conversations[conv_id] = messages
-                # Dump extracted messages for this conversation (skip in dry-run mode)
-                if not self.dry_run:
-                    self.parser.dump_data(
-                        messages, output_format="json", outfile=extracted_file
-                    )
+                # Dump extracted messages for this conversation
+                self.parser.dump_data(
+                    messages, output_format="json", outfile=extracted_file
+                )
 
             # Count messages for this conversation
             messages = self.conversations[conv_id]
