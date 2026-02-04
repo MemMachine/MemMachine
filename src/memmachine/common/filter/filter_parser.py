@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import NamedTuple, Protocol
+from typing import NamedTuple, Protocol, runtime_checkable
 
 from memmachine.common.data_types import FilterablePropertyValue
 
@@ -12,6 +12,7 @@ class FilterParseError(ValueError):
     """Raised when the textual filter specification is invalid."""
 
 
+@runtime_checkable
 class FilterExpr(Protocol):
     """Marker protocol for filter expression nodes."""
 

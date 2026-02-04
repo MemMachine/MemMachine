@@ -450,6 +450,7 @@ class MemmachineHelperRestapiv2(MemmachineHelperBase):
         top_k=None,
         filter_str=None,
         types=None,
+        agent_mode=None,
         headers=None,
         timeout=None,
     ):
@@ -474,6 +475,8 @@ class MemmachineHelperRestapiv2(MemmachineHelperBase):
             sm_payload["filter"] = filter_str
         if types:
             sm_payload["types"] = types
+        if agent_mode:
+            sm_payload["agent_mode"] = agent_mode
         sm_payload["query"] = query
         def_headers = self.get_headers()
         if headers:
@@ -503,6 +506,7 @@ class MemmachineHelperRestapiv2(MemmachineHelperBase):
         top_k=None,
         filter_str=None,
         types=None,
+        agent_mode=None,
         headers=None,
         timeout=None,
     ):
@@ -527,6 +531,8 @@ class MemmachineHelperRestapiv2(MemmachineHelperBase):
             sm_payload["filter"] = filter_str
         if types:
             sm_payload["types"] = types
+        if agent_mode:
+            sm_payload["agent_mode"] = agent_mode
         sm_payload["query"] = query
         def_headers = self.get_headers()
         if headers:

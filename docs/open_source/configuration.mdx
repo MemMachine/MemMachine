@@ -71,6 +71,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           vector_graph_store: my-neo4j-store
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
+          llm_model: my-agent-llm
         short_term_memory:
           llm_model: my-summarization-llm
           message_capacity: 64000
@@ -83,6 +84,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           vector_graph_store: my-neo4j-store # ID of the VectorGraphStore from 'resources.databases'
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
+          llm_model: my-agent-llm # ID of the Language Model from 'resources.language_models'
         short_term_memory: # Configuration for short-term memory
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
           message_capacity: 64000 # Maximum length of short-term memory (default: 64000)
@@ -96,6 +98,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory.vector_graph_store` | The ID of a database defined in `resources.databases` for long-term storage. | *Required* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. | *Required* |
+    | `long_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for retrieval agent. | *Required* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
   </Accordion>
