@@ -1,4 +1,3 @@
-import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -18,7 +17,7 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
 )
-from memmachine.common.vector_graph_store.data_types import Edge, EntityType, Node
+from memmachine.common.vector_graph_store.data_types import Edge, Node
 from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
     NebulaGraphVectorGraphStore,
     NebulaGraphVectorGraphStoreParams,
@@ -83,18 +82,26 @@ async def nebula_client(nebula_connection_info):
 
     except Exception as e:
         await client.close()
-        raise RuntimeError(f"Failed to initialize NebulaGraph test environment: {e}") from e
+        raise RuntimeError(
+            f"Failed to initialize NebulaGraph test environment: {e}"
+        ) from e
 
     yield client
 
     # Cleanup after tests - must drop in order: graphs -> graph types -> schema
     try:
-        await client.execute(f"SESSION SET SCHEMA {nebula_connection_info['schema_name']}")
-        await client.execute(f"DROP GRAPH IF EXISTS {nebula_connection_info['graph_name']}")
+        await client.execute(
+            f"SESSION SET SCHEMA {nebula_connection_info['schema_name']}"
+        )
+        await client.execute(
+            f"DROP GRAPH IF EXISTS {nebula_connection_info['graph_name']}"
+        )
         await client.execute("DROP GRAPH TYPE IF EXISTS memmachine_type")
-        await client.execute(f"DROP SCHEMA IF EXISTS {nebula_connection_info['schema_name']}")
-    except Exception as e:
-        print(f"Warning: Cleanup failed: {e}")
+        await client.execute(
+            f"DROP SCHEMA IF EXISTS {nebula_connection_info['schema_name']}"
+        )
+    except Exception:
+        pass
 
     await client.close()
 
@@ -277,15 +284,18 @@ async def test_search_similar_nodes_with_filter(vector_graph_store):
 
     nodes = [
         Node(
-            uid=str(uuid4()),            properties={"title": "Doc 1", "category": "tech"},
+            uid=str(uuid4()),
+            properties={"title": "Doc 1", "category": "tech"},
             embeddings={"content": ([1.0, 0.0, 0.0], SimilarityMetric.EUCLIDEAN)},
         ),
         Node(
-            uid=str(uuid4()),            properties={"title": "Doc 2", "category": "business"},
+            uid=str(uuid4()),
+            properties={"title": "Doc 2", "category": "business"},
             embeddings={"content": ([0.9, 0.1, 0.0], SimilarityMetric.EUCLIDEAN)},
         ),
         Node(
-            uid=str(uuid4()),            properties={"title": "Doc 3", "category": "tech"},
+            uid=str(uuid4()),
+            properties={"title": "Doc 3", "category": "tech"},
             embeddings={"content": ([0.8, 0.2, 0.0], SimilarityMetric.EUCLIDEAN)},
         ),
     ]
@@ -340,12 +350,24 @@ async def test_search_related_nodes(vector_graph_store):
     )
 
     await vector_graph_store.add_nodes(collection=person_collection, nodes=[alice, bob])
-    await vector_graph_store.add_nodes(collection=company_collection, nodes=[acme, techcorp])
+    await vector_graph_store.add_nodes(
+        collection=company_collection, nodes=[acme, techcorp]
+    )
 
     # Create edges
     edges = [
-        Edge(uid=str(uuid4()), source_uid=alice.uid, target_uid=acme.uid, properties={"role": "Engineer"}),
-        Edge(uid=str(uuid4()), source_uid=bob.uid, target_uid=techcorp.uid, properties={"role": "Manager"}),
+        Edge(
+            uid=str(uuid4()),
+            source_uid=alice.uid,
+            target_uid=acme.uid,
+            properties={"role": "Engineer"},
+        ),
+        Edge(
+            uid=str(uuid4()),
+            source_uid=bob.uid,
+            target_uid=techcorp.uid,
+            properties={"role": "Manager"},
+        ),
     ]
 
     await vector_graph_store.add_edges(
@@ -378,15 +400,18 @@ async def test_search_directional_nodes(vector_graph_store):
     now = datetime.now(UTC)
     nodes = [
         Node(
-            uid=str(uuid4()),            properties={"timestamp": now - timedelta(hours=3), "priority": 1},
+            uid=str(uuid4()),
+            properties={"timestamp": now - timedelta(hours=3), "priority": 1},
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"timestamp": now - timedelta(hours=2), "priority": 2},
+            uid=str(uuid4()),
+            properties={"timestamp": now - timedelta(hours=2), "priority": 2},
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"timestamp": now - timedelta(hours=1), "priority": 3},
+            uid=str(uuid4()),
+            properties={"timestamp": now - timedelta(hours=1), "priority": 3},
             embeddings={},
         ),
     ]
@@ -417,15 +442,18 @@ async def test_search_matching_nodes(vector_graph_store):
 
     nodes = [
         Node(
-            uid=str(uuid4()),            properties={"name": "Laptop", "price": 1000, "category": "electronics"},
+            uid=str(uuid4()),
+            properties={"name": "Laptop", "price": 1000, "category": "electronics"},
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"name": "Mouse", "price": 25, "category": "electronics"},
+            uid=str(uuid4()),
+            properties={"name": "Mouse", "price": 25, "category": "electronics"},
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"name": "Desk", "price": 300, "category": "furniture"},
+            uid=str(uuid4()),
+            properties={"name": "Desk", "price": 300, "category": "furniture"},
             embeddings={},
         ),
     ]
@@ -506,8 +534,7 @@ async def test_delete_all_data(nebula_client, vector_graph_store):
     collection = "test_data"
 
     nodes = [
-        Node(uid=str(uuid4()), properties={"value": i}, embeddings={})
-        for i in range(5)
+        Node(uid=str(uuid4()), properties={"value": i}, embeddings={}) for i in range(5)
     ]
 
     await vector_graph_store.add_nodes(collection=collection, nodes=nodes)
@@ -532,9 +559,18 @@ async def test_sanitize_name():
     )
 
     # Test special characters
-    assert NebulaGraphVectorGraphStore._sanitize_name("my-collection") == "SANITIZED_my_u2d_collection"
-    assert NebulaGraphVectorGraphStore._sanitize_name("my.field") == "SANITIZED_my_u2e_field"
-    assert NebulaGraphVectorGraphStore._sanitize_name("my collection") == "SANITIZED_my_u20_collection"
+    assert (
+        NebulaGraphVectorGraphStore._sanitize_name("my-collection")
+        == "SANITIZED_my_u2d_collection"
+    )
+    assert (
+        NebulaGraphVectorGraphStore._sanitize_name("my.field")
+        == "SANITIZED_my_u2e_field"
+    )
+    assert (
+        NebulaGraphVectorGraphStore._sanitize_name("my collection")
+        == "SANITIZED_my_u20_collection"
+    )
 
     # Test desanitization
     sanitized = NebulaGraphVectorGraphStore._sanitize_name("my-collection")
@@ -549,19 +585,43 @@ async def test_complex_filters(vector_graph_store):
 
     nodes = [
         Node(
-            uid=str(uuid4()),            properties={"name": "Laptop", "price": 1000, "stock": 5, "category": "electronics"},
+            uid=str(uuid4()),
+            properties={
+                "name": "Laptop",
+                "price": 1000,
+                "stock": 5,
+                "category": "electronics",
+            },
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"name": "Mouse", "price": 25, "stock": 50, "category": "electronics"},
+            uid=str(uuid4()),
+            properties={
+                "name": "Mouse",
+                "price": 25,
+                "stock": 50,
+                "category": "electronics",
+            },
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"name": "Premium Mouse", "price": 80, "stock": 20, "category": "electronics"},
+            uid=str(uuid4()),
+            properties={
+                "name": "Premium Mouse",
+                "price": 80,
+                "stock": 20,
+                "category": "electronics",
+            },
             embeddings={},
         ),
         Node(
-            uid=str(uuid4()),            properties={"name": "Desk", "price": 300, "stock": 10, "category": "furniture"},
+            uid=str(uuid4()),
+            properties={
+                "name": "Desk",
+                "price": 300,
+                "stock": 10,
+                "category": "furniture",
+            },
             embeddings={},
         ),
     ]
