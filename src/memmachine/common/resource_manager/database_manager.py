@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Lock
-from typing import Any, Self, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
@@ -38,7 +38,7 @@ class DatabaseManager:
         # String annotation "NebulaAsyncClient" (forward reference) because the type
         # is only imported under TYPE_CHECKING and doesn't exist at runtime.
         # Type checkers see it, but runtime treats it as a string literal.
-        self.nebula_clients: dict[str, "NebulaAsyncClient"] = {}
+        self.nebula_clients: dict[str, NebulaAsyncClient] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
@@ -348,7 +348,7 @@ class DatabaseManager:
             try:
                 # Create schema if not exists
                 await client.execute(f"CREATE SCHEMA IF NOT EXISTS {conf.schema_name}")
-                logger.info(f"Ensured schema exists: {conf.schema_name}")
+                logger.info("Ensured schema exists: %s", conf.schema_name)
 
                 # Set session to the schema
                 await client.execute(f"SESSION SET SCHEMA {conf.schema_name}")
@@ -358,13 +358,13 @@ class DatabaseManager:
                 await client.execute(
                     f"CREATE GRAPH TYPE IF NOT EXISTS {graph_type_name} AS {{}}"
                 )
-                logger.info(f"Ensured graph type exists: {graph_type_name}")
+                logger.info("Ensured graph type exists: %s", graph_type_name)
 
                 # Create graph based on the graph type
                 await client.execute(
                     f"CREATE GRAPH IF NOT EXISTS {conf.graph_name} TYPED {graph_type_name}"
                 )
-                logger.info(f"Ensured graph exists: {conf.graph_name}")
+                logger.info("Ensured graph exists: %s", conf.graph_name)
 
                 # Set session to the graph
                 await client.execute(f"SESSION SET GRAPH {conf.graph_name}")

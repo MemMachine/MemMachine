@@ -1,4 +1,5 @@
-"""NebulaGraph Enterprise 5.0 implementation of VectorGraphStore interface.
+"""
+NebulaGraph Enterprise 5.0 implementation of VectorGraphStore interface.
 
 This module provides a complete implementation of the VectorGraphStore abstract
 interface using NebulaGraph Enterprise 5.0 as the backend. It supports:
@@ -16,6 +17,8 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
+from nebulagraph_python.py_data_types import NVector
+
 from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr, Or
 from memmachine.common.vector_graph_store.data_types import (
@@ -32,7 +35,6 @@ from memmachine.common.vector_graph_store.data_types import (
     mangle_property_name,
 )
 from memmachine.common.vector_graph_store.vector_graph_store import VectorGraphStore
-from nebulagraph_python.py_data_types import NVector
 
 if TYPE_CHECKING:
     from nebulagraph_python.client import NebulaAsyncClient
@@ -42,7 +44,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NebulaGraphVectorGraphStoreParams:
-    """Parameters for configuring NebulaGraphVectorGraphStore.
+    """
+    Parameters for configuring NebulaGraphVectorGraphStore.
 
     Args:
         client: Connected NebulaAsyncClient instance with session pool
@@ -64,6 +67,7 @@ class NebulaGraphVectorGraphStoreParams:
         hnsw_ef_search: HNSW search quality (higher = better recall, slower query)
         metrics_factory: Optional metrics factory for observability
         user_metrics_labels: Optional user-defined metric labels
+
     """
 
     client: "NebulaAsyncClient"
@@ -89,7 +93,8 @@ class NebulaGraphVectorGraphStoreParams:
 
 
 class NebulaGraphVectorGraphStore(VectorGraphStore):
-    """NebulaGraph Enterprise 5.0 implementation of VectorGraphStore.
+    """
+    NebulaGraph Enterprise 5.0 implementation of VectorGraphStore.
 
     This implementation uses NebulaGraph Enterprise 5.0's native vector support
     with GQL (ISO Graph Query Language) instead of Cypher. Key differences:
@@ -105,11 +110,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         CREATING = auto()
         ONLINE = auto()
 
-    def __init__(self, params: NebulaGraphVectorGraphStoreParams):
-        """Initialize NebulaGraph vector graph store.
+    def __init__(self, params: NebulaGraphVectorGraphStoreParams) -> None:
+        """
+        Initialize NebulaGraph vector graph store.
 
         Args:
             params: Configuration parameters for the store
+
         """
         # Client and configuration
         self._client = params.client
@@ -134,7 +141,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         # Maps collection/relation name -> {property_name: gql_type}
         self._graph_type_schemas: dict[str, dict[str, str]] = {}
         # Maps index name -> CacheIndexState
-        self._index_state_cache: dict[str, NebulaGraphVectorGraphStore.CacheIndexState] = {}
+        self._index_state_cache: dict[
+            str, NebulaGraphVectorGraphStore.CacheIndexState
+        ] = {}
         # Maps collection name -> node count (for threshold triggers)
         self._collection_node_counts: dict[str, int] = {}
         # Maps relation name -> edge count (for threshold triggers)
@@ -159,7 +168,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         collection: str,
         nodes: Iterable[Node],
     ) -> None:
-        """Add nodes to a collection.
+        """
+        Add nodes to a collection.
 
         Creates the graph type if needed, inserts nodes with properties and embeddings,
         and creates indexes when thresholds are reached.
@@ -167,6 +177,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         Args:
             collection: Collection name (becomes node type in graph type)
             nodes: Iterable of Node objects to add
+
         """
         nodes_list = list(nodes)
         if not nodes_list:
@@ -186,13 +197,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     all_embeddings[emb_name] = (emb_vec, metric)
 
         # Ensure graph type exists with required schema
-        await self._ensure_graph_type_for_nodes(collection, all_properties, all_embeddings)
+        await self._ensure_graph_type_for_nodes(
+            collection, all_properties, all_embeddings
+        )
 
         sanitized_collection = self._sanitize_name(collection)
 
         # Insert nodes
         # TODO: The following loops can be simplified
-        # TODO: Seems _metric is not used. 
+        # TODO: Seems _metric is not used.
         for node in nodes_list:
             # Build property assignments
             props = {"uid": node.uid}
@@ -218,7 +231,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             insert_stmt = f"""
             INSERT (n@{sanitized_collection} {{
-                {', '.join(prop_assignments)}
+                {", ".join(prop_assignments)}
             }})
             """
             await self._client.execute(insert_stmt)
@@ -270,7 +283,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         target_collection: str,
         edges: Iterable[Edge],
     ) -> None:
-        """Add edges between nodes in collections.
+        """
+        Add edges between nodes in collections.
 
         Creates edge type in graph type if needed, then inserts edges with properties.
 
@@ -279,6 +293,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             source_collection: Source node collection name
             target_collection: Target node collection name
             edges: Iterable of Edge objects to add
+
         """
         edges_list = list(edges)
         if not edges_list:
@@ -340,7 +355,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         limit: int | None = 100,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
-        """Search for nodes with similar embeddings using ANN or KNN search.
+        """
+        Search for nodes with similar embeddings using ANN or KNN search.
 
         Automatically selects search strategy:
         - ANN (Approximate): Uses vector indexes (IVF/HNSW) when available - fast for large datasets
@@ -358,6 +374,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             List of Node objects ordered by similarity
+
         """
         await self._ensure_session_context()
 
@@ -401,7 +418,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             # Build OPTIONS clause
             if self._ann_index_type == "IVF":
-                options = f"{{METRIC: {metric_name}, TYPE: IVF, NPROBE: {self._ivf_nprobe}}}"
+                options = (
+                    f"{{METRIC: {metric_name}, TYPE: IVF, NPROBE: {self._ivf_nprobe}}}"
+                )
             else:  # HNSW
                 options = f"{{METRIC: {metric_name}, TYPE: HNSW, EFSEARCH: {self._hnsw_ef_search}}}"
 
@@ -428,10 +447,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 nodes.append(self._nebula_result_to_node(collection, node_data))
 
             # Check fallback threshold
-            if property_filter and len(nodes) < (limit or 100) * self._fallback_threshold:
+            if (
+                property_filter
+                and len(nodes) < (limit or 100) * self._fallback_threshold
+            ):
                 # Fall back to exact search
                 logger.info(
-                    f"ANN search returned insufficient results ({len(nodes)}), falling back to exact search"
+                    "ANN search returned insufficient results (%s), falling back to exact search",
+                    len(nodes),
                 )
                 return await self._exact_similarity_search(
                     collection=collection,
@@ -448,16 +471,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             return nodes
 
-        else:
-            # Exact search (no index or forced)
-            return await self._exact_similarity_search(
-                collection=collection,
-                embedding_name=embedding_name,
-                query_embedding=query_embedding,
-                similarity_metric=similarity_metric,
-                limit=limit,
-                property_filter=property_filter,
-            )
+        # Exact search (no index or forced)
+        return await self._exact_similarity_search(
+            collection=collection,
+            embedding_name=embedding_name,
+            query_embedding=query_embedding,
+            similarity_metric=similarity_metric,
+            limit=limit,
+            property_filter=property_filter,
+        )
 
     async def _exact_similarity_search(
         self,
@@ -469,7 +491,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         limit: int | None,
         property_filter: FilterExpr | None,
     ) -> list[Node]:
-        """Perform KNN (K-Nearest Neighbor) exact similarity search.
+        """
+        Perform KNN (K-Nearest Neighbor) exact similarity search.
 
         This method does not use vector indexes and scans all vectors.
         Suitable for small-sized graphs and low-dimensional vectors.
@@ -484,6 +507,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             List of nodes ordered by similarity
+
         """
         sanitized_collection = self._sanitize_name(collection)
         mangled_embedding = mangle_embedding_name(embedding_name)
@@ -508,7 +532,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         query_parts = [f"MATCH (n:{sanitized_collection})"]
         if where_clause:
             query_parts.append(f"WHERE {where_clause}")
-        query_parts.append(f"RETURN n")
+        query_parts.append("RETURN n")
         query_parts.append(
             f"ORDER BY {distance_func}(n.{mangled_embedding}, {vec_literal}) {order_dir}"
         )
@@ -524,11 +548,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for row in result:
             node_data = row["n"]
             # Unwrap ValueWrapper if needed
-            if hasattr(node_data, 'cast_primitive'):
+            if hasattr(node_data, "cast_primitive"):
                 node_data = node_data.cast_primitive()
                 # execute returns node with structure: {id, type, labels, properties}
-                if 'properties' in node_data:
-                    node_data = node_data['properties']
+                if "properties" in node_data:
+                    node_data = node_data["properties"]
             nodes.append(self._nebula_result_to_node(collection, node_data))
 
         return nodes
@@ -546,7 +570,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         edge_property_filter: FilterExpr | None = None,
         node_property_filter: FilterExpr | None = None,
     ) -> list[Node]:
-        """Search for nodes connected to a specified node via edges.
+        """
+        Search for nodes connected to a specified node via edges.
 
         Args:
             relation: Edge type name
@@ -561,6 +586,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             List of related Node objects
+
         """
         await self._ensure_session_context()
 
@@ -608,7 +634,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 query_parts2.append(f"WHERE {' AND '.join(where_clauses)}")
             query_parts2.append("RETURN DISTINCT n")
 
-            query_parts = query_parts1 + ["UNION"] + query_parts2
+            query_parts = [*query_parts1, "UNION", *query_parts2]
         else:
             query_parts = [f"MATCH {pattern}"]
             if where_clauses:
@@ -627,11 +653,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for row in result:
             node_data = row["n"]
             # Unwrap ValueWrapper if needed
-            if hasattr(node_data, 'cast_primitive'):
+            if hasattr(node_data, "cast_primitive"):
                 node_data = node_data.cast_primitive()
                 # execute returns node with structure: {id, type, labels, properties}
-                if 'properties' in node_data:
-                    node_data = node_data['properties']
+                if "properties" in node_data:
+                    node_data = node_data["properties"]
             nodes.append(self._nebula_result_to_node(other_collection, node_data))
 
         return nodes
@@ -647,7 +673,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         limit: int | None = 1,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
-        """Search for nodes ordered by properties with range filtering.
+        """
+        Search for nodes ordered by properties with range filtering.
 
         Args:
             collection: Collection name to search
@@ -660,6 +687,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             List of Node objects ordered by specified properties
+
         """
         await self._ensure_session_context()
 
@@ -670,10 +698,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if not by_properties_list:
             raise ValueError("by_properties cannot be empty")
 
-        if len(by_properties_list) != len(starting_at_list) or len(by_properties_list) != len(
-            order_ascending_list
-        ):
-            raise ValueError("by_properties, starting_at, and order_ascending must have same length")
+        if len(by_properties_list) != len(starting_at_list) or len(
+            by_properties_list
+        ) != len(order_ascending_list):
+            raise ValueError(
+                "by_properties, starting_at, and order_ascending must have same length"
+            )
 
         sanitized_collection = self._sanitize_name(collection)
 
@@ -688,7 +718,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         # Build range conditions
         for i, (prop_name, start_value, ascending) in enumerate(
-            zip(by_properties_list, starting_at_list, order_ascending_list)
+            zip(
+                by_properties_list, starting_at_list, order_ascending_list, strict=False
+            )
         ):
             if start_value is None:
                 continue
@@ -706,14 +738,18 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if isinstance(start_value, datetime):
                 # Format datetime to match NebulaGraph's expected format (no microseconds, no timezone)
                 params[param_name] = start_value.strftime("%Y-%m-%dT%H:%M:%S")
-                where_clauses.append(f"n.{mangled_prop} {op} local_datetime({{{{{param_name}}}}})")
+                where_clauses.append(
+                    f"n.{mangled_prop} {op} local_datetime({{{{{param_name}}}}})"
+                )
             else:
                 params[param_name] = start_value
                 where_clauses.append(f"n.{mangled_prop} {op} {{{{{param_name}}}}}")
 
         # Build ORDER BY clause
         order_parts = []
-        for prop_name, ascending in zip(by_properties_list, order_ascending_list):
+        for prop_name, ascending in zip(
+            by_properties_list, order_ascending_list, strict=False
+        ):
             mangled_prop = mangle_property_name(prop_name)
             direction = "ASC" if ascending else "DESC"
             order_parts.append(f"n.{mangled_prop} {direction}")
@@ -724,7 +760,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if where_clauses:
             query_parts.append(f"WHERE {' AND '.join(where_clauses)}")
 
-        query_parts.append(f"RETURN n")
+        query_parts.append("RETURN n")
         query_parts.append(f"ORDER BY {', '.join(order_parts)}")
 
         if limit is not None:
@@ -732,8 +768,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         query = "\n".join(query_parts)
 
-        logger.debug(f"search_directional_nodes query: {query}")
-        logger.debug(f"search_directional_nodes params: {params}")
+        logger.debug("search_directional_nodes query: %s", query)
+        logger.debug("search_directional_nodes params: %s", params)
 
         result = await self._client.execute_py(query, params)
 
@@ -742,12 +778,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for row in result:
             node_data = row["n"]
             # Check if ValueWrapper needs unwrapping
-            if hasattr(node_data, 'cast_primitive'):
+            if hasattr(node_data, "cast_primitive"):
                 node_data = node_data.cast_primitive()
-                if 'properties' in node_data:
-                    node_data = node_data['properties']
-            elif isinstance(node_data, dict) and 'properties' in node_data:
-                node_data = node_data['properties']
+                if "properties" in node_data:
+                    node_data = node_data["properties"]
+            elif isinstance(node_data, dict) and "properties" in node_data:
+                node_data = node_data["properties"]
             nodes.append(self._nebula_result_to_node(collection, node_data))
 
         return nodes
@@ -759,7 +795,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
-        """Search for nodes matching property filters.
+        """
+        Search for nodes matching property filters.
 
         Args:
             collection: Collection name to search
@@ -768,6 +805,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             List of matching Node objects
+
         """
         await self._ensure_session_context()
 
@@ -796,11 +834,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for row in result:
             node_data = row["n"]
             # Unwrap ValueWrapper if needed
-            if hasattr(node_data, 'cast_primitive'):
+            if hasattr(node_data, "cast_primitive"):
                 node_data = node_data.cast_primitive()
                 # execute returns node with structure: {id, type, labels, properties}
-                if 'properties' in node_data:
-                    node_data = node_data['properties']
+                if "properties" in node_data:
+                    node_data = node_data["properties"]
             nodes.append(self._nebula_result_to_node(collection, node_data))
 
         return nodes
@@ -811,7 +849,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         collection: str,
         node_uids: Iterable[str],
     ) -> list[Node]:
-        """Get nodes by their UIDs.
+        """
+        Get nodes by their UIDs.
 
         Args:
             collection: Collection name
@@ -819,6 +858,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             List of Node objects (order not guaranteed)
+
         """
         node_uids_list = list(node_uids)
         if not node_uids_list:
@@ -851,18 +891,19 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for row in result:
             # Handle ValueWrapper from execute_py results
             node_data = row["n"]
-            if hasattr(node_data, 'cast_primitive'):
+            if hasattr(node_data, "cast_primitive"):
                 node_data = node_data.cast_primitive()
                 # execute_py returns node with structure: {id, type, labels, properties}
                 # Extract just the properties dict
-                if 'properties' in node_data:
-                    node_data = node_data['properties']
+                if "properties" in node_data:
+                    node_data = node_data["properties"]
             nodes.append(self._nebula_result_to_node(collection, node_data))
 
         return nodes
 
     def _nebula_result_to_node(self, collection: str, node_data: dict) -> Node:
-        """Convert NebulaGraph result to Node object.
+        """
+        Convert NebulaGraph result to Node object.
 
         Args:
             collection: Collection name
@@ -870,6 +911,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             Node object
+
         """
         uid = node_data["uid"]
         properties = {}
@@ -878,7 +920,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for key, value in node_data.items():
             if key == "uid":
                 continue
-            elif is_mangled_property_name(key):
+            if is_mangled_property_name(key):
                 prop_name = demangle_property_name(key)
                 properties[prop_name] = value
             elif is_mangled_embedding_name(key):
@@ -893,7 +935,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 elif isinstance(value, list):
                     vec = value
                 else:
-                    logger.warning(f"Unexpected embedding value type: {type(value)}")
+                    logger.warning("Unexpected embedding value type: %s", type(value))
 
                 if vec is not None:
                     # Return tuple with vector and default COSINE metric
@@ -911,13 +953,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         collection: str,
         node_uids: Iterable[str],
     ) -> None:
-        """Delete nodes and their connected edges.
+        """
+        Delete nodes and their connected edges.
 
         Note: GQL doesn't have DETACH DELETE, so must delete edges first.
 
         Args:
             collection: Collection name
             node_uids: Iterable of node UIDs to delete
+
         """
         node_uids_list = list(node_uids)
         if not node_uids_list:
@@ -939,7 +983,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 await self._client.execute(delete_edges_query)
             except Exception as e:
                 # Node may have no edges
-                logger.debug(f"Error deleting edges for node {uid}: {e}")
+                logger.debug("Error deleting edges for node %s: %s", uid, e)
 
             # Step 2: Delete the node itself
             delete_node_query = f"""
@@ -955,7 +999,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             )
 
     async def delete_all_data(self) -> None:
-        """Delete all data from the graph.
+        """
+        Delete all data from the graph.
 
         This removes all nodes and edges from the current graph instance.
         Note: The graph type schema is preserved (strong schema model).
@@ -968,13 +1013,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         try:
             await self._client.execute(f"DROP GRAPH IF EXISTS {self._graph_name}")
         except Exception as e:
-            logger.warning(f"Error dropping graph: {e}")
+            logger.warning("Error dropping graph: %s", e)
 
         # Also drop and recreate graph type for clean slate
         try:
-            await self._client.execute(f"DROP GRAPH TYPE IF EXISTS {self._graph_type_name}")
+            await self._client.execute(
+                f"DROP GRAPH TYPE IF EXISTS {self._graph_type_name}"
+            )
         except Exception as e:
-            logger.warning(f"Error dropping graph type: {e}")
+            logger.warning("Error dropping graph type: %s", e)
 
         # Recreate graph type and graph
         await self._client.execute(f"CREATE GRAPH TYPE {self._graph_type_name} AS {{}}")
@@ -991,7 +1038,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         logger.info("Deleted all data and reset schema")
 
     async def close(self) -> None:
-        """Shut down and release resources.
+        """
+        Shut down and release resources.
 
         Cancels background tasks and closes the client connection.
         """
@@ -1013,7 +1061,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
     @staticmethod
     def _sanitize_name(name: str) -> str:
-        """Sanitize identifier name for use in GQL queries.
+        """
+        Sanitize identifier name for use in GQL queries.
 
         Converts unsafe characters to _uXX_ format where XX is hex code.
         Adds SANITIZED_ prefix to avoid conflicts.
@@ -1023,6 +1072,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             Sanitized identifier safe for GQL
+
         """
         result = "SANITIZED_"
         for char in name:
@@ -1034,13 +1084,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
     @staticmethod
     def _desanitize_name(sanitized: str) -> str:
-        """Restore original name from sanitized form.
+        """
+        Restore original name from sanitized form.
 
         Args:
             sanitized: Sanitized identifier
 
         Returns:
             Original identifier name
+
         """
         if not sanitized.startswith("SANITIZED_"):
             return sanitized
@@ -1065,25 +1117,27 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         return result
 
     def _infer_gql_type(self, value: PropertyValue) -> str:
-        """Infer GQL type from Python value.
+        """
+        Infer GQL type from Python value.
 
         Args:
             value: Python value to infer type from
 
         Returns:
             GQL type string
+
         """
         if isinstance(value, bool):
             return "BOOL"
-        elif isinstance(value, int):
+        if isinstance(value, int):
             return "INT64"
-        elif isinstance(value, float):
+        if isinstance(value, float):
             return "DOUBLE"
-        elif isinstance(value, str):
+        if isinstance(value, str):
             return "STRING"
-        elif isinstance(value, datetime):
+        if isinstance(value, datetime):
             return "LOCAL DATETIME"
-        elif isinstance(value, list):
+        if isinstance(value, list):
             if not value:
                 return "LIST<STRING>"
             if all(isinstance(x, bool) for x in value):
@@ -1093,72 +1147,76 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if all(isinstance(x, float) for x in value):
                 return "LIST<DOUBLE>"
             return "LIST<STRING>"
-        else:
-            raise ValueError(f"Unsupported property type: {type(value)}")
+        raise ValueError(f"Unsupported property type: {type(value)}")
 
     def _format_value(self, value: PropertyValue) -> str:
-        """Format Python value for GQL query.
+        """
+        Format Python value for GQL query.
 
         Args:
             value: Python value to format
 
         Returns:
             GQL-formatted value string
+
         """
         if isinstance(value, str):
             escaped = value.replace("\\", "\\\\").replace('"', '\\"')
             return f'"{escaped}"'
-        elif isinstance(value, bool):
+        if isinstance(value, bool):
             return str(value).lower()
-        elif isinstance(value, (int, float)):
+        if isinstance(value, (int, float)):
             return str(value)
-        elif isinstance(value, datetime):
+        if isinstance(value, datetime):
             # Use local_datetime() function for proper type conversion
             # Format: YYYY-MM-DDTHH:MM:SS (no microseconds, no timezone)
             formatted_str = value.strftime("%Y-%m-%dT%H:%M:%S")
             return f'local_datetime("{formatted_str}")'
-        elif isinstance(value, list):
+        if isinstance(value, list):
             formatted = [self._format_value(v) for v in value]
-            return f'[{", ".join(formatted)}]'
-        elif value is None:
+            return f"[{', '.join(formatted)}]"
+        if value is None:
             return "NULL"
-        else:
-            raise ValueError(f"Unsupported value type: {type(value)}")
+        raise ValueError(f"Unsupported value type: {type(value)}")
 
     def _vector_to_gql_literal(self, vec: list[float]) -> str:
-        """Convert Python list to GQL VECTOR literal.
+        """
+        Convert Python list to GQL VECTOR literal.
 
         Args:
             vec: Vector as list of floats
 
         Returns:
             GQL VECTOR literal
+
         """
         vec_str = ", ".join(str(v) for v in vec)
         return f"VECTOR<{len(vec)}, FLOAT>([{vec_str}])"
 
     def _similarity_metric_to_nebula(self, metric: SimilarityMetric) -> str:
-        """Convert SimilarityMetric to NebulaGraph metric name.
+        """
+        Convert SimilarityMetric to NebulaGraph metric name.
 
         Args:
             metric: Similarity metric
 
         Returns:
             NebulaGraph metric name (L2 or IP)
+
         """
         if metric == SimilarityMetric.EUCLIDEAN:
             return "L2"
-        elif metric == SimilarityMetric.COSINE:
+        if metric == SimilarityMetric.COSINE:
             return "IP"
-        else:
-            raise ValueError(f"Unsupported similarity metric: {metric}")
+        raise ValueError(f"Unsupported similarity metric: {metric}")
 
     def _render_filter_expr(
         self,
         node_alias: str,
         filter_expr: FilterExpr | None,
     ) -> str:
-        """Convert FilterExpr to NebulaGraph WHERE clause with embedded values.
+        """
+        Convert FilterExpr to NebulaGraph WHERE clause with embedded values.
 
         Args:
             node_alias: GQL variable name for the node
@@ -1166,6 +1224,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         Returns:
             WHERE clause string with values embedded directly
+
         """
         if filter_expr is None:
             return ""
@@ -1178,42 +1237,40 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 if expr.op == "==":
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} = {value_str}"
-                elif expr.op == "!=":
+                if expr.op == "!=":
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} <> {value_str}"
-                elif expr.op == ">":
+                if expr.op == ">":
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} > {value_str}"
-                elif expr.op == ">=":
+                if expr.op == ">=":
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} >= {value_str}"
-                elif expr.op == "<":
+                if expr.op == "<":
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} < {value_str}"
-                elif expr.op == "<=":
+                if expr.op == "<=":
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} <= {value_str}"
-                elif expr.op == "in":
+                if expr.op == "in":
                     if not isinstance(expr.value, list):
                         raise ValueError("'in' operator requires list value")
                     value_strs = [self._format_value(v) for v in expr.value]
                     values_list = ", ".join(value_strs)
                     return f"{prop_ref} IN [{values_list}]"
-                else:
-                    raise ValueError(f"Unsupported operator: {expr.op}")
+                raise ValueError(f"Unsupported operator: {expr.op}")
 
-            elif isinstance(expr, And):
+            if isinstance(expr, And):
                 left_clause = render(expr.left)
                 right_clause = render(expr.right)
                 return f"({left_clause}) AND ({right_clause})"
 
-            elif isinstance(expr, Or):
+            if isinstance(expr, Or):
                 left_clause = render(expr.left)
                 right_clause = render(expr.right)
                 return f"({left_clause}) OR ({right_clause})"
 
-            else:
-                raise ValueError(f"Unsupported filter expression type: {type(expr)}")
+            raise ValueError(f"Unsupported filter expression type: {type(expr)}")
 
         where_clause = render(filter_expr)
         return where_clause
@@ -1229,7 +1286,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         properties: dict[str, PropertyValue],
         embeddings: dict[str, tuple[list[float], SimilarityMetric]],
     ) -> None:
-        """Ensure node type exists in graph type for this collection.
+        """
+        Ensure node type exists in graph type for this collection.
 
         Creates node type on first encounter. Subsequent calls validate compatibility.
 
@@ -1237,6 +1295,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             collection: Collection name (node type)
             properties: Node properties from first batch
             embeddings: Embeddings from first batch (name -> (vector, metric))
+
         """
         async with self._schema_lock:
             # Check if node type already exists in cache
@@ -1271,13 +1330,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             ALTER GRAPH TYPE {self._graph_type_name} {{
                 ADD NODE TYPE IF NOT EXISTS {sanitized_collection} (
                     LABEL {sanitized_collection} {{
-                        {', '.join(prop_defs)}
+                        {", ".join(prop_defs)}
                     }}
                 )
             }}
             """
             await self._client.execute(alter_stmt)
-            logger.info(f"Added node type '{sanitized_collection}' to graph type")
+            logger.info("Added node type '%s' to graph type", sanitized_collection)
 
             # Cache the schema
             self._graph_type_schemas[collection] = schema
@@ -1289,7 +1348,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         target_collection: str,
         properties: dict[str, PropertyValue],
     ) -> None:
-        """Ensure edge type exists in graph type for this relation.
+        """
+        Ensure edge type exists in graph type for this relation.
 
         Creates edge type on first encounter. Subsequent calls validate compatibility.
 
@@ -1298,6 +1358,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             source_collection: Source node type
             target_collection: Target node type
             properties: Edge properties from first batch
+
         """
         async with self._schema_lock:
             # Check if edge type already exists in cache
@@ -1319,8 +1380,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             # Build property definitions
             if schema:
-                prop_defs = [f"{prop_name} {prop_type}" for prop_name, prop_type in schema.items()]
-                props_clause = f"LABEL {sanitized_relation} {{ {', '.join(prop_defs)} }}"
+                prop_defs = [
+                    f"{prop_name} {prop_type}"
+                    for prop_name, prop_type in schema.items()
+                ]
+                props_clause = (
+                    f"LABEL {sanitized_relation} {{ {', '.join(prop_defs)} }}"
+                )
             else:
                 props_clause = f"LABEL {sanitized_relation} {{}}"
 
@@ -1331,9 +1397,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 ADD EDGE TYPE IF NOT EXISTS {sanitized_relation} ({sanitized_source})-[{props_clause}]->({sanitized_target})
             }}
             """
-            logger.debug(f"ALTER statement for edge type: {alter_stmt}")
+            logger.debug("ALTER statement for edge type: %s", alter_stmt)
             await self._client.execute(alter_stmt)
-            logger.info(f"Added edge type '{sanitized_relation}' to graph type")
+            logger.info("Added edge type '%s' to graph type", sanitized_relation)
 
             # Cache the schema
             self._graph_type_schemas[edge_key] = schema
@@ -1346,7 +1412,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         dimensions: int,
         similarity_metric: SimilarityMetric,
     ) -> None:
-        """Create vector index if it doesn't exist.
+        """
+        Create vector index if it doesn't exist.
 
         Args:
             entity_type: NODE or EDGE
@@ -1354,6 +1421,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             embedding_name: Embedding property name
             dimensions: Vector dimensions
             similarity_metric: COSINE or EUCLIDEAN
+
         """
         index_name = f"idx_{self._sanitize_name(node_or_edge_type)}_{embedding_name}"
 
@@ -1415,12 +1483,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
                 # Mark as online
                 self._index_state_cache[index_name] = self.CacheIndexState.ONLINE
-                logger.info(f"Created vector index: {index_name}")
+                logger.info("Created vector index: %s", index_name)
 
-            except Exception as e:
+            except Exception:
                 # Remove from cache on error
                 self._index_state_cache.pop(index_name, None)
-                logger.error(f"Failed to create vector index {index_name}: {e}")
+                logger.exception("Failed to create vector index %s", index_name)
                 raise
 
     async def _create_range_index_if_not_exists(
@@ -1428,16 +1496,20 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         node_or_edge_type: str,
         properties: list[str],
     ) -> None:
-        """Create normal (range) index if it doesn't exist.
+        """
+        Create normal (range) index if it doesn't exist.
 
         Args:
             node_or_edge_type: Type name
             properties: List of property names to index
+
         """
         if not properties:
             return
 
-        index_name = f"idx_{self._sanitize_name(node_or_edge_type)}_{'_'.join(properties)}"
+        index_name = (
+            f"idx_{self._sanitize_name(node_or_edge_type)}_{'_'.join(properties)}"
+        )
 
         # Check cache
         if index_name in self._index_state_cache:
@@ -1468,10 +1540,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
                 # Mark as online
                 self._index_state_cache[index_name] = self.CacheIndexState.ONLINE
-                logger.info(f"Created range index: {index_name}")
+                logger.info("Created range index: %s", index_name)
 
-            except Exception as e:
+            except Exception:
                 # Remove from cache on error
                 self._index_state_cache.pop(index_name, None)
-                logger.error(f"Failed to create range index {index_name}: {e}")
+                logger.exception("Failed to create range index %s", index_name)
                 raise
