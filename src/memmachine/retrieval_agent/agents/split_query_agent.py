@@ -167,7 +167,7 @@ class SplitQueryAgent(AgentToolBase):
             param.query = sub_query
             # TODO: make this self-adaptive
             # param.limit /= 2
-            tasks.append(super().do_query(policy, param, backend))
+            tasks.append(super().do_query(policy, param))
         results = await asyncio.gather(*tasks)
         for res, perf in results:
             if res is None:
