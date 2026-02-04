@@ -18,10 +18,15 @@ async def long_term_memory_params_from_config(
     )
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
     reranker = await resource_manager.get_reranker(config.reranker, validate=True)
+    llm_model = await resource_manager.get_language_model(
+        config.llm_model,
+        validate=True,
+    )
     return LongTermMemoryParams(
         session_id=config.session_id,
         vector_graph_store=vector_graph_store,
         embedder=embedder,
         reranker=reranker,
+        llm_model=llm_model,
         message_sentence_chunking=config.message_sentence_chunking,
     )

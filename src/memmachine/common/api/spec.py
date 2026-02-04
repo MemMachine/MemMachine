@@ -619,6 +619,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             examples=Examples.MEMORY_TYPES,
         ),
     ]
+    agent_mode: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=SpecDoc.AGENT_MODE,
+            examples=Examples.AGENT_MODE,
+        ),
+    ]
 
 
 class DeleteMemoriesSpec(_WithOrgAndProj):

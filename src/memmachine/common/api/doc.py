@@ -216,7 +216,8 @@ class SpecDoc:
     """
 
     SCORE_THRESHOLD = """
-    The minimum score for a memory to be included in the search results. Defaults to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
+    The minimum score for a memory to be included in the search results. Defaults
+    to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
     """
 
     QUERY = """
@@ -318,6 +319,10 @@ class SpecDoc:
 
     DATABASES_STATUS = """
     The status of all configured databases."""
+
+    AGENT_MODE = """
+    Whether to use retrieval agent for memory search or not. Agent Mode does not
+    support score threshold filtering."""
 
     # --- Configuration API Fields ---
 
@@ -615,6 +620,7 @@ class Examples:
     SEARCH_RESULT_STATUS: ClassVar[list[int]] = [0]
     SERVER_VERSION: ClassVar[list[str]] = ["0.1.2", "0.2.0"]
     CLIENT_VERSION: ClassVar[list[str]] = ["0.1.2", "0.2.0"]
+    AGENT_MODE: ClassVar[list[bool]] = [True, False]
 
 
 class RouterDoc:

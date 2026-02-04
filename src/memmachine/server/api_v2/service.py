@@ -25,6 +25,8 @@ from memmachine.common.api.spec import (
 )
 from memmachine.common.episode_store.episode_model import EpisodeEntry
 
+import logging
+logger = logging.getLogger(__name__)
 
 # Placeholder dependency injection function
 async def get_memmachine(request: Request) -> MemMachine:
@@ -93,6 +95,7 @@ async def _search_target_memories(
     spec: SearchMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
+    logger.info(f"Service received search:\nquery={spec.query}\nagent_mode={spec.agent_mode}")
     results = await memmachine.query_search(
         session_data=_SessionData(
             org_id=spec.org_id,
@@ -107,6 +110,7 @@ async def _search_target_memories(
         score_threshold=spec.score_threshold
         if spec.score_threshold is not None
         else -float("inf"),
+        agent_mode=spec.agent_mode,
     )
     content = SearchResultContent(
         episodic_memory=None,

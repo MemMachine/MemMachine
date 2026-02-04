@@ -513,6 +513,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
+        agent_mode: bool = False,
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -545,6 +546,7 @@ class MemMachine:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=search_filter,
+                agent_mode=agent_mode,
             )
 
         return response
@@ -561,6 +563,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
+        agent_mode: bool = False,
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -582,6 +585,9 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"MemMachine querying search:\nquery={query}\nagent_mode={agent_mode}")
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
             episodic_task = asyncio.create_task(
@@ -592,6 +598,7 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     search_filter=property_filter,
+                    agent_mode=agent_mode,
                 )
             )
 
