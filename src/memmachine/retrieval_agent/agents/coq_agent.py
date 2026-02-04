@@ -253,7 +253,7 @@ class ChainOfQueryAgent(AgentToolBase):
         max_retry = 60
         while not success:
             try:
-                result, matrics = await super().do_query(policy, q, backend)
+                result, matrics = await super().do_query(policy, q)
                 success = True
             except Exception as e:
                 max_retry -= 1
@@ -286,10 +286,8 @@ class ChainOfQueryAgent(AgentToolBase):
                 break
             used_query.append(curr_query.query)
             # Step 1: Perform the query
-            mem_retrieval_start = time.time()
-            result, p_matrics = await self._do_default_query(policy, curr_query, backend)
-            self._update_perf_matrics(perf_matrics, p_matrics)
-            perf_matrics["memory_retrieval_time"] += time.time() - mem_retrieval_start
+            result, p_matrics = await self._do_default_query(policy, curr_query)
+            self._update_perf_matrics(p_matrics, perf_matrics)
 
             # Step 2: Check if the evidence is enough to answer the original query
             llm_start = time.time()

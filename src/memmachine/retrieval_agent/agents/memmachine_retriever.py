@@ -1,4 +1,5 @@
 import logging
+import time
 from memmachine.episodic_memory.declarative_memory import (
     Episode,
     DeclarativeMemory,
@@ -48,10 +49,15 @@ class MemMachineAgent(AgentToolBase):
     async def do_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
         logger.info(f"CALLING {self.agent_name} with query: {query.query}")
 
-        _, result = await self._memory.search_scored(
+        perf_matrics = {"memory_retrieval_time": 0.0}
+        mem_retrieval_start = time.time()
+        scored_episodes = await self._memory.search_scored(
             query=query.query,
             max_num_episodes=query.limit,
             expand_context=query.expand_context,
             property_filter=query.property_filter,
         )
-        return result, {}
+        perf_matrics["memory_retrieval_time"] += time.time() - mem_retrieval_start
+
+        episodes = [episode for _, episode in scored_episodes]
+        return episodes, perf_matrics

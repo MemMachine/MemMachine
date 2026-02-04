@@ -49,8 +49,8 @@ class AgentToolBase:
         self._child_token_cost = 0
         self._child_time_cost = 0
         for tool in self._children_tools:
-            self._child_token_cost += tool.agent_cost()[0]
-            self._child_time_cost += tool.agent_cost()[1]
+            self._child_token_cost += tool.token_cost
+            self._child_time_cost += tool.time_cost
 
     @property
     @abstractmethod
@@ -108,25 +108,13 @@ class AgentToolBase:
 
         res = [r[0] for r in result[:query.limit]]
         return sorted(res, key=lambda x: x.timestamp)
-    
-    def merge_result(self, source: dict[str, list[Episode]], target: dict[str, list[Episode]]) -> dict[str, list[Episode]]:
-        uids = set()
-        for key, value in target.items():
-            for item in value:
-                uids.add(item.uid)
-        for key in source:
-            if key not in target:
-                target[key] = []
-            target[key] += [item for item in source[key] if item.uid not in uids]
-            uids.update([item.uid for item in source[key]])
-        return target
 
     async def do_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
         if len(self._children_tools) == 0:
             raise RuntimeError("No child tool to call")
         tasks = []
         for tool in self._children_tools:
-            task = tool.do_query(policy, query, backend)
+            task = tool.do_query(policy, query)
             tasks.append(task)
         results = await asyncio.gather(*tasks)
         data: list[Episode] = []
@@ -153,27 +141,5 @@ class AgentToolBase:
     def time_cost(self) -> int:
         pass
 
-    def agent_cost(self) -> tuple[int, int]:
-        return (self._child_token_cost + self.token_cost, self._child_time_cost + self.time_cost)
-
     def agent_tools(self) -> list['AgentToolBase']:
         return self._children_tools
-
-    def add_tool(self, tool: 'AgentToolBase'):
-        self._children_tools.append(tool)
-        self._child_token_cost += tool.agent_cost()[0]
-        self._child_time_cost += tool.agent_cost()[1]
-
-    def remove_tool(self, name: str):
-        for tool in self._children_tools:
-            if tool.agent_name == name:
-                self._children_tools.remove(tool)
-                self._child_token_cost -= tool.agent_cost()[0]
-                self._child_time_cost -= tool.agent_cost()[1]
-                return
-        
-
-
-
-
-

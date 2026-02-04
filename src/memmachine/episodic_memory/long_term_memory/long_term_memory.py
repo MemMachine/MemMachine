@@ -224,7 +224,7 @@ class LongTermMemory:
         logger = logging.getLogger(__name__)
         logger.info(f"LongTermMemory querying scored:\nquery={query}\nagent_mode={agent_mode}")
         if agent_mode:
-            res_episodes = await self._retrieval_agent.do_query(
+            res_episodes, perf_matrics = await self._retrieval_agent.do_query(
                 QueryPolicy(
                     token_cost=10,
                     time_cost=10,
@@ -242,6 +242,7 @@ class LongTermMemory:
                     ),
                 ),
             )
+            logger.info(f"Retrieval agent performance metrics: {perf_matrics}")
             scored_declarative_memory_episodes = [(1.0, episode) for episode in res_episodes]
         else:
             scored_declarative_memory_episodes = (
