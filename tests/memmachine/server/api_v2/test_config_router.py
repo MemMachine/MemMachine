@@ -564,3 +564,367 @@ def test_update_memory_semantic_ingestion(client, mock_resource_manager):
     assert data["success"] is True
     assert "ingestion_trigger_messages=10" in data["message"]
     assert "ingestion_trigger_age=600s" in data["message"]
+
+
+# --- Get Config with Memory Configuration Tests ---
+
+
+def test_get_config_includes_memory_config(client, mock_resource_manager):
+    """Test GET /api/v2/config returns memory configuration."""
+    response = client.get("/api/v2/config")
+    assert response.status_code == 200
+
+    data = response.json()
+
+    # Check resources are present
+    assert "resources" in data
+
+    # Check episodic_memory is present
+    assert "episodic_memory" in data
+    em = data["episodic_memory"]
+    assert "long_term_memory" in em
+    assert "short_term_memory" in em
+    assert "enabled" in em
+
+    # Check long_term_memory config
+    ltm = em["long_term_memory"]
+    assert ltm["embedder"] == "old-embedder"
+    assert ltm["reranker"] == "old-reranker"
+    assert ltm["vector_graph_store"] == "old-store"
+    assert ltm["enabled"] is True
+
+    # Check short_term_memory config
+    stm = em["short_term_memory"]
+    assert stm["llm_model"] == "old-model"
+    assert stm["message_capacity"] == 500
+    assert stm["enabled"] is True
+
+    # Check semantic_memory is present
+    assert "semantic_memory" in data
+    sm = data["semantic_memory"]
+    assert sm["database"] == "old-db"
+    assert sm["llm_model"] == "old-llm"
+    assert sm["embedding_model"] == "old-embedder"
+
+
+# --- Long-Term Memory Configuration Tests ---
+
+
+def test_get_long_term_memory_config(client, mock_resource_manager):
+    """Test GET /api/v2/config/memory/episodic/long_term returns LTM config."""
+    response = client.get("/api/v2/config/memory/episodic/long_term")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["embedder"] == "old-embedder"
+    assert data["reranker"] == "old-reranker"
+    assert data["vector_graph_store"] == "old-store"
+    assert data["enabled"] is True
+
+
+def test_update_long_term_memory_config(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic/long_term updates LTM config."""
+    payload = {
+        "embedder": "new-embedder",
+        "reranker": "new-reranker",
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/long_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "embedder=new-embedder" in data["message"]
+    assert "reranker=new-reranker" in data["message"]
+
+    # Verify config was persisted
+    mock_resource_manager.save_config.assert_called()
+
+
+def test_update_long_term_memory_config_with_enabled(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic/long_term can toggle enabled flag."""
+    payload = {
+        "enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/long_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "long_term_memory_enabled=False" in data["message"]
+
+
+def test_update_long_term_memory_config_all_fields(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic/long_term can update all fields."""
+    payload = {
+        "embedder": "new-embedder",
+        "reranker": "new-reranker",
+        "vector_graph_store": "new-store",
+        "enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/long_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "embedder=new-embedder" in data["message"]
+    assert "reranker=new-reranker" in data["message"]
+    assert "vector_graph_store=new-store" in data["message"]
+    assert "long_term_memory_enabled=False" in data["message"]
+
+
+# --- Short-Term Memory Configuration Tests ---
+
+
+def test_get_short_term_memory_config(client, mock_resource_manager):
+    """Test GET /api/v2/config/memory/episodic/short_term returns STM config."""
+    response = client.get("/api/v2/config/memory/episodic/short_term")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["llm_model"] == "old-model"
+    assert data["message_capacity"] == 500
+    assert data["enabled"] is True
+
+
+def test_update_short_term_memory_config(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic/short_term updates STM config."""
+    payload = {
+        "llm_model": "new-model",
+        "message_capacity": 1000,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/short_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "llm_model=new-model" in data["message"]
+    assert "message_capacity=1000" in data["message"]
+
+    # Verify config was persisted
+    mock_resource_manager.save_config.assert_called()
+
+
+def test_update_short_term_memory_config_with_enabled(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic/short_term can toggle enabled flag."""
+    payload = {
+        "enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/short_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "short_term_memory_enabled=False" in data["message"]
+
+
+def test_update_short_term_memory_config_all_fields(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic/short_term can update all fields."""
+    payload = {
+        "llm_model": "new-model",
+        "message_capacity": 2000,
+        "enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/short_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "llm_model=new-model" in data["message"]
+    assert "message_capacity=2000" in data["message"]
+    assert "short_term_memory_enabled=False" in data["message"]
+
+
+def test_get_semantic_memory_config(client, mock_resource_manager):
+    """Test GET /api/v2/config/memory/semantic returns semantic memory config."""
+    response = client.get("/api/v2/config/memory/semantic")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert "enabled" in data
+    assert "database" in data
+    assert "llm_model" in data
+    assert "embedding_model" in data
+
+
+def test_update_semantic_memory_config(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/semantic updates semantic config."""
+    payload = {
+        "enabled": True,
+        "database": "postgres-db",
+    }
+
+    response = client.put("/api/v2/config/memory/semantic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "enabled=True" in data["message"]
+    assert "database=postgres-db" in data["message"]
+
+    # Verify config was persisted
+    mock_resource_manager.save_config.assert_called()
+
+
+def test_update_semantic_memory_config_all_fields(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/semantic can update all fields."""
+    payload = {
+        "enabled": True,
+        "database": "postgres-db",
+        "llm_model": "gpt-4",
+        "embedding_model": "openai-embedder",
+        "ingestion_trigger_messages": 10,
+        "ingestion_trigger_age_seconds": 3600,
+    }
+
+    response = client.put("/api/v2/config/memory/semantic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "enabled=True" in data["message"]
+    assert "database=postgres-db" in data["message"]
+    assert "llm_model=gpt-4" in data["message"]
+    assert "embedding_model=openai-embedder" in data["message"]
+    assert "ingestion_trigger_messages=10" in data["message"]
+    assert "ingestion_trigger_age=3600s" in data["message"]
+
+
+def test_update_semantic_memory_config_partial(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/semantic with partial fields."""
+    payload = {
+        "llm_model": "gpt-4o",
+    }
+
+    response = client.put("/api/v2/config/memory/semantic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "llm_model=gpt-4o" in data["message"]
+
+
+def test_get_episodic_memory_config(client, mock_resource_manager):
+    """Test GET /api/v2/config/memory/episodic returns episodic memory config."""
+    response = client.get("/api/v2/config/memory/episodic")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert "long_term_memory" in data
+    assert "short_term_memory" in data
+    assert "enabled" in data
+    # Check nested structures
+    assert "embedder" in data["long_term_memory"]
+    assert "reranker" in data["long_term_memory"]
+    assert "llm_model" in data["short_term_memory"]
+    assert "message_capacity" in data["short_term_memory"]
+
+
+def test_update_episodic_memory_config(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic updates episodic config."""
+    payload = {
+        "enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "enabled=False" in data["message"]
+
+    # Verify config was persisted
+    mock_resource_manager.save_config.assert_called()
+
+
+def test_update_episodic_memory_config_ltm_enabled(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic can toggle LTM enabled flag."""
+    payload = {
+        "long_term_memory_enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "long_term_memory_enabled=False" in data["message"]
+
+
+def test_update_episodic_memory_config_stm_enabled(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic can toggle STM enabled flag."""
+    payload = {
+        "short_term_memory_enabled": False,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "short_term_memory_enabled=False" in data["message"]
+
+
+def test_update_episodic_memory_config_with_ltm_settings(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic can update LTM settings."""
+    payload = {
+        "long_term_memory": {
+            "embedder": "new-embedder",
+            "reranker": "new-reranker",
+        },
+    }
+
+    response = client.put("/api/v2/config/memory/episodic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "embedder=new-embedder" in data["message"]
+    assert "reranker=new-reranker" in data["message"]
+
+
+def test_update_episodic_memory_config_with_stm_settings(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic can update STM settings."""
+    payload = {
+        "short_term_memory": {
+            "llm_model": "new-llm",
+            "message_capacity": 500,
+        },
+    }
+
+    response = client.put("/api/v2/config/memory/episodic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "llm_model=new-llm" in data["message"]
+    assert "message_capacity=500" in data["message"]
+
+
+def test_update_episodic_memory_config_all_fields(client, mock_resource_manager):
+    """Test PUT /api/v2/config/memory/episodic can update all fields."""
+    payload = {
+        "long_term_memory": {
+            "embedder": "new-embedder",
+            "reranker": "new-reranker",
+            "vector_graph_store": "new-store",
+        },
+        "short_term_memory": {
+            "llm_model": "new-llm",
+            "message_capacity": 500,
+        },
+        "long_term_memory_enabled": True,
+        "short_term_memory_enabled": True,
+        "enabled": True,
+    }
+
+    response = client.put("/api/v2/config/memory/episodic", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True

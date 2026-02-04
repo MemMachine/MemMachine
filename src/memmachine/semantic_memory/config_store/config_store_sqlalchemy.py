@@ -671,7 +671,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             tag_id = res.scalar_one()
             await session.commit()
 
-        return tag_id
+        return TagIdT(tag_id)
 
     async def update_tag(
         self,

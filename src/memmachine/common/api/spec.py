@@ -746,6 +746,138 @@ class DeleteSemanticMemorySpec(_WithOrgAndProj):
         return self
 
 
+class AddFeatureSpec(_WithOrgAndProj):
+    """Specification model for adding a semantic feature."""
+
+    set_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_SET_ID,
+        ),
+    ]
+    category_name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_CATEGORY_NAME,
+        ),
+    ]
+    tag: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_TAG,
+        ),
+    ]
+    feature: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_NAME,
+        ),
+    ]
+    value: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_VALUE,
+        ),
+    ]
+    feature_metadata: Annotated[
+        dict[str, JsonValue] | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_METADATA,
+        ),
+    ]
+    citations: Annotated[
+        list[EpisodeIdT] | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_CITATIONS,
+        ),
+    ]
+
+
+class AddFeatureResponse(BaseModel):
+    """Response model for adding a semantic feature."""
+
+    feature_id: Annotated[
+        FeatureIdT,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_ID,
+        ),
+    ]
+
+
+class GetFeatureSpec(_WithOrgAndProj):
+    """Specification model for getting a semantic feature."""
+
+    feature_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_ID,
+        ),
+    ]
+    load_citations: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=SpecDoc.FEATURE_LOAD_CITATIONS,
+        ),
+    ]
+
+
+class UpdateFeatureSpec(_WithOrgAndProj):
+    """Specification model for updating a semantic feature."""
+
+    feature_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.FEATURE_ID,
+        ),
+    ]
+    category_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_CATEGORY_NAME,
+        ),
+    ]
+    tag: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_TAG,
+        ),
+    ]
+    feature: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_NAME,
+        ),
+    ]
+    value: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_VALUE,
+        ),
+    ]
+    metadata: Annotated[
+        dict[str, str] | None,
+        Field(
+            default=None,
+            description=SpecDoc.FEATURE_METADATA,
+        ),
+    ]
+
+
 class SearchResult(BaseModel):
     """Response model for memory search results."""
 
@@ -888,6 +1020,663 @@ class RestErrorModel(BaseModel):
         Field(
             ...,
             description=SpecDoc.ERROR_TRACE,
+        ),
+    ]
+
+
+# --- Semantic Set Type API Models ---
+
+
+class CreateSemanticSetTypeSpec(_WithOrgAndProj):
+    """Specification model for creating a semantic set type."""
+
+    is_org_level: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=SpecDoc.SET_TYPE_IS_ORG_LEVEL,
+        ),
+    ]
+    metadata_tags: Annotated[
+        list[str],
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_METADATA_TAGS,
+        ),
+    ]
+    name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_NAME,
+        ),
+    ]
+    description: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_DESCRIPTION,
+        ),
+    ]
+
+
+class CreateSemanticSetTypeResponse(BaseModel):
+    """Response model for creating a semantic set type."""
+
+    set_type_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_ID,
+        ),
+    ]
+
+
+class ListSemanticSetTypesSpec(_WithOrgAndProj):
+    """Specification model for listing semantic set types."""
+
+
+class SemanticSetTypeEntry(BaseModel):
+    """A semantic set type entry."""
+
+    id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_ID,
+        ),
+    ]
+    is_org_level: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_IS_ORG_LEVEL,
+        ),
+    ]
+    tags: Annotated[
+        list[str],
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_METADATA_TAGS,
+        ),
+    ]
+    name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_NAME,
+        ),
+    ]
+    description: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_DESCRIPTION,
+        ),
+    ]
+
+
+class ListSemanticSetTypesResponse(BaseModel):
+    """Response model for listing semantic set types."""
+
+    set_types: Annotated[
+        list[SemanticSetTypeEntry],
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPES_LIST,
+        ),
+    ]
+
+
+class DeleteSemanticSetTypeSpec(_WithOrgAndProj):
+    """Specification model for deleting a semantic set type."""
+
+    set_type_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_ID,
+        ),
+    ]
+
+
+class GetSemanticSetIdSpec(_WithOrgAndProj):
+    """Specification model for getting a semantic set ID."""
+
+    is_org_level: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=SpecDoc.SET_TYPE_IS_ORG_LEVEL,
+        ),
+    ]
+    metadata_tags: Annotated[
+        list[str],
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_METADATA_TAGS,
+        ),
+    ]
+    set_metadata: Annotated[
+        dict[str, JsonValue] | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_METADATA,
+        ),
+    ]
+
+
+class GetSemanticSetIdResponse(BaseModel):
+    """Response model for getting a semantic set ID."""
+
+    set_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SEMANTIC_SET_ID,
+        ),
+    ]
+
+
+class ListSemanticSetIdsSpec(_WithOrgAndProj):
+    """Specification model for listing semantic set IDs."""
+
+    set_metadata: Annotated[
+        dict[str, JsonValue] | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_METADATA,
+        ),
+    ]
+
+
+class SemanticSetEntry(BaseModel):
+    """A semantic set entry."""
+
+    id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SEMANTIC_SET_ID,
+        ),
+    ]
+    is_org_level: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_IS_ORG_LEVEL,
+        ),
+    ]
+    tags: Annotated[
+        list[str],
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_METADATA_TAGS,
+        ),
+    ]
+    name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_NAME,
+        ),
+    ]
+    description: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_TYPE_DESCRIPTION,
+        ),
+    ]
+
+
+class ListSemanticSetIdsResponse(BaseModel):
+    """Response model for listing semantic set IDs."""
+
+    sets: Annotated[
+        list[SemanticSetEntry],
+        Field(
+            ...,
+            description=SpecDoc.SETS_LIST,
+        ),
+    ]
+
+
+class ConfigureSemanticSetSpec(_WithOrgAndProj):
+    """Specification model for configuring a semantic set."""
+
+    set_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SEMANTIC_SET_ID,
+        ),
+    ]
+    embedder_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_EMBEDDER_NAME,
+        ),
+    ]
+    llm_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.SET_LLM_NAME,
+        ),
+    ]
+
+
+# --- Semantic Category API Models ---
+
+
+class GetSemanticCategorySpec(_WithOrgAndProj):
+    """Specification model for getting a semantic category."""
+
+    category_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+
+
+class SemanticCategoryEntry(BaseModel):
+    """A semantic category entry."""
+
+    id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+    name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_NAME,
+        ),
+    ]
+    prompt: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_PROMPT,
+        ),
+    ]
+    description: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_DESCRIPTION,
+        ),
+    ]
+
+
+class AddSemanticCategorySpec(_WithOrgAndProj):
+    """Specification model for adding a semantic category."""
+
+    set_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SEMANTIC_SET_ID,
+        ),
+    ]
+    category_name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_NAME,
+        ),
+    ]
+    prompt: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_PROMPT,
+        ),
+    ]
+    description: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_DESCRIPTION,
+        ),
+    ]
+
+
+class AddSemanticCategoryResponse(BaseModel):
+    """Response model for adding a semantic category."""
+
+    category_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+
+
+class AddSemanticCategoryTemplateSpec(_WithOrgAndProj):
+    """Specification model for adding a semantic category template."""
+
+    set_type_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_ID,
+        ),
+    ]
+    category_name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_NAME,
+        ),
+    ]
+    prompt: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_PROMPT,
+        ),
+    ]
+    description: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_DESCRIPTION,
+        ),
+    ]
+
+
+class ListSemanticCategoryTemplatesSpec(_WithOrgAndProj):
+    """Specification model for listing semantic category templates."""
+
+    set_type_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SET_TYPE_ID,
+        ),
+    ]
+
+
+class SemanticCategoryTemplateEntry(BaseModel):
+    """A semantic category template entry."""
+
+    id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+    name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_NAME,
+        ),
+    ]
+    origin_type: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_ORIGIN_TYPE,
+        ),
+    ]
+    origin_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_ORIGIN_ID,
+        ),
+    ]
+    inherited: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=SpecDoc.CATEGORY_INHERITED,
+        ),
+    ]
+
+
+class ListSemanticCategoryTemplatesResponse(BaseModel):
+    """Response model for listing semantic category templates."""
+
+    categories: Annotated[
+        list[SemanticCategoryTemplateEntry],
+        Field(
+            ...,
+            description=SpecDoc.CATEGORIES_LIST,
+        ),
+    ]
+
+
+class DisableSemanticCategorySpec(_WithOrgAndProj):
+    """Specification model for disabling a semantic category."""
+
+    set_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.SEMANTIC_SET_ID,
+        ),
+    ]
+    category_name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_NAME,
+        ),
+    ]
+
+
+class GetSemanticCategorySetIdsSpec(_WithOrgAndProj):
+    """Specification model for getting set IDs for a category."""
+
+    category_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+
+
+class GetSemanticCategorySetIdsResponse(BaseModel):
+    """Response model for getting set IDs for a category."""
+
+    set_ids: Annotated[
+        list[str],
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_SET_IDS,
+        ),
+    ]
+
+
+class DeleteSemanticCategorySpec(_WithOrgAndProj):
+    """Specification model for deleting a semantic category."""
+
+    category_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+
+
+# --- Semantic Tag API Models ---
+
+
+class AddSemanticTagSpec(_WithOrgAndProj):
+    """Specification model for adding a tag to a category."""
+
+    category_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.CATEGORY_ID,
+        ),
+    ]
+    tag_name: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.TAG_NAME,
+        ),
+    ]
+    tag_description: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.TAG_DESCRIPTION,
+        ),
+    ]
+
+
+class AddSemanticTagResponse(BaseModel):
+    """Response model for adding a tag."""
+
+    tag_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.TAG_ID,
+        ),
+    ]
+
+
+class DeleteSemanticTagSpec(_WithOrgAndProj):
+    """Specification model for deleting a tag."""
+
+    tag_id: Annotated[
+        str,
+        Field(
+            ...,
+            description=SpecDoc.TAG_ID,
+        ),
+    ]
+
+
+# --- Episodic Memory Configuration Models ---
+
+
+class GetEpisodicMemoryConfigSpec(_WithOrgAndProj):
+    """Specification model for getting episodic memory configuration."""
+
+
+class EpisodicMemoryConfigEntry(BaseModel):
+    """Response model for episodic memory configuration."""
+
+    enabled: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.EPISODIC_ENABLED,
+        ),
+    ]
+    long_term_memory_enabled: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.EPISODIC_LTM_ENABLED,
+        ),
+    ]
+    short_term_memory_enabled: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.EPISODIC_STM_ENABLED,
+        ),
+    ]
+
+
+class ConfigureEpisodicMemorySpec(_WithOrgAndProj):
+    """Specification model for configuring episodic memory for a session."""
+
+    enabled: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=SpecDoc.EPISODIC_ENABLED,
+        ),
+    ]
+    long_term_memory_enabled: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=SpecDoc.EPISODIC_LTM_ENABLED,
+        ),
+    ]
+    short_term_memory_enabled: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=SpecDoc.EPISODIC_STM_ENABLED,
+        ),
+    ]
+
+
+class GetShortTermMemoryConfigSpec(_WithOrgAndProj):
+    """Specification model for getting short-term memory configuration."""
+
+
+class ShortTermMemoryConfigEntry(BaseModel):
+    """Response model for short-term memory configuration."""
+
+    enabled: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.EPISODIC_STM_ENABLED,
+        ),
+    ]
+
+
+class ConfigureShortTermMemorySpec(_WithOrgAndProj):
+    """Specification model for configuring short-term memory for a session."""
+
+    enabled: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=SpecDoc.EPISODIC_STM_ENABLED,
+        ),
+    ]
+
+
+class GetLongTermMemoryConfigSpec(_WithOrgAndProj):
+    """Specification model for getting long-term memory configuration."""
+
+
+class LongTermMemoryConfigEntry(BaseModel):
+    """Response model for long-term memory configuration."""
+
+    enabled: Annotated[
+        bool,
+        Field(
+            ...,
+            description=SpecDoc.EPISODIC_LTM_ENABLED,
+        ),
+    ]
+
+
+class ConfigureLongTermMemorySpec(_WithOrgAndProj):
+    """Specification model for configuring long-term memory for a session."""
+
+    enabled: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=SpecDoc.EPISODIC_LTM_ENABLED,
         ),
     ]
 

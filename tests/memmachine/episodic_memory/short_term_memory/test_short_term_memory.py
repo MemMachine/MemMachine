@@ -103,6 +103,15 @@ class MockShortTermMemoryDataManager(SessionDataManager):
     async def get_sessions(self, filters: dict[str, object] | None = None) -> list[str]:
         return []
 
+    async def update_session_episodic_config(
+        self,
+        session_key: str,
+        enabled: bool | None = None,
+        long_term_memory_enabled: bool | None = None,
+        short_term_memory_enabled: bool | None = None,
+    ) -> None:
+        pass
+
 
 T = TypeVar("T")
 

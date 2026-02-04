@@ -9,12 +9,20 @@ from memmachine.common.api.config_spec import (
     AddEmbedderSpec,
     AddLanguageModelSpec,
     DeleteResourceResponse,
+    EpisodicMemoryConfigResponse,
     GetConfigResponse,
+    LongTermMemoryConfigResponse,
     ResourcesStatus,
     ResourceStatus,
+    SemanticMemoryConfigResponse,
+    ShortTermMemoryConfigResponse,
+    UpdateEpisodicMemorySpec,
+    UpdateLongTermMemorySpec,
     UpdateMemoryConfigResponse,
     UpdateMemoryConfigSpec,
     UpdateResourceResponse,
+    UpdateSemanticMemorySpec,
+    UpdateShortTermMemorySpec,
 )
 from memmachine.common.api.doc import RouterDoc
 from memmachine.common.errors import (
@@ -41,9 +49,15 @@ config_router = APIRouter(prefix="/config", tags=["Configuration"])
 async def get_config(
     service: Annotated[ConfigService, Depends(get_config_service)],
 ) -> GetConfigResponse:
-    """Get current configuration with resource status."""
+    """Get current configuration with resource status and memory configuration."""
     resources = service.get_resources_status()
-    return GetConfigResponse(resources=resources)
+    episodic_memory = service.get_episodic_memory_config()
+    semantic_memory = service.get_semantic_memory_config()
+    return GetConfigResponse(
+        resources=resources,
+        episodic_memory=episodic_memory,
+        semantic_memory=semantic_memory,
+    )
 
 
 @config_router.get("/resources", description=RouterDoc.GET_RESOURCES)
@@ -76,6 +90,145 @@ async def update_memory_config_endpoint(
     except Exception as e:
         raise RestError(
             code=500, message="Failed to update memory configuration", ex=e
+        ) from e
+
+
+@config_router.get(
+    "/memory/episodic",
+    description=RouterDoc.GET_EPISODIC_CONFIG,
+)
+async def get_episodic_memory_config(
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> EpisodicMemoryConfigResponse:
+    """Get current episodic memory configuration."""
+    return service.get_episodic_memory_config()
+
+
+@config_router.put(
+    "/memory/episodic",
+    description=RouterDoc.UPDATE_EPISODIC_CONFIG,
+)
+async def update_episodic_memory_config(
+    spec: UpdateEpisodicMemorySpec,
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> UpdateMemoryConfigResponse:
+    """Update episodic memory configuration."""
+    try:
+        message = service.update_episodic_memory_config(spec)
+        return UpdateMemoryConfigResponse(success=True, message=message)
+    except Exception as e:
+        raise RestError(
+            code=500, message="Failed to update episodic memory configuration", ex=e
+        ) from e
+
+
+@config_router.get(
+    "/memory/episodic/long_term",
+    description=RouterDoc.GET_LTM_CONFIG,
+)
+async def get_long_term_memory_config(
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> LongTermMemoryConfigResponse:
+    """Get current long-term memory configuration."""
+    return service.get_long_term_memory_config()
+
+
+@config_router.get(
+    "/memory/episodic/short_term",
+    description=RouterDoc.GET_STM_CONFIG,
+)
+async def get_short_term_memory_config(
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> ShortTermMemoryConfigResponse:
+    """Get current short-term memory configuration."""
+    return service.get_short_term_memory_config()
+
+
+class UpdateLongTermMemoryConfigSpec(UpdateLongTermMemorySpec):
+    """Specification for updating long-term memory configuration with enabled flag."""
+
+    enabled: bool | None = None
+
+
+class UpdateShortTermMemoryConfigSpec(UpdateShortTermMemorySpec):
+    """Specification for updating short-term memory configuration with enabled flag."""
+
+    enabled: bool | None = None
+
+
+@config_router.put(
+    "/memory/episodic/long_term",
+    description=RouterDoc.UPDATE_LTM_CONFIG,
+)
+async def update_long_term_memory_config(
+    spec: UpdateLongTermMemoryConfigSpec,
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> UpdateMemoryConfigResponse:
+    """Update long-term memory configuration."""
+    try:
+        # Create a base spec without the enabled field
+        base_spec = UpdateLongTermMemorySpec(
+            embedder=spec.embedder,
+            reranker=spec.reranker,
+            vector_graph_store=spec.vector_graph_store,
+        )
+        message = service.update_long_term_memory_config(base_spec, spec.enabled)
+        return UpdateMemoryConfigResponse(success=True, message=message)
+    except Exception as e:
+        raise RestError(
+            code=500, message="Failed to update long-term memory configuration", ex=e
+        ) from e
+
+
+@config_router.put(
+    "/memory/episodic/short_term",
+    description=RouterDoc.UPDATE_STM_CONFIG,
+)
+async def update_short_term_memory_config(
+    spec: UpdateShortTermMemoryConfigSpec,
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> UpdateMemoryConfigResponse:
+    """Update short-term memory configuration."""
+    try:
+        # Create a base spec without the enabled field
+        base_spec = UpdateShortTermMemorySpec(
+            llm_model=spec.llm_model,
+            message_capacity=spec.message_capacity,
+        )
+        message = service.update_short_term_memory_config(base_spec, spec.enabled)
+        return UpdateMemoryConfigResponse(success=True, message=message)
+    except Exception as e:
+        raise RestError(
+            code=500, message="Failed to update short-term memory configuration", ex=e
+        ) from e
+
+
+@config_router.get(
+    "/memory/semantic",
+    description=RouterDoc.GET_SEMANTIC_CONFIG,
+)
+async def get_semantic_memory_config(
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> SemanticMemoryConfigResponse:
+    """Get current semantic memory configuration."""
+    return service.get_semantic_memory_config()
+
+
+@config_router.put(
+    "/memory/semantic",
+    description=RouterDoc.UPDATE_SEMANTIC_CONFIG,
+)
+async def update_semantic_memory_config(
+    spec: UpdateSemanticMemorySpec,
+    service: Annotated[ConfigService, Depends(get_config_service)],
+) -> UpdateMemoryConfigResponse:
+    """Update semantic memory configuration."""
+    try:
+        message = service.update_semantic_memory_config(spec)
+        return UpdateMemoryConfigResponse(success=True, message=message)
+    except Exception as e:
+        raise RestError(
+            code=500, message="Failed to update semantic memory configuration", ex=e
         ) from e
 
 

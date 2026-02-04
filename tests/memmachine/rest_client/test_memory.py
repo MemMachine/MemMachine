@@ -959,3 +959,1553 @@ class TestMemory:
             RuntimeError, match="Cannot delete semantic memory: client has been closed"
         ):
             memory.delete_semantic(semantic_id="feature_456")
+
+    # Feature management tests
+    def test_add_feature_success(self, mock_client):
+        """Test successful feature addition."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"feature_id": "feature_123"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.add_feature(
+            set_id="test_set",
+            category_name="preferences",
+            tag="food",
+            feature="favorite_food",
+            value="pizza",
+        )
+
+        assert result == "feature_123"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/feature" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["org_id"] == "test_org"
+        assert json_data["project_id"] == "test_project"
+        assert json_data["set_id"] == "test_set"
+        assert json_data["category_name"] == "preferences"
+        assert json_data["tag"] == "food"
+        assert json_data["feature"] == "favorite_food"
+        assert json_data["value"] == "pizza"
+
+    def test_add_feature_with_metadata_and_citations(self, mock_client):
+        """Test feature addition with metadata and citations."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"feature_id": "feature_456"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.add_feature(
+            set_id="test_set",
+            category_name="preferences",
+            tag="food",
+            feature="favorite_food",
+            value="pizza",
+            feature_metadata={"source": "conversation"},
+            citations=["ep1", "ep2"],
+        )
+
+        assert result == "feature_456"
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["feature_metadata"] == {"source": "conversation"}
+        assert json_data["citations"] == ["ep1", "ep2"]
+
+    def test_add_feature_http_error(self, mock_client):
+        """Test add_feature handles HTTP errors correctly."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.add_feature(
+                set_id="test_set",
+                category_name="preferences",
+                tag="food",
+                feature="favorite_food",
+                value="pizza",
+            )
+
+    def test_add_feature_client_closed(self, mock_client):
+        """Test add_feature raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot add feature: client has been closed"
+        ):
+            memory.add_feature(
+                set_id="test_set",
+                category_name="preferences",
+                tag="food",
+                feature="favorite_food",
+                value="pizza",
+            )
+
+    def test_get_feature_success(self, mock_client):
+        """Test successful feature retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "set_id": "test_set",
+            "category": "preferences",
+            "tag": "food",
+            "feature_name": "favorite_food",
+            "value": "pizza",
+            "metadata": {"id": "feature_123", "citations": None, "other": None},
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_feature(feature_id="feature_123")
+
+        assert result is not None
+        assert result.set_id == "test_set"
+        assert result.category == "preferences"
+        assert result.tag == "food"
+        assert result.feature_name == "favorite_food"
+        assert result.value == "pizza"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/feature/get" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["feature_id"] == "feature_123"
+        assert json_data["load_citations"] is False
+
+    def test_get_feature_with_citations(self, mock_client):
+        """Test feature retrieval with citations."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "set_id": "test_set",
+            "category": "preferences",
+            "tag": "food",
+            "feature_name": "favorite_food",
+            "value": "pizza",
+            "metadata": {
+                "id": "feature_123",
+                "citations": ["ep1", "ep2"],
+                "other": None,
+            },
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_feature(feature_id="feature_123", load_citations=True)
+
+        assert result is not None
+        assert result.metadata.citations == ["ep1", "ep2"]
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["load_citations"] is True
+
+    def test_get_feature_not_found(self, mock_client):
+        """Test get_feature returns None when feature not found."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_feature(feature_id="nonexistent")
+        assert result is None
+
+    def test_get_feature_http_error_not_found(self, mock_client):
+        """Test get_feature returns None when HTTPError with 404."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_feature(feature_id="nonexistent")
+        assert result is None
+
+    def test_get_feature_client_closed(self, mock_client):
+        """Test get_feature raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot get feature: client has been closed"
+        ):
+            memory.get_feature(feature_id="feature_123")
+
+    def test_update_feature_success(self, mock_client):
+        """Test successful feature update."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.update_feature(feature_id="feature_123", value="sushi")
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/feature/update" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["feature_id"] == "feature_123"
+        assert json_data["value"] == "sushi"
+        # None values should be excluded
+        assert "category_name" not in json_data
+        assert "feature" not in json_data
+        assert "tag" not in json_data
+        assert "metadata" not in json_data
+
+    def test_update_feature_all_fields(self, mock_client):
+        """Test feature update with all fields."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.update_feature(
+            feature_id="feature_123",
+            category_name="new_preferences",
+            tag="cuisine",
+            feature="top_food",
+            value="sushi",
+            metadata={"updated": "true"},
+        )
+
+        assert result is True
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["category_name"] == "new_preferences"
+        assert json_data["tag"] == "cuisine"
+        assert json_data["feature"] == "top_food"
+        assert json_data["value"] == "sushi"
+        assert json_data["metadata"] == {"updated": "true"}
+
+    def test_update_feature_http_error(self, mock_client):
+        """Test update_feature handles HTTP errors correctly."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.update_feature(feature_id="feature_123", value="sushi")
+
+    def test_update_feature_client_closed(self, mock_client):
+        """Test update_feature raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot update feature: client has been closed"
+        ):
+            memory.update_feature(feature_id="feature_123", value="sushi")
+
+    # --- Semantic Set Type SDK Tests ---
+
+    def test_create_semantic_set_type_success(self, mock_client):
+        """Test successful semantic set type creation."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"set_type_id": "set_type_123"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.create_semantic_set_type(
+            metadata_tags=["user_id", "session_id"],
+            is_org_level=False,
+            name="User Sessions",
+            description="Set type for user sessions",
+        )
+
+        assert result == "set_type_123"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/set_type" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["org_id"] == "test_org"
+        assert json_data["project_id"] == "test_project"
+        assert json_data["metadata_tags"] == ["user_id", "session_id"]
+        assert json_data["is_org_level"] is False
+        assert json_data["name"] == "User Sessions"
+        assert json_data["description"] == "Set type for user sessions"
+
+    def test_create_semantic_set_type_minimal(self, mock_client):
+        """Test set type creation with minimal parameters."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"set_type_id": "set_type_456"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.create_semantic_set_type(metadata_tags=["user_id"])
+
+        assert result == "set_type_456"
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["metadata_tags"] == ["user_id"]
+        assert "name" not in json_data or json_data.get("name") is None
+        assert "description" not in json_data or json_data.get("description") is None
+
+    def test_create_semantic_set_type_http_error(self, mock_client):
+        """Test set type creation handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.create_semantic_set_type(metadata_tags=["user_id"])
+
+    def test_create_semantic_set_type_client_closed(self, mock_client):
+        """Test set type creation raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot create set type: client has been closed"
+        ):
+            memory.create_semantic_set_type(metadata_tags=["user_id"])
+
+    def test_list_semantic_set_types_success(self, mock_client):
+        """Test successful listing of semantic set types."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "set_types": [
+                {
+                    "id": "st_1",
+                    "is_org_level": False,
+                    "tags": ["user_id"],
+                    "name": "User Set",
+                    "description": "User-scoped sets",
+                },
+                {
+                    "id": "st_2",
+                    "is_org_level": True,
+                    "tags": [],
+                    "name": None,
+                    "description": None,
+                },
+            ]
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.list_semantic_set_types()
+
+        assert len(result) == 2
+        assert result[0].id == "st_1"
+        assert result[0].is_org_level is False
+        assert result[0].tags == ["user_id"]
+        assert result[0].name == "User Set"
+        assert result[1].id == "st_2"
+        assert result[1].is_org_level is True
+
+    def test_list_semantic_set_types_http_error(self, mock_client):
+        """Test listing set types handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.list_semantic_set_types()
+
+    def test_list_semantic_set_types_client_closed(self, mock_client):
+        """Test listing set types raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot list set types: client has been closed"
+        ):
+            memory.list_semantic_set_types()
+
+    def test_delete_semantic_set_type_success(self, mock_client):
+        """Test successful semantic set type deletion."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.delete_semantic_set_type(set_type_id="st_123")
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/set_type/delete" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["set_type_id"] == "st_123"
+
+    def test_delete_semantic_set_type_http_error(self, mock_client):
+        """Test set type deletion handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.delete_semantic_set_type(set_type_id="nonexistent")
+
+    def test_delete_semantic_set_type_client_closed(self, mock_client):
+        """Test set type deletion raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot delete set type: client has been closed"
+        ):
+            memory.delete_semantic_set_type(set_type_id="st_123")
+
+    def test_get_semantic_set_id_success(self, mock_client):
+        """Test successful semantic set ID retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"set_id": "mem_user_set_abc123"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_semantic_set_id(
+            metadata_tags=["user_id"],
+            is_org_level=False,
+            set_metadata={"user_id": "user123"},
+        )
+
+        assert result == "mem_user_set_abc123"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/set_id/get" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["metadata_tags"] == ["user_id"]
+        assert json_data["is_org_level"] is False
+        assert json_data["set_metadata"] == {"user_id": "user123"}
+
+    def test_get_semantic_set_id_minimal(self, mock_client):
+        """Test set ID retrieval with minimal parameters."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"set_id": "mem_project_set_def456"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_semantic_set_id(metadata_tags=[])
+
+        assert result == "mem_project_set_def456"
+
+    def test_get_semantic_set_id_http_error(self, mock_client):
+        """Test set ID retrieval handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.get_semantic_set_id(metadata_tags=["user_id"])
+
+    def test_get_semantic_set_id_client_closed(self, mock_client):
+        """Test set ID retrieval raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot get set ID: client has been closed"
+        ):
+            memory.get_semantic_set_id(metadata_tags=["user_id"])
+
+    def test_list_semantic_set_ids_success(self, mock_client):
+        """Test successful listing of semantic sets."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "sets": [
+                {
+                    "id": "mem_user_set_abc",
+                    "is_org_level": False,
+                    "tags": ["user_id"],
+                    "name": "User Set",
+                    "description": None,
+                },
+                {
+                    "id": "mem_project_set_def",
+                    "is_org_level": True,
+                    "tags": [],
+                    "name": None,
+                    "description": None,
+                },
+            ]
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.list_semantic_set_ids()
+
+        assert len(result) == 2
+        assert result[0].id == "mem_user_set_abc"
+        assert result[0].is_org_level is False
+        assert result[0].tags == ["user_id"]
+        assert result[1].id == "mem_project_set_def"
+
+    def test_list_semantic_set_ids_with_metadata_filter(self, mock_client):
+        """Test listing sets with metadata filter."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"sets": []}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        memory.list_semantic_set_ids(set_metadata={"user_id": "user123"})
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["set_metadata"] == {"user_id": "user123"}
+
+    def test_list_semantic_set_ids_http_error(self, mock_client):
+        """Test listing sets handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.list_semantic_set_ids()
+
+    def test_list_semantic_set_ids_client_closed(self, mock_client):
+        """Test listing sets raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot list sets: client has been closed"
+        ):
+            memory.list_semantic_set_ids()
+
+    def test_configure_semantic_set_success(self, mock_client):
+        """Test successful semantic set configuration."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.configure_semantic_set(
+            set_id="mem_user_set_abc",
+            embedder_name="openai-embed",
+            llm_name="gpt-4",
+        )
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/set/configure" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["set_id"] == "mem_user_set_abc"
+        assert json_data["embedder_name"] == "openai-embed"
+        assert json_data["llm_name"] == "gpt-4"
+
+    def test_configure_semantic_set_partial(self, mock_client):
+        """Test set configuration with only embedder."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.configure_semantic_set(
+            set_id="mem_user_set_abc",
+            embedder_name="openai-embed",
+        )
+
+        assert result is True
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["embedder_name"] == "openai-embed"
+        assert "llm_name" not in json_data or json_data.get("llm_name") is None
+
+    def test_configure_semantic_set_http_error(self, mock_client):
+        """Test set configuration handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.configure_semantic_set(
+                set_id="nonexistent",
+                embedder_name="openai-embed",
+            )
+
+    def test_configure_semantic_set_client_closed(self, mock_client):
+        """Test set configuration raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot configure set: client has been closed"
+        ):
+            memory.configure_semantic_set(
+                set_id="mem_user_set_abc",
+                embedder_name="openai-embed",
+            )
+
+    # --- Semantic Category Tests ---
+
+    def test_get_semantic_category_success(self, mock_client):
+        """Test successful category retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "id": "cat_123",
+            "name": "preferences",
+            "prompt": "Extract user preferences",
+            "description": "Category for user preferences",
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_semantic_category("cat_123")
+
+        assert result is not None
+        assert result.id == "cat_123"
+        assert result.name == "preferences"
+        assert result.prompt == "Extract user preferences"
+        assert result.description == "Category for user preferences"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/get" in call_args[0][1]
+
+    def test_get_semantic_category_not_found(self, mock_client):
+        """Test category retrieval returns None for 404."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.json.return_value = None
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_semantic_category("nonexistent")
+        assert result is None
+
+    def test_get_semantic_category_client_closed(self, mock_client):
+        """Test category retrieval raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot get category: client has been closed"
+        ):
+            memory.get_semantic_category("cat_123")
+
+    def test_add_semantic_category_success(self, mock_client):
+        """Test successful category creation."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"category_id": "cat_456"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.add_semantic_category(
+            set_id="set_123",
+            category_name="preferences",
+            prompt="Extract user preferences",
+            description="Category for user preferences",
+        )
+
+        assert result == "cat_456"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["set_id"] == "set_123"
+        assert json_data["category_name"] == "preferences"
+        assert json_data["prompt"] == "Extract user preferences"
+        assert json_data["description"] == "Category for user preferences"
+
+    def test_add_semantic_category_minimal(self, mock_client):
+        """Test category creation with minimal parameters."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"category_id": "cat_789"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.add_semantic_category(
+            set_id="set_123",
+            category_name="preferences",
+            prompt="Extract preferences",
+        )
+
+        assert result == "cat_789"
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert "description" not in json_data or json_data.get("description") is None
+
+    def test_add_semantic_category_http_error(self, mock_client):
+        """Test category creation handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.add_semantic_category(
+                set_id="set_123",
+                category_name="preferences",
+                prompt="Extract preferences",
+            )
+
+    def test_add_semantic_category_client_closed(self, mock_client):
+        """Test category creation raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot add category: client has been closed"
+        ):
+            memory.add_semantic_category(
+                set_id="set_123",
+                category_name="preferences",
+                prompt="Extract preferences",
+            )
+
+    def test_add_semantic_category_template_success(self, mock_client):
+        """Test successful category template creation."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"category_id": "cat_template_456"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.add_semantic_category_template(
+            set_type_id="st_123",
+            category_name="preferences",
+            prompt="Extract user preferences",
+            description="Template for user preferences",
+        )
+
+        assert result == "cat_template_456"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/template" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["set_type_id"] == "st_123"
+        assert json_data["category_name"] == "preferences"
+
+    def test_add_semantic_category_template_http_error(self, mock_client):
+        """Test category template creation handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.add_semantic_category_template(
+                set_type_id="st_123",
+                category_name="preferences",
+                prompt="Extract preferences",
+            )
+
+    def test_add_semantic_category_template_client_closed(self, mock_client):
+        """Test category template creation raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot add category template: client has been closed"
+        ):
+            memory.add_semantic_category_template(
+                set_type_id="st_123",
+                category_name="preferences",
+                prompt="Extract preferences",
+            )
+
+    def test_list_semantic_category_templates_success(self, mock_client):
+        """Test successful listing of category templates."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "categories": [
+                {
+                    "id": "cat_1",
+                    "name": "preferences",
+                    "origin_type": "set_type",
+                    "origin_id": "st_123",
+                    "inherited": False,
+                },
+                {
+                    "id": "cat_2",
+                    "name": "facts",
+                    "origin_type": "set",
+                    "origin_id": "set_456",
+                    "inherited": True,
+                },
+            ]
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.list_semantic_category_templates("st_123")
+
+        assert len(result) == 2
+        assert result[0].id == "cat_1"
+        assert result[0].name == "preferences"
+        assert result[0].origin_type == "set_type"
+        assert result[0].inherited is False
+        assert result[1].id == "cat_2"
+        assert result[1].inherited is True
+
+    def test_list_semantic_category_templates_http_error(self, mock_client):
+        """Test listing category templates handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.list_semantic_category_templates("st_123")
+
+    def test_list_semantic_category_templates_client_closed(self, mock_client):
+        """Test listing category templates raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError,
+            match="Cannot list category templates: client has been closed",
+        ):
+            memory.list_semantic_category_templates("st_123")
+
+    def test_disable_semantic_category_success(self, mock_client):
+        """Test successful category disabling."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.disable_semantic_category(
+            set_id="set_123",
+            category_name="preferences",
+        )
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/disable" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["set_id"] == "set_123"
+        assert json_data["category_name"] == "preferences"
+
+    def test_disable_semantic_category_http_error(self, mock_client):
+        """Test category disabling handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.disable_semantic_category(
+                set_id="set_123",
+                category_name="nonexistent",
+            )
+
+    def test_disable_semantic_category_client_closed(self, mock_client):
+        """Test category disabling raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot disable category: client has been closed"
+        ):
+            memory.disable_semantic_category(
+                set_id="set_123",
+                category_name="preferences",
+            )
+
+    def test_get_semantic_category_set_ids_success(self, mock_client):
+        """Test successful retrieval of category set IDs."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"set_ids": ["set_1", "set_2", "set_3"]}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_semantic_category_set_ids("cat_123")
+
+        assert result == ["set_1", "set_2", "set_3"]
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/set_ids/get" in call_args[0][1]
+
+    def test_get_semantic_category_set_ids_empty(self, mock_client):
+        """Test category set IDs retrieval with empty result."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"set_ids": []}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_semantic_category_set_ids("cat_123")
+        assert result == []
+
+    def test_get_semantic_category_set_ids_http_error(self, mock_client):
+        """Test category set IDs retrieval handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.text = "Internal Server Error"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.get_semantic_category_set_ids("cat_123")
+
+    def test_get_semantic_category_set_ids_client_closed(self, mock_client):
+        """Test category set IDs retrieval raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot get category set IDs: client has been closed"
+        ):
+            memory.get_semantic_category_set_ids("cat_123")
+
+    def test_delete_semantic_category_success(self, mock_client):
+        """Test successful category deletion."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.delete_semantic_category("cat_123")
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/delete" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["category_id"] == "cat_123"
+
+    def test_delete_semantic_category_http_error(self, mock_client):
+        """Test category deletion handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.delete_semantic_category("nonexistent")
+
+    def test_delete_semantic_category_client_closed(self, mock_client):
+        """Test category deletion raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot delete category: client has been closed"
+        ):
+            memory.delete_semantic_category("cat_123")
+
+    # --- Semantic Tag Tests ---
+
+    def test_add_semantic_tag_success(self, mock_client):
+        """Test successful tag creation."""
+        mock_response = Mock()
+        mock_response.status_code = 201
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {"tag_id": "tag_456"}
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.add_semantic_tag(
+            category_id="cat_123",
+            tag_name="food_preference",
+            tag_description="User food preferences",
+        )
+
+        assert result == "tag_456"
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/tag" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["category_id"] == "cat_123"
+        assert json_data["tag_name"] == "food_preference"
+        assert json_data["tag_description"] == "User food preferences"
+
+    def test_add_semantic_tag_http_error(self, mock_client):
+        """Test tag creation handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.add_semantic_tag(
+                category_id="nonexistent",
+                tag_name="food_preference",
+                tag_description="User food preferences",
+            )
+
+    def test_add_semantic_tag_client_closed(self, mock_client):
+        """Test tag creation raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot add tag: client has been closed"
+        ):
+            memory.add_semantic_tag(
+                category_id="cat_123",
+                tag_name="food_preference",
+                tag_description="User food preferences",
+            )
+
+    def test_delete_semantic_tag_success(self, mock_client):
+        """Test successful tag deletion."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.delete_semantic_tag("tag_123")
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memories/semantic/category/tag/delete" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["tag_id"] == "tag_123"
+
+    def test_delete_semantic_tag_http_error(self, mock_client):
+        """Test tag deletion handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.delete_semantic_tag("nonexistent")
+
+    def test_delete_semantic_tag_client_closed(self, mock_client):
+        """Test tag deletion raises RuntimeError when client is closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError, match="Cannot delete tag: client has been closed"
+        ):
+            memory.delete_semantic_tag("tag_123")
+
+    # --- Episodic Memory Configuration Tests ---
+
+    def test_get_episodic_memory_config_success(self, mock_client):
+        """Test successful episodic memory config retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "enabled": True,
+            "long_term_memory_enabled": True,
+            "short_term_memory_enabled": False,
+        }
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.get_episodic_memory_config()
+
+        assert result.enabled is True
+        assert result.long_term_memory_enabled is True
+        assert result.short_term_memory_enabled is False
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memory/episodic/config/get" in call_args[0][1]
+
+    def test_get_episodic_memory_config_http_error(self, mock_client):
+        """Test episodic memory config retrieval handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.get_episodic_memory_config()
+
+    def test_get_episodic_memory_config_client_closed(self, mock_client):
+        """Test episodic memory config retrieval raises RuntimeError when client closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError,
+            match="Cannot get episodic memory config: client has been closed",
+        ):
+            memory.get_episodic_memory_config()
+
+    def test_configure_episodic_memory_success(self, mock_client):
+        """Test successful episodic memory configuration."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.configure_episodic_memory(
+            enabled=True,
+            long_term_memory_enabled=False,
+            short_term_memory_enabled=True,
+        )
+
+        assert result is True
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
+        assert call_args[0][0] == "POST"
+        assert "/api/v2/memory/episodic/config" in call_args[0][1]
+        json_data = call_args[1]["json"]
+        assert json_data["enabled"] is True
+        assert json_data["long_term_memory_enabled"] is False
+        assert json_data["short_term_memory_enabled"] is True
+
+    def test_configure_episodic_memory_partial(self, mock_client):
+        """Test episodic memory configuration with partial parameters."""
+        mock_response = Mock()
+        mock_response.status_code = 204
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        result = memory.configure_episodic_memory(enabled=False)
+
+        assert result is True
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["enabled"] is False
+        assert "long_term_memory_enabled" not in json_data
+        assert "short_term_memory_enabled" not in json_data
+
+    def test_configure_episodic_memory_http_error(self, mock_client):
+        """Test episodic memory configuration handles HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        with pytest.raises(requests.RequestException):
+            memory.configure_episodic_memory(enabled=False)
+
+    def test_configure_episodic_memory_client_closed(self, mock_client):
+        """Test episodic memory configuration raises RuntimeError when client closed."""
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+        memory._client_closed = True
+
+        with pytest.raises(
+            RuntimeError,
+            match="Cannot configure episodic memory: client has been closed",
+        ):
+            memory.configure_episodic_memory(enabled=False)

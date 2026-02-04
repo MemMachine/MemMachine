@@ -58,12 +58,107 @@ class ResourcesStatus(BaseModel):
     ]
 
 
+class LongTermMemoryConfigResponse(BaseModel):
+    """Response model for long-term memory configuration."""
+
+    embedder: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.LTM_CONFIG_EMBEDDER),
+    ]
+    reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.LTM_CONFIG_RERANKER),
+    ]
+    vector_graph_store: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.LTM_CONFIG_VECTOR_GRAPH_STORE),
+    ]
+    enabled: Annotated[
+        bool,
+        Field(default=True, description=SpecDoc.LTM_CONFIG_ENABLED),
+    ]
+
+
+class ShortTermMemoryConfigResponse(BaseModel):
+    """Response model for short-term memory configuration."""
+
+    llm_model: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.STM_CONFIG_LLM_MODEL),
+    ]
+    message_capacity: Annotated[
+        int | None,
+        Field(default=None, description=SpecDoc.STM_CONFIG_MESSAGE_CAPACITY),
+    ]
+    enabled: Annotated[
+        bool,
+        Field(default=True, description=SpecDoc.STM_CONFIG_ENABLED),
+    ]
+
+
+class EpisodicMemoryConfigResponse(BaseModel):
+    """Response model for episodic memory configuration."""
+
+    long_term_memory: Annotated[
+        LongTermMemoryConfigResponse,
+        Field(
+            default_factory=LongTermMemoryConfigResponse, description=SpecDoc.LTM_CONFIG
+        ),
+    ]
+    short_term_memory: Annotated[
+        ShortTermMemoryConfigResponse,
+        Field(
+            default_factory=ShortTermMemoryConfigResponse,
+            description=SpecDoc.STM_CONFIG,
+        ),
+    ]
+    enabled: Annotated[
+        bool,
+        Field(default=True, description=SpecDoc.EPISODIC_ENABLED),
+    ]
+
+
+class SemanticMemoryConfigResponse(BaseModel):
+    """Response model for semantic memory configuration."""
+
+    enabled: Annotated[
+        bool,
+        Field(default=False, description=SpecDoc.SEMANTIC_ENABLED),
+    ]
+    database: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_DATABASE),
+    ]
+    llm_model: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_LLM_MODEL),
+    ]
+    embedding_model: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_EMBEDDING_MODEL),
+    ]
+
+
 class GetConfigResponse(BaseModel):
     """Response model for configuration retrieval."""
 
     resources: Annotated[
         ResourcesStatus,
         Field(..., description=SpecDoc.RESOURCES_STATUS),
+    ]
+    episodic_memory: Annotated[
+        EpisodicMemoryConfigResponse,
+        Field(
+            default_factory=EpisodicMemoryConfigResponse,
+            description=SpecDoc.EPISODIC_MEMORY_CONFIG,
+        ),
+    ]
+    semantic_memory: Annotated[
+        SemanticMemoryConfigResponse,
+        Field(
+            default_factory=SemanticMemoryConfigResponse,
+            description=SpecDoc.SEMANTIC_MEMORY_CONFIG,
+        ),
     ]
 
 

@@ -7,9 +7,13 @@ from typing import Any
 from pydantic import SecretStr
 
 from memmachine.common.api.config_spec import (
+    EpisodicMemoryConfigResponse,
+    LongTermMemoryConfigResponse,
     ResourceInfo,
     ResourcesStatus,
     ResourceStatus,
+    SemanticMemoryConfigResponse,
+    ShortTermMemoryConfigResponse,
     UpdateEpisodicMemorySpec,
     UpdateLongTermMemorySpec,
     UpdateSemanticMemorySpec,
@@ -506,3 +510,172 @@ class ConfigService:
         """Get the error message for a failed reranker."""
         error = self._resource_manager.reranker_manager.get_resource_error(name)
         return str(error) if error else None
+
+    def get_episodic_memory_config(self) -> EpisodicMemoryConfigResponse:
+        """Get the current episodic memory configuration."""
+        config = self._resource_manager.config
+        em = config.episodic_memory
+
+        ltm_config = LongTermMemoryConfigResponse(
+            embedder=em.long_term_memory.embedder if em.long_term_memory else None,
+            reranker=em.long_term_memory.reranker if em.long_term_memory else None,
+            vector_graph_store=em.long_term_memory.vector_graph_store
+            if em.long_term_memory
+            else None,
+            enabled=em.long_term_memory_enabled
+            if em.long_term_memory_enabled is not None
+            else True,
+        )
+
+        stm_config = ShortTermMemoryConfigResponse(
+            llm_model=em.short_term_memory.llm_model if em.short_term_memory else None,
+            message_capacity=em.short_term_memory.message_capacity
+            if em.short_term_memory
+            else None,
+            enabled=em.short_term_memory_enabled
+            if em.short_term_memory_enabled is not None
+            else True,
+        )
+
+        return EpisodicMemoryConfigResponse(
+            long_term_memory=ltm_config,
+            short_term_memory=stm_config,
+            enabled=em.enabled if em.enabled is not None else True,
+        )
+
+    def get_semantic_memory_config(self) -> SemanticMemoryConfigResponse:
+        """Get the current semantic memory configuration."""
+        config = self._resource_manager.config
+        sm = config.semantic_memory
+
+        return SemanticMemoryConfigResponse(
+            enabled=sm.enabled if sm.enabled is not None else False,
+            database=sm.database,
+            llm_model=sm.llm_model,
+            embedding_model=sm.embedding_model,
+        )
+
+    def get_long_term_memory_config(self) -> LongTermMemoryConfigResponse:
+        """Get the current long-term memory configuration."""
+        config = self._resource_manager.config
+        em = config.episodic_memory
+
+        return LongTermMemoryConfigResponse(
+            embedder=em.long_term_memory.embedder if em.long_term_memory else None,
+            reranker=em.long_term_memory.reranker if em.long_term_memory else None,
+            vector_graph_store=em.long_term_memory.vector_graph_store
+            if em.long_term_memory
+            else None,
+            enabled=em.long_term_memory_enabled
+            if em.long_term_memory_enabled is not None
+            else True,
+        )
+
+    def get_short_term_memory_config(self) -> ShortTermMemoryConfigResponse:
+        """Get the current short-term memory configuration."""
+        config = self._resource_manager.config
+        em = config.episodic_memory
+
+        return ShortTermMemoryConfigResponse(
+            llm_model=em.short_term_memory.llm_model if em.short_term_memory else None,
+            message_capacity=em.short_term_memory.message_capacity
+            if em.short_term_memory
+            else None,
+            enabled=em.short_term_memory_enabled
+            if em.short_term_memory_enabled is not None
+            else True,
+        )
+
+    def update_long_term_memory_config(
+        self,
+        spec: UpdateLongTermMemorySpec,
+        enabled: bool | None = None,
+    ) -> str:
+        """
+        Update long-term memory configuration.
+
+        Only supplied (non-None) fields are updated; the rest stay unchanged.
+        Returns a human-readable summary of what was changed.
+        """
+        config = self._resource_manager.config
+        em = config.episodic_memory
+        changes: list[str] = []
+
+        changes.extend(_apply_ltm_updates(em, spec))
+
+        if enabled is not None:
+            em.long_term_memory_enabled = enabled
+            changes.append(f"long_term_memory_enabled={enabled}")
+
+        if changes:
+            self._persist_config()
+            return "Updated: " + ", ".join(changes)
+        return "No changes applied."
+
+    def update_short_term_memory_config(
+        self,
+        spec: UpdateShortTermMemorySpec,
+        enabled: bool | None = None,
+    ) -> str:
+        """
+        Update short-term memory configuration.
+
+        Only supplied (non-None) fields are updated; the rest stay unchanged.
+        Returns a human-readable summary of what was changed.
+        """
+        config = self._resource_manager.config
+        em = config.episodic_memory
+        changes: list[str] = []
+
+        changes.extend(_apply_stm_updates(em, spec))
+
+        if enabled is not None:
+            em.short_term_memory_enabled = enabled
+            changes.append(f"short_term_memory_enabled={enabled}")
+
+        if changes:
+            self._persist_config()
+            return "Updated: " + ", ".join(changes)
+        return "No changes applied."
+
+    def update_semantic_memory_config(
+        self,
+        spec: UpdateSemanticMemorySpec,
+    ) -> str:
+        """
+        Update semantic memory configuration.
+
+        Only supplied (non-None) fields are updated; the rest stay unchanged.
+        Returns a human-readable summary of what was changed.
+        """
+        config = self._resource_manager.config
+        sm = config.semantic_memory
+        changes: list[str] = []
+
+        changes.extend(_apply_semantic_memory_updates(sm, spec))
+
+        if changes:
+            self._persist_config()
+            return "Updated: " + ", ".join(changes)
+        return "No changes applied."
+
+    def update_episodic_memory_config(
+        self,
+        spec: UpdateEpisodicMemorySpec,
+    ) -> str:
+        """
+        Update episodic memory configuration.
+
+        Only supplied (non-None) fields are updated; the rest stay unchanged.
+        Returns a human-readable summary of what was changed.
+        """
+        config = self._resource_manager.config
+        em = config.episodic_memory
+        changes: list[str] = []
+
+        changes.extend(_apply_episodic_memory_updates(em, spec))
+
+        if changes:
+            self._persist_config()
+            return "Updated: " + ", ".join(changes)
+        return "No changes applied."

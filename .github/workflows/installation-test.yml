@@ -211,7 +211,7 @@ jobs:
         run: |
           set -eo pipefail
           echo "Starting memmachine-server..."
-          memmachine-server >server-out.log 2>&1 &
+          MEMMACHINE_CONFIG_API=1 memmachine-server >server-out.log 2>&1 &
           echo $! > server.pid
           echo "Server PID: $(cat server.pid)"
 

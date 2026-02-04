@@ -11,13 +11,19 @@ from memmachine.common.api.config_spec import (
     AddEmbedderSpec,
     AddLanguageModelSpec,
     DeleteResourceResponse,
+    EpisodicMemoryConfigResponse,
     GetConfigResponse,
+    LongTermMemoryConfigResponse,
     ResourcesStatus,
+    SemanticMemoryConfigResponse,
+    ShortTermMemoryConfigResponse,
     UpdateEpisodicMemorySpec,
+    UpdateLongTermMemorySpec,
     UpdateMemoryConfigResponse,
     UpdateMemoryConfigSpec,
     UpdateResourceResponse,
     UpdateSemanticMemorySpec,
+    UpdateShortTermMemorySpec,
 )
 
 if TYPE_CHECKING:
@@ -161,6 +167,323 @@ class Config:
             return UpdateMemoryConfigResponse(**response.json())
         except requests.RequestException:
             logger.exception("Failed to update memory config")
+            raise
+
+    def get_episodic_memory_config(
+        self, timeout: int | None = None
+    ) -> EpisodicMemoryConfigResponse:
+        """
+        Get the current episodic memory configuration.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            EpisodicMemoryConfigResponse containing current episodic memory settings
+            including both long-term and short-term memory configuration
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        try:
+            response = self.client.request(
+                "GET",
+                f"{self.client.base_url}/api/v2/config/memory/episodic",
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return EpisodicMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to get episodic memory config")
+            raise
+
+    def update_episodic_memory_config(
+        self,
+        long_term_memory: UpdateLongTermMemorySpec | None = None,
+        short_term_memory: UpdateShortTermMemorySpec | None = None,
+        long_term_memory_enabled: bool | None = None,
+        short_term_memory_enabled: bool | None = None,
+        enabled: bool | None = None,
+        timeout: int | None = None,
+    ) -> UpdateMemoryConfigResponse:
+        """
+        Update episodic memory configuration.
+
+        Args:
+            long_term_memory: Long-term memory configuration updates
+            short_term_memory: Short-term memory configuration updates
+            long_term_memory_enabled: Whether long-term memory is enabled
+            short_term_memory_enabled: Whether short-term memory is enabled
+            enabled: Whether episodic memory is enabled overall
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            UpdateMemoryConfigResponse indicating success
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        spec = UpdateEpisodicMemorySpec(
+            long_term_memory=long_term_memory,
+            short_term_memory=short_term_memory,
+            long_term_memory_enabled=long_term_memory_enabled,
+            short_term_memory_enabled=short_term_memory_enabled,
+            enabled=enabled,
+        )
+        payload = spec.model_dump(exclude_none=True)
+        try:
+            response = self.client.request(
+                "PUT",
+                f"{self.client.base_url}/api/v2/config/memory/episodic",
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return UpdateMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to update episodic memory config")
+            raise
+
+    def get_long_term_memory_config(
+        self, timeout: int | None = None
+    ) -> LongTermMemoryConfigResponse:
+        """
+        Get the current long-term memory configuration.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            LongTermMemoryConfigResponse containing current LTM settings
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        try:
+            response = self.client.request(
+                "GET",
+                f"{self.client.base_url}/api/v2/config/memory/episodic/long_term",
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return LongTermMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to get long-term memory config")
+            raise
+
+    def get_short_term_memory_config(
+        self, timeout: int | None = None
+    ) -> ShortTermMemoryConfigResponse:
+        """
+        Get the current short-term memory configuration.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            ShortTermMemoryConfigResponse containing current STM settings
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        try:
+            response = self.client.request(
+                "GET",
+                f"{self.client.base_url}/api/v2/config/memory/episodic/short_term",
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return ShortTermMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to get short-term memory config")
+            raise
+
+    def update_long_term_memory_config(
+        self,
+        embedder: str | None = None,
+        reranker: str | None = None,
+        vector_graph_store: str | None = None,
+        enabled: bool | None = None,
+        timeout: int | None = None,
+    ) -> UpdateMemoryConfigResponse:
+        """
+        Update long-term memory configuration.
+
+        Args:
+            embedder: Name of the embedder to use for long-term memory
+            reranker: Name of the reranker to use for long-term memory
+            vector_graph_store: Name of the vector graph store to use
+            enabled: Whether long-term memory is enabled
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            UpdateMemoryConfigResponse indicating success
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        spec = UpdateLongTermMemorySpec(
+            embedder=embedder,
+            reranker=reranker,
+            vector_graph_store=vector_graph_store,
+        )
+        payload = spec.model_dump(exclude_none=True)
+        if enabled is not None:
+            payload["enabled"] = enabled
+        try:
+            response = self.client.request(
+                "PUT",
+                f"{self.client.base_url}/api/v2/config/memory/episodic/long_term",
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return UpdateMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to update long-term memory config")
+            raise
+
+    def update_short_term_memory_config(
+        self,
+        llm_model: str | None = None,
+        message_capacity: int | None = None,
+        enabled: bool | None = None,
+        timeout: int | None = None,
+    ) -> UpdateMemoryConfigResponse:
+        """
+        Update short-term memory configuration.
+
+        Args:
+            llm_model: Name of the language model to use for short-term memory
+            message_capacity: Maximum number of messages to keep in short-term memory
+            enabled: Whether short-term memory is enabled
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            UpdateMemoryConfigResponse indicating success
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        spec = UpdateShortTermMemorySpec(
+            llm_model=llm_model,
+            message_capacity=message_capacity,
+        )
+        payload = spec.model_dump(exclude_none=True)
+        if enabled is not None:
+            payload["enabled"] = enabled
+        try:
+            response = self.client.request(
+                "PUT",
+                f"{self.client.base_url}/api/v2/config/memory/episodic/short_term",
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return UpdateMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to update short-term memory config")
+            raise
+
+    def get_semantic_memory_config(
+        self, timeout: int | None = None
+    ) -> SemanticMemoryConfigResponse:
+        """
+        Get the current semantic memory configuration.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            SemanticMemoryConfigResponse containing current semantic memory settings
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        try:
+            response = self.client.request(
+                "GET",
+                f"{self.client.base_url}/api/v2/config/memory/semantic",
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return SemanticMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to get semantic memory config")
+            raise
+
+    def update_semantic_memory_config(
+        self,
+        enabled: bool | None = None,
+        database: str | None = None,
+        llm_model: str | None = None,
+        embedding_model: str | None = None,
+        ingestion_trigger_messages: int | None = None,
+        ingestion_trigger_age_seconds: int | None = None,
+        timeout: int | None = None,
+    ) -> UpdateMemoryConfigResponse:
+        """
+        Update semantic memory configuration.
+
+        Args:
+            enabled: Whether semantic memory is enabled
+            database: Name of the database to use for semantic memory
+            llm_model: Name of the language model to use for feature extraction
+            embedding_model: Name of the embedder to use for semantic similarity
+            ingestion_trigger_messages: Number of messages before triggering ingestion
+            ingestion_trigger_age_seconds: Age threshold in seconds for triggering ingestion
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            UpdateMemoryConfigResponse indicating success
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        self._check_closed()
+        spec = UpdateSemanticMemorySpec(
+            enabled=enabled,
+            database=database,
+            llm_model=llm_model,
+            embedding_model=embedding_model,
+            ingestion_trigger_messages=ingestion_trigger_messages,
+            ingestion_trigger_age_seconds=ingestion_trigger_age_seconds,
+        )
+        payload = spec.model_dump(exclude_none=True)
+        try:
+            response = self.client.request(
+                "PUT",
+                f"{self.client.base_url}/api/v2/config/memory/semantic",
+                json=payload,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return UpdateMemoryConfigResponse(**response.json())
+        except requests.RequestException:
+            logger.exception("Failed to update semantic memory config")
             raise
 
     def add_embedder(

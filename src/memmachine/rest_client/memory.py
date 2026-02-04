@@ -13,19 +13,55 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import requests
+from pydantic import JsonValue
 
 from memmachine.common.api import EpisodeType, MemoryType
 from memmachine.common.api.spec import (
+    AddFeatureResponse,
+    AddFeatureSpec,
     AddMemoriesResponse,
     AddMemoriesSpec,
     AddMemoryResult,
+    AddSemanticCategoryResponse,
+    AddSemanticCategorySpec,
+    AddSemanticCategoryTemplateSpec,
+    AddSemanticTagResponse,
+    AddSemanticTagSpec,
+    ConfigureEpisodicMemorySpec,
+    ConfigureSemanticSetSpec,
+    CreateSemanticSetTypeResponse,
+    CreateSemanticSetTypeSpec,
     DeleteEpisodicMemorySpec,
+    DeleteSemanticCategorySpec,
     DeleteSemanticMemorySpec,
+    DeleteSemanticSetTypeSpec,
+    DeleteSemanticTagSpec,
+    DisableSemanticCategorySpec,
+    EpisodicMemoryConfigEntry,
+    GetEpisodicMemoryConfigSpec,
+    GetFeatureSpec,
+    GetSemanticCategorySetIdsResponse,
+    GetSemanticCategorySetIdsSpec,
+    GetSemanticCategorySpec,
+    GetSemanticSetIdResponse,
+    GetSemanticSetIdSpec,
     ListMemoriesSpec,
     ListResult,
+    ListSemanticCategoryTemplatesResponse,
+    ListSemanticCategoryTemplatesSpec,
+    ListSemanticSetIdsResponse,
+    ListSemanticSetIdsSpec,
+    ListSemanticSetTypesResponse,
+    ListSemanticSetTypesSpec,
     MemoryMessage,
     SearchMemoriesSpec,
     SearchResult,
+    SemanticCategoryEntry,
+    SemanticCategoryTemplateEntry,
+    SemanticFeature,
+    SemanticSetEntry,
+    SemanticSetTypeEntry,
+    UpdateFeatureSpec,
 )
 
 if TYPE_CHECKING:
@@ -621,6 +657,199 @@ class Memory:
             logger.info("Semantic memory %s deleted successfully", semantic_id)
             return True
 
+    def add_feature(
+        self,
+        *,
+        set_id: str,
+        category_name: str,
+        tag: str,
+        feature: str,
+        value: str,
+        feature_metadata: dict[str, JsonValue] | None = None,
+        citations: builtins.list[str] | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """
+        Add a semantic feature.
+
+        Args:
+            set_id: Set ID to add the feature to.
+            category_name: Category name to attach the feature to.
+            tag: Tag name to associate with the feature.
+            feature: Feature name/key.
+            value: Feature value.
+            feature_metadata: Optional metadata to store alongside the feature.
+            citations: Optional episode IDs supporting this feature.
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            The created feature ID.
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot add feature: client has been closed")
+
+        spec = AddFeatureSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_id=set_id,
+            category_name=category_name,
+            tag=tag,
+            feature=feature,
+            value=value,
+            feature_metadata=feature_metadata,
+            citations=citations,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/feature",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            add_response = AddFeatureResponse(**response_data)
+            logger.debug(
+                "Successfully added feature: %s (ID: %s)",
+                feature,
+                add_response.feature_id,
+            )
+        except Exception:
+            logger.exception("Failed to add feature %s", feature)
+            raise
+        else:
+            return add_response.feature_id
+
+    def get_feature(
+        self,
+        feature_id: str,
+        load_citations: bool = False,
+        timeout: int | None = None,
+    ) -> SemanticFeature | None:
+        """
+        Get a semantic feature by ID.
+
+        Args:
+            feature_id: Feature identifier.
+            load_citations: Whether to load referenced episode IDs.
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            The feature, or None if it does not exist.
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot get feature: client has been closed")
+
+        spec = GetFeatureSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            feature_id=feature_id,
+            load_citations=load_citations,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/feature/get",
+                json=v2_data,
+                timeout=timeout,
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            response_data = response.json()
+            feature = SemanticFeature(**response_data)
+            logger.debug("Successfully retrieved feature: %s", feature_id)
+        except requests.HTTPError as e:
+            if (
+                hasattr(e, "response")
+                and e.response is not None
+                and e.response.status_code == 404
+            ):
+                return None
+            raise
+        except Exception:
+            logger.exception("Failed to get feature %s", feature_id)
+            raise
+        else:
+            return feature
+
+    def update_feature(
+        self,
+        *,
+        feature_id: str,
+        category_name: str | None = None,
+        feature: str | None = None,
+        value: str | None = None,
+        tag: str | None = None,
+        metadata: dict[str, str] | None = None,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Update an existing semantic feature.
+
+        Only fields that are not None are updated.
+
+        Args:
+            feature_id: Feature identifier.
+            category_name: New category name.
+            feature: New feature name/key.
+            value: New feature value.
+            tag: New tag name.
+            metadata: Replacement metadata payload.
+            timeout: Request timeout in seconds (uses client default if not provided)
+
+        Returns:
+            True if update was successful.
+
+        Raises:
+            requests.RequestException: If the request fails
+            RuntimeError: If the client has been closed
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot update feature: client has been closed")
+
+        spec = UpdateFeatureSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            feature_id=feature_id,
+            category_name=category_name,
+            feature=feature,
+            value=value,
+            tag=tag,
+            metadata=metadata,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/feature/update",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully updated feature: %s", feature_id)
+        except Exception:
+            logger.exception("Failed to update feature %s", feature_id)
+            raise
+        else:
+            return True
+
     def get_default_filter_dict(self) -> dict[str, str]:
         """
         Get default filter_dict based on Memory metadata.
@@ -691,6 +920,887 @@ class Memory:
             conditions.append(f"{key}='{escaped_value}'")
 
         return " AND ".join(conditions)
+
+    def create_semantic_set_type(
+        self,
+        *,
+        metadata_tags: builtins.list[str],
+        is_org_level: bool = False,
+        name: str | None = None,
+        description: str | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """
+        Create a new semantic set type.
+
+        A set type defines a template for grouping semantic features based on
+        metadata tags.
+
+        Args:
+            metadata_tags: Ordered list of metadata tag keys that define the set type.
+            is_org_level: Whether the set type is org-scoped (True) or project-scoped (False).
+            name: Optional human-readable name for the set type.
+            description: Optional description of the set type's purpose.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The created set type ID.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot create set type: client has been closed")
+
+        spec = CreateSemanticSetTypeSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            is_org_level=is_org_level,
+            metadata_tags=metadata_tags,
+            name=name,
+            description=description,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/set_type",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = CreateSemanticSetTypeResponse(**response_data)
+            logger.debug("Successfully created set type: %s", result.set_type_id)
+        except Exception:
+            logger.exception("Failed to create set type")
+            raise
+        else:
+            return result.set_type_id
+
+    def list_semantic_set_types(
+        self,
+        timeout: int | None = None,
+    ) -> builtins.list[SemanticSetTypeEntry]:
+        """
+        List all semantic set types.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            List of semantic set type entries.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot list set types: client has been closed")
+
+        spec = ListSemanticSetTypesSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/set_type/list",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = ListSemanticSetTypesResponse(**response_data)
+            logger.debug("Successfully listed %d set types", len(result.set_types))
+        except Exception:
+            logger.exception("Failed to list set types")
+            raise
+        else:
+            return result.set_types
+
+    def delete_semantic_set_type(
+        self,
+        set_type_id: str,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Delete a semantic set type.
+
+        Args:
+            set_type_id: The unique identifier of the set type to delete.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if deletion was successful.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot delete set type: client has been closed")
+
+        spec = DeleteSemanticSetTypeSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_type_id=set_type_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/set_type/delete",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully deleted set type: %s", set_type_id)
+        except Exception:
+            logger.exception("Failed to delete set type %s", set_type_id)
+            raise
+        else:
+            return True
+
+    def get_semantic_set_id(
+        self,
+        *,
+        metadata_tags: builtins.list[str],
+        is_org_level: bool = False,
+        set_metadata: dict[str, JsonValue] | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """
+        Get or create a semantic set ID.
+
+        Args:
+            metadata_tags: Ordered list of metadata tag keys defining the set type.
+            is_org_level: Whether the set is org-scoped (True) or project-scoped (False).
+            set_metadata: Optional metadata key-value pairs used to identify the set.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The set ID.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot get set ID: client has been closed")
+
+        spec = GetSemanticSetIdSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            is_org_level=is_org_level,
+            metadata_tags=metadata_tags,
+            set_metadata=set_metadata,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/set_id/get",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = GetSemanticSetIdResponse(**response_data)
+            logger.debug("Successfully got set ID: %s", result.set_id)
+        except Exception:
+            logger.exception("Failed to get set ID")
+            raise
+        else:
+            return result.set_id
+
+    def list_semantic_set_ids(
+        self,
+        set_metadata: dict[str, JsonValue] | None = None,
+        timeout: int | None = None,
+    ) -> builtins.list[SemanticSetEntry]:
+        """
+        List all semantic sets.
+
+        Args:
+            set_metadata: Optional metadata key-value pairs to filter sets.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            List of semantic set entries.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot list sets: client has been closed")
+
+        spec = ListSemanticSetIdsSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_metadata=set_metadata,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/set_id/list",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = ListSemanticSetIdsResponse(**response_data)
+            logger.debug("Successfully listed %d sets", len(result.sets))
+        except Exception:
+            logger.exception("Failed to list sets")
+            raise
+        else:
+            return result.sets
+
+    def configure_semantic_set(
+        self,
+        *,
+        set_id: str,
+        embedder_name: str | None = None,
+        llm_name: str | None = None,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Configure a semantic set.
+
+        Args:
+            set_id: The set ID to configure.
+            embedder_name: Optional embedder name override for this set.
+            llm_name: Optional language model name override for this set.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if configuration was successful.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot configure set: client has been closed")
+
+        spec = ConfigureSemanticSetSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_id=set_id,
+            embedder_name=embedder_name,
+            llm_name=llm_name,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/set/configure",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully configured set: %s", set_id)
+        except Exception:
+            logger.exception("Failed to configure set %s", set_id)
+            raise
+        else:
+            return True
+
+    def get_semantic_category(
+        self,
+        category_id: str,
+        timeout: int | None = None,
+    ) -> SemanticCategoryEntry | None:
+        """
+        Get a semantic category by ID.
+
+        Args:
+            category_id: The unique identifier of the category to retrieve.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The category entry, or None if not found.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot get category: client has been closed")
+
+        spec = GetSemanticCategorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            category_id=category_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/get",
+                json=v2_data,
+                timeout=timeout,
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            response_data = response.json()
+            if response_data is None:
+                return None
+            result = SemanticCategoryEntry(**response_data)
+            logger.debug("Successfully retrieved category: %s", category_id)
+        except requests.HTTPError as e:
+            if (
+                hasattr(e, "response")
+                and e.response is not None
+                and e.response.status_code == 404
+            ):
+                return None
+            raise
+        except Exception:
+            logger.exception("Failed to get category %s", category_id)
+            raise
+        else:
+            return result
+
+    def add_semantic_category(
+        self,
+        *,
+        set_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """
+        Add a semantic category to a set.
+
+        Args:
+            set_id: The set ID to add the category to.
+            category_name: Human-readable name for the category.
+            prompt: The prompt template used for extracting features.
+            description: Optional description of the category.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The created category ID.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot add category: client has been closed")
+
+        spec = AddSemanticCategorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_id=set_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = AddSemanticCategoryResponse(**response_data)
+            logger.debug("Successfully added category: %s", result.category_id)
+        except Exception:
+            logger.exception("Failed to add category %s", category_name)
+            raise
+        else:
+            return result.category_id
+
+    def add_semantic_category_template(
+        self,
+        *,
+        set_type_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None = None,
+        timeout: int | None = None,
+    ) -> str:
+        """
+        Add a category template to a set type.
+
+        Category templates are inherited by all set IDs mapped to the set type.
+
+        Args:
+            set_type_id: The set type ID to add the template to.
+            category_name: Human-readable name for the category.
+            prompt: The prompt template used for extracting features.
+            description: Optional description of the category.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The created category template ID.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot add category template: client has been closed")
+
+        spec = AddSemanticCategoryTemplateSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_type_id=set_type_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/template",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = AddSemanticCategoryResponse(**response_data)
+            logger.debug("Successfully added category template: %s", result.category_id)
+        except Exception:
+            logger.exception("Failed to add category template %s", category_name)
+            raise
+        else:
+            return result.category_id
+
+    def list_semantic_category_templates(
+        self,
+        set_type_id: str,
+        timeout: int | None = None,
+    ) -> builtins.list[SemanticCategoryTemplateEntry]:
+        """
+        List all category templates for a set type.
+
+        Args:
+            set_type_id: The set type ID to list templates for.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            List of category template entries.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot list category templates: client has been closed")
+
+        spec = ListSemanticCategoryTemplatesSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_type_id=set_type_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/template/list",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = ListSemanticCategoryTemplatesResponse(**response_data)
+            logger.debug(
+                "Successfully listed %d category templates", len(result.categories)
+            )
+        except Exception:
+            logger.exception("Failed to list category templates for %s", set_type_id)
+            raise
+        else:
+            return result.categories
+
+    def disable_semantic_category(
+        self,
+        *,
+        set_id: str,
+        category_name: str,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Disable a semantic category for a specific set.
+
+        Args:
+            set_id: The set ID to disable the category for.
+            category_name: The name of the category to disable.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if the category was disabled successfully.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot disable category: client has been closed")
+
+        spec = DisableSemanticCategorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            set_id=set_id,
+            category_name=category_name,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/disable",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug(
+                "Successfully disabled category %s for set %s", category_name, set_id
+            )
+        except Exception:
+            logger.exception(
+                "Failed to disable category %s for set %s", category_name, set_id
+            )
+            raise
+        else:
+            return True
+
+    def get_semantic_category_set_ids(
+        self,
+        category_id: str,
+        timeout: int | None = None,
+    ) -> builtins.list[str]:
+        """
+        Get the set IDs that use a specific category.
+
+        Args:
+            category_id: The category ID to get set IDs for.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            List of set IDs using the category.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot get category set IDs: client has been closed")
+
+        spec = GetSemanticCategorySetIdsSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            category_id=category_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/set_ids/get",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = GetSemanticCategorySetIdsResponse(**response_data)
+            logger.debug(
+                "Successfully retrieved %d set IDs for category %s",
+                len(result.set_ids),
+                category_id,
+            )
+        except Exception:
+            logger.exception("Failed to get set IDs for category %s", category_id)
+            raise
+        else:
+            return result.set_ids
+
+    def delete_semantic_category(
+        self,
+        category_id: str,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Delete a semantic category.
+
+        Args:
+            category_id: The unique identifier of the category to delete.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if deletion was successful.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot delete category: client has been closed")
+
+        spec = DeleteSemanticCategorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            category_id=category_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/delete",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully deleted category: %s", category_id)
+        except Exception:
+            logger.exception("Failed to delete category %s", category_id)
+            raise
+        else:
+            return True
+
+    def add_semantic_tag(
+        self,
+        *,
+        category_id: str,
+        tag_name: str,
+        tag_description: str,
+        timeout: int | None = None,
+    ) -> str:
+        """
+        Add a tag to a semantic category.
+
+        Args:
+            category_id: The category ID to add the tag to.
+            tag_name: Human-readable name for the tag.
+            tag_description: Description of what this tag represents.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The created tag ID.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot add tag: client has been closed")
+
+        spec = AddSemanticTagSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            category_id=category_id,
+            tag_name=tag_name,
+            tag_description=tag_description,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/tag",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = AddSemanticTagResponse(**response_data)
+            logger.debug("Successfully added tag: %s", result.tag_id)
+        except Exception:
+            logger.exception(
+                "Failed to add tag %s to category %s", tag_name, category_id
+            )
+            raise
+        else:
+            return result.tag_id
+
+    def delete_semantic_tag(
+        self,
+        tag_id: str,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Delete a semantic tag.
+
+        Args:
+            tag_id: The unique identifier of the tag to delete.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if deletion was successful.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot delete tag: client has been closed")
+
+        spec = DeleteSemanticTagSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            tag_id=tag_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memories/semantic/category/tag/delete",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully deleted tag: %s", tag_id)
+        except Exception:
+            logger.exception("Failed to delete tag %s", tag_id)
+            raise
+        else:
+            return True
+
+    # --- Episodic Memory Configuration Methods ---
+
+    def get_episodic_memory_config(
+        self,
+        timeout: int | None = None,
+    ) -> EpisodicMemoryConfigEntry:
+        """
+        Get episodic memory configuration for this project.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The episodic memory configuration entry.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError(
+                "Cannot get episodic memory config: client has been closed"
+            )
+
+        spec = GetEpisodicMemoryConfigSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memory/episodic/config/get",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = EpisodicMemoryConfigEntry(**response_data)
+            logger.debug("Successfully retrieved episodic memory config")
+        except Exception:
+            logger.exception("Failed to get episodic memory config")
+            raise
+        else:
+            return result
+
+    def configure_episodic_memory(
+        self,
+        *,
+        enabled: bool | None = None,
+        long_term_memory_enabled: bool | None = None,
+        short_term_memory_enabled: bool | None = None,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Configure episodic memory for this project.
+
+        Allows enabling or disabling episodic memory components independently.
+        Only provided (non-None) values are updated.
+
+        Args:
+            enabled: Whether episodic memory is enabled overall.
+            long_term_memory_enabled: Whether long-term memory is enabled.
+            short_term_memory_enabled: Whether short-term memory is enabled.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if configuration was successful.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError(
+                "Cannot configure episodic memory: client has been closed"
+            )
+
+        spec = ConfigureEpisodicMemorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            enabled=enabled,
+            long_term_memory_enabled=long_term_memory_enabled,
+            short_term_memory_enabled=short_term_memory_enabled,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memory/episodic/config",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully configured episodic memory")
+        except Exception:
+            logger.exception("Failed to configure episodic memory")
+            raise
+        else:
+            return True
 
     def mark_client_closed(self) -> None:
         """Mark this memory instance as closed by its owning client."""

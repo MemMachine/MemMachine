@@ -355,3 +355,41 @@ class SessionDataManagerSQL(SessionDataManager):
                 short_term_data.episode_num,
                 short_term_data.last_seq,
             )
+
+    async def update_session_episodic_config(
+        self,
+        session_key: str,
+        enabled: bool | None = None,
+        long_term_memory_enabled: bool | None = None,
+        short_term_memory_enabled: bool | None = None,
+    ) -> None:
+        """Update episodic memory configuration flags for a session."""
+        async with self._async_session() as dbsession:
+            # Query for the existing session
+            sessions = await dbsession.execute(
+                select(self.SessionConfig).where(
+                    self.SessionConfig.session_key == session_key,
+                ),
+            )
+            session = sessions.scalars().first()
+            if session is None:
+                raise SessionNotFoundError(session_key)
+
+            # Get the current param_data and update it
+            param_data = dict(session.param_data)
+
+            if enabled is not None:
+                param_data["enabled"] = enabled
+            if long_term_memory_enabled is not None:
+                param_data["long_term_memory_enabled"] = long_term_memory_enabled
+            if short_term_memory_enabled is not None:
+                param_data["short_term_memory_enabled"] = short_term_memory_enabled
+
+            # Update the session
+            update_stmt = (
+                update(self.SessionConfig)
+                .where(self.SessionConfig.session_key == session_key)
+                .values(param_data=param_data)
+            )
+            await dbsession.execute(update_stmt)
+            await dbsession.commit()

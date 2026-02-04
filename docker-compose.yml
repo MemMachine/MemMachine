@@ -89,7 +89,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HOST: 0.0.0.0
     volumes:
-      - ./configuration.yml:/app/configuration.yml:ro,Z
+      - ./configuration.yml:/app/configuration.yml:rw,Z
       - memmachine_logs:/tmp/memory_logs
     depends_on:
       postgres:

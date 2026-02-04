@@ -123,6 +123,24 @@ class SpecDoc:
 
     SEMANTIC_METADATA_OTHER = "Additional storage metadata for the semantic feature."
 
+    FEATURE_ID = "Unique identifier for the semantic feature."
+
+    FEATURE_SET_ID = "Identifier of the semantic set to add the feature to."
+
+    FEATURE_CATEGORY_NAME = "Category name to attach the feature to."
+
+    FEATURE_TAG = "Tag name to associate with the feature."
+
+    FEATURE_NAME = "Feature name/key."
+
+    FEATURE_VALUE = "Feature value."
+
+    FEATURE_METADATA = "Optional metadata to store alongside the feature."
+
+    FEATURE_CITATIONS = "Optional episode IDs supporting this feature."
+
+    FEATURE_LOAD_CITATIONS = "Whether to load referenced episode IDs."
+
     EPISODIC_SHORT_EPISODES = "Matched short-term episodic entries."
 
     EPISODIC_SHORT_SUMMARY = "Summaries of matched short-term episodes."
@@ -445,6 +463,125 @@ class SpecDoc:
     UPDATE_SEMANTIC_MEMORY = """
     Partial update for semantic memory configuration. Only supplied
     fields are updated; omitted fields remain unchanged."""
+
+    # --- Memory Configuration Response Fields ---
+
+    LTM_CONFIG = """
+    Current long-term memory configuration."""
+
+    STM_CONFIG = """
+    Current short-term memory configuration."""
+
+    LTM_CONFIG_EMBEDDER = """
+    ID of the embedder resource used for long-term memory."""
+
+    LTM_CONFIG_RERANKER = """
+    ID of the reranker resource used for long-term memory search."""
+
+    LTM_CONFIG_VECTOR_GRAPH_STORE = """
+    ID of the vector graph store (database) for storing long-term memories."""
+
+    LTM_CONFIG_ENABLED = """
+    Whether long-term memory is enabled."""
+
+    STM_CONFIG_LLM_MODEL = """
+    ID of the language model used for short-term memory summarization."""
+
+    STM_CONFIG_MESSAGE_CAPACITY = """
+    Maximum message capacity for short-term memory, in characters."""
+
+    STM_CONFIG_ENABLED = """
+    Whether short-term memory is enabled."""
+
+    EPISODIC_MEMORY_CONFIG = """
+    Current episodic memory configuration including both long-term and short-term memory."""
+
+    SEMANTIC_MEMORY_CONFIG = """
+    Current semantic memory configuration."""
+
+    # --- Semantic Set Type Fields ---
+
+    SET_TYPE_ID = """
+    Unique identifier for the semantic set type."""
+
+    SET_TYPE_IS_ORG_LEVEL = """
+    Whether the set type is scoped at the organization level (True) or
+    project level (False). Org-level sets are shared across all projects
+    within the organization."""
+
+    SET_TYPE_METADATA_TAGS = """
+    Ordered list of metadata tag keys that define this set type. These tags
+    determine how set IDs are generated and grouped. For example,
+    ["user_id", "session_id"] means sets are grouped by user and session."""
+
+    SET_TYPE_NAME = """
+    Optional human-readable name for the set type."""
+
+    SET_TYPE_DESCRIPTION = """
+    Optional description of the set type's purpose."""
+
+    SET_TYPES_LIST = """
+    List of semantic set types."""
+
+    SET_METADATA = """
+    Optional metadata key-value pairs used to filter or identify semantic sets."""
+
+    SETS_LIST = """
+    List of semantic sets."""
+
+    SET_EMBEDDER_NAME = """
+    Optional embedder name override for this semantic set. If not specified,
+    the default embedder is used."""
+
+    SET_LLM_NAME = """
+    Optional language model name override for this semantic set. If not
+    specified, the default language model is used."""
+
+    # --- Semantic Category Fields ---
+
+    CATEGORY_ID = """
+    Unique identifier for the semantic category."""
+
+    CATEGORY_NAME = """
+    Human-readable name for the category. Categories group related features
+    together for extraction and organization."""
+
+    CATEGORY_PROMPT = """
+    The prompt template used for extracting features in this category.
+    This drives the LLM's feature extraction behavior."""
+
+    CATEGORY_DESCRIPTION = """
+    Optional human-readable description of the category's purpose."""
+
+    CATEGORY_ORIGIN_TYPE = """
+    The origin type of the category: 'set_id' for local categories or
+    'set_type' for inherited template categories."""
+
+    CATEGORY_ORIGIN_ID = """
+    The identifier of the origin (set_id or set_type_id) where the category
+    was defined."""
+
+    CATEGORY_INHERITED = """
+    Whether this category is inherited from a set type template."""
+
+    CATEGORIES_LIST = """
+    List of semantic categories."""
+
+    CATEGORY_SET_IDS = """
+    List of set IDs associated with a category."""
+
+    # --- Semantic Tag Fields ---
+
+    TAG_ID = """
+    Unique identifier for the semantic tag."""
+
+    TAG_NAME = """
+    Human-readable name for the tag. Tags represent specific types of
+    features within a category."""
+
+    TAG_DESCRIPTION = """
+    Human-readable description of what this tag represents and when
+    features should be tagged with it."""
 
 
 class Examples:
@@ -859,4 +996,337 @@ class RouterDoc:
     - `success: false, status: failed`: Still failing (check error field)
 
     Returns 404 if the reranker is not configured.
+    """
+
+    ADD_FEATURE = """
+    Add a semantic feature to a project.
+
+    Creates a new semantic feature with the specified category, tag, feature name,
+    and value. Optional metadata and episode citations can be attached.
+
+    Returns the unique identifier of the created feature.
+    """
+
+    GET_FEATURE = """
+    Get a semantic feature by ID.
+
+    Retrieves a specific semantic feature using its unique identifier.
+    Optionally includes episode citations if `load_citations` is true.
+
+    Returns 404 if the feature does not exist.
+    """
+
+    UPDATE_FEATURE = """
+    Update a semantic feature.
+
+    Updates an existing semantic feature with new values. Only the fields
+    provided in the request are updated; omitted fields retain their current
+    values.
+
+    Returns 404 if the feature does not exist.
+    """
+
+    UPDATE_LTM_CONFIG = """
+    Update long-term memory configuration.
+
+    This endpoint updates the long-term memory configuration at runtime.
+    Only the fields you supply are modified; omitted fields retain their
+    current values.
+
+    The configuration includes:
+    - embedder: The embedder resource to use for creating embeddings
+    - reranker: The reranker resource to use for search result reranking
+    - vector_graph_store: The database for storing long-term memories
+    - enabled: Whether long-term memory is enabled
+    """
+
+    UPDATE_STM_CONFIG = """
+    Update short-term memory configuration.
+
+    This endpoint updates the short-term memory configuration at runtime.
+    Only the fields you supply are modified; omitted fields retain their
+    current values.
+
+    The configuration includes:
+    - llm_model: The language model to use for summarization
+    - message_capacity: Maximum message capacity in characters
+    - enabled: Whether short-term memory is enabled
+    """
+
+    GET_EPISODIC_CONFIG = """
+    Get episodic memory configuration.
+
+    Returns the current episodic memory configuration including both
+    long-term and short-term memory settings, and the overall enabled status.
+    """
+
+    UPDATE_EPISODIC_CONFIG = """
+    Update episodic memory configuration.
+
+    This endpoint updates the episodic memory configuration at runtime,
+    including both long-term and short-term memory settings.
+    Only the fields you supply are modified; omitted fields retain their
+    current values.
+
+    The configuration includes:
+    - long_term_memory: Long-term memory settings (embedder, reranker, vector_graph_store)
+    - short_term_memory: Short-term memory settings (llm_model, message_capacity)
+    - long_term_memory_enabled: Whether long-term memory is enabled
+    - short_term_memory_enabled: Whether short-term memory is enabled
+    - enabled: Whether episodic memory is enabled overall
+    """
+
+    GET_LTM_CONFIG = """
+    Get long-term memory configuration.
+
+    Returns the current long-term memory configuration including embedder,
+    reranker, vector graph store, and enabled status.
+    """
+
+    GET_STM_CONFIG = """
+    Get short-term memory configuration.
+
+    Returns the current short-term memory configuration including LLM model,
+    message capacity, and enabled status.
+    """
+
+    GET_SEMANTIC_CONFIG = """
+    Get semantic memory configuration.
+
+    Returns the current semantic memory configuration including database,
+    LLM model, embedding model, and enabled status.
+    """
+
+    UPDATE_SEMANTIC_CONFIG = """
+    Update semantic memory configuration.
+
+    This endpoint updates the semantic memory configuration at runtime.
+    Only the fields you supply are modified; omitted fields retain their
+    current values.
+
+    The configuration includes:
+    - enabled: Whether semantic memory is enabled
+    - database: The database resource to use for storing semantic memories
+    - llm_model: The language model to use for feature extraction
+    - embedding_model: The embedder to use for semantic similarity
+    - ingestion_trigger_messages: Number of messages before triggering ingestion
+    - ingestion_trigger_age_seconds: Age threshold for triggering ingestion
+    """
+
+    # --- Semantic Set Type API Router Docs ---
+
+    CREATE_SEMANTIC_SET_TYPE = """
+    Create a new semantic set type.
+
+    A set type defines a template for grouping semantic features based on
+    metadata tags. For example, a set type with tags ["user_id"] creates
+    user-scoped feature groups.
+
+    Set types can be organization-level (shared across projects) or
+    project-level (scoped to a single project).
+
+    Returns the unique identifier of the created set type.
+    """
+
+    LIST_SEMANTIC_SET_TYPES = """
+    List all semantic set types.
+
+    Returns all set types defined for the organization. Each set type
+    includes its metadata tag configuration and scope level.
+    """
+
+    DELETE_SEMANTIC_SET_TYPE = """
+    Delete a semantic set type.
+
+    Permanently removes the specified set type. This does not delete
+    the sets or features associated with the set type.
+
+    Returns 404 if the set type does not exist.
+    """
+
+    GET_SEMANTIC_SET_ID = """
+    Get or create a semantic set ID.
+
+    Returns the set ID for the given set type configuration and optional
+    metadata. If the set does not exist, it is created.
+
+    The set ID is deterministically generated based on:
+    - Organization and project scope
+    - Set type (org-level or project-level)
+    - Metadata tags and values
+    """
+
+    LIST_SEMANTIC_SET_IDS = """
+    List all semantic sets.
+
+    Returns all sets for the organization/project context. Can be filtered
+    by metadata values.
+    """
+
+    CONFIGURE_SEMANTIC_SET = """
+    Configure a semantic set.
+
+    Updates the embedder and/or language model used for a specific set.
+    This allows customizing the models used for feature extraction and
+    embedding on a per-set basis.
+
+    If not configured, sets inherit the default embedder and language model.
+    """
+
+    # --- Semantic Category API Router Docs ---
+
+    GET_SEMANTIC_CATEGORY = """
+    Get a semantic category by ID.
+
+    Retrieves a specific category using its unique identifier.
+    Returns the category name, prompt, and description.
+
+    Returns 404 if the category does not exist.
+    """
+
+    ADD_SEMANTIC_CATEGORY = """
+    Add a semantic category to a set.
+
+    Creates a new category within a specific set. Categories define how
+    features are extracted and organized. Each category has:
+    - A name for identification
+    - A prompt that drives LLM feature extraction
+    - An optional description
+
+    Returns the unique identifier of the created category.
+    """
+
+    ADD_SEMANTIC_CATEGORY_TEMPLATE = """
+    Add a semantic category template to a set type.
+
+    Creates a category that will be inherited by all sets mapped to this
+    set type. Template categories provide default extraction behavior
+    that can be customized or disabled per-set.
+
+    Returns the unique identifier of the created category template.
+    """
+
+    LIST_SEMANTIC_CATEGORY_TEMPLATES = """
+    List semantic category templates for a set type.
+
+    Returns all categories defined on a set type. These categories
+    are inherited by sets mapped to the set type.
+    """
+
+    DISABLE_SEMANTIC_CATEGORY = """
+    Disable a semantic category for a set.
+
+    Prevents a category from being used for feature extraction on a
+    specific set. This is useful for disabling inherited categories
+    without deleting them.
+
+    The category remains available for other sets.
+    """
+
+    GET_SEMANTIC_CATEGORY_SET_IDS = """
+    Get set IDs associated with a category.
+
+    Returns all set IDs that have features in the specified category.
+    Useful for understanding the scope of a category's usage.
+    """
+
+    DELETE_SEMANTIC_CATEGORY = """
+    Delete a semantic category.
+
+    Permanently removes the category and all associated tags and features.
+    This is a destructive operation that cannot be undone.
+
+    Returns 404 if the category does not exist.
+    """
+
+    # --- Semantic Tag API Router Docs ---
+
+    ADD_SEMANTIC_TAG = """
+    Add a tag to a semantic category.
+
+    Creates a new tag within a category. Tags represent specific types
+    of features that can be extracted. Each tag has:
+    - A name for identification
+    - A description explaining what the tag represents
+
+    Returns the unique identifier of the created tag.
+    """
+
+    DELETE_SEMANTIC_TAG = """
+    Delete a semantic tag.
+
+    Permanently removes the tag from its category. Features tagged with
+    this tag may lose their tag association.
+
+    Returns 404 if the tag does not exist.
+    """
+
+    # --- Episodic Memory Configuration Endpoints ---
+
+    GET_EPISODIC_MEMORY_CONFIG = """
+    Get episodic memory configuration for a project.
+
+    Returns the current episodic memory configuration for the specified
+    project, including whether episodic memory, long-term memory, and
+    short-term memory are enabled.
+
+    Returns 404 if the project does not exist.
+    """
+
+    CONFIGURE_EPISODIC_MEMORY = """
+    Configure episodic memory for a project.
+
+    Allows enabling or disabling episodic memory components for a specific
+    project session. You can independently control:
+
+    - **enabled**: Master switch for all episodic memory. When disabled,
+      no episodic memories will be stored or retrieved.
+    - **long_term_memory_enabled**: Controls long-term memory storage.
+      Long-term memory provides persistent storage with summarization
+      and vector search capabilities.
+    - **short_term_memory_enabled**: Controls short-term memory storage.
+      Short-term memory maintains recent context for the current session.
+
+    Only provided (non-null) values are updated. Fields not specified
+    in the request retain their current values.
+
+    Returns 404 if the project does not exist.
+    """
+
+    GET_SHORT_TERM_MEMORY_CONFIG = """
+    Get short-term memory configuration for a project.
+
+    Returns whether short-term episodic memory is enabled for the specified
+    project.
+
+    Returns 404 if the project does not exist.
+    """
+
+    CONFIGURE_SHORT_TERM_MEMORY = """
+    Configure short-term memory for a project.
+
+    Allows enabling or disabling short-term episodic memory for a specific
+    project session. Short-term memory maintains recent context for the
+    current session.
+
+    Returns 404 if the project does not exist.
+    """
+
+    GET_LONG_TERM_MEMORY_CONFIG = """
+    Get long-term memory configuration for a project.
+
+    Returns whether long-term episodic memory is enabled for the specified
+    project.
+
+    Returns 404 if the project does not exist.
+    """
+
+    CONFIGURE_LONG_TERM_MEMORY = """
+    Configure long-term memory for a project.
+
+    Allows enabling or disabling long-term episodic memory for a specific
+    project session. Long-term memory provides persistent storage with
+    summarization and vector search capabilities.
+
+    Returns 404 if the project does not exist.
     """

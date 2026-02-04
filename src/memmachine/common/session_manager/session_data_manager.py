@@ -82,3 +82,27 @@ class SessionDataManager(ABC):
     async def get_short_term_memory(self, session_key: str) -> tuple[str, int, int]:
         """Retrieve short-term memory data for a session."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def update_session_episodic_config(
+        self,
+        session_key: str,
+        enabled: bool | None = None,
+        long_term_memory_enabled: bool | None = None,
+        short_term_memory_enabled: bool | None = None,
+    ) -> None:
+        """
+        Update episodic memory configuration flags for a session.
+
+        Only provided (non-None) values are updated.
+
+        Args:
+            session_key: The session key to update.
+            enabled: Whether episodic memory is enabled overall.
+            long_term_memory_enabled: Whether long-term memory is enabled.
+            short_term_memory_enabled: Whether short-term memory is enabled.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+        """
+        raise NotImplementedError

@@ -389,6 +389,37 @@ class MemMachine:
             filters=cast(dict[str, object] | None, to_property_filter(search_filter))
         )
 
+    async def update_session_episodic_config(
+        self,
+        session_key: str,
+        enabled: bool | None = None,
+        long_term_memory_enabled: bool | None = None,
+        short_term_memory_enabled: bool | None = None,
+    ) -> None:
+        """
+        Update episodic memory configuration flags for a session.
+
+        This allows enabling/disabling episodic memory, long-term memory,
+        and short-term memory independently for a specific session.
+
+        Args:
+            session_key: The session key to update.
+            enabled: Whether episodic memory is enabled overall.
+            long_term_memory_enabled: Whether long-term memory is enabled.
+            short_term_memory_enabled: Whether short-term memory is enabled.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+
+        """
+        session_data_manager = await self._resources.get_session_data_manager()
+        await session_data_manager.update_session_episodic_config(
+            session_key=session_key,
+            enabled=enabled,
+            long_term_memory_enabled=long_term_memory_enabled,
+            short_term_memory_enabled=short_term_memory_enabled,
+        )
+
     @staticmethod
     def _merge_filter_exprs(
         left: FilterExpr | None,
