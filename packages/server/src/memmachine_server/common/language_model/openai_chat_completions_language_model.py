@@ -171,7 +171,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             response.choices[0].message.parsed
         )
 
-    async def generate_response(  # noqa: C901
+    async def generate_response(
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
@@ -179,6 +179,39 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
+        output, function_calls_arguments, _, _ = await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+        return output, function_calls_arguments
+
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, Any, int, int]:
+        return await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+
+    async def _generate_response(  # noqa: C901
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, list[dict[str, Any]], int, int]:
         """Generate a chat completion response (and optional tool call)."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
@@ -193,6 +226,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         generate_response_call_uuid = uuid4()
 
         start_time = time.monotonic()
+        response: ChatCompletion | None = None
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
             try:
@@ -247,6 +281,9 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                 logger.exception(error_message)
                 raise ExternalServiceAPIError(error_message) from e
 
+        if response is None:
+            raise RuntimeError("OpenAI response was not generated")
+
         end_time = time.monotonic()
 
         self._collect_metrics(
@@ -255,7 +292,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             end_time,
         )
 
-        function_calls_arguments = []
+        function_calls_arguments: list[dict[str, Any]] = []
         try:
             if response.choices[0].message.tool_calls:
                 for tool_call in response.choices[0].message.tool_calls:
@@ -287,6 +324,8 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         return (
             response.choices[0].message.content or "",
             function_calls_arguments,
+            response.usage.prompt_tokens if response.usage else 0,
+            response.usage.completion_tokens if response.usage else 0,
         )
 
     def _collect_metrics(

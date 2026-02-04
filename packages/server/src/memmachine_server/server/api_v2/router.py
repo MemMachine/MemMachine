@@ -369,6 +369,8 @@ async def get_feature(
             feature_id=spec.feature_id,
             load_citations=spec.load_citations,
         )
+    except ResourceNotFoundError as e:
+        raise RestError(code=404, message=str(e), ex=e) from e
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except Exception as e:

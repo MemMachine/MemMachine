@@ -19,7 +19,13 @@ dev = [
 ]
 
 [tool.ruff]
-exclude = ["tools"]
+exclude = [
+    "tools",
+    "build",
+    ".tmp",
+    "evaluation/retrieval_skill",
+    "src/memmachine-ts",
+]
 
 [tool.ruff.lint]
 select = [
@@ -87,6 +93,7 @@ convention = "google"
     "ASYNC210",
     "C901",
     "D",
+    "FA",
     "PERF203",
     "PTH",
     "T201",
@@ -98,6 +105,7 @@ convention = "google"
     "T201",
     "D",
     "ARG",
+    "FA",
     "PERF203",
 ]
 "evaluation/**/*.py" = [
@@ -105,6 +113,7 @@ convention = "google"
     "ARG",
     "T201",
     "ANN",
+    "FA",
     "PTH123",
     "PTH120",
     "PTH110",
@@ -115,6 +124,7 @@ convention = "google"
     "B023",
     "B007",
     "TRY300",
+    "PERF203",
     "PERF401",
 ]
 
@@ -126,6 +136,13 @@ addopts = ["-m", "not integration"]
 markers = [
     "integration: mark the test as an integration test",
     "slow: mark the test as slow"
+]
+
+[tool.ty.environment]
+extra-paths = [
+    "packages/common/src",
+    "packages/server/src",
+    "packages/client/src",
 ]
 
 [tool.complexipy]

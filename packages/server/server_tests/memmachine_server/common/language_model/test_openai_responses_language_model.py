@@ -224,7 +224,7 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
         user_prompt="User prompt",
     )
 
-    assert content is None
+    assert content == ""
     assert tool_calls == [
         {
             "call_id": "call_123",

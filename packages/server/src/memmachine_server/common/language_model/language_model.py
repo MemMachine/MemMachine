@@ -94,3 +94,49 @@ class LanguageModel(ABC):
 
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, Any, int, int]:
+        """
+        Generate a response based on the provided prompts and tools.
+
+        Args:
+            system_prompt (str | None):
+                The system prompt to guide the model's behavior
+                (default: None).
+            user_prompt (str | None):
+                The user prompt containing the main input
+                (default: None).
+            tools (list[dict[str, Any]] | None):
+                A list of tools that the model can use in its response, if supported
+                (default: None).
+            tool_choice (str | dict[str, str] | None):
+                Strategy for selecting tools, if supported.
+                Can be "auto" for automatic selection,
+                "required" for using at least one tool,
+                or a specific tool.
+                If None, implementation-defined default is used
+                (default: None).
+            max_attempts (int):
+                The maximum number of attempts to make before giving up
+                (default: 1).
+
+        Returns:
+            tuple[str, Any, int, int]:
+                A tuple containing the generated response text, tool call outputs (if any),
+                LLM input token, and LLM output token.
+
+        Raises:
+            ExternalServiceAPIError:
+                Errors from the underlying embedding API.
+            ValueError:
+                Invalid input or max_attempts.
+
+        """

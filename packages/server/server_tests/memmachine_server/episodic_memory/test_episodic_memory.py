@@ -221,6 +221,53 @@ async def test_query_memory_all_enabled(
 
 
 @pytest.mark.asyncio
+async def test_query_memory_short_term_only_mode_skips_long_term(
+    episodic_memory,
+    mock_short_term_memory,
+    mock_long_term_memory,
+):
+    ep1 = create_test_episode(uid=str(uuid4()), content="short-only")
+    ep1_rsp = EpisodeResponse(**ep1.model_dump())
+    mock_short_term_memory.get_short_term_memory_context.return_value = (
+        [ep1_rsp],
+        "summary",
+    )
+
+    response = await episodic_memory.query_memory(
+        "test query",
+        mode=EpisodicMemory.QueryMode.SHORT_TERM_ONLY,
+    )
+
+    assert response is not None
+    assert response.short_term_memory.episodes == [ep1_rsp]
+    assert response.long_term_memory.episodes == []
+    mock_short_term_memory.get_short_term_memory_context.assert_awaited_once()
+    mock_long_term_memory.search_scored.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_query_memory_long_term_only_mode_skips_short_term(
+    episodic_memory,
+    mock_short_term_memory,
+    mock_long_term_memory,
+):
+    ep1 = create_test_episode(uid=str(uuid4()), content="long-only")
+    ep1_rsp = EpisodeResponse(score=0.5, **ep1.model_dump())
+    mock_long_term_memory.search_scored.return_value = [(0.5, ep1)]
+
+    response = await episodic_memory.query_memory(
+        "test query",
+        mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
+    )
+
+    assert response is not None
+    assert response.short_term_memory.episodes == []
+    assert response.long_term_memory.episodes == [ep1_rsp]
+    mock_short_term_memory.get_short_term_memory_context.assert_not_awaited()
+    mock_long_term_memory.search_scored.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_query_memory_short_term_only(
     episodic_memory_params,
     mock_short_term_memory,

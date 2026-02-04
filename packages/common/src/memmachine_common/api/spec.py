@@ -473,7 +473,7 @@ class MemoryMessage(BaseModel):
             return v if v.tzinfo else v.replace(tzinfo=UTC)
 
         # Unix timestamp (seconds or milliseconds)
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             # Heuristic: > 10^12 is probably milliseconds
             if v > 1_000_000_000_000:
                 v = v / 1000
@@ -590,6 +590,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             default_factory=list,
             description=SpecDoc.MEMORY_TYPES,
             examples=Examples.MEMORY_TYPES,
+        ),
+    ]
+    agent_mode: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=SpecDoc.AGENT_MODE,
+            examples=Examples.AGENT_MODE,
         ),
     ]
 

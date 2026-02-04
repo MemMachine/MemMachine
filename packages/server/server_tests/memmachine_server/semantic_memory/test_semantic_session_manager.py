@@ -364,7 +364,9 @@ async def test_search_passes_set_ids_and_filters(
     )
 
     mock_semantic_service.search.assert_awaited_once()
-    kwargs = mock_semantic_service.search.await_args.kwargs
+    await_args = mock_semantic_service.search.await_args
+    assert await_args is not None
+    kwargs = await_args.kwargs
 
     set_type_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,
@@ -492,7 +494,9 @@ async def test_get_set_features_wraps_opts(
     )
 
     mock_semantic_service.get_set_features.assert_awaited_once()
-    kwargs = mock_semantic_service.get_set_features.await_args.kwargs
+    await_args = mock_semantic_service.get_set_features.await_args
+    assert await_args is not None
+    kwargs = await_args.kwargs
     assert kwargs["page_size"] == 7
     assert kwargs["with_citations"] is True
     assert result == ["features"]

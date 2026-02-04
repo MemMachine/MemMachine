@@ -86,6 +86,7 @@
               "open_source/configuration",
               "open_source/memory_types",
               "open_source/databases",
+              "open_source/retrieval_agent_architecture",
               "open_source/community"
             ]
           }
