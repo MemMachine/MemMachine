@@ -24,6 +24,7 @@ class MigrationHack:
         base_url: str = "http://localhost:8080",
         org_id: str = "",
         project_id: str = "",
+        memory_types: str = "episodic",
         input: str = "data/conversations-chatgpt-sample.json",
         source: str = "openai",
         filters: dict | None = None,
@@ -78,6 +79,7 @@ class MigrationHack:
             )
         self.org_id = org_id
         self.project_id = project_id
+        self.memory_types = [mt.strip().lower() for mt in memory_types.split(",")]
         # Extract the base filename from the chat history file path
         self.input_file_base_name = os.path.splitext(
             os.path.basename(self.input_file),
@@ -386,6 +388,7 @@ class MigrationHack:
                 self.rest_client.add_memory(
                     org_id=self.org_id if self.org_id else "",
                     project_id=self.project_id if self.project_id else "",
+                    memory_types=self.memory_types if self.memory_types else [],
                     messages=batch,
                 )
                 # Log the success request into run-specific success file
@@ -620,6 +623,12 @@ Examples:
         default="",
         help="Project ID in MemMachine (optional, leave empty to use default)",
     )
+    memmachine_group.add_argument(
+        "--memory-types",
+        type=str,
+        default="episodic",
+        help="Memory types to use (default: %(default)s). Can be 'episodic', 'semantic', or 'episodic,semantic'",
+    )
 
     # Filtering arguments
     filter_group = parser.add_argument_group("Filtering Options")
@@ -741,6 +750,7 @@ if __name__ == "__main__":
         base_url=args.base_url,
         org_id=args.org_id,
         project_id=args.project_id,
+        memory_types=args.memory_types,
         input=args.input,
         source=args.source,
         filters=filters or None,

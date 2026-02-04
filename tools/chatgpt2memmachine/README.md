@@ -36,6 +36,7 @@ python migration.py -i locomo_history.json --org-id my-org --project-id my-proje
 - `--base-url URL`: Base URL of the MemMachine API (default: `http://localhost:8080`)
 - `--org-id ID`: Organization ID in MemMachine (optional, leave empty for default)
 - `--project-id ID`: Project ID in MemMachine (optional, leave empty for default)
+- `--memory-types TYPES`: Memory types to use (default: `episodic`). Can be `episodic`, `semantic`, or comma-separated values like `episodic,semantic`
 
 ### Filtering Options
 
@@ -98,6 +99,19 @@ python migration.py -i chat.json --org-id my-org --project-id my-project \
 # Resume migration, skipping already successful messages
 python migration.py -i chat.json --org-id my-org --project-id my-project \
   --run-id 20260202T235246858124 --resume
+```
+
+### Memory Types
+
+```bash
+# Use only episodic memory (default)
+python migration.py -i chat.json --org-id my-org --project-id my-project --memory-types episodic
+
+# Use only semantic memory
+python migration.py -i chat.json --org-id my-org --project-id my-project --memory-types semantic
+
+# Use both episodic and semantic memory
+python migration.py -i chat.json --org-id my-org --project-id my-project --memory-types episodic,semantic
 ```
 
 ### Performance Optimization

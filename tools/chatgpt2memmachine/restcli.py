@@ -112,7 +112,9 @@ class MemMachineRestClient:
     }'
     """
 
-    def add_memory(self, org_id="", project_id="", messages=None) -> dict:
+    def add_memory(
+        self, org_id="", project_id="", messages=None, memory_types=None
+    ) -> dict:
         add_memory_endpoint = self._get_url("memories")
         payload = {
             "messages": messages,
@@ -121,7 +123,8 @@ class MemMachineRestClient:
             payload["org_id"] = org_id
         if project_id:
             payload["project_id"] = project_id
-
+        if memory_types:
+            payload["types"] = memory_types
         start_time = time.time()
         response = requests.post(add_memory_endpoint, json=payload, timeout=300)
         end_time = time.time()
