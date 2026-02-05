@@ -49,7 +49,7 @@ gpu = [
     "sentence-transformers>=5.1.0",
 ]
 nebula = [
-    "nebula5-python>=5.0.0",
+    "nebula5-python>=5.2.0",
 ]
 
 [project.scripts]

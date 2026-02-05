@@ -204,30 +204,25 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         sanitized_collection = self._sanitize_name(collection)
 
         # Insert nodes
-        # TODO: The following loops can be simplified
-        # TODO: Seems _metric is not used.
         for node in nodes_list:
-            # Build property assignments
-            props = {"uid": node.uid}
-
-            for prop_name, prop_value in node.properties.items():
-                mangled = mangle_property_name(prop_name)
-                props[mangled] = prop_value
-
-            for emb_name, (emb_vec, _metric) in node.embeddings.items():
-                mangled = mangle_embedding_name(emb_name)
-                props[mangled] = self._vector_to_gql_literal(emb_vec)
-
             # Build INSERT statement with embedded values (no parameterization)
             prop_assignments = []
-            for key, value in props.items():
-                if key.startswith("embedding_"):
-                    # Embeddings are already formatted as VECTOR literals
-                    prop_assignments.append(f"{key}: {value}")
-                else:
-                    # Format value directly into query
-                    formatted_value = self._format_value(value)
-                    prop_assignments.append(f"{key}: {formatted_value}")
+
+            # Add uid
+            uid_formatted = self._format_value(node.uid)
+            prop_assignments.append(f"uid: {uid_formatted}")
+
+            # Add properties
+            for prop_name, prop_value in node.properties.items():
+                mangled = mangle_property_name(prop_name)
+                formatted_value = self._format_value(prop_value)
+                prop_assignments.append(f"{mangled}: {formatted_value}")
+
+            # Add embeddings (metric is tracked in all_embeddings for index creation)
+            for emb_name, (emb_vec, _) in node.embeddings.items():
+                mangled = mangle_embedding_name(emb_name)
+                vec_literal = self._vector_to_gql_literal(emb_vec)
+                prop_assignments.append(f"{mangled}: {vec_literal}")
 
             insert_stmt = f"""
             INSERT (n@{sanitized_collection} {{
@@ -261,19 +256,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
 
-        if (
-            self._range_index_threshold
-            and new_count >= self._range_index_threshold
-            and current_count < self._range_index_threshold
-        ):
-            # Create range indexes for commonly filtered properties
-            # For now, just create index on uid
-            # TODO: uid is pk. Nebula does not require index on pk.
-            task = asyncio.create_task(
-                self._create_range_index_if_not_exists(collection, ["uid"])
-            )
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+        # Note: We don't create a range index on 'uid' because it's declared as PRIMARY KEY
+        # in the node type schema, and NebulaGraph Enterprise automatically creates
+        # a primary key index on all properties that form the primary key.
+        # See: nebula-ent-docs CREATE GRAPH TYPE statement documentation.
+        #
+        # Range indexes for other commonly filtered properties can be added here
+        # when needed based on query patterns.
 
     async def add_edges(
         self,
@@ -901,12 +890,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         return nodes
 
-    def _nebula_result_to_node(self, collection: str, node_data: dict) -> Node:
+    def _nebula_result_to_node(self, _collection: str, node_data: dict) -> Node:
         """
         Convert NebulaGraph result to Node object.
 
         Args:
-            collection: Collection name
+            _collection: Collection name (unused, kept for API consistency)
             node_data: Node data from query result (properties dict)
 
         Returns:
