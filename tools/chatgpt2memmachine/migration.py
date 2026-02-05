@@ -5,6 +5,8 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 
+from memmachine import MemMachineClient
+from memmachine.common.api.config_spec import UpdateEpisodicMemorySpec
 from parsers import get_parser
 from restcli import MemMachineRestClient
 from tqdm import tqdm
@@ -34,6 +36,7 @@ class MigrationHack:
         run_id: str | None = None,
         retry_failed: bool = False,
         resume: bool = False,
+        disable_stm_summary: bool = False,
     ):
         self.base_url = base_url
         self.verbose = verbose
@@ -109,6 +112,7 @@ class MigrationHack:
         if self.resume:
             self.stats["resume"] = True
             self.stats["resume_run_id"] = run_id
+        self.disable_stm_summary = disable_stm_summary
 
     def _load_previous_run_ids(self):
         """Load message IDs from success and error files of a previous run.
@@ -136,6 +140,54 @@ class MigrationHack:
                 )
             if len(self.error_message_ids) == 0:
                 print(f"WARNING: No failed message IDs found in {errors_file}")
+
+    def _extract_single_conversation(self, conv_id: int, all_data: list) -> tuple[int, list, int]:
+        """Extract and save a single conversation from the full dataset.
+        
+        Args:
+            conv_id: Conversation ID (1-indexed)
+            all_data: Full dataset loaded from JSON
+            
+        Returns:
+            Tuple of (conv_id, messages, message_count)
+        """
+        extracted_file_name = (
+            f"{self.input_file_base_name}_{conv_id}_extracted.json"
+        )
+        extracted_file = os.path.join(self.extract_dir, extracted_file_name)
+        
+        if os.path.exists(extracted_file):
+            # Load from existing extracted file
+            with open(extracted_file, "r") as f:
+                messages = json.load(f)
+            filtered = self._filter_messages(messages, self.filters)
+        else:
+            # Extract from full dataset (directly from all_data, no file I/O)
+            # Get the conversation at index conv_id (1-indexed)
+            if conv_id <= len(all_data):
+                chat = all_data[conv_id - 1]  # Convert to 0-indexed
+                
+                # Extract messages from this chat using parser's logic
+                chat_title_actual = chat.get("title", "")
+                messages = self.parser._extract_chat_messages(chat, chat_title_actual)
+                messages.sort(key=lambda x: x.get("timestamp", 0))
+                
+                # Dump extracted messages for this conversation
+                self.parser.dump_data(
+                    messages, output_format="json", outfile=extracted_file
+                )
+                filtered = messages
+            else:
+                filtered = []
+        
+        # Count messages
+        msg_count = 0
+        if isinstance(filtered, list):
+            msg_count = len(filtered)
+        elif isinstance(filtered, str):
+            msg_count = 1
+            
+        return conv_id, filtered, msg_count
 
     def load_and_extract(self):
         if self.input_file is None:
@@ -186,35 +238,57 @@ class MigrationHack:
                     f"Resume mode: Loading all conversations, will skip messages from success file"
                 )
 
-        for conv_id in conv_ids_to_process:
-            extracted_file_name = (
-                f"{self.input_file_base_name}_{conv_id}_extracted.json"
-            )
-            extracted_file = os.path.join(self.extract_dir, extracted_file_name)
-            if os.path.exists(extracted_file):
-                # load from file directly and filter
-                with open(extracted_file, "r") as f:
-                    messages = json.load(f)
-                # load from file directly and filter
-                filtered = self._filter_messages(messages, self.filters)
-                self.conversations[conv_id] = filtered
-            else:
-                # Build filters for this conversation (merge global filters with conv index)
-                filters = {**(self.filters or {}), "index": conv_id}
-                # load messages from source, filters are applied at this level
-                messages = self.parser.load(self.input_file, filters=filters)
-                self.conversations[conv_id] = messages
-                # Dump extracted messages for this conversation
-                self.parser.dump_data(
-                    messages, output_format="json", outfile=extracted_file
+        # Load full dataset once (only if we need to extract new conversations)
+        needs_extraction = any(
+            not os.path.exists(
+                os.path.join(
+                    self.extract_dir,
+                    f"{self.input_file_base_name}_{conv_id}_extracted.json"
                 )
-
-            # Count messages for this conversation
-            messages = self.conversations[conv_id]
-            if isinstance(messages, list):
-                self.total_messages += len(messages)
-            elif isinstance(messages, str):
-                self.total_messages += 1
+            )
+            for conv_id in conv_ids_to_process
+        )
+        
+        all_data = None
+        if needs_extraction:
+            if self.verbose:
+                print("Loading full dataset for extraction...")
+            all_data = self.parser.load_json(self.input_file)
+            if self.verbose:
+                print(f"Loaded {len(all_data)} conversations from file")
+        
+        # Parallel extraction using ThreadPoolExecutor
+        workers = min(self.max_workers, len(conv_ids_to_process))
+        
+        if self.verbose:
+            print(f"Extracting conversations with {workers} worker(s)...")
+        
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(self._extract_single_conversation, conv_id, all_data): conv_id
+                for conv_id in conv_ids_to_process
+            }
+            
+            # Use progress bar if not verbose
+            if not self.verbose:
+                pbar = tqdm(
+                    total=len(conv_ids_to_process),
+                    desc="Extracting conversations",
+                    unit="conv"
+                )
+            
+            for future in as_completed(futures):
+                conv_id, messages, msg_count = future.result()
+                self.conversations[conv_id] = messages
+                self.total_messages += msg_count
+                
+                if not self.verbose:
+                    pbar.update(1)
+                elif self.verbose:
+                    print(f"Extracted conversation {conv_id} ({msg_count} messages)")
+            
+            if not self.verbose:
+                pbar.close()
 
         # Update stats with total messages count
         self.stats["total_messages"] = self.total_messages
@@ -527,6 +601,7 @@ class MigrationHack:
 
         print("Migration complete")
         print(f"Run ID: {self.run_id}")
+        print(f"Duration: {self.stats['duration_seconds']:.2f} seconds")
         print(
             f"Statistics saved to: {os.path.join(self.output_dir, f'migration_stats_{self.run_id}.json')}"
         )
@@ -548,6 +623,15 @@ class MigrationHack:
 
     def migrate(self):
         """Load conversations and add them to MemMachine"""
+        # Disable short-term memory summarization if requested
+        if self.disable_stm_summary:
+            print("Disabling short-term memory summarization...")
+            sdk_client = MemMachineClient(base_url=self.base_url)
+            sdk_client.config().update_memory_config(
+                episodic_memory=UpdateEpisodicMemorySpec(short_term_memory_enabled=False)
+            )
+            print("Short-term memory summarization disabled.")
+
         self.load_and_extract()
         self.add_memories()
 
@@ -694,6 +778,19 @@ Examples:
         action="store_true",
         help="Skip messages that succeeded in a previous run. Requires --run-id to specify the previous run.",
     )
+    mode_group.add_argument(
+        "--disable-stm-summary",
+        action="store_true",
+        dest="disable_stm_summary",
+        default=True,
+        help="Disable short-term memory summarization during import to reduce LLM costs (default: enabled).",
+    )
+    mode_group.add_argument(
+        "--enable-stm-summary",
+        action="store_false",
+        dest="disable_stm_summary",
+        help="Keep short-term memory summarization enabled during import.",
+    )
 
     args = parser.parse_args()
 
@@ -760,6 +857,7 @@ if __name__ == "__main__":
         run_id=args.run_id,
         retry_failed=args.retry_failed,
         resume=args.resume,
+        disable_stm_summary=args.disable_stm_summary,
     )
 
     # Currently we always migrate full conversations without summarization

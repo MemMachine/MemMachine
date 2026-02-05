@@ -57,6 +57,7 @@ resources:
     openai_embedder:
       provider: openai
       config:
+        max_input_length: 2048
         model: "text-embedding-3-small"
         api_key: <YOUR_API_KEY>
         base_url: "https://api.openai.com/v1"
@@ -64,6 +65,7 @@ resources:
     aws_embedder_id:
       provider: 'amazon-bedrock'
       config:
+        max_input_length: 2048
         region: "us-west-2"
         aws_access_key_id: <AWS_ACCESS_KEY_ID>
         aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
@@ -72,6 +74,7 @@ resources:
     ollama_embedder:
       provider: openai
       config:
+        max_input_length: 2048
         model: "nomic-embed-text"
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
@@ -79,6 +82,7 @@ resources:
     openai_compatible_embedder:
       provider: openai
       config:
+        max_input_length: 2048
         model: "text-embedding-v4"
         api_key: <YOUR_API_KEY>
         base_url: "https://api.openai.com/v1"
