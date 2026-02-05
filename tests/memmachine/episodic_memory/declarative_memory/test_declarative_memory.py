@@ -133,6 +133,7 @@ def nebula_connection_info():
         "username": nebula_user,
         "password": nebula_password,
         "schema_name": "/test_declarative_schema",
+        "graph_type_name": "memmachine_type",
         "graph_name": "test_declarative_graph",
     }
 
@@ -161,9 +162,11 @@ async def nebula_client(nebula_connection_info):
         await client.execute(
             f"SESSION SET SCHEMA {nebula_connection_info['schema_name']}"
         )
-        await client.execute("CREATE GRAPH TYPE IF NOT EXISTS memmachine_type AS {}")
         await client.execute(
-            f"CREATE GRAPH IF NOT EXISTS {nebula_connection_info['graph_name']} TYPED memmachine_type"
+            f"CREATE GRAPH TYPE IF NOT EXISTS {nebula_connection_info['graph_type_name']} AS {{}}"
+        )
+        await client.execute(
+            f"CREATE GRAPH IF NOT EXISTS {nebula_connection_info['graph_name']} TYPED {nebula_connection_info['graph_type_name']}"
         )
         await client.execute(
             f"SESSION SET GRAPH {nebula_connection_info['graph_name']}"
@@ -178,7 +181,9 @@ async def nebula_client(nebula_connection_info):
         await client.execute(
             f"DROP GRAPH IF EXISTS {nebula_connection_info['graph_name']}"
         )
-        await client.execute("DROP GRAPH TYPE IF EXISTS memmachine_type")
+        await client.execute(
+            f"DROP GRAPH TYPE IF EXISTS {nebula_connection_info['graph_type_name']}"
+        )
         await client.execute(
             f"DROP SCHEMA IF EXISTS {nebula_connection_info['schema_name']}"
         )
@@ -201,6 +206,7 @@ def nebula_vector_graph_store(nebula_client, nebula_connection_info):
         NebulaGraphVectorGraphStoreParams(
             client=nebula_client,
             schema_name=nebula_connection_info["schema_name"],
+            graph_type_name=nebula_connection_info["graph_type_name"],
             graph_name=nebula_connection_info["graph_name"],
             force_exact_similarity_search=True,
         )

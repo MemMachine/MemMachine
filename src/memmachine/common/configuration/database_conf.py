@@ -94,6 +94,14 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
             "A schema is a logical container for graph types and graphs."
         ),
     )
+    graph_type_name: str = Field(
+        default="memmachine_type",
+        description=(
+            "Graph type name. This defines the schema (node types, edge types, "
+            "and their properties). Multiple graphs can share the same graph type. "
+            "Will be created if it doesn't exist."
+        ),
+    )
     graph_name: str = Field(
         default="memmachine",
         description=(
