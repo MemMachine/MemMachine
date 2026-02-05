@@ -60,7 +60,10 @@ Either way, after one of the commands finished, you are able to open your n8n in
 
     ![Community Nodes Page](./assets/community_nodes_page.png)
 
-    3. Enter the package name: `@memmachine/n8n-nodes-memmachine`.
+    3. Enter the package name: 
+    ```
+    @memmachine/n8n-nodes-memmachine
+    ```
     4. Acknowledge the risk and click **Install**.
 
     ![Install Community Nodes](./assets/install_community_nodes.png)
@@ -77,7 +80,10 @@ The Manager node is used for manual memory operations at any point in your workf
 
 ### Connect MemMachine
 
-To use the node you'll need to configure a connection. In case you are running MemMachine on the same machine as a docker container use `http://host.docker.internal/v2/api` as endpoint.
+To use the node you'll need to configure a connection. In case you are running MemMachine on the same machine as a docker container use  this endpoint:
+```
+http://host.docker.internal:8080/v2/api
+```
 
 ![MemMachine connection](./assets/connect_memmachine.png)
 
