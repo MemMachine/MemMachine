@@ -15,7 +15,10 @@ from memmachine.common.configuration.reranker_conf import (
 from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.embedder import Embedder
 from memmachine.common.errors import InvalidRerankerError
-from memmachine.common.resource_manager.reranker_manager import RerankerManager
+from memmachine.common.resource_manager.reranker_manager import (
+    EmbedderFactory,
+    RerankerManager,
+)
 from tests.memmachine.conftest import requires_sentence_transformers
 
 
