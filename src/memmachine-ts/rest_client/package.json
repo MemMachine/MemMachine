@@ -1,11 +1,11 @@
 {
   "name": "@memmachine/client",
-  "version": "0.0.1",
+  "version": "0.2.5",
   "description": "TypeScript client for MemMachine RESTful APIs",
   "homepage": "https://memmachine.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/MemMachine/MemMachine"
+    "url": "git+https://github.com/MemMachine/MemMachine.git"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

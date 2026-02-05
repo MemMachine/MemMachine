@@ -8,12 +8,15 @@ from memmachine.common.api.version import get_version
 
 def test_get_version():
     # Matches:
+    # 0.1
     # 0.2.2
+    # 0.1.dev93
     # 0.2.2.dev93
+    # 0.1.dev93+g2b5fd8250.d20260203
     # 0.2.2.dev93+g2b5fd8250
     pattern = re.compile(
         r"""
-        ^\d+\.\d+\.\d+                  # major.minor.patch
+        ^\d+\.\d+(?:\.\d+)?             # major.minor or major.minor.patch
         (?:                             # optional dev release
             \.dev\d+                    # .devN
             (?:\+[a-z0-9]+(?:\.[a-z0-9]+)*)?  # +local(.local)*

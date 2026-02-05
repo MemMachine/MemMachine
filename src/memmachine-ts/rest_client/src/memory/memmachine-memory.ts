@@ -35,7 +35,7 @@ import type {
  *   const memory = project.memory()
  *
  *   // Add a memory
- *   await memory.add('This is a simple memory', { episode_type: 'note' })
+ *   await memory.add('This is a simple memory', { episode_type: 'message' })
  *
  *   // Search memories
  *   const result = await memory.search('Show a simple memory', { top_k: 5 })
@@ -196,13 +196,21 @@ export class MemMachineMemory {
       throw new MemMachineAPIError('Search query must be a non-empty string')
     }
 
-    const { top_k = 10, filter = '', types = ['episodic', 'semantic'] } = options ?? {}
+    const {
+      top_k = 10,
+      filter = '',
+      expand_context = 0,
+      score_threshold,
+      types = ['episodic', 'semantic']
+    } = options ?? {}
 
     const payload = {
       ...this.projectContext,
       query,
       top_k,
       filter,
+      expand_context,
+      ...(score_threshold != null ? { score_threshold } : {}),
       types
     }
 

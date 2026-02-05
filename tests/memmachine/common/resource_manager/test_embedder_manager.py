@@ -9,6 +9,7 @@ from memmachine.common.configuration.embedder_conf import (
 )
 from memmachine.common.embedder import Embedder
 from memmachine.common.resource_manager.embedder_manager import EmbedderManager
+from tests.memmachine.conftest import requires_sentence_transformers
 
 
 @pytest.fixture
@@ -57,6 +58,7 @@ async def test_build_openai_embedders(mock_conf):
     assert isinstance(embedder, Embedder)
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_build_sentence_transformer_embedders(mock_conf):
     builder = EmbedderManager(mock_conf)
@@ -67,6 +69,7 @@ async def test_build_sentence_transformer_embedders(mock_conf):
     assert isinstance(embedder, Embedder)
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_build_all(mock_conf):
     builder = EmbedderManager(mock_conf)

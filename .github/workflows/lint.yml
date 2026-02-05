@@ -21,10 +21,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/ruff-action@v3.5.1
-      - uses: astral-sh/ruff-action@v3.5.1
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version-file: "pyproject.toml"
+      - uses: astral-sh/ruff-action@v3
         with:
           args: "format --check --diff"
+          version-file: "pyproject.toml"
 
   ty-static-check:
     name: ty static check

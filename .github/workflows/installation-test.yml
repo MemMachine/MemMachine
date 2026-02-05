@@ -262,7 +262,7 @@ jobs:
         shell: bash
         run: |
           uv pip install pytest
-          uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v --integration -m integration
+          uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v -m integration
 
       - name: Stop memmachine-server
         if: always()

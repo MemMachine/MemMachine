@@ -1,5 +1,8 @@
 # conftest.py
 import os
+import shutil
+import subprocess
+from importlib.util import find_spec
 from unittest.mock import create_autospec
 
 import pytest
@@ -51,22 +54,31 @@ from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import 
 )
 
 
-def pytest_addoption(parser):
-    parser.addoption(
-        "--integration",
-        action="store_true",
-        default=False,
-        help="Run integration tests",
-    )
+def is_docker_available() -> bool:
+    """Check if Docker daemon is running and accessible."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    else:
+        return result.returncode == 0
 
 
-def pytest_collection_modifyitems(config, items):
-    skip_integration = pytest.mark.skip(reason="need --integration option to run")
+requires_sentence_transformers = pytest.mark.skipif(
+    find_spec("sentence_transformers") is None,
+    reason="sentence_transformers not installed",
+)
 
-    if not config.getoption("--integration"):
-        for item in items:
-            if "integration" in item.keywords:
-                item.add_marker(skip_integration)
+requires_docker = pytest.mark.skipif(
+    not is_docker_available(),
+    reason="Docker is not available",
+)
 
 
 @pytest.fixture
@@ -260,10 +272,9 @@ def real_llm_model(request):
 
 
 @pytest.fixture(scope="session")
-def pg_container(pytestconfig):
-    if not pytestconfig.getoption("--integration"):
-        pytest.skip("need --integration option to start Postgres container")
-
+def pg_container():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
     with PostgresContainer("pgvector/pgvector:pg16") as container:
         yield container
 
@@ -343,9 +354,9 @@ async def in_memory_semantic_storage():
 
 
 @pytest.fixture(scope="session")
-def neo4j_container(pytestconfig):
-    if not pytestconfig.getoption("--integration"):
-        pytest.skip("need --integration option to start Neo4j container")
+def neo4j_container():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
 
     class _Neo4jContainer(Neo4jContainer):
         @wait_container_is_ready(ServiceUnavailable)

@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     # Validate host
     try:
         # Accept both IP and hostname
-        if args.host not in ("localhost",):
+        if args.host != "localhost":
             ipaddress.ip_address(args.host)
     except ValueError:
         parser.error(f"Invalid host: {args.host!r}")

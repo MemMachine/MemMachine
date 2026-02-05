@@ -26,6 +26,7 @@ from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
+from tests.memmachine.conftest import is_docker_available
 
 pytestmark = pytest.mark.integration
 
@@ -37,6 +38,9 @@ def metrics_factory():
 
 @pytest.fixture(scope="module")
 def neo4j_connection_info():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
+
     neo4j_username = "neo4j"
     neo4j_password = "password"
 

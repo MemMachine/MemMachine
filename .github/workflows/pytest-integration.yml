@@ -54,7 +54,7 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --integration --cov=memmachine
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --cov=memmachine
           else
-            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --integration --cov=memmachine
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --cov=memmachine
           fi

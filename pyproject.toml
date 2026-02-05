@@ -78,9 +78,9 @@ dev = [
     "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
-    "ruff>=0.13.2",
+    "ruff~=0.15.0",
     "testcontainers[neo4j,postgres]>=4.13.1",
-    "ty>=0.0.11",
+    "ty~=0.0.14",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
@@ -185,6 +185,7 @@ convention = "google"
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
+addopts = ["-m", "not integration"]
 
 markers = [
     "integration: mark the test as an integration test",

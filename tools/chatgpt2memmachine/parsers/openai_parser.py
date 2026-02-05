@@ -297,10 +297,11 @@ class OpenAIParser(BaseParser):
         since = filters.get("since", 0) or 0
         index = filters.get("index", 0) or 0
         limit = filters.get("limit", 0) or 0
+        user_only = filters.get("user_only", False)
         chat_title = filters.get("chat_title")
 
         self.logger.debug(
-            f"Loading OpenAI chat history: since={since}, limit={limit}, index={index}, chat_title={chat_title}"
+            f"Loading OpenAI chat history: since={since}, limit={limit}, index={index}, user_only={user_only}, chat_title={chat_title}"
         )
 
         data = self.load_json(infile)
@@ -328,6 +329,8 @@ class OpenAIParser(BaseParser):
 
             # Add messages up to limit
             for msg in chat_messages:
+                if user_only and msg.get("role") == "assistant":
+                    continue
                 messages.append(msg)
                 msg_count += 1
                 if limit and msg_count >= limit:

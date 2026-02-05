@@ -1,6 +1,6 @@
 """Storage configuration models."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import ClassVar, Self
 
 import yaml
@@ -148,7 +148,7 @@ class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
         return self
 
 
-class SupportedDB(str, Enum):
+class SupportedDB(StrEnum):
     """Supported database providers."""
 
     # <-- Add these annotations so mypy knows these attributes exist

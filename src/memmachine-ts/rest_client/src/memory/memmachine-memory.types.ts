@@ -124,11 +124,15 @@ export interface AddMemoryResult {
  *
  * @property top_k - Maximum number of results to return (optional).
  * @property filter - Filter criteria for the search (optional).
+ * @property expand_context - Number of extra episodes to include for context (optional).
+ * @property score_threshold - Minimum score threshold for search results (optional).
  * @property types - Types of memory to search (optional).
  */
 export interface SearchMemoriesOptions {
   top_k?: number
   filter?: string
+  expand_context?: number
+  score_threshold?: number
   types?: MemoryType[]
 }
 

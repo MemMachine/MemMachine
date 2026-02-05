@@ -4,22 +4,13 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from neo4j import AsyncGraphDatabase
-from sentence_transformers import CrossEncoder, SentenceTransformer
 from testcontainers.neo4j import Neo4jContainer
 
-from memmachine.common.embedder.sentence_transformer_embedder import (
-    SentenceTransformerEmbedder,
-    SentenceTransformerEmbedderParams,
-)
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
 from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
-)
-from memmachine.common.reranker.cross_encoder_reranker import (
-    CrossEncoderReranker,
-    CrossEncoderRerankerParams,
 )
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -31,12 +22,23 @@ from memmachine.episodic_memory.declarative_memory import (
     DeclarativeMemoryParams,
     Episode,
 )
+from tests.memmachine.conftest import (
+    is_docker_available,
+    requires_sentence_transformers,
+)
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope="module")
 def embedder():
+    from sentence_transformers import SentenceTransformer
+
+    from memmachine.common.embedder.sentence_transformer_embedder import (
+        SentenceTransformerEmbedder,
+        SentenceTransformerEmbedderParams,
+    )
+
     return SentenceTransformerEmbedder(
         SentenceTransformerEmbedderParams(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -49,6 +51,13 @@ def embedder():
 
 @pytest.fixture(scope="module")
 def reranker():
+    from sentence_transformers import CrossEncoder
+
+    from memmachine.common.reranker.cross_encoder_reranker import (
+        CrossEncoderReranker,
+        CrossEncoderRerankerParams,
+    )
+
     return CrossEncoderReranker(
         CrossEncoderRerankerParams(
             cross_encoder=CrossEncoder(
@@ -60,6 +69,9 @@ def reranker():
 
 @pytest.fixture(scope="module")
 def neo4j_connection_info():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
+
     neo4j_username = "neo4j"
     neo4j_password = "password"
 
@@ -124,6 +136,7 @@ async def clear_declarative_memory(declarative_memory):
     yield
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_add_episodes(declarative_memory):
     all_episodes = await declarative_memory.get_matching_episodes()
@@ -171,6 +184,7 @@ async def test_add_episodes(declarative_memory):
     assert len(all_episodes) == len(episodes)
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_search(declarative_memory):
     now = datetime.now(tz=UTC)
@@ -351,6 +365,7 @@ async def test_search(declarative_memory):
     assert "episode6" in [result.uid for result in results]
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_get_episodes(declarative_memory):
     now = datetime.now(tz=UTC)
@@ -474,6 +489,7 @@ async def test_get_episodes(declarative_memory):
     assert set(results) == set(special_episodes)
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_get_matching_episodes(declarative_memory):
     now = datetime.now(tz=UTC)
@@ -637,6 +653,7 @@ async def test_get_matching_episodes(declarative_memory):
     assert len(results) == 45
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_delete_episodes(declarative_memory):
     now = datetime.now(tz=UTC)
@@ -758,6 +775,7 @@ async def test_delete_episodes(declarative_memory):
     assert all(episode not in all_episodes for episode in special_episodes)
 
 
+@requires_sentence_transformers
 def test_string_from_episode_context():
     now = datetime.now(tz=UTC)
     episode1 = Episode(

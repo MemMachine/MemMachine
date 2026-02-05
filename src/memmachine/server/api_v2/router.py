@@ -66,8 +66,8 @@ async def create_project(
     try:
         user_conf = EpisodicMemoryConfPartial(
             long_term_memory=LongTermMemoryConfPartial(
-                embedder=spec.config.embedder if spec.config.embedder else None,
-                reranker=spec.config.reranker if spec.config.reranker else None,
+                embedder=spec.config.embedder or None,
+                reranker=spec.config.reranker or None,
             )
         )
         session = await memmachine.create_session(
@@ -186,7 +186,7 @@ async def add_memories(
 ) -> AddMemoriesResponse:
     """Add memories to a project."""
     # Use types from spec if provided, otherwise use all memory types
-    target_memories = spec.types if spec.types else ALL_MEMORY_TYPES
+    target_memories = spec.types or ALL_MEMORY_TYPES
     results = await _add_messages_to(
         target_memories=target_memories, spec=spec, memmachine=memmachine
     )
@@ -203,7 +203,7 @@ async def search_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> SearchResult:
     """Search memories in a project."""
-    target_memories = spec.types if spec.types else ALL_MEMORY_TYPES
+    target_memories = spec.types or ALL_MEMORY_TYPES
     try:
         return await _search_target_memories(
             target_memories=target_memories, spec=spec, memmachine=memmachine

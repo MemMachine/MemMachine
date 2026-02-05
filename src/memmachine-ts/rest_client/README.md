@@ -65,6 +65,7 @@ The core client for interacting with MemMachine RESTful APIs.
 
 - `project()` — Create a MemMachineProject instance
 - `getProjects()` — List all projects from MemMachine server
+- `getMetrics()` — Retrieve Prometheus metrics from MemMachine server
 - `healthCheck()` — Check MemMachine server health
 
 ---

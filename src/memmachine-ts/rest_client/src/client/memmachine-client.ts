@@ -37,6 +37,9 @@ import type { ClientOptions, HealthStatus } from './memmachine-client.types'
  *   const projects = await client.getProjects()
  *   console.dir(projects, { depth: null })
  *
+ *   const metrics = await client.getMetrics()
+ *   console.log(metrics)
+ *
  *   const healthStatus = await client.healthCheck()
  *   console.dir(healthStatus, { depth: null })
  * }
@@ -98,6 +101,21 @@ export class MemMachineClient {
       return response.data
     } catch (error: unknown) {
       handleAPIError(error, 'Failed to get projects')
+    }
+  }
+
+  /**
+   * Retrieves Prometheus metrics from the MemMachine server.
+   *
+   * @returns A promise that resolves to the server metrics.
+   * @throws {@link MemMachineAPIError} if the request fails.
+   */
+  async getMetrics(): Promise<string> {
+    try {
+      const response = await this.client.get('/metrics')
+      return response.data
+    } catch (error: unknown) {
+      handleAPIError(error, 'Failed to get metrics')
     }
   }
 

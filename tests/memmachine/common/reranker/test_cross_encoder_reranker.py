@@ -1,4 +1,7 @@
 import pytest
+
+pytest.importorskip("sentence_transformers")
+
 from sentence_transformers import CrossEncoder
 
 from memmachine.common.reranker.cross_encoder_reranker import (
@@ -10,15 +13,10 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def cross_encoder():
-    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L6-v2")
-
-
-@pytest.fixture
-def reranker(cross_encoder):
+def reranker():
     return CrossEncoderReranker(
         CrossEncoderRerankerParams(
-            cross_encoder=cross_encoder,
+            cross_encoder=CrossEncoder("cross-encoder/ms-marco-MiniLM-L6-v2"),
             max_input_length=2000,
         ),
     )

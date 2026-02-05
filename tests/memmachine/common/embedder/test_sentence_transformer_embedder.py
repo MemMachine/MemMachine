@@ -1,4 +1,7 @@
 import pytest
+
+pytest.importorskip("sentence_transformers")
+
 from sentence_transformers import SentenceTransformer
 
 from memmachine.common.embedder.sentence_transformer_embedder import (
@@ -10,16 +13,13 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def sentence_transformer():
-    return SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-
-@pytest.fixture
-def embedder(sentence_transformer):
+def embedder():
     return SentenceTransformerEmbedder(
         SentenceTransformerEmbedderParams(
             model_name="all-MiniLM-L6-v2",
-            sentence_transformer=sentence_transformer,
+            sentence_transformer=SentenceTransformer(
+                "sentence-transformers/all-MiniLM-L6-v2"
+            ),
             max_input_length=2000,
         ),
     )

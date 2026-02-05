@@ -15,10 +15,8 @@ from memmachine.common.configuration.reranker_conf import (
 from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.embedder import Embedder
 from memmachine.common.errors import InvalidRerankerError
-from memmachine.common.resource_manager.reranker_manager import (
-    EmbedderFactory,
-    RerankerManager,
-)
+from memmachine.common.resource_manager.reranker_manager import RerankerManager
+from tests.memmachine.conftest import requires_sentence_transformers
 
 
 @pytest.fixture
@@ -131,6 +129,7 @@ async def test_build_cohere_rerankers(reranker_manager):
     assert reranker is not None
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_build_cross_encoder_rerankers(reranker_manager):
     await reranker_manager.build_all()
@@ -158,6 +157,7 @@ async def test_identity_rerankers(reranker_manager):
     assert reranker is not None
 
 
+@requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_build_rrf_hybrid_rerankers(reranker_manager):
     await reranker_manager.build_all()
