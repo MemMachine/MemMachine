@@ -107,6 +107,15 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  docs:
+    build:
+      context: docs/
+      dockerfile: Dockerfile
+    ports:
+      - "${DOCS_PORT:-3000}:3000"
+    volumes:
+      - ./docs:/docs:ro,Z
+      
 volumes:
   postgres_data:
     driver: local
