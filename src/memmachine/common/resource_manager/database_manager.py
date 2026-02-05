@@ -354,15 +354,14 @@ class DatabaseManager:
                 await client.execute(f"SESSION SET SCHEMA {conf.schema_name}")
 
                 # Create empty graph type if not exists
-                graph_type_name = "memmachine_type"
                 await client.execute(
-                    f"CREATE GRAPH TYPE IF NOT EXISTS {graph_type_name} AS {{}}"
+                    f"CREATE GRAPH TYPE IF NOT EXISTS {conf.graph_type_name} AS {{}}"
                 )
-                logger.info("Ensured graph type exists: %s", graph_type_name)
+                logger.info("Ensured graph type exists: %s", conf.graph_type_name)
 
                 # Create graph based on the graph type
                 await client.execute(
-                    f"CREATE GRAPH IF NOT EXISTS {conf.graph_name} TYPED {graph_type_name}"
+                    f"CREATE GRAPH IF NOT EXISTS {conf.graph_name} TYPED {conf.graph_type_name}"
                 )
                 logger.info("Ensured graph exists: %s", conf.graph_name)
 
@@ -390,6 +389,7 @@ class DatabaseManager:
             params_kwargs: dict[str, Any] = {
                 "client": client,
                 "schema_name": conf.schema_name,
+                "graph_type_name": conf.graph_type_name,
                 "graph_name": conf.graph_name,
                 "force_exact_similarity_search": conf.force_exact_similarity_search,
                 "ann_index_type": conf.ann_index_type,

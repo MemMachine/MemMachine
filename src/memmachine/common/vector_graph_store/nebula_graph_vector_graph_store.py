@@ -48,8 +48,9 @@ class NebulaGraphVectorGraphStoreParams:
     Parameters for configuring NebulaGraphVectorGraphStore.
 
     Args:
-        client: Connected NebulaAsyncClient instance with session pool
+        client: Connected NebulaAsyncClient instance
         schema_name: NebulaGraph schema path (e.g., "/default_schema")
+        graph_type_name: Graph type name that defines the schema structure
         graph_name: Graph instance name within the schema
         force_exact_similarity_search: If True, always use KNN exact search (no ANN)
         filtered_similarity_search_fudge_factor: Multiplier for ANN limit when filtering
@@ -72,6 +73,7 @@ class NebulaGraphVectorGraphStoreParams:
 
     client: "NebulaAsyncClient"
     schema_name: str
+    graph_type_name: str
     graph_name: str
     force_exact_similarity_search: bool = False
     filtered_similarity_search_fudge_factor: int = 4
@@ -121,8 +123,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         # Client and configuration
         self._client = params.client
         self._schema_name = params.schema_name
+        self._graph_type_name = params.graph_type_name
         self._graph_name = params.graph_name
-        self._graph_type_name = "memmachine_type"  # Fixed graph type name
         self._force_exact_similarity_search = params.force_exact_similarity_search
         self._fudge_factor = params.filtered_similarity_search_fudge_factor
         self._fallback_threshold = params.exact_similarity_search_fallback_threshold
