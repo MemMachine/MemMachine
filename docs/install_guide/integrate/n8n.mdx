@@ -12,9 +12,47 @@ This integration provides two specialized nodes:
 * **MemMachine Manager:** Store messages and "Enrich" your agent prompts with semantic context.
 * **MemMachine AI Memory:** A native memory node that plugs directly into n8n's **AI Agent** node.
 
----
+## Start n8n
+
+To start a simple n8n container run the upstream docker container as described in the official docs: 
+
+```bash
+docker run -it --rm \
+  --name n8n \
+  -p 5678:5678 \
+  -e GENERIC_TIMEZONE="Europe/Berlin" \
+  -e TZ="Europe/Berlin" \
+  -e N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true \
+  -e N8N_RUNNERS_ENABLED=true \
+  -v n8n_data:/home/node/.n8n \
+  docker.n8n.io/n8nio/n8n
+```
+
+### With Tracing 
+
+If you want to visualize the memory interactions you might want to use the `docker-compose` file in the github repository.
+
+```bash
+wget -q https://raw.githubusercontent.com/MemMachine/n8n-nodes-memmachine/refs/heads/main/docker-compose.yml
+docker-compose up -d
+```
+
+Either way, after one of the commands finished, you are able to open your n8n instance.
+
 
 <Steps>
+  <Step title="First Login">
+    Open [localhost:5678/](http://localhost:5678/):
+    1. Fill out a sign-up form.
+    ![SignUp form](./assets/first_1.png)
+    2. Skip the customization and click `Get Started`.
+
+    ![customize form](./assets/first_2.png)
+
+    3. Skip the offer page with `Skip`.
+
+    ![upsell form](./assets/first_3.png)
+  </Step>
   <Step title="Install the Community Node">
     If you are using a self-hosted n8n instance:
     1. Navigate to **Settings > Community Nodes**.
