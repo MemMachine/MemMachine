@@ -115,7 +115,7 @@ services:
       - "${DOCS_PORT:-3000}:3000"
     volumes:
       - ./docs:/docs:ro,Z
-      
+
 volumes:
   postgres_data:
     driver: local
