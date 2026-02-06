@@ -161,6 +161,39 @@ class MemMachineRestClient:
     }'
     """
 
+    def configure_short_term_memory(self, org_id, project_id, enabled: bool):
+        """Configure short-term memory summarization for a project.
+
+        Args:
+            org_id: Organization ID
+            project_id: Project ID
+            enabled: Whether short-term memory summarization is enabled
+        """
+        url = self._get_url("memory/episodic/short_term/config")
+        payload = {
+            "org_id": org_id,
+            "project_id": project_id,
+            "enabled": enabled,
+        }
+        start_time = time.time()
+        response = requests.post(url, json=payload, timeout=300)
+        end_time = time.time()
+
+        latency_ms = round((end_time - start_time) * 1000, 2)
+
+        if self.verbose:
+            self._trace_request("POST", url, payload, response, latency_ms)
+            response_code = response.status_code if response is not None else ""
+            self.api_requests_fp.write(
+                f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
+            )
+            self.api_requests_fp.flush()
+
+        if response.status_code != 204:
+            raise Exception(
+                f"Failed to configure short-term memory: {response.text}"
+            )
+
     def search_memory(self, org_id, project_id, query_str, limit=5):
         search_memory_endpoint = self._get_url("memories/search")
         query = {

@@ -9,8 +9,6 @@ from restcli import MemMachineRestClient
 from tqdm import tqdm
 from utils import format_timestamp_iso8601, load_run_id_file, parse_time
 
-from memmachine import MemMachineClient
-
 
 def generate_run_id() -> str:
     """Generate a unique run ID based on current timestamp."""
@@ -624,29 +622,22 @@ class MigrationHack:
     def migrate(self):
         """Load conversations and add them to MemMachine"""
         # Disable short-term memory summarization if requested
-        memory_client = None
         if self.disable_stm_summary:
             print("Disabling short-term memory summarization...")
-            sdk_client = MemMachineClient(
-                base_url=self.base_url,
-            )
             org = self.org_id or "universal"
             proj = self.project_id or "universal"
-            project = sdk_client.get_or_create_project(
-                org_id=org,
-                project_id=proj,
-            )
-            memory_client = project.memory()
-            memory_client.configure_episodic_memory(short_term_memory_enabled=False)
+            self.rest_client.configure_short_term_memory(org, proj, enabled=False)
             print("Short-term memory summarization disabled.")
 
         self.load_and_extract()
         self.add_memories()
 
         # Re-enable short-term memory summarization after import
-        if self.disable_stm_summary and memory_client is not None:
+        if self.disable_stm_summary:
             print("Re-enabling short-term memory summarization...")
-            memory_client.configure_episodic_memory(short_term_memory_enabled=True)
+            org = self.org_id or "universal"
+            proj = self.project_id or "universal"
+            self.rest_client.configure_short_term_memory(org, proj, enabled=True)
             print("Short-term memory summarization re-enabled.")
 
 
