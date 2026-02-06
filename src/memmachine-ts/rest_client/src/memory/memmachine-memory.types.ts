@@ -21,33 +21,26 @@ export type MemoryProducerRole = 'user' | 'assistant' | 'system'
  * Represents an episodic memory entry in MemMachine.
  *
  * @property uid - Unique identifier for the memory entry.
+ * @property score - Relevance score of the memory entry.
  * @property content - Content of the memory entry.
- * @property session_key - Session key associated with the memory entry.
  * @property created_at - Timestamp when the memory entry was created.
  * @property producer_id - ID of the entity that produced the memory entry.
  * @property producer_role - Role of the producer.
  * @property produced_for_id - ID of the entity for whom the memory was produced.
- * @property sequence_num - Sequence number of the memory entry.
  * @property episode_type - Type of episode associated with the memory entry.
- * @property content_type - Type of content in the memory entry.
- * @property filterable_metadata - Filterable metadata associated with the memory entry.
  * @property metadata - Additional metadata associated with the memory entry.
  */
 export interface EpisodicMemory {
   uid: string
+  score: number
   content: string
-  session_key: string
   created_at: string
 
   producer_id: string
   producer_role: string
   produced_for_id?: string
 
-  sequence_num: number
-
   episode_type: string
-  content_type: string
-  filterable_metadata?: Record<string, unknown>
   metadata?: Record<string, unknown>
 }
 
@@ -146,9 +139,13 @@ export interface SearchMemoriesResult {
   status: number
   content: {
     episodic_memory: {
-      long_term_memory: EpisodicMemory[]
-      short_term_memory: EpisodicMemory[]
-      episode_summary: string[]
+      long_term_memory: {
+        episodes: EpisodicMemory[]
+      }
+      short_term_memory: {
+        episodes: EpisodicMemory[]
+        episode_summary: string[]
+      }
     }
     semantic_memory: SemanticMemory[]
   }
