@@ -4,6 +4,7 @@
 # 3. uv run python3 test_migration.py                # run test
 
 import os
+
 import pytest
 
 # Disable this file from pytest collection

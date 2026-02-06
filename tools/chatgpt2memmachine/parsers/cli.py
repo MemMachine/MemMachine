@@ -6,20 +6,19 @@ from various sources (OpenAI, Locomo, etc.).
 """
 
 import argparse
-import json
 import os
 import sys
-from typing import Any, Optional
 
 # Handle imports for both script execution and module import
 try:
-    from . import get_parser
     from ..utils import parse_time
+    from . import get_parser
 except ImportError:
     # When run as a script, add parent directory to path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from parsers import get_parser
     from utils import parse_time
+
+    from parsers import get_parser
 
 
 def get_args():
@@ -182,7 +181,7 @@ if __name__ == "__main__":
                 print(f"  WARNING: {warning}", file=sys.stderr)
 
         # Summary
-        print(f"\nValidation Summary:", file=sys.stderr)
+        print("\nValidation Summary:", file=sys.stderr)
         print(f"  Errors: {len(errors)}", file=sys.stderr)
         print(f"  Warnings: {len(warnings)}", file=sys.stderr)
 

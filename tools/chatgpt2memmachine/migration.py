@@ -1,21 +1,21 @@
 import argparse
 import datetime
-import os
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timezone
 
-from memmachine import MemMachineClient
 from parsers import get_parser
 from restcli import MemMachineRestClient
 from tqdm import tqdm
-from utils import parse_time, format_timestamp_iso8601, load_run_id_file
+from utils import format_timestamp_iso8601, load_run_id_file, parse_time
+
+from memmachine import MemMachineClient
 
 
 def generate_run_id() -> str:
     """Generate a unique run ID based on current timestamp."""
     # Format: YYYYMMDDTHHMMSSffffff (filesystem-safe ISO 8601)
-    now = datetime.datetime.now(timezone.utc)
+    now = datetime.datetime.now(datetime.UTC)
     return now.strftime("%Y%m%dT%H%M%S%f")
 
 
@@ -94,7 +94,7 @@ class MigrationHack:
         # Statistics tracking
         self.stats = {
             "run_id": self.run_id,
-            "start_time": datetime.datetime.now(timezone.utc).isoformat(),
+            "start_time": datetime.datetime.now(datetime.UTC).isoformat(),
             "input_file": self.input_file,
             "source": self.source,
             "org_id": self.org_id or "universal",
@@ -140,21 +140,21 @@ class MigrationHack:
             if len(self.error_message_ids) == 0:
                 print(f"WARNING: No failed message IDs found in {errors_file}")
 
-    def _extract_single_conversation(self, conv_id: int, all_data: list) -> tuple[int, list, int]:
+    def _extract_single_conversation(
+        self, conv_id: int, all_data: list
+    ) -> tuple[int, list, int]:
         """Extract and save a single conversation from the full dataset.
-        
+
         Args:
             conv_id: Conversation ID (1-indexed)
             all_data: Full dataset loaded from JSON
-            
+
         Returns:
             Tuple of (conv_id, messages, message_count)
         """
-        extracted_file_name = (
-            f"{self.input_file_base_name}_{conv_id}_extracted.json"
-        )
+        extracted_file_name = f"{self.input_file_base_name}_{conv_id}_extracted.json"
         extracted_file = os.path.join(self.extract_dir, extracted_file_name)
-        
+
         if os.path.exists(extracted_file):
             # Load from existing extracted file
             with open(extracted_file, "r") as f:
@@ -165,12 +165,12 @@ class MigrationHack:
             # Get the conversation at index conv_id (1-indexed)
             if conv_id <= len(all_data):
                 chat = all_data[conv_id - 1]  # Convert to 0-indexed
-                
+
                 # Extract messages from this chat using parser's logic
                 chat_title_actual = chat.get("title", "")
                 messages = self.parser._extract_chat_messages(chat, chat_title_actual)
                 messages.sort(key=lambda x: x.get("timestamp", 0))
-                
+
                 # Dump extracted messages for this conversation
                 self.parser.dump_data(
                     messages, output_format="json", outfile=extracted_file
@@ -178,14 +178,14 @@ class MigrationHack:
                 filtered = messages
             else:
                 filtered = []
-        
+
         # Count messages
         msg_count = 0
         if isinstance(filtered, list):
             msg_count = len(filtered)
         elif isinstance(filtered, str):
             msg_count = 1
-            
+
         return conv_id, filtered, msg_count
 
     def load_and_extract(self):
@@ -229,12 +229,12 @@ class MigrationHack:
                     f"Optimized: Processing {len(conv_ids_to_process)} conversation(s) with failed messages"
                 )
             elif self.verbose:
-                print(f"WARNING: No conversations found with failed messages")
+                print("WARNING: No conversations found with failed messages")
         elif self.resume:
             # Resume: Load all conversations normally, filtering will happen at message level
             if self.verbose:
                 print(
-                    f"Resume mode: Loading all conversations, will skip messages from success file"
+                    "Resume mode: Loading all conversations, will skip messages from success file"
                 )
 
         # Load full dataset once (only if we need to extract new conversations)
@@ -242,12 +242,12 @@ class MigrationHack:
             not os.path.exists(
                 os.path.join(
                     self.extract_dir,
-                    f"{self.input_file_base_name}_{conv_id}_extracted.json"
+                    f"{self.input_file_base_name}_{conv_id}_extracted.json",
                 )
             )
             for conv_id in conv_ids_to_process
         )
-        
+
         all_data = None
         if needs_extraction:
             if self.verbose:
@@ -255,37 +255,39 @@ class MigrationHack:
             all_data = self.parser.load_json(self.input_file)
             if self.verbose:
                 print(f"Loaded {len(all_data)} conversations from file")
-        
+
         # Parallel extraction using ThreadPoolExecutor
         workers = min(self.max_workers, len(conv_ids_to_process))
-        
+
         if self.verbose:
             print(f"Extracting conversations with {workers} worker(s)...")
-        
+
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(self._extract_single_conversation, conv_id, all_data): conv_id
+                executor.submit(
+                    self._extract_single_conversation, conv_id, all_data
+                ): conv_id
                 for conv_id in conv_ids_to_process
             }
-            
+
             # Use progress bar if not verbose
             if not self.verbose:
                 pbar = tqdm(
                     total=len(conv_ids_to_process),
                     desc="Extracting conversations",
-                    unit="conv"
+                    unit="conv",
                 )
-            
+
             for future in as_completed(futures):
                 conv_id, messages, msg_count = future.result()
                 self.conversations[conv_id] = messages
                 self.total_messages += msg_count
-                
+
                 if not self.verbose:
                     pbar.update(1)
                 elif self.verbose:
                     print(f"Extracted conversation {conv_id} ({msg_count} messages)")
-            
+
             if not self.verbose:
                 pbar.close()
 
@@ -312,7 +314,7 @@ class MigrationHack:
             if key == "content":
                 # Content is already set above
                 continue
-            elif key == "role":
+            if key == "role":
                 # Set both role and producer from role field
                 formatted["role"] = value
                 formatted["producer"] = value
@@ -347,8 +349,7 @@ class MigrationHack:
         )
         filepath = os.path.join(self.output_dir, filename)
         with open(filepath, "a") as f:
-            for msg_id in message_ids:
-                f.write(f"{conv_id}:{msg_id}\n")
+            f.writelines(f"{conv_id}:{msg_id}\n" for msg_id in message_ids)
             if not success and error_msg and self.verbose:
                 f.write(f"  Error: {error_msg}\n")
 
@@ -371,7 +372,7 @@ class MigrationHack:
                 filtered.append(msg)
                 continue
             # not a dictionary, skip
-            elif not isinstance(msg, dict):
+            if not isinstance(msg, dict):
                 continue
             # check if the message is after the since timestamp
             if since and msg.get("timestamp", 0) < since:
@@ -498,7 +499,7 @@ class MigrationHack:
         org_display = self.org_id if self.org_id else "universal"
         project_display = self.project_id if self.project_id else "universal"
 
-        print(f"\nDry Run Summary:")
+        print("\nDry Run Summary:")
         print(f"  Run ID: {self.run_id}")
         print(f"  Target: {org_display}/{project_display}")
         print(f"  Conversations: {total_conversations}")
@@ -529,7 +530,7 @@ class MigrationHack:
                         sample_payload["org_id"] = self.org_id
                     if self.project_id:
                         sample_payload["project_id"] = self.project_id
-                    print(f"\n  Sample Payload:")
+                    print("\n  Sample Payload:")
                     print(
                         f"  {json.dumps(sample_payload, indent=2, ensure_ascii=False)}"
                     )
@@ -550,7 +551,7 @@ class MigrationHack:
             )
             return
 
-        print(f"Adding memories to MemMachine...")
+        print("Adding memories to MemMachine...")
         # Process conversations using ThreadPoolExecutor
         # Default max_workers=1 for sequential processing
         workers = min(self.max_workers, len(self.conversations))
@@ -607,7 +608,7 @@ class MigrationHack:
 
     def _update_final_stats(self):
         """Update final statistics with end time and duration."""
-        self.stats["end_time"] = datetime.datetime.now(timezone.utc).isoformat()
+        self.stats["end_time"] = datetime.datetime.now(datetime.UTC).isoformat()
         start = datetime.datetime.fromisoformat(self.stats["start_time"])
         end = datetime.datetime.fromisoformat(self.stats["end_time"])
         self.stats["duration_seconds"] = (end - start).total_seconds()
@@ -636,9 +637,7 @@ class MigrationHack:
                 project_id=proj,
             )
             memory_client = project.memory()
-            memory_client.configure_episodic_memory(
-                short_term_memory_enabled=False
-            )
+            memory_client.configure_episodic_memory(short_term_memory_enabled=False)
             print("Short-term memory summarization disabled.")
 
         self.load_and_extract()
@@ -647,9 +646,7 @@ class MigrationHack:
         # Re-enable short-term memory summarization after import
         if self.disable_stm_summary and memory_client is not None:
             print("Re-enabling short-term memory summarization...")
-            memory_client.configure_episodic_memory(
-                short_term_memory_enabled=True
-            )
+            memory_client.configure_episodic_memory(short_term_memory_enabled=True)
             print("Short-term memory summarization re-enabled.")
 
 

@@ -11,7 +11,7 @@ import logging
 import re
 import sys
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 class BaseParser(ABC):
@@ -131,14 +131,13 @@ class BaseParser(ABC):
         Returns:
             Number of conversations
         """
-        pass
 
     @abstractmethod
     def load(
         self,
         infile: str,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Any]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[Any]:
         """
         Load messages from the input file.
 
@@ -153,9 +152,8 @@ class BaseParser(ABC):
         Returns:
             List of messages (format depends on parser implementation)
         """
-        pass
 
-    def validate(self, infile: str) -> Tuple[bool, List[str], List[str]]:
+    def validate(self, infile: str) -> tuple[bool, list[str], list[str]]:
         """
         Validate file structure without processing.
 
@@ -178,7 +176,7 @@ class BaseParser(ABC):
     def dump_data(
         data: Any,
         output_format: str = "json",
-        outfile: Optional[str] = None,
+        outfile: str | None = None,
     ) -> None:
         """
         Output data in the specified format.

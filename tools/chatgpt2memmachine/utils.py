@@ -4,13 +4,11 @@ Common utility functions for chatgpt2memmachine tool.
 This module provides shared utility functions used across the tool.
 """
 
-import os
 import datetime
-from typing import Optional
-from datetime import timezone
+import os
 
 
-def parse_time(time_str: str) -> Optional[float]:
+def parse_time(time_str: str) -> float | None:
     """
     Parse time string to timestamp.
 
@@ -61,7 +59,7 @@ def parse_time(time_str: str) -> Optional[float]:
     return None
 
 
-def format_timestamp_iso8601(timestamp: float | int) -> str:
+def format_timestamp_iso8601(timestamp: float) -> str:
     """
     Convert Unix timestamp to ISO 8601 format (UTC).
 
@@ -71,7 +69,7 @@ def format_timestamp_iso8601(timestamp: float | int) -> str:
     Returns:
         ISO 8601 formatted string (e.g., "2024-01-15T10:00:00.000Z")
     """
-    dt = datetime.datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
@@ -85,7 +83,7 @@ def get_filename_safe_timestamp() -> str:
     return datetime.datetime.now().strftime("%Y%m%dT%H%M%S%f")
 
 
-def parse_run_id_line(line: str) -> Optional[tuple[int, str]]:
+def parse_run_id_line(line: str) -> tuple[int, str] | None:
     """
     Parse a line from success/error file into (conv_id, message_id) tuple.
 

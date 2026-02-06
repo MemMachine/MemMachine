@@ -4,8 +4,7 @@ OpenAI chat history parser.
 This module provides the parser for OpenAI chat history export format.
 """
 
-import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .base import BaseParser
 
@@ -20,7 +19,7 @@ class OpenAIParser(BaseParser):
         data = self.load_json(infile)
         return len(data)
 
-    def validate(self, infile: str) -> Tuple[bool, List[str], List[str]]:
+    def validate(self, infile: str) -> tuple[bool, list[str], list[str]]:
         """
         Validate OpenAI chat history file structure without processing messages.
 
@@ -123,11 +122,11 @@ class OpenAIParser(BaseParser):
 
     def _validate_chat_messages(
         self,
-        mapping: Dict[str, Any],
+        mapping: dict[str, Any],
         chat_prefix: str,
-        errors: List[str],
-        warnings: List[str],
-    ) -> Tuple[int, int]:
+        errors: list[str],
+        warnings: list[str],
+    ) -> tuple[int, int]:
         """Validate messages in a chat mapping and return counts."""
         message_count = 0
         valid_message_count = 0
@@ -195,8 +194,8 @@ class OpenAIParser(BaseParser):
         return message_count, valid_message_count
 
     def _extract_chat_messages(
-        self, chat: Dict[str, Any], chat_title: str
-    ) -> List[Dict[str, Any]]:
+        self, chat: dict[str, Any], chat_title: str
+    ) -> list[dict[str, Any]]:
         """
         Extract messages from a chat and add chat metadata.
 
@@ -274,8 +273,8 @@ class OpenAIParser(BaseParser):
     def load(
         self,
         infile: str,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Load messages from OpenAI chat history export.
 
@@ -348,10 +347,10 @@ class OpenAIParser(BaseParser):
 
     def _should_process_chat(
         self,
-        chat: Dict[str, Any],
+        chat: dict[str, Any],
         chat_count: int,
         index: int,
-        chat_title: Optional[str],
+        chat_title: str | None,
         since: float,
     ) -> bool:
         """Check if a chat should be processed based on filters."""

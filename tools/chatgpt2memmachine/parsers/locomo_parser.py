@@ -5,7 +5,7 @@ This module provides the parser for Locomo chat history format.
 """
 
 import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseParser
 
@@ -43,8 +43,8 @@ class LocomoParser(BaseParser):
     def load(
         self,
         infile: str,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Load messages from Locomo chat history.
 

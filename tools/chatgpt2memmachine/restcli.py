@@ -4,7 +4,6 @@ import time
 from datetime import datetime
 
 import requests
-
 from utils import get_filename_safe_timestamp
 
 
@@ -48,7 +47,7 @@ class MemMachineRestClient:
             return
 
         trace_lines = []
-        trace_lines.append(f"\n🔍 API TRACE")
+        trace_lines.append("\n🔍 API TRACE")
         trace_lines.append(f"   {method} {url}")
         if payload:
             trace_lines.append(
@@ -78,11 +77,9 @@ class MemMachineRestClient:
                     )
                     trace_lines.append(f"   Error: {error_text}")
             except Exception as e:
-                trace_lines.append(
-                    f"   Response Code: <error reading response: {str(e)}>"
-                )
+                trace_lines.append(f"   Response Code: <error reading response: {e!s}>")
         else:
-            trace_lines.append(f"   Response Code: <no response object>")
+            trace_lines.append("   Response Code: <no response object>")
 
         if latency_ms is not None:
             trace_lines.append(f"   Latency: {latency_ms}ms")

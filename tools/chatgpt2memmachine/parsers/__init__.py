@@ -28,7 +28,6 @@ def get_parser(source: str, verbose: bool = False):
     source = source.lower()
     if source == "openai":
         return OpenAIParser(verbose=verbose)
-    elif source == "locomo":
+    if source == "locomo":
         return LocomoParser(verbose=verbose)
-    else:
-        raise ValueError(f"Unknown input source: {source}")
+    raise ValueError(f"Unknown input source: {source}")
