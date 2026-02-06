@@ -1,0 +1,86 @@
+---
+title: "System API"
+description: "Reference for system health, metrics, and versioning"
+icon: "microchip"
+---
+
+The `client.system` namespace provides tools for monitoring the MemMachine server's health and performance. These endpoints are primarily used for infrastructure orchestration (like Kubernetes liveness probes) and performance monitoring.
+
+## Health and Versioning
+
+### `health`
+Performs a comprehensive health check of the MemMachine service and its connected dependencies (Vector Stores, Databases).
+
+```python
+status = client.system.health()
+print(f"Service: {status['service']} - Status: {status['status']}")
+```
+
+**Returns:**
+
+| **Field** | **Type** | **Description**                                         |
+| --------- | -------- | ------------------------------------------------------- |
+| `status`  | `str`    | Current health state (e.g., `"healthy"`, `"degraded"`). |
+| `service` | `str`    | Name of the service (`"memmachine"`).                   |
+| `version` | `str`    | The semantic version of the running server.             |
+
+### `version`
+
+Returns detailed versioning information for the server and the API specification it supports.
+
+```python
+v = client.system.version()
+print(f"Running API Version: {v['api_version']}")
+```
+
+------
+
+## Observability
+
+### `metrics`
+
+Exposes system-level performance metrics. By default, this returns metrics in the **Prometheus** text format, suitable for scraping by monitoring tools.
+
+```python
+prometheus_data = client.system.metrics()
+```
+
+**Common Metrics Tracked:**
+
+- `memmachine_request_duration_seconds`: Latency of API calls.
+- `memmachine_memory_ingestion_total`: Count of memories added.
+- `memmachine_vector_search_latency`: Time taken for embedding and searching.
+
+------
+
+## Environment Information
+
+### `get_info`
+
+Retrieves non-sensitive environmental information about the server instance.
+
+```python
+info = client.system.get_info()
+```
+
+| **Field**     | **Type** | **Description**                                       |
+| ------------- | -------- | ----------------------------------------------------- |
+| `environment` | `str`    | Current mode (e.g., `"production"`, `"development"`). |
+| `uptime`      | `float`  | Server uptime in seconds.                             |
+| `provider`    | `str`    | The cloud or infrastructure provider detected.        |
+
+------
+
+## Utility Methods
+
+### `ping`
+
+A lightweight, low-latency check to verify that the network path to the server is open.
+
+```python
+if client.system.ping():
+    print("Server is reachable")
+```
+<Tip>
+If you are running MemMachine in a containerized environment (Docker/K8s), use the `client.system.health()` endpoint for your **Liveness** and **Readiness** probes.
+</Tip>
