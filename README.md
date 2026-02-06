@@ -2,10 +2,18 @@
 
 <div align="center">
 
+![MemMachine: Long Term Memory for AI Agents](https://raw.githubusercontent.com/MemMachine/MemMachine/main/assets/img/MemMachine_Hero_Banner.png)
+
+**The open-source memory layer for AI agents.**
+
+*Stop building stateless agents. Give your AI persistent memory with just 5 lines of code.*
+
+<br/>
+
 ![GitHub Release Version](https://img.shields.io/github/v/release/memmachine/memmachine?display_name=release)
-![Discord](https://img.shields.io/discord/1412878659479666810)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MemMachine/MemMachine)
 ![GitHub License](https://img.shields.io/github/license/MemMachine/MemMachine)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/MemMachine/MemMachine)
+![Discord](https://img.shields.io/discord/1412878659479666810)
 <br/>
 ![Docker Pulls](https://img.shields.io/docker/pulls/memmachine/memmachine)
 ![GitHub Downloads](https://img.shields.io/github/downloads/memmachine/memmachine/total?label=GitHub%20Downloads)
@@ -15,44 +23,108 @@
 
 </div>
 
-## Growing Community
+## What is MemMachine?
 
-MemMachine is a growing community of builders and developers. Please help us grow by clicking the *Star* button above.
+MemMachine is an open-source **long-term memory layer** for AI agents and LLM-powered applications. It enables your AI to **learn, store, and recall** information from past sessions—transforming stateless chatbots into personalized, context-aware assistants.
 
-<img src="https://starchart.cc/MemMachine/MemMachine.svg?variant=light" alt="Alt text" height="300"/>
+### Key Capabilities
 
-## Universal memory layer for AI Agents
+- **Episodic Memory**: Graph-based conversational context that persists across sessions
+- **Profile Memory**: Long-term user facts and preferences stored in SQL
+- **Working Memory**: Short-term context for the current session
+- **Agent Memory Persistence**: Memory that survives restarts, sessions, and even model changes
 
-Meet MemMachine, an open-source memory layer for advanced AI agents. It enables
-AI-powered applications to learn, store, and recall data and preferences from
-past sessions to enrich future interactions. MemMachine's memory layer persists
-across multiple sessions, agents, and large language models, building a
-sophisticated, evolving user profile. It transforms AI chatbots into
-personalized, context-aware AI assistants designed to understand and respond
-with better precision and depth.
+## Quick Start
+
+Get up and running in under 5 minutes:
+
+> **Prerequisites:** This code requires a running MemMachine Server.  
+> [Start a server locally](https://docs.memmachine.ai/getting_started/quickstart) or create a free account on the [MemMachine Platform](https://console.memmachine.ai/).
+
+```bash
+pip install memmachine-client
+```
+
+```python
+from memmachine import MemMachineClient
+
+# Initialize the client
+client = MemMachineClient(base_url="http://localhost:8080")
+
+# Get or create a project
+project = client.get_or_create_project(org_id="my_org", project_id="my_project")
+
+# Create a memory instance for a user session
+memory = project.memory(
+    group_id="default",
+    agent_id="travel_agent",
+    user_id="alice",
+    session_id="session_001"
+)
+
+# Add a memory
+memory.add("I prefer aisle seats on flights", metadata={"category": "travel"})
+# => [AddMemoryResult(uid='...')]
+
+# Search memories
+results = memory.search("What are my flight preferences?")
+print(results.content.episodic_memory.long_term_memory.episodes[0].content)
+# => "I prefer aisle seats on flights"
+```
+
+For full installation options (Docker, self-hosted, cloud), visit the
+[Quick Start Guide](https://docs.memmachine.ai/getting_started/quickstart).
+
+## Integrations
+
+MemMachine works seamlessly with your favorite AI frameworks:
+
+<div align="center">
+
+| Framework | Description |
+|-----------|-------------|
+| [**LangChain**](integrations/langchain/) | Memory provider for LangChain agents |
+| [**LangGraph**](integrations/langgraph/) | Stateful memory for LangGraph workflows |
+| [**CrewAI**](integrations/crewai/) | Persistent memory for CrewAI multi-agent systems |
+| [**LlamaIndex**](integrations/llamaindex/) | Memory integration for LlamaIndex applications |
+| [**AWS Strands**](integrations/aws_strands_agent_sdk/) | Memory for AWS Strands Agent SDK |
+| [**n8n**](integrations/n8n/) | No-code workflow automation integration |
+| [**Dify**](integrations/dify/) | Memory backend for Dify AI applications |
+| [**FastGPT**](integrations/fastgpt/) | Integration with FastGPT platform |
+
+</div>
+
+## MCP Server Support
+
+MemMachine includes a native **Model Context Protocol (MCP)** server for seamless integration with Claude Desktop, Cursor, and other MCP-compatible clients:
+
+```bash
+# Stdio mode (for Claude Desktop)
+memmachine-mcp-stdio
+
+# HTTP mode (for web clients)
+memmachine-mcp-http
+```
+
+See the [MCP documentation](https://docs.memmachine.ai/integrations/mcp) for setup instructions.
 
 ## Who Is MemMachine For?
 
-- Developers building AI agents, assistants, or autonomous workflows.
-- Researchers experimenting with agent architectures and cognitive models.
+- **Developers** building AI agents, assistants, or autonomous workflows
+- **Researchers** experimenting with agent architectures and cognitive models
+- **Teams** who need persistent, cross-session memory for their LLM applications
 
 ## Key Features
 
-- **Multiple Memory Types:** MemMachine supports Working (Short Term),
-    Persistent (Long Term), and Personalized (Profile) memory types.
-- **Developer Friendly APIs:** Python SDK, RESTful, and MCP interfaces and
-    endpoints to make integrating MemMachine easy into your Agents. For more
-    information, refer to the
-    [API Reference Guide](https://docs.memmachine.ai/api_reference).
+- **Multiple Memory Types**: Working (short-term), Episodic (long-term conversational), and Profile (user facts) memory
+- **Developer-Friendly APIs**: Python SDK, RESTful API, TypeScript SDK, and MCP server interfaces
+- **Flexible Storage**: Graph database (Neo4j) for episodic memory, SQL for profiles
+- **LLM Agnostic**: Works with OpenAI, Anthropic, Bedrock, Ollama, and any LLM provider
+- **Self-Hosted or Cloud**: Run locally, in Docker, or use our managed service
+
+For more information, refer to the [API Reference Guide](https://docs.memmachine.ai/api_reference).
 
 ## Architecture
-
-1. Agents Interact via the API Layer
-    Users interact with an agent, which connects to the MemMachine Memory core through a RESTful API, Python SDK, or MCP Server.
-2. MemMachine Manages Memory
-    MemMachine processes interactions and stores them in two distinct types: Episodic Memory for conversational context and Profile Memory for long-term user facts.
-3. Data is Persisted to Databases
-    Memory is persisted to a database layer where Episodic Memory is stored in a graph database and Profile Memory is stored in an SQL database.
 
 <div align="center">
 
@@ -60,60 +132,50 @@ with better precision and depth.
 
 </div>
 
+1. **Agents interact via the API Layer**: Users interact with an agent, which connects to MemMachine through a RESTful API, Python SDK, or MCP Server.
+2. **MemMachine manages memory**: Processes interactions and stores them as Episodic Memory (conversational context) and Profile Memory (long-term user facts).
+3. **Data is persisted**: Episodic memory is stored in a graph database; profile memory is stored in SQL.
+
 ## Use Cases & Example Agents
 
-MemMachine's versatile memory architecture can be applied across any domain,
-transforming generic bots into specialized, expert assistants. Our growing list
-of [examples](examples/README.md) showcases the endless possibilities of
-memory-powered agents that integrate into your own applications and solutions.
+MemMachine's versatile memory architecture can be applied across any domain. Explore our [examples](examples/README.md) to see memory-powered agents in action:
 
-- **CRM Agent:** Your agent can recall a client's entire history and deal stage,
-    proactively helping your sales team build relationships and close deals
-    faster.
-- **Healthcare Navigator:** Offer continuous patient support with an agent that
-    remembers medical history and tracks treatment progress to provide a
-    seamless healthcare journey.
-- **Personal Finance Advisor:** Your agent will remember a user's portfolio and
-    risk tolerance, delivering personalized financial insights based on their
-    complete history.
-- **Content Writer:** Build an assistant that remembers your unique style guide
-    and terminology, ensuring perfect consistency across all documentation.
+| Agent | Description |
+|-------|-------------|
+| **CRM Agent** | Recalls client history and deal stages to help sales teams close faster |
+| **Healthcare Navigator** | Remembers medical history and tracks treatment progress |
+| **Personal Finance Advisor** | Stores portfolio preferences and risk tolerance for personalized insights |
+| **Writing Assistant** | Learns your style guide and terminology for consistent content |
 
-We're excited to see what you're working on. Join the
-[Discord Server](https://discord.gg/usydANvKqD) and drop a shout-out to your
-project in the **showcase** channel.
+## Built with MemMachine
 
-## Quick Start
+Are you using MemMachine in your project? We'd love to feature you!
 
-Want to get started right away? Check out our
-[Quick Start Guide](https://docs.memmachine.ai).
+- Share your project in [GitHub Discussions → Showcase](https://github.com/MemMachine/MemMachine/discussions/categories/showcase)
+- Drop a message in our [Discord #showcase channel](https://discord.gg/usydANvKqD)
 
-## Installation
+## Growing Community
 
-MemMachine is distributed as a Docker container and Python package. For full
-installation options, visit the [documentation](https://docs.memmachine.ai).
+MemMachine is a growing community of builders and developers. Help us grow by clicking the ⭐ **Star** button above!
 
-## Basic Usage
-
-Get started with a simple "Hello World" example by following the
-[Quick Start Guide](https://docs.memmachine.ai/getting_started/quickstart).
+<img src="https://starchart.cc/MemMachine/MemMachine.svg?variant=light" alt="MemMachine Star History" height="300"/>
 
 ## Documentation
 
-- [Main Website](https://memmachine.ai)
-- [Docs & API Reference](https://docs.memmachine.ai)
+- **[Main Website](https://memmachine.ai)** – Learn about MemMachine
+- **[Docs & API Reference](https://docs.memmachine.ai)** – Full documentation
+- **[Quick Start Guide](https://docs.memmachine.ai/getting_started/quickstart)** – Get started in minutes
 
 ## Community & Support
 
-- **Discord:** Join our Docker community for support, updates, and discussions:
+- **Discord**: Join our community for support, updates, and discussions:
     [https://discord.gg/usydANvKqD](https://discord.gg/usydANvKqD)
-- **Issues & Feature Requests:** Use GitHub
-    [Issues](https://github.com/MemMachine/MemMachine/issues).
+- **Issues & Feature Requests**: Use GitHub
+    [Issues](https://github.com/MemMachine/MemMachine/issues)
 
 ## Contributing
 
-We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for
-guidelines.
+We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 

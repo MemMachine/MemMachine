@@ -46,9 +46,22 @@ requires-python = ">= 3.12"
 authors = [
     { name = "MemMachine", email = "noreply@memmachine.ai" },
 ]
-description = "MemMachine is an open-source memory layer for AI agents, giving your creations short-term, long-term, and personalization memory, enabling them to learn, adapt, and remember."
+description = "MemMachine: Open-source long-term memory layer for AI agents and LLMs. Provides episodic memory, profile memory, and working memory to enable persistent, context-aware AI applications that learn and remember across sessions."
 readme = "README.md"
-keywords = ["memmachine"]
+keywords = [
+    "memmachine",
+    "ai-agents",
+    "llm-memory",
+    "long-term-memory",
+    "episodic-memory",
+    "agent-memory",
+    "ai-infrastructure",
+    "langchain",
+    "openai",
+    "anthropic",
+    "mcp",
+    "model-context-protocol",
+]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
