@@ -237,7 +237,7 @@ build_image() {
         final_args+=("--push")
     fi
 
-    local scm_version; scm_version=$(git describe --tags --always 2>/dev/null | sed 's/^v//;s/-\([0-9]\+\)-g\([0-9a-f]\+\)/.dev\1+g\2/' || echo "$VERSION")
+    local scm_version; scm_version=$(git describe --tags --always 2>/dev/null | sed -E 's/^v//;s/-([0-9]+)-g([0-9a-f]+)/.dev\1+g\2/' || echo "$VERSION")
 
     # shellcheck disable=SC2086
     docker buildx build --platform "${PLATFORMS}" ${build_args} --build-arg SCM_VERSION="${scm_version}" "${docker_tags[@]}" "${final_args[@]}" . || error "Docker build for ${build_type_upper} failed."

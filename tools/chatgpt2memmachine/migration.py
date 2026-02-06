@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 
 from memmachine import MemMachineClient
-from memmachine.common.api.config_spec import UpdateEpisodicMemorySpec
 from parsers import get_parser
 from restcli import MemMachineRestClient
 from tqdm import tqdm
@@ -24,8 +23,8 @@ class MigrationHack:
     def __init__(
         self,
         base_url: str = "http://localhost:8080",
-        org_id: str = "",
-        project_id: str = "",
+        org_id: str = "memory_migration",
+        project_id: str = "memory_migration",
         memory_types: str = "episodic",
         input: str = "data/conversations-chatgpt-sample.json",
         source: str = "openai",
@@ -380,8 +379,8 @@ class MigrationHack:
             # check if the message is before the limit
             if limit and len(filtered) >= limit:
                 break
-            # check if the message is a assistant message and user_only is enabled
-            if user_only and msg.get("role", "") == "assistant":
+            # check if user_only is enabled, only keep user messages
+            if user_only and msg.get("role", "") != "user":
                 continue
             # check if the message is a chat title message and chat_title is not empty
             if chat_title and msg.get("chat_title", "") != chat_title:
@@ -624,16 +623,34 @@ class MigrationHack:
     def migrate(self):
         """Load conversations and add them to MemMachine"""
         # Disable short-term memory summarization if requested
+        memory_client = None
         if self.disable_stm_summary:
             print("Disabling short-term memory summarization...")
-            sdk_client = MemMachineClient(base_url=self.base_url)
-            sdk_client.config().update_memory_config(
-                episodic_memory=UpdateEpisodicMemorySpec(short_term_memory_enabled=False)
+            sdk_client = MemMachineClient(
+                base_url=self.base_url,
+            )
+            org = self.org_id or "universal"
+            proj = self.project_id or "universal"
+            project = sdk_client.get_or_create_project(
+                org_id=org,
+                project_id=proj,
+            )
+            memory_client = project.memory()
+            memory_client.configure_episodic_memory(
+                short_term_memory_enabled=False
             )
             print("Short-term memory summarization disabled.")
 
         self.load_and_extract()
         self.add_memories()
+
+        # Re-enable short-term memory summarization after import
+        if self.disable_stm_summary and memory_client is not None:
+            print("Re-enabling short-term memory summarization...")
+            memory_client.configure_episodic_memory(
+                short_term_memory_enabled=True
+            )
+            print("Short-term memory summarization re-enabled.")
 
 
 def get_args():
@@ -698,14 +715,14 @@ Examples:
     memmachine_group.add_argument(
         "--org-id",
         type=str,
-        default="",
-        help="Organization ID in MemMachine (optional, leave empty to use default)",
+        default="memory_migration",
+        help="Organization ID in MemMachine (default: %(default)s)",
     )
     memmachine_group.add_argument(
         "--project-id",
         type=str,
-        default="",
-        help="Project ID in MemMachine (optional, leave empty to use default)",
+        default="memory_migration",
+        help="Project ID in MemMachine (default: %(default)s)",
     )
     memmachine_group.add_argument(
         "--memory-types",

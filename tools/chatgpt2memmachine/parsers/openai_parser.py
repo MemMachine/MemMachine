@@ -329,7 +329,7 @@ class OpenAIParser(BaseParser):
 
             # Add messages up to limit
             for msg in chat_messages:
-                if user_only and msg.get("role") == "assistant":
+                if user_only and msg.get("role") != "user":
                     continue
                 messages.append(msg)
                 msg_count += 1
