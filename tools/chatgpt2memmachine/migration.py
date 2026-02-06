@@ -623,9 +623,10 @@ class MigrationHack:
         """Load conversations and add them to MemMachine"""
         # Disable short-term memory summarization if requested
         if self.disable_stm_summary:
-            print("Disabling short-term memory summarization...")
             org = self.org_id or "universal"
             proj = self.project_id or "universal"
+            self.rest_client.ensure_project(org, proj)
+            print("Disabling short-term memory summarization...")
             self.rest_client.configure_short_term_memory(org, proj, enabled=False)
             print("Short-term memory summarization disabled.")
 

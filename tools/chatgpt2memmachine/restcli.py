@@ -109,6 +109,35 @@ class MemMachineRestClient:
     }'
     """
 
+    def ensure_project(self, org_id, project_id):
+        """Ensure a project exists, creating it if necessary.
+
+        Args:
+            org_id: Organization ID
+            project_id: Project ID
+        """
+        url = self._get_url("projects")
+        payload = {"org_id": org_id, "project_id": project_id}
+        start_time = time.time()
+        response = requests.post(url, json=payload, timeout=300)
+        end_time = time.time()
+
+        latency_ms = round((end_time - start_time) * 1000, 2)
+
+        if self.verbose:
+            self._trace_request("POST", url, payload, response, latency_ms)
+            response_code = response.status_code if response is not None else ""
+            self.api_requests_fp.write(
+                f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
+            )
+            self.api_requests_fp.flush()
+
+        # 201 = created, 409 = already exists (both are fine)
+        if response.status_code not in (201, 409):
+            raise Exception(
+                f"Failed to ensure project exists: {response.text}"
+            )
+
     def add_memory(
         self, org_id="", project_id="", messages=None, memory_types=None
     ) -> dict:
