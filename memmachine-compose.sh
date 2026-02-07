@@ -949,7 +949,8 @@ main() {
     show_service_info
 }
 
-# Handle script arguments
+# Handle script arguments (ensure COMPOSE_CMD is set for stop/restart/logs/clean)
+find_docker_compose
 case "${1:-}" in
     "stop")
         print_info "Stopping MemMachine services..."
