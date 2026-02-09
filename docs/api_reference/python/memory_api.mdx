@@ -41,11 +41,7 @@ client.memories.add(
 
 Performs a hybrid semantic search across the episodic memory store to find relevant context.
 
-
-
-Python
-
-```
+```python
 results = client.memories.search(
     org_id="my_org",
     project_id="my_proj",
@@ -70,8 +66,6 @@ results = client.memories.search(
 
 Retrieves a paginated list of raw memory episodes.
 
-
-
 | **Parameter** | **Type** | **Default**  | **Description**           |
 | ------------- | -------- | ------------ | ------------------------- |
 | `org_id`      | `str`    | **Required** | Organization identifier.  |
@@ -83,11 +77,7 @@ Retrieves a paginated list of raw memory episodes.
 
 Permanently removes all episodic memories from a specific project.
 
-
-
-Python
-
-```
+```python
 client.memories.delete_all_episodic(org_id="my_org", project_id="my_proj")
 ```
 
@@ -98,8 +88,6 @@ client.memories.delete_all_episodic(org_id="my_org", project_id="my_proj")
 ### `configure_episodic_memory`
 
 Adjusts the behavior of episodic memory for a project at runtime.
-
-
 
 | **Parameter**               | **Type** | **Default** | **Description**                                       |
 | --------------------------- | -------- | ----------- | ----------------------------------------------------- |
