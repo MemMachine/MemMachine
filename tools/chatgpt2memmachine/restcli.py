@@ -146,9 +146,7 @@ class MemMachineRestClient:
 
         # 201 = created, 409 = already exists (both are fine)
         if response.status_code not in (201, 409):
-            raise Exception(
-                f"Failed to ensure project exists: {response.text}"
-            )
+            raise Exception(f"Failed to ensure project exists: {response.text}")
 
     def add_memory(
         self, org_id="", project_id="", messages=None, memory_types=None
@@ -237,9 +235,7 @@ class MemMachineRestClient:
                     self.api_requests_fp.flush()
 
         if response.status_code != 204:
-            raise Exception(
-                f"Failed to configure short-term memory: {response.text}"
-            )
+            raise Exception(f"Failed to configure short-term memory: {response.text}")
 
     def search_memory(self, org_id, project_id, query_str, limit=5):
         search_memory_endpoint = self._get_url("memories/search")
