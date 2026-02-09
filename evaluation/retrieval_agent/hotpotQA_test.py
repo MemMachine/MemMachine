@@ -1,0 +1,208 @@
+import asyncio
+import argparse
+import json
+import sys
+import time
+from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
+from uuid import uuid4
+
+import tiktoken
+from dotenv import load_dotenv
+from huggingface_hub import hf_hub_download
+from openai import OpenAI
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from memmachine.episodic_memory.declarative_memory import (
+    ContentType,
+    Episode,
+)
+from evaluation.utils import agent_utils
+
+ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as the only source of knowledge.
+
+<instructions>
+1. Normalize inputs before deciding anything:
+   - Treat `{memories}` as possibly empty.
+   - Normalize entity spellings/case/ordinals/titles and common aliases (e.g., “10Th” → “10th”; honorific variants).
+   - If `{question}` is malformed, underspecified, or missing key constraints, ask exactly one concise clarifying question instead of answering.
+
+2. Choose the evidence basis using this strict priority:
+   (a) **Memory-explicit**: Use when `{memories}` contain at least one explicit statement that answers the question or provides all necessary facts.
+   (b) **Memory-determined inference**: Use when explicit memory facts, taken together, *fully determine* the answer unambiguously (show minimal reasoning).
+   (c) **Open-domain fallback**: Use general world knowledge when memories are empty/irrelevant/too vague OR do not fully determine the answer.
+
+3. Uncertainty rule:
+   - Do **not** say “unknown/not mentioned” if open-domain knowledge can reasonably answer.
+   - If neither memories nor general knowledge allow a confident answer, say “I don’t know” (optionally add a brief reason).
+
+4. Ambiguity handling:
+   - If multiple plausible entities/answers remain after normalization, provide the top candidates and note the ambiguity briefly.
+   - If multiple valid answers are genuinely possible, enumerate them (comma-separated or short bullets).
+
+5. Computation and counting:
+   - For counts or time intervals, compute explicitly (brief enumeration or numeric subtraction) to avoid mistakes.
+
+6. Output requirements (concise, auditable):
+   - Provide the **Answer** only, without additional commentary.
+   - Keep the total response to **max 2 sentences**, except when enumeration/computation is required; then use **up to 4 short lines** (bullets allowed) while staying as brief as possible.
+</instructions>
+
+<memories>
+{memories}
+</memories>
+
+Question: {question}
+"""
+
+def n_tokens(msg : str) -> int:
+    """
+    Count tokens in messages.
+    """
+    enc = tiktoken.get_encoding("o200k_base")
+    return len(enc.encode(msg))
+
+async def hotpotqa_ingest(dataset: list[dict[str, any]]):
+    t1 = datetime.now(timezone.utc)
+    added_content = 0
+    total_questions = 0
+    per_batch = 1000
+    index = -1
+
+    vector_graph_store = agent_utils.init_vector_graph_store(neo4j_uri="bolt://localhost:7687")
+    for data in dataset:
+        index += 1
+        # Notice that the index of items must align between ingestion and search
+        memory, _, _ = await agent_utils.init_memmachine_params(
+            vector_graph_store=vector_graph_store,
+            session_id=f"hotpotqa_group_{index}",
+        )
+
+        context = data["context"]
+        sentences = context["sentences"]
+        episodes = []
+        total_questions += 1
+        tokens = 0
+        for sent_list in sentences:
+            for sent in sent_list:
+                added_content += 1
+                tokens += n_tokens(sent)
+                ts = t1 + timedelta(minutes=added_content)
+                episodes.append(
+                    Episode(
+                        uid=str(uuid4()),
+                        timestamp=ts,
+                        source="user",
+                        content_type=ContentType.TEXT,
+                        content=sent,
+                    )
+                )
+                if added_content % per_batch == 0 or ((sent == sent_list[-1]) and (sent_list == sentences[-1])):
+                    print(f"Adding batch of {len(episodes)} episodes, tokens in batch: {tokens}...")
+                    t = time.perf_counter()
+                    await memory.add_episodes(episodes=episodes)
+                    print(f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s")
+                    print(f"Total added episodes: {added_content}")
+                    print(f"Total questions processed: {total_questions}/{len(dataset)}")
+                    episodes = []
+                    tokens = 0
+    print(f"Completed HotpotQA ingestion, added {total_questions} questions, {added_content} episodes.")
+
+async def hotpotqa_search(dataset: list[dict[str, any]], eval_result_path: str | None = None, agent_name: str = "ToolSelectAgent"):
+    tasks = []
+    attribute_matrix = agent_utils.init_attribute_matrix()
+    index = -1
+    responses: list[tuple[int, dict[str, any]]] = []
+    num_searched = 0
+    vector_graph_store = agent_utils.init_vector_graph_store(neo4j_uri="bolt://localhost:7687")
+    for data in dataset:
+        index += 1
+        context = data["context"]
+        titles = context["title"]
+        sentences = context["sentences"] # List[List[str]]
+
+        # Get supporting facts in string
+        supporting_facts = []
+        fact_index_dict = data["supporting_facts"]
+        for title, sent_id in zip(fact_index_dict["title"], fact_index_dict["sent_id"]):
+            sent = sentences[titles.index(title)][sent_id]
+            supporting_facts.append(sent)
+
+        memory, model, query_agent = await agent_utils.init_memmachine_params(
+            vector_graph_store=vector_graph_store,
+            model_name="gpt-5-mini",
+            session_id=f"hotpotqa_group_{index}",
+            agent_name=agent_name,
+        )
+
+        tasks.append(
+            agent_utils.process_question(
+                answer_prompt=ANSWER_PROMPT,
+                query_agent=query_agent,
+                memory=memory,
+                model=model,
+                question=data["question"],
+                answer=data["answer"],
+                category=(data["type"]),
+                supporting_facts=supporting_facts,
+                search_limit=20,
+                model_name="gpt-5-mini",
+                extra_attributes={"level": data["level"]},
+            )
+        )
+
+        if len(tasks) % 30 == 0 or (index == len(dataset) - 1):
+            responses.extend(await asyncio.gather(*tasks))
+            num_searched += len(tasks)
+            print(f"Completed HotpotQA searching {num_searched}/{len(dataset)} questions...")
+            tasks = []
+    
+    results: dict[str, any] = {}
+    agent_utils.update_results(responses, attribute_matrix, results)
+    agent_utils.update_final_attribute_matrix(
+        "hotpotqa",
+        attribute_matrix,
+        results,
+    )
+
+    if eval_result_path is not None:
+        with open(eval_result_path, "w") as f:
+            json.dump(results, f, indent=4)
+
+def load_hotpotqa_dataset(length: int, split: str) -> list[dict[str, any]]:
+    from datasets import load_dataset
+
+    dataset = load_dataset("hotpot_qa", "distractor", split=split)
+
+    # To JSON format
+    data = dataset.select(range(length)).to_list()
+    return data
+
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--eval-result-path", required=False, help="Path to save evaluation results", default=None)
+    parser.add_argument("--run-type", required=False, help="Type of run: ingest or search", default="search")
+    parser.add_argument("--length", required=False, help="Number of records to run on EACH n-needel dataset(total 3x length are testing)", type=int, default=30)
+    parser.add_argument("--split-name", required=False, help="Dataset split name: train(90.4k questions, 20%% easy, 63%% medium, 17%% hard), validation(7.41k question, all hard)", default="validation")
+    parser.add_argument("--test-target", required=True, help="Testing memmachine(bypass agent) or retrieval_agent", choices=["memmachine", "retrieval_agent"])
+    args = parser.parse_args()
+
+    print(f"Starting HotpotQA test with run type {args.run_type} and length {args.length}...")
+
+    dataset = load_hotpotqa_dataset(args.length, args.split_name)
+
+    if args.run_type == "ingest":
+        await hotpotqa_ingest(dataset)
+    elif args.run_type == "search":
+        agent_name = "MemMachineAgent" if args.test_target == "memmachine" else "ToolSelectAgent"
+        await hotpotqa_search(dataset, args.eval_result_path, agent_name)
+    else:
+        raise ValueError(f"Unknown run type: {args.run_type}, please use 'ingest' or 'search'.")
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    asyncio.run(main())

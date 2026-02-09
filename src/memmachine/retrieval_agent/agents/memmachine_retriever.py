@@ -49,7 +49,10 @@ class MemMachineAgent(AgentToolBase):
     async def do_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
         logger.info(f"CALLING {self.agent_name} with query: {query.query}")
 
-        perf_matrics = {"memory_retrieval_time": 0.0}
+        perf_matrics = {
+            "memory_retrieval_time": 0.0,
+            "agent": self.agent_name,
+        }
         mem_retrieval_start = time.time()
         scored_episodes = await self._memory.search_scored(
             query=query.query,

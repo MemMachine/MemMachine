@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import logging
+import time
 from typing import Any, cast
 
 from memmachine.retrieval_agent.common.agent_api import (
@@ -148,8 +149,15 @@ class SplitQueryAgent(AgentToolBase):
 
     async def do_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
         logger.info(f"CALLING {self.agent_name} with query: {query.query}")
+        perf_matrics: dict[str, Any] = {
+            "queries": [],
+            "llm_time": 0.0,
+            "agent": self.agent_name,
+        }
         prompt = self._prompt.format(query=query.query)
+        llm_start = time.time()
         rsp, _, input_token, output_token = await cast(LanguageModel, self._model).generate_response_with_token_usage(user_prompt=prompt)
+        perf_matrics["llm_time"] += time.time() - llm_start
         sub_queries: list[str] = []
         for line in rsp.split("\n"):
             if line.strip() == "":
@@ -159,7 +167,6 @@ class SplitQueryAgent(AgentToolBase):
             sub_queries = [query.query]
 
         result: list[Episode] = []
-        perf_matrics: dict[str, Any] = {"queries": []}
         tasks = []
         for sub_query in sub_queries:
             perf_matrics["queries"].append(sub_query)
@@ -176,7 +183,11 @@ class SplitQueryAgent(AgentToolBase):
             perf_matrics = self._update_perf_matrics(perf, perf_matrics)
 
         self._update_perf_matrics(
-            {"input_token": input_token, "output_token": output_token},
+            {
+                "input_token": input_token,
+                "output_token": output_token,
+                "memory_search_called": len(sub_queries),
+            },
             perf_matrics,
         )
 

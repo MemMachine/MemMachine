@@ -46,6 +46,10 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
         user_metrics_labels (dict[str, str]):
             Labels to attach to the collected metrics
             (default: {}).
+        reasoning_effort (str | None):
+            Reasoning effort level for supported models
+            (e.g. "minimal", "low", "medium", "high", "none").
+            If None, the API default is used.
 
     """
 
@@ -70,6 +74,14 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
         default_factory=dict,
         description="Labels to attach to the collected metrics",
     )
+    reasoning_effort: str | None = Field(
+        None,
+        description=(
+            "Reasoning effort level for supported models "
+            "(e.g. 'minimal', 'low', 'medium', 'high', 'none' depend on model). "
+            "If None, API default is used."
+        ),
+    )
 
 
 class OpenAIResponsesLanguageModel(LanguageModel):
@@ -91,6 +103,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         self._model = params.model
 
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
+        self._reasoning_effort = params.reasoning_effort
 
         metrics_factory = params.metrics_factory
 
@@ -255,15 +268,22 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     attempt,
                     max_attempts,
                 )
+                request_kwargs: dict[str, Any] = {
+                    "model": self._model,
+                    "input": input_prompts,
+                }
+                if self._reasoning_effort is not None:
+                    request_kwargs["reasoning"] = {
+                        "effort": self._reasoning_effort,
+                    }
+
                 if tools is None:
                     response = await self._client.responses.create(
-                        model=self._model,
-                        input=input_prompts,
+                        **request_kwargs,
                     )
                 else:
                     response = await self._client.responses.create(
-                        model=self._model,
-                        input=input_prompts,
+                        **request_kwargs,
                         tools=cast(list[ToolParam], tools),
                         tool_choice=cast(
                             Any,

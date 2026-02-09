@@ -1,0 +1,31 @@
+long_term_memory:
+  embedder: my_embedder_id
+  reranker: my_reranker_id
+  vector_graph_store: my_storage_id
+
+sessiondb:
+  uri: sqlitetest.db
+
+vector_graph_store:
+  my_storage_id:
+    provider: neo4j
+    config:
+      uri: 'bolt://localhost:7687'
+      username: neo4j
+      password: <NEO4J_PASSWORD>
+
+embedder:
+  my_embedder_id:
+    provider: "openai"
+    config:
+      model: "text-embedding-3-small"
+      api_key: <OPENAI_API_KEY>
+
+reranker:
+  my_reranker_id:
+    provider: "amazon-bedrock"
+    config:
+      region: "us-west-2"
+      aws_access_key_id: <AWS_ACCESS_KEY_ID>
+      aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+      model_id: "cohere.rerank-v3-5:0"

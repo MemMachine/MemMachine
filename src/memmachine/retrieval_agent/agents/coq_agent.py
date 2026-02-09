@@ -176,9 +176,11 @@ class ChainOfQueryAgent(AgentToolBase):
             "evidence": [],
             "confidence_scores": [],
             "memory_retrieval_time": 0.0,
+            "memory_search_called": 0,
             "llm_time": 0.0,
             "input_token": 0,
             "output_token": 0,
+            "agent": self.agent_name,
         }
 
     async def combined_check_and_rewrite(
@@ -288,6 +290,7 @@ class ChainOfQueryAgent(AgentToolBase):
             # Step 1: Perform the query
             result, p_matrics = await self._do_default_query(policy, curr_query)
             self._update_perf_matrics(p_matrics, perf_matrics)
+            perf_matrics["memory_search_called"] += 1
 
             # Step 2: Check if the evidence is enough to answer the original query
             llm_start = time.time()
