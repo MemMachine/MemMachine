@@ -156,7 +156,8 @@
               "api_reference/python/client",
               "api_reference/python/client_api",
               "api_reference/python/project_api",
-              "api_reference/python/memory_api"
+              "api_reference/python/memory_api",
+              "api_reference/python/project_api"
             ]
           },
           {
@@ -166,7 +167,7 @@
               "api_reference/python/episodic_memory",
               "api_reference/python/episodic_memory_manager",
               "api_reference/python/memory_types",
-              "api_reference/python/profile_memory"
+              "api_reference/python/semantic_memory"
             ]
           }
         ]

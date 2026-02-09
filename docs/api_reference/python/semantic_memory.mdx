@@ -1,0 +1,81 @@
+---
+title: "Semantic Memory"
+description: "Server-side implementation of structured knowledge and semantic tagging."
+icon: "diagram-project"
+---
+
+The **Semantic Memory** module provides the server-side logic for managing structured knowledge. Unlike Episodic memory, which is chronological, Semantic memory is relational—organizing data into a hierarchy of **Sets**, **Categories**, and **Tags**.
+
+## Knowledge Hierarchy
+
+The server implements a three-tier structure to ensure data remains organized and searchable:
+
+1.  **Semantic Set:** The top-level container (e.g., "User Profiles", "Product Catalog").
+2.  **Category:** A specific attribute or bucket within a set (e.g., "Preferences", "Specifications").
+3.  **Tag:** The atomic piece of knowledge (e.g., "Likes: Spicy Food", "Color: Blue").
+
+
+---
+
+## Core Server Operations
+
+The server handles semantic operations through specialized specification models defined in `spec.py`.
+
+### 1. Set Management
+Before tags can be added, a **Set Type** must be established. The server uses the `CreateSemanticSetTypeSpec` to define the schema and ownership of a knowledge set.
+
+```python
+# Server-side logic for set creation
+async def create_semantic_set_type(spec: CreateSemanticSetTypeSpec):
+    # Validates org_id/project_id and initializes the set in the database
+```
+
+### 2. Category Configuration
+
+Categories act as templates for data extraction. The server allows for **Category Templates**, which define how a Language Model should extract information from raw text to populate specific semantic tags.
+
+### 3. Tag Ingestion & Consolidation
+
+When the SDK calls `client.semantic.add_tag()`, the server processes an `AddSemanticTagSpec`.
+
+- **Vectorization:** The server generates an embedding for the tag value.
+- **Consolidation:** Periodically, the server identifies "large sections" (many similar tags) and uses an LLM to deduplicate or summarize them into a single, cleaner entry.
+
+------
+
+## Technical Implementation Details
+
+### Semantic Search (`hybrid_search`)
+
+The server does not perform simple keyword lookups. When a search request comes in, the server:
+
+1. Filters the database by `org_id` and `project_id`.
+2. Identifies the relevant `set_id`.
+3. Performs a vector similarity search across all tags within that set.
+4. Returns a `SemanticFeature` object containing the tag, its category, and associated metadata.
+
+### Lifecycle and Caching
+
+Semantic instances are managed by the server's resource layer. Because semantic data is often shared across sessions (unlike private episodic chat logs), the server optimizes for **Read-Heavy** workloads, caching frequently accessed sets to reduce database latency.
+
+------
+
+## Internal Models (DTOs)
+
+The server utilizes the following Pydantic models for semantic operations:
+
+| **Model**                   | **Purpose**                                                  |
+| --------------------------- | ------------------------------------------------------------ |
+| `AddSemanticTagSpec`        | Validates the category, value, and metadata for a new tag.   |
+| `CreateSemanticSetTypeSpec` | Establishes a new knowledge boundary.                        |
+| `SemanticFeature`           | The standardized output format for a retrieved knowledge entry. |
+
+```python
+# Example of a SemanticFeature returned by the server
+{
+    "id": "uuid-123",
+    "category_id": "user_preferences",
+    "value": "Vegan",
+    "metadata": {"source": "conversation_4"}
+}
+```

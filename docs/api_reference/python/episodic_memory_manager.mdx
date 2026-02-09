@@ -1,41 +1,73 @@
 ---
 title: "Episodic Memory Manager"
-description: "Manager for Episodic Memory instances"
+description: "Server-side orchestration and lifecycle management for memory instances."
 icon: "sitemap"
 ---
 
-Factory and manager for per-session episodic memory instances.
+The **Episodic Memory Manager** is a factory and orchestration layer that manages per-session memory instances. Its primary role is to ensure that memory resources (like vector store connections and LLM caches) are reused efficiently and disposed of correctly through a **Reference Counting** mechanism.
+
+## Resource Orchestration
+
+In a high-concurrency server environment, creating a new memory instance for every single API request is expensive. The Manager solves this by maintaining an active cache of instances.
+
+
+
+### The Lifecycle Flow
+1.  **Request:** An API call arrives with a `session_key` (derived from `org_id` and `project_id`).
+2.  **Lookup:** The Manager checks the `instance_cache` to see if a memory object for that session already exists.
+3.  **Instantiation:** If not found, it uses `EpisodicMemoryParams` to build a new instance.
+4.  **Reference Increment:** The manager increments the "Active User" count for that instance.
+5.  **Cleanup:** When the request finishes, the count decrements. If the count hits zero and the `max_life_time` expires, the instance is closed and purged from memory.
+
+---
 
 ## Class `EpisodicMemoryManagerParams`
 
-Parameters for configuring the EpisodicMemoryManager.
+These parameters define the "Rules of Engagement" for the server's memory usage.
 
-Attributes:
-    instance_cache_size (int): The maximum number of instances to cache.
-    max_life_time (int): The maximum idle lifetime of an instance in seconds.
-    resource_manager (ResourceManager): The resource manager.
-    session_data_manager (SessionDataManager): The session data manager.
+| Attribute | Type | Description |
+| :--- | :--- | :--- |
+| `instance_cache_size` | `int` | The maximum number of unique sessions to keep in RAM simultaneously. |
+| `max_life_time` | `int` | How long (in seconds) an idle session stays in the cache before being evicted. |
+| `resource_manager` | `ResourceManager` | Provides shared access to the LLM and Embedding providers. |
+| `session_data_manager` | `SessionDataManager` | Handles the low-level database persistence for session metadata. |
 
-```python
-def EpisodicMemoryManagerParams()
-```
+---
 
 ## Class `EpisodicMemoryManager`
 
-Manage the lifecycle and access of episodic memory instances.
+The manager class is responsible for the thread-safe creation and retrieval of memory pillars.
 
-This class is responsible for creating, retrieving, and closing
-`SemanticMemory` instances based on a session key. It uses a
-reference counting mechanism to manage the lifecycle of each memory
-instance, ensuring that resources are properly released when no
-longer needed.
+### Key Responsibilities
+
+#### 1. Instance Retrieval (`get_instance`)
+The manager ensures that two concurrent requests for the same `project_id` share the same memory instance, preventing data race conditions and redundant database connections.
+
+#### 2. Cross-Namespace Support
+While primarily focused on Episodic data, the manager also facilitates the retrieval of **Semantic Memory** instances when a hybrid search is required, ensuring that the Knowledge Graph and the Chat History are synchronized.
+
+
+
+#### 3. Graceful Shutdown
+When the server receives a shutdown signal, the Manager is responsible for:
+- Flushing any pending "summarization" loops to the database.
+- Closing all active vector database connections.
+- Clearing the instance cache.
+
+---
+
+## Implementation Example (Internal)
 
 ```python
-def EpisodicMemoryManager(params: EpisodicMemoryManagerParams)
+# How the server uses the manager inside service.py
+async def handle_request(spec):
+    # Manager handles the 'get or create' logic automatically
+    memory_instance = await manager.get_memory_instance(
+        session_key=spec.session_key,
+        params=default_params
+    )
+    
+    async with memory_instance:
+        return await memory_instance.add(spec.messages)
 ```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `params` | `EpisodicMemoryManagerParams` | - |
+<Note> Developer Note: Because the Manager uses reference counting, it is vital to use the memory instance within an async with block or manually call close() to prevent memory leaks in the server process. </Note>
