@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 from datetime import datetime
 
@@ -18,6 +19,8 @@ class MemMachineRestClient:
         self.base_url = base_url
         self.api_version = api_version
         self.verbose = verbose
+        # Thread safety: lock for file writes in verbose mode
+        self.file_lock = threading.Lock() if verbose else None
         if self.verbose:
             if not run_id:
                 run_id = get_filename_safe_timestamp()
@@ -84,9 +87,15 @@ class MemMachineRestClient:
         if latency_ms is not None:
             trace_lines.append(f"   Latency: {latency_ms}ms")
 
-        # Write to trace file
-        self.trace_fp.write("\n".join(trace_lines) + "\n")
-        self.trace_fp.flush()  # Ensure immediate write
+        # Thread safety: use file lock to prevent concurrent writes
+        if self.file_lock:
+            with self.file_lock:
+                self.trace_fp.write("\n".join(trace_lines) + "\n")
+                self.trace_fp.flush()  # Ensure immediate write
+        else:
+            # Fallback for non-verbose mode (shouldn't reach here due to early return)
+            self.trace_fp.write("\n".join(trace_lines) + "\n")
+            self.trace_fp.flush()
 
     """
     curl -X POST "http://localhost:8080/api/v2/memories" \
@@ -127,16 +136,17 @@ class MemMachineRestClient:
         if self.verbose:
             self._trace_request("POST", url, payload, response, latency_ms)
             response_code = response.status_code if response is not None else ""
-            self.api_requests_fp.write(
-                f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
-            )
-            self.api_requests_fp.flush()
+            # Thread safety: lock already held in _trace_request, acquire separately here
+            if self.file_lock:
+                with self.file_lock:
+                    self.api_requests_fp.write(
+                        f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
+                    )
+                    self.api_requests_fp.flush()
 
         # 201 = created, 409 = already exists (both are fine)
         if response.status_code not in (201, 409):
-            raise Exception(
-                f"Failed to ensure project exists: {response.text}"
-            )
+            raise Exception(f"Failed to ensure project exists: {response.text}")
 
     def add_memory(
         self, org_id="", project_id="", messages=None, memory_types=None
@@ -168,10 +178,13 @@ class MemMachineRestClient:
             )
             # Write to API requests log file
             response_code = response.status_code if response is not None else ""
-            self.api_requests_fp.write(
-                f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms},{response_code}\n",
-            )
-            self.api_requests_fp.flush()  # Ensure immediate write
+            # Thread safety: lock for file write
+            if self.file_lock:
+                with self.file_lock:
+                    self.api_requests_fp.write(
+                        f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms},{response_code}\n",
+                    )
+                    self.api_requests_fp.flush()  # Ensure immediate write
 
         if response.status_code != 200:
             raise Exception(f"Failed to post episodic memory: {response.text}")
@@ -213,15 +226,16 @@ class MemMachineRestClient:
         if self.verbose:
             self._trace_request("POST", url, payload, response, latency_ms)
             response_code = response.status_code if response is not None else ""
-            self.api_requests_fp.write(
-                f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
-            )
-            self.api_requests_fp.flush()
+            # Thread safety: lock already held in _trace_request, acquire separately here
+            if self.file_lock:
+                with self.file_lock:
+                    self.api_requests_fp.write(
+                        f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
+                    )
+                    self.api_requests_fp.flush()
 
         if response.status_code != 204:
-            raise Exception(
-                f"Failed to configure short-term memory: {response.text}"
-            )
+            raise Exception(f"Failed to configure short-term memory: {response.text}")
 
     def search_memory(self, org_id, project_id, query_str, limit=5):
         search_memory_endpoint = self._get_url("memories/search")
@@ -253,10 +267,13 @@ class MemMachineRestClient:
             )
             # Write to API requests log file
             response_code = response.status_code if response is not None else ""
-            self.api_requests_fp.write(
-                f"{datetime.now().isoformat()},POST,{search_memory_endpoint},{latency_ms},{response_code}\n",
-            )
-            self.api_requests_fp.flush()  # Ensure immediate write
+            # Thread safety: lock for file write
+            if self.file_lock:
+                with self.file_lock:
+                    self.api_requests_fp.write(
+                        f"{datetime.now().isoformat()},POST,{search_memory_endpoint},{latency_ms},{response_code}\n",
+                    )
+                    self.api_requests_fp.flush()  # Ensure immediate write
 
         if response.status_code != 200:
             raise Exception(f"Failed to search episodic memory: {response.text}")
