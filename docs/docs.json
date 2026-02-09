@@ -160,14 +160,14 @@
               "api_reference/python/project_api"
             ]
           },
-          {
-            "group": "PythonSDK Server",
+         {
+            "group": "Python SDK Server",
             "pages": [
-              "api_reference/python/server",
-              "api_reference/python/episodic_memory",
-              "api_reference/python/episodic_memory_manager",
-              "api_reference/python/memory_types",
-              "api_reference/python/semantic_memory"
+              "server",
+              "memory_types",
+              "episodic_memory",
+              "semantic_memory",
+              "episodic_memory_manager"
             ]
           }
         ]
