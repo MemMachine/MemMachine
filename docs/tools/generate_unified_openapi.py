@@ -1,11 +1,6 @@
 
 import json
-import sys
-import os
 import inspect
-
-# Add src to sys.path
-sys.path.insert(0, os.path.join(os.getcwd(), "src"))
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -14,17 +9,17 @@ from memmachine.server.api_v2.mcp import mcp
 
 def generate_unified_openapi():
     app = FastAPI(title="MemMachine Server", version="0.2.0")
-    
+
     # Load v2 routes
     load_v2_api_router(app)
-    
+
     # Generate base OpenAPI
     openapi_schema = get_openapi(
         title="MemMachine Server",
         version="0.2.0",
         routes=app.routes,
     )
-    
+
     # Tag v2 routes
     for path, methods in openapi_schema["paths"].items():
         if path.startswith("/api/v2"):
@@ -41,13 +36,13 @@ def generate_unified_openapi():
     # Since FastMCP structure isn't fully clear on HTTP mapping, we'll document them as abstract operations
     # or if we knew the specific HTTP mapping FastMCP uses.
     # For now, we will list them under /mcp/{tool_name} to satisfy the user's request to "include MCP tools"
-    
+
     # Inspect mcp object for tools
     # FastMCP stores tools in _tool_manager._tools
     if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
         for name, tool in mcp._tool_manager._tools.items():
             path_item = {}
-            
+
             # Create a POST operation for the tool
             operation = {
                 "tags": ["MCP"],
@@ -60,7 +55,7 @@ def generate_unified_openapi():
                     }
                 }
             }
-            
+
             # Try to extract parameters
             if hasattr(tool, "fn"):
                 sig = inspect.signature(tool.fn)

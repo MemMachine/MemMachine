@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: T201, E402
+# ruff: noqa: T201
 """
 Quick test script for CrewAI + MemMachine integration.
 
@@ -7,13 +7,7 @@ This script tests the basic functionality without requiring a full CrewAI setup.
 """
 
 import sys
-from pathlib import Path
 
-# Add project root and src to path for imports
-SRC_DIR = Path(__file__).resolve().parents[2] / "src"
-sys.path.insert(0, str(SRC_DIR))
-
-# Use relative import for tool module
 from .tool import MemMachineTools, create_memmachine_tools
 
 

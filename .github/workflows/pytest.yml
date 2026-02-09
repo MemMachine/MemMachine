@@ -34,4 +34,4 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Test with python ${{ matrix.python-version }}
-        run: uv run --frozen --all-extras pytest -n auto --cov=memmachine
+        run: uv run --frozen --all-extras pytest --cov=memmachine
