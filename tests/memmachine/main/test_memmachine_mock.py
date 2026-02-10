@@ -311,7 +311,7 @@ async def test_query_search_runs_targeted_memory_tasks(
         session_data=dummy_session,
         set_metadata=None,
         limit=None,
-        min_distance=score_threshold,
+        distance_threshold=score_threshold,
         search_filter=None,
     )
 
