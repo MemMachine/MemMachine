@@ -1,6 +1,7 @@
 """SQLAlchemy-backed semantic storage implementation using pgvector."""
 
 import logging
+from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import Any, overload
 
@@ -139,7 +140,7 @@ class Feature(BaseSemanticStorage):
     def to_typed_model(
         self,
         *,
-        citations: list[EpisodeIdT] | None = None,
+        citations: Sequence[EpisodeIdT] | None = None,
     ) -> SemanticFeature:
         return SemanticFeature(
             metadata=SemanticFeature.Metadata(
@@ -223,19 +224,19 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(delete(Feature))
             await session.commit()
 
-    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+    async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         pass
 
     async def add_feature(
         self,
         *,
-        set_id: str,
+        set_id: SetIdT,
         category_name: str,
         feature: str,
         value: str,
         tag: str,
         embedding: InstanceOf[np.ndarray],
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> FeatureIdT:
         stmt = (
             insert(Feature)
@@ -268,7 +269,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         value: str | None = None,
         tag: str | None = None,
         embedding: InstanceOf[np.ndarray] | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         try:
             feature_id_int = int(feature_id)
@@ -312,7 +313,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             result = await session.execute(stmt)
             feature = result.scalar_one_or_none()
 
-            citations_map: dict[int, list[EpisodeIdT]] = {}
+            citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
             if feature is not None and load_citations:
                 citations_map = await self._load_feature_citations(
                     session,
@@ -333,7 +334,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         tag_threshold: int | None = None,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         stmt = select(Feature)
 
         stmt = self._apply_feature_filter(
@@ -354,23 +355,34 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             raise InvalidArgumentError("Cannot specify offset without limit")
 
         async with self._create_session() as session:
-            result = await session.execute(stmt)
-            features = result.scalars().all()
-            citations_map: dict[int, list[EpisodeIdT]] = {}
-            if load_citations and features:
-                citations_map = await self._load_feature_citations(
-                    session,
-                    [f.id for f in features if f.id is not None],
-                )
-        if tag_threshold is not None and tag_threshold > 0 and features:
-            from collections import Counter
+            result = await session.stream(stmt)
+            requires_buffering = load_citations or (
+                tag_threshold is not None and tag_threshold > 0
+            )
+            if requires_buffering:
+                features = [f async for f in result.scalars()]
+                citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
+                if load_citations and features:
+                    citations_map = await self._load_feature_citations(
+                        session,
+                        [f.id for f in features if f.id is not None],
+                    )
+                if tag_threshold is not None and tag_threshold > 0 and features:
+                    from collections import Counter
 
-            counts = Counter(f.tag_id for f in features)
-            features = [f for f in features if counts[f.tag_id] >= tag_threshold]
+                    counts = Counter(f.tag_id for f in features)
+                    features = [
+                        f for f in features if counts[f.tag_id] >= tag_threshold
+                    ]
+                for feature in features:
+                    yield feature.to_typed_model(
+                        citations=citations_map.get(feature.id)
+                    )
+                return
+            async for feature in result.scalars():
+                yield feature.to_typed_model()
 
-        return [f.to_typed_model(citations=citations_map.get(f.id)) for f in features]
-
-    async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
         try:
             feature_ids_ints = TypeAdapter(list[int]).validate_python(feature_ids)
         except ValidationError as e:
@@ -398,7 +410,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         try:
             feature_id_int = int(feature_id)
@@ -419,10 +431,10 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def get_history_messages(
         self,
         *,
-        set_ids: list[str] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> AsyncIterator[EpisodeIdT]:
         stmt = select(SetIngestedHistory.history_id).order_by(
             SetIngestedHistory.history_id.asc(),
         )
@@ -435,15 +447,14 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         )
 
         async with self._create_session() as session:
-            result = await session.execute(stmt)
-            history_ids = result.scalars().all()
-
-        return TypeAdapter(list[EpisodeIdT]).validate_python(history_ids)
+            result = await session.stream(stmt)
+            async for history_id in result.scalars():
+                yield EpisodeIdT(history_id)
 
     async def get_history_messages_count(
         self,
         *,
-        set_ids: list[str] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         is_ingested: bool | None = None,
     ) -> int:
         stmt = select(func.count(SetIngestedHistory.history_id))
@@ -462,8 +473,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
     async def mark_messages_ingested(
         self,
-        set_id: str,
-        history_ids: list[EpisodeIdT],
+        *,
+        set_id: SetIdT,
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         if len(history_ids) == 0:
             raise ValueError("No ids provided")
@@ -481,7 +493,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
     async def add_history_to_set(
         self,
-        set_id: str,
+        set_id: SetIdT,
         history_id: EpisodeIdT,
     ) -> None:
         stmt = insert(SetIngestedHistory).values(set_id=set_id, history_id=history_id)
@@ -490,7 +502,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(stmt)
             await session.commit()
 
-    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
         if not history_ids:
             return
 
@@ -502,7 +514,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(stmt)
             await session.commit()
 
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+    async def delete_history_set(self, set_ids: Sequence[SetIdT]) -> None:
         if not set_ids:
             return
 
@@ -518,7 +530,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         stmt: Select,
         *,
-        set_ids: list[str] | None = None,
+        set_ids: Sequence[str] | None = None,
         is_ingested: bool | None = None,
         limit: int | None = None,
     ) -> Select:
@@ -698,8 +710,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def _load_feature_citations(
         self,
         session: AsyncSession,
-        feature_ids: list[int],
-    ) -> dict[int, list[EpisodeIdT]]:
+        feature_ids: Sequence[int],
+    ) -> Mapping[int, Sequence[EpisodeIdT]]:
         if not feature_ids:
             return {}
 
@@ -710,7 +722,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         result = await session.execute(stmt)
 
-        citations: dict[int, list[EpisodeIdT]] = {
+        citations: MutableMapping[int, list[EpisodeIdT]] = {
             feature_id: [] for feature_id in feature_ids
         }
 
@@ -719,50 +731,54 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         return citations
 
-    async def get_history_set_ids(
+    def get_history_set_ids(
         self,
         *,
         min_uningested_messages: int | None = None,
         older_than: AwareDatetime | None = None,
-    ) -> list[SetIdT]:
-        stmt = select(SetIngestedHistory.set_id).distinct()
+    ) -> AsyncIterator[SetIdT]:
+        async def _iter() -> AsyncIterator[SetIdT]:
+            stmt = select(SetIngestedHistory.set_id).distinct()
 
-        conditions = []
+            conditions = []
 
-        if min_uningested_messages is not None and min_uningested_messages > 0:
-            inner = aliased(SetIngestedHistory)
+            if min_uningested_messages is not None and min_uningested_messages > 0:
+                inner = aliased(SetIngestedHistory)
 
-            count_uningested = (
-                select(func.count(inner.set_id))
-                .where(
-                    inner.set_id == SetIngestedHistory.set_id,  # correlate on set_id
-                    inner.ingested.is_(False),
+                count_uningested = (
+                    select(func.count(inner.set_id))
+                    .where(
+                        inner.set_id
+                        == SetIngestedHistory.set_id,  # correlate on set_id
+                        inner.ingested.is_(False),
+                    )
+                    .scalar_subquery()
                 )
-                .scalar_subquery()
-            )
 
-            conditions.append(count_uningested >= min_uningested_messages)
+                conditions.append(count_uningested >= min_uningested_messages)
 
-        if older_than is not None:
-            conditions.append(
-                and_(
-                    SetIngestedHistory.created_at <= older_than,
-                    SetIngestedHistory.ingested.is_(False),
+            if older_than is not None:
+                conditions.append(
+                    and_(
+                        SetIngestedHistory.created_at <= older_than,
+                        SetIngestedHistory.ingested.is_(False),
+                    )
                 )
-            )
 
-        if len(conditions) == 1:
-            stmt = stmt.where(conditions[0])
-        elif len(conditions) > 1:
-            stmt = stmt.where(or_(*conditions))
+            if len(conditions) == 1:
+                stmt = stmt.where(conditions[0])
+            elif len(conditions) > 1:
+                stmt = stmt.where(or_(*conditions))
 
-        async with self._create_session() as session:
-            result = await session.execute(stmt)
-            set_ids = result.scalars().all()
+            async with self._create_session() as session:
+                result = await session.stream(stmt)
+                async for set_id in result.scalars():
+                    if set_id is not None:
+                        yield SetIdT(set_id)
 
-        return TypeAdapter(list[SetIdT]).validate_python(set_ids)
+        return _iter()
 
-    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+    async def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         stmt = union(
             select(SetIngestedHistory.set_id).where(
                 SetIngestedHistory.set_id.startswith(prefix)
@@ -771,7 +787,6 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         )
 
         async with self._create_session() as session:
-            result = await session.execute(stmt)
-            set_ids = result.scalars().all()
-
-        return TypeAdapter(list[SetIdT]).validate_python(set_ids)
+            result = await session.stream(stmt)
+            async for set_id in result.scalars():
+                yield SetIdT(set_id)

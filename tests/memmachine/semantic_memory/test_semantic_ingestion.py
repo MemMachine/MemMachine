@@ -30,6 +30,14 @@ from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
 )
 
 
+async def _collect_feature_set(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_feature_set(**kwargs)]
+
+
+async def _collect_history_messages(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_history_messages(**kwargs)]
+
+
 @pytest.fixture
 def semantic_prompt() -> SemanticPrompt:
     return RawSemanticPrompt(
@@ -114,13 +122,15 @@ async def test_process_single_set_returns_when_no_messages(
 
     assert resource_retriever.seen_ids == ["user-123"]
     assert (
-        await semantic_storage.get_feature_set(
-            filter_expr=parse_filter("set_id IN ('user-123')")
+        await _collect_feature_set(
+            semantic_storage,
+            filter_expr=parse_filter("set_id IN ('user-123')"),
         )
         == []
     )
     assert (
-        await semantic_storage.get_history_messages(
+        await _collect_history_messages(
+            semantic_storage,
             set_ids=["user-123"],
             is_ingested=False,
         )
@@ -175,7 +185,8 @@ async def test_process_single_set_applies_commands(
     filter_str = (
         f"set_id IN ('user-123') AND category_name IN ('{semantic_category.name}')"
     )
-    features = await semantic_storage.get_feature_set(
+    features = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
         load_citations=True,
     )
@@ -188,19 +199,22 @@ async def test_process_single_set_applies_commands(
     assert list(feature.metadata.citations) == [message_id]
 
     filter_str = "set_id IN ('user-123') AND feature_name IN ('favorite_motorcycle')"
-    remaining = await semantic_storage.get_feature_set(
+    remaining = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
     )
     assert remaining == []
 
     assert (
-        await semantic_storage.get_history_messages(
+        await _collect_history_messages(
+            semantic_storage,
             set_ids=["user-123"],
             is_ingested=False,
         )
         == []
     )
-    ingested = await semantic_storage.get_history_messages(
+    ingested = await _collect_history_messages(
+        semantic_storage,
         set_ids=["user-123"],
         is_ingested=True,
     )
@@ -398,7 +412,8 @@ async def test_deduplicate_features_merges_and_relabels(
     filter_str = (
         f"set_id IN ('user-789') AND category_name IN ('{semantic_category.name}')"
     )
-    memories = await semantic_storage.get_feature_set(
+    memories = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
         load_citations=True,
     )
@@ -437,7 +452,8 @@ async def test_deduplicate_features_merges_and_relabels(
     assert kept_feature is not None
     assert kept_feature.value == "original pizza"
 
-    all_features = await semantic_storage.get_feature_set(
+    all_features = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
         load_citations=True,
     )

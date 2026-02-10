@@ -273,17 +273,21 @@ async def test_query_search_runs_targeted_memory_tasks(
     )
     monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
 
+    semantic_features = [
+        SemanticFeature(
+            category="profile",
+            tag="name",
+            feature_name="value",
+            value="semantic-response",
+        )
+    ]
+
+    async def mock_search(*args, **kwargs):
+        for feature in semantic_features:
+            yield feature
+
     semantic_manager = MagicMock()
-    semantic_manager.search = AsyncMock(
-        return_value=[
-            SemanticFeature(
-                category="profile",
-                tag="name",
-                feature_name="value",
-                value="semantic-response",
-            )
-        ]
-    )
+    semantic_manager.search = mock_search
     patched_resource_manager.get_semantic_session_manager = AsyncMock(
         return_value=semantic_manager
     )
@@ -297,10 +301,9 @@ async def test_query_search_runs_targeted_memory_tasks(
     )
 
     async_episodic.assert_awaited_once()
-    semantic_manager.search.assert_awaited_once()
 
     assert result.episodic_memory is async_episodic.return_value
-    assert result.semantic_memory == semantic_manager.search.return_value
+    assert result.semantic_memory == semantic_features
 
 
 @pytest.mark.asyncio
@@ -322,17 +325,21 @@ async def test_query_search_skips_unrequested_memories(
     )
     monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
 
+    semantic_features = [
+        SemanticFeature(
+            category="profile",
+            tag="name",
+            feature_name="value",
+            value="semantic-response",
+        )
+    ]
+
+    async def mock_search(*args, **kwargs):
+        for feature in semantic_features:
+            yield feature
+
     semantic_manager = MagicMock()
-    semantic_manager.search = AsyncMock(
-        return_value=[
-            SemanticFeature(
-                category="profile",
-                tag="name",
-                feature_name="value",
-                value="semantic-response",
-            )
-        ]
-    )
+    semantic_manager.search = mock_search
     patched_resource_manager.get_semantic_session_manager = AsyncMock(
         return_value=semantic_manager
     )
@@ -346,10 +353,9 @@ async def test_query_search_skips_unrequested_memories(
     )
 
     async_episodic.assert_not_called()
-    semantic_manager.search.assert_awaited_once()
 
     assert result.episodic_memory is None
-    assert result.semantic_memory == semantic_manager.search.return_value
+    assert result.semantic_memory == semantic_features
 
 
 @pytest.mark.asyncio

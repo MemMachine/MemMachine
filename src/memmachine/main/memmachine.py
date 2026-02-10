@@ -597,15 +597,20 @@ class MemMachine:
 
         if MemoryType.Semantic in target_memories:
             semantic_session = await self._resources.get_semantic_session_manager()
-            semantic_task = asyncio.create_task(
-                semantic_session.search(
-                    message=query,
-                    session_data=session_data,
-                    set_metadata=set_metadata,
-                    limit=limit,
-                    search_filter=property_filter,
-                )
-            )
+
+            async def _collect_semantic_results() -> list[SemanticFeature]:
+                return [
+                    feature
+                    async for feature in semantic_session.search(
+                        message=query,
+                        session_data=session_data,
+                        set_metadata=set_metadata,
+                        limit=limit,
+                        search_filter=property_filter,
+                    )
+                ]
+
+            semantic_task = asyncio.create_task(_collect_semantic_results())
 
         return MemMachine.SearchResponse(
             episodic_memory=await episodic_task if episodic_task else None,
@@ -669,15 +674,20 @@ class MemMachine:
 
         if MemoryType.Semantic in target_memories:
             semantic_session = await self._resources.get_semantic_session_manager()
-            semantic_task = asyncio.create_task(
-                semantic_session.get_set_features(
-                    session_data=session_data,
-                    set_metadata=set_metadata,
-                    search_filter=search_filter_expr,
-                    page_size=page_size,
-                    page_num=page_num,
-                )
-            )
+
+            async def _collect_semantic_results() -> list[SemanticFeature]:
+                return [
+                    feature
+                    async for feature in semantic_session.get_set_features(
+                        session_data=session_data,
+                        set_metadata=set_metadata,
+                        search_filter=search_filter_expr,
+                        page_size=page_size,
+                        page_num=page_num,
+                    )
+                ]
+
+            semantic_task = asyncio.create_task(_collect_semantic_results())
 
         episodic_result = await episodic_task if episodic_task else None
         semantic_result = await semantic_task if semantic_task else None

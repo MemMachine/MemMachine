@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import MutableMapping, Sequence
+
 from memmachine.common import rw_locks
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
@@ -30,15 +32,19 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         # Shared lock for non-set_id caches
         self._other_lock = rw_locks.AsyncRWLock()
 
-        self._setid_config_cache: dict[SetIdT, SemanticConfigStorage.Config] = {}
+        self._setid_config_cache: MutableMapping[
+            SetIdT, SemanticConfigStorage.Config
+        ] = {}
         self._registered_set_id_set_types: set[SetIdT] = set()
 
-        self._category_cache: dict[
+        self._category_cache: MutableMapping[
             CategoryIdT, SemanticConfigStorage.Category | None
         ] = {}
-        self._tag_cache: dict[TagIdT, SemanticConfigStorage.Tag | None] = {}
-        self._set_type_categories_cache: dict[str, list[SemanticCategory]] = {}
-        self._set_type_ids_cache: dict[str, list[SetTypeEntry]] = {}
+        self._tag_cache: MutableMapping[TagIdT, SemanticConfigStorage.Tag | None] = {}
+        self._set_type_categories_cache: MutableMapping[
+            str, Sequence[SemanticCategory]
+        ] = {}
+        self._set_type_ids_cache: MutableMapping[str, Sequence[SetTypeEntry]] = {}
 
     async def startup(self) -> None:
         await self._wrapped.startup()
@@ -118,7 +124,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         self,
         *,
         category_id: CategoryIdT,
-    ) -> list[SetIdT]:
+    ) -> Sequence[SetIdT]:
         return await self._wrapped.get_category_set_ids(category_id=category_id)
 
     async def create_category(
@@ -216,7 +222,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         self,
         *,
         set_type_id: str,
-    ) -> list[SemanticCategory]:
+    ) -> Sequence[SemanticCategory]:
         async with self._other_lock.read_lock():
             if set_type_id in self._set_type_categories_cache:
                 return self._set_type_categories_cache[set_type_id]
@@ -285,7 +291,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         *,
         org_id: str,
         org_level_set: bool = False,
-        metadata_tags: list[str],
+        metadata_tags: Sequence[str],
         name: str | None = None,
         description: str | None = None,
     ) -> str:
@@ -302,7 +308,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
 
         return set_type_id
 
-    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]:
+    async def list_set_type_ids(self, *, org_id: str) -> Sequence[SetTypeEntry]:
         async with self._other_lock.read_lock():
             if org_id in self._set_type_ids_cache:
                 return self._set_type_ids_cache[org_id]

@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Mapping, MutableMapping, Sequence
 
 from pydantic import (
     BaseModel,
@@ -20,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 def _features_to_llm_format(
-    features: list[SemanticFeature],
-) -> dict[str, dict[str, str]]:
-    structured_features: dict[str, dict[str, str]] = {}
+    features: Sequence[SemanticFeature],
+) -> Mapping[str, Mapping[str, str]]:
+    structured_features: MutableMapping[str, MutableMapping[str, str]] = {}
 
     for feature in features:
         if feature.tag not in structured_features:
@@ -38,16 +39,16 @@ def _features_to_llm_format(
 class _SemanticFeatureUpdateRes(BaseModel):
     """Schema used to validate parsed feature-update commands returned by the LLM."""
 
-    commands: list[SemanticCommand] = Field(default_factory=list)
+    commands: Sequence[SemanticCommand] = Field(default_factory=list)
 
 
 @validate_call
 async def llm_feature_update(
-    features: list[SemanticFeature],
+    features: Sequence[SemanticFeature],
     message_content: str,
     model: InstanceOf[LanguageModel],
     update_prompt: str,
-) -> list[SemanticCommand]:
+) -> Sequence[SemanticCommand]:
     """Generate feature update commands from an incoming message using the LLM."""
     user_prompt = (
         "The old feature set is provided below:\n"
@@ -87,14 +88,14 @@ class LLMReducedFeature(BaseModel):
 class SemanticConsolidateMemoryRes(BaseModel):
     """LLM response describing merged features and ids of features to retain."""
 
-    consolidated_memories: list[LLMReducedFeature] = Field(default_factory=list)
-    keep_memories: list[EpisodeIdT] | None
+    consolidated_memories: Sequence[LLMReducedFeature] = Field(default_factory=list)
+    keep_memories: Sequence[EpisodeIdT] | None
     model_config = ConfigDict(coerce_numbers_to_str=True)
 
 
 @validate_call
 async def llm_consolidate_features(
-    features: list[SemanticFeature],
+    features: Sequence[SemanticFeature],
     model: InstanceOf[LanguageModel],
     consolidate_prompt: str,
 ) -> SemanticConsolidateMemoryRes | None:
