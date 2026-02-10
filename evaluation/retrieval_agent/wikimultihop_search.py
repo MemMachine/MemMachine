@@ -17,6 +17,8 @@ from evaluation.retrieval_agent.wikimultihop_ingest import load_data
 
 from evaluation.utils import agent_utils
 
+# Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
+# Reinforcement Learning", arXiv:2508.03680.
 ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as the primary source when they contain sufficient evidence; otherwise use general world knowledge.
 
 <instructions>
@@ -55,33 +57,38 @@ Question: {question}
 
 async def run_wiki(
     dpath: str | None = None,
-    tpath: str | None = None,
+    epath: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    print("Starting WikiMultiHop test...")
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "--data-path", required=True, help="Path to the source data file"
     )
     parser.add_argument(
-        "--target-path", required=True, help="Path to the target data file"
+        "--eval-result-path", required=True, help="Path to save evaluation results", default=None
     )
     parser.add_argument(
         "--length", type=int, default=500, help="Number of questions to search"
     )
     parser.add_argument(
-        "--test-target", required=True, help="Testing memmachine(bypass agent) or retrieval_agent", choices=["memmachine", "retrieval_agent"]
+        "--test-target", required=True, help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm", choices=["memmachine", "retrieval_agent", "llm"]
     )
 
     args = parser.parse_args()
 
+    print("Starting WikiMultiHop test...")
+    print(f"Data path: {args.data_path}")
+    print(f"Evaluation result path: {args.eval_result_path}")
+    print(f"Length: {args.length}")
+    print(f"Test target: {args.test_target}")
+
     data_path = args.data_path
-    target_path = args.target_path
+    eval_result_path = args.eval_result_path
 
     if dpath:
         data_path = dpath
-    if tpath:
-        target_path = tpath
+    if epath:
+        eval_result_path = epath
 
     vector_graph_store = agent_utils.init_vector_graph_store(neo4j_uri="bolt://localhost:7687")
     memory, model, query_agent = await agent_utils.init_memmachine_params(
@@ -91,12 +98,13 @@ async def run_wiki(
         agent_name="ToolSelectAgent" if args.test_target == "retrieval_agent" else "MemMachineAgent",
     )
 
-    _, questions, answers, types, supporting_facts = load_data(data_path=data_path, start_line=1, end_line=args.length, randomize="NONE")
+    contexts, questions, answers, types, supporting_facts = load_data(data_path=data_path, start_line=1, end_line=args.length, randomize="NONE")
     print(f"Loaded {len(questions)} questions, start querying...")
 
     tasks = []
     results: dict[str, Any] = {}
     attribute_matrix = agent_utils.init_attribute_matrix()
+    full_content = "\n".join(contexts)
     for q, a, t, f_list in zip(questions, answers, types, supporting_facts):
         t += 5 # Use locomo category 1-5, and wiki 6-9
         tasks.append(
@@ -110,6 +118,7 @@ async def run_wiki(
                 t,
                 f_list,
                 "",
+                full_content=full_content if args.test_target == "llm" else None,
             )
         )
 
@@ -123,11 +132,11 @@ async def run_wiki(
         attribute_matrix,
         results,
     )
-    return target_path, results
+    return eval_result_path, results
 
 async def main():
-    target_path, results = await run_wiki()
-    with open(target_path, "w") as f:
+    eval_result_path, results = await run_wiki()
+    with open(eval_result_path, "w") as f:
         json.dump(results, f, indent=4)
 
 if __name__ == "__main__":

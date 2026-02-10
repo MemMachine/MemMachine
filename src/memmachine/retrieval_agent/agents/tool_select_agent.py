@@ -13,6 +13,8 @@ from memmachine.episodic_memory.declarative_memory import Episode
 
 logger = logging.getLogger(__name__)
 
+# Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
+# Reinforcement Learning", arXiv:2508.03680.
 TOOL_SELECT_PROMPT = """You are a tool router. Your task is to select exactly ONE tool name from the provided list that best fits the user query. Do not call any tools. Use only the text in {query}; d
 o not assume external context or missing metadata. You may interpret dependency only from explicit linguistic structure (e.g., “use X to find Y”, possessive/relationship chains)
 .

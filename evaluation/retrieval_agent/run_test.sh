@@ -6,7 +6,7 @@ usage_locomo() {
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
-    echo "  TEST_TARGET       [memmachine | retrieval_agent]"
+    echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
     exit 1
 }
 
@@ -16,7 +16,7 @@ usage_wiki() {
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
-    echo "  TEST_TARGET       [memmachine | retrieval_agent]"
+    echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]]"
     echo "  LENGTH            Number of examples to run [1 - 12576]"
     exit 1
 }
@@ -30,7 +30,7 @@ usage_hotpotqa() {
     echo "  SPLIT_NAME        Dataset split name [train | validation]. Train set contains 19.9%"
     echo "                      easy, 62.8% medium, 17.3% hard questions. Validation set contains"
     echo "                      hard questions only."
-    echo "  TEST_TARGET       [memmachine | retrieval_agent]"
+    echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]]"
     echo "  LENGTH            Number of examples to run [train set 1 - 90447 | validation set 1 - 7405]"
     exit 1
 }
@@ -128,11 +128,11 @@ run_test() {
     case "$TEST" in
         locomo)
             INGEST_CMD=(python -u locomo_ingest.py --data-path $SCRIPT_DIR/../data/locomo10.json)
-            SEARCH_CMD=(python -u locomo_search.py --data-path $SCRIPT_DIR/../data/locomo10.json --target-path "$RESULT_FILE" --test-target "$TEST_TARGET")
+            SEARCH_CMD=(python -u locomo_search.py --data-path $SCRIPT_DIR/../data/locomo10.json --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET")
             ;;
         wikimultihop)
             INGEST_CMD=(python -u wikimultihop_ingest.py --data-path $SCRIPT_DIR/../data/wikimultihop.json --length "$LENGTH")
-            SEARCH_CMD=(python -u wikimultihop_search.py --data-path $SCRIPT_DIR/../data/wikimultihop.json --target-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH")
+            SEARCH_CMD=(python -u wikimultihop_search.py --data-path $SCRIPT_DIR/../data/wikimultihop.json --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH")
             ;;
         hotpotqa)
             INGEST_CMD=(python -u hotpotQA_test.py --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
