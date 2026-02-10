@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -33,14 +34,23 @@ def metrics_factory():
 
 @pytest.fixture(scope="module")
 def nebula_connection_info():
-    """NebulaGraph connection information.
+    """NebulaGraph connection info from environment variables.
 
-    Note: Connects to NebulaGraph Enterprise 5.0 testing instance.
+    Set these environment variables to test with NebulaGraph:
+    - NEBULA_HOST (default: 127.0.0.1:9669)
+    - NEBULA_USER (default: root)
+    - NEBULA_PASSWORD (default: nebula)
+
+    Note: Requires NebulaGraph Enterprise 5.0 for vector support.
     """
+    nebula_host = os.environ.get("NEBULA_HOST", "127.0.0.1:9669")
+    nebula_user = os.environ.get("NEBULA_USER", "root")
+    nebula_password = os.environ.get("NEBULA_PASSWORD", "nebula")
+
     return {
-        "hosts": ["192.168.8.11:9698"],
-        "username": "root",
-        "password": "NebulaGraph01",
+        "hosts": [nebula_host],
+        "username": nebula_user,
+        "password": nebula_password,
         "schema_name": "/test_schema",
         "graph_type_name": "memmachine_type",
         "graph_name": "test_graph",
