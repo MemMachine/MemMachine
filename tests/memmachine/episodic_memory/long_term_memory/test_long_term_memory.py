@@ -118,101 +118,28 @@ def neo4j_vector_graph_store(neo4j_driver):
 
 
 @pytest.fixture(scope="module")
-def nebula_connection_info():
-    """NebulaGraph connection info from environment variables.
-
-    Set these environment variables to test with NebulaGraph:
-    - NEBULA_HOST (default: 127.0.0.1:9669)
-    - NEBULA_USER (default: root)
-    - NEBULA_PASSWORD (default: nebula)
-    """
-    nebula_host = os.environ.get("NEBULA_HOST", "127.0.0.1:9669")
-    nebula_user = os.environ.get("NEBULA_USER", "root")
-    nebula_password = os.environ.get("NEBULA_PASSWORD", "nebula")
-
-    return {
-        "hosts": [nebula_host],
-        "username": nebula_user,
-        "password": nebula_password,
-        "schema_name": "/test_long_term_schema",
-        "graph_type_name": "memmachine_type",
-        "graph_name": "test_long_term_graph",
-    }
+def nebula_connection_info(nebula_connection_info_factory):
+    """NebulaGraph connection info for long-term memory tests."""
+    return nebula_connection_info_factory(
+        schema_name="/test_long_term_schema",
+        graph_name="test_long_term_graph",
+    )
 
 
 @pytest_asyncio.fixture(scope="module")
-async def nebula_client(nebula_connection_info):
-    """Create NebulaGraph client, skip tests if unavailable."""
-    try:
-        from nebulagraph_python.client import NebulaAsyncClient, SessionConfig
-    except ImportError:
-        pytest.skip("nebulagraph_python not installed")
-
-    try:
-        # Try to connect
-        client = await NebulaAsyncClient.connect(
-            hosts=nebula_connection_info["hosts"],
-            username=nebula_connection_info["username"],
-            password=nebula_connection_info["password"],
-            session_config=SessionConfig(),
-        )
-
-        # Initialize schema and graph
-        await client.execute(
-            f"CREATE SCHEMA IF NOT EXISTS {nebula_connection_info['schema_name']}"
-        )
-        await client.execute(
-            f"SESSION SET SCHEMA {nebula_connection_info['schema_name']}"
-        )
-        await client.execute(
-            f"CREATE GRAPH TYPE IF NOT EXISTS {nebula_connection_info['graph_type_name']} AS {{}}"
-        )
-        await client.execute(
-            f"CREATE GRAPH IF NOT EXISTS {nebula_connection_info['graph_name']} TYPED {nebula_connection_info['graph_type_name']}"
-        )
-        await client.execute(
-            f"SESSION SET GRAPH {nebula_connection_info['graph_name']}"
-        )
-
-        yield client
-
-        # Cleanup
-        await client.execute(
-            f"SESSION SET SCHEMA {nebula_connection_info['schema_name']}"
-        )
-        await client.execute(
-            f"DROP GRAPH IF EXISTS {nebula_connection_info['graph_name']}"
-        )
-        await client.execute(
-            f"DROP GRAPH TYPE IF EXISTS {nebula_connection_info['graph_type_name']}"
-        )
-        await client.execute(
-            f"DROP SCHEMA IF EXISTS {nebula_connection_info['schema_name']}"
-        )
-        await client.close()
-
-    except Exception as e:
-        # Skip tests if NebulaGraph is not available
-        pytest.skip(f"NebulaGraph not available: {e}")
+async def nebula_client(nebula_client_factory, nebula_connection_info):
+    """Create NebulaGraph client for long-term memory tests."""
+    return await nebula_client_factory(nebula_connection_info)
 
 
 @pytest.fixture(scope="module")
 def nebula_vector_graph_store(nebula_client, nebula_connection_info):
     """NebulaGraph vector graph store for testing."""
-    from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
-        NebulaGraphVectorGraphStore,
-        NebulaGraphVectorGraphStoreParams,
+    from tests.memmachine.episodic_memory.conftest import (
+        create_nebula_vector_graph_store,
     )
 
-    return NebulaGraphVectorGraphStore(
-        NebulaGraphVectorGraphStoreParams(
-            client=nebula_client,
-            schema_name=nebula_connection_info["schema_name"],
-            graph_type_name=nebula_connection_info["graph_type_name"],
-            graph_name=nebula_connection_info["graph_name"],
-            force_exact_similarity_search=True,
-        )
-    )
+    return create_nebula_vector_graph_store(nebula_client, nebula_connection_info)
 
 
 # --- Parameterized Fixture for Both Backends ---
