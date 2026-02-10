@@ -412,6 +412,8 @@ class TestConfig:
                 "database": "postgres-db",
                 "llm_model": "gpt-4",
                 "embedding_model": "openai-embedder",
+                "cluster_similarity_threshold": 0.4,
+                "cluster_max_time_gap_seconds": 3600,
             }
         )
         result = config.get_semantic_memory_config()
@@ -420,6 +422,8 @@ class TestConfig:
         assert result.database == "postgres-db"
         assert result.llm_model == "gpt-4"
         assert result.embedding_model == "openai-embedder"
+        assert result.cluster_similarity_threshold == 0.4
+        assert result.cluster_max_time_gap_seconds == 3600
         mock_client.request.assert_called_once_with(
             "GET",
             "http://localhost:8080/api/v2/config/memory/semantic",
@@ -442,6 +446,8 @@ class TestConfig:
             embedding_model="openai-embedder",
             ingestion_trigger_messages=10,
             ingestion_trigger_age_seconds=3600,
+            cluster_similarity_threshold=0.45,
+            cluster_max_time_gap_seconds=7200,
         )
         assert isinstance(result, UpdateMemoryConfigResponse)
         assert result.success is True
@@ -457,6 +463,8 @@ class TestConfig:
         assert body["embedding_model"] == "openai-embedder"
         assert body["ingestion_trigger_messages"] == 10
         assert body["ingestion_trigger_age_seconds"] == 3600
+        assert body["cluster_similarity_threshold"] == 0.45
+        assert body["cluster_max_time_gap_seconds"] == 7200
 
     def test_update_semantic_memory_config_partial(self, config, mock_client):
         mock_client.request.return_value = _mock_response(

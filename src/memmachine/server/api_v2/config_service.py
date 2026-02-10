@@ -242,6 +242,17 @@ def _apply_semantic_memory_updates(
         changes.append(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
+    if spec.cluster_similarity_threshold is not None:
+        sm.cluster_similarity_threshold = spec.cluster_similarity_threshold
+        changes.append(
+            "semantic_memory.cluster_similarity_threshold="
+            f"{spec.cluster_similarity_threshold}"
+        )
+    if spec.cluster_max_time_gap_seconds is not None:
+        sm.cluster_max_time_gap = timedelta(seconds=spec.cluster_max_time_gap_seconds)
+        changes.append(
+            f"semantic_memory.cluster_max_time_gap={spec.cluster_max_time_gap_seconds}s"
+        )
 
     return changes
 
@@ -553,6 +564,12 @@ class ConfigService:
             database=sm.database,
             llm_model=sm.llm_model,
             embedding_model=sm.embedding_model,
+            cluster_similarity_threshold=sm.cluster_similarity_threshold,
+            cluster_max_time_gap_seconds=(
+                int(sm.cluster_max_time_gap.total_seconds())
+                if sm.cluster_max_time_gap is not None
+                else None
+            ),
         )
 
     def get_long_term_memory_config(self) -> LongTermMemoryConfigResponse:

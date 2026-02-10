@@ -1,5 +1,6 @@
 """Tests for the ingestion service using the in-memory semantic storage."""
 
+from datetime import UTC, datetime
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -7,8 +8,18 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
+from memmachine.common.data_types import SimilarityMetric
+from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeEntry, EpisodeIdT, EpisodeStorage
 from memmachine.common.filter.filter_parser import parse_filter
+from memmachine.semantic_memory.cluster_manager import (
+    ClusterInfo,
+    ClusterParams,
+    ClusterState,
+)
+from memmachine.semantic_memory.cluster_store.in_memory_cluster_store import (
+    InMemoryClusterStateStorage,
+)
 from memmachine.semantic_memory.semantic_ingestion import IngestionService
 from memmachine.semantic_memory.semantic_llm import (
     LLMReducedFeature,
@@ -28,6 +39,43 @@ from tests.memmachine.semantic_memory.mock_semantic_memory_objects import (
     MockEmbedder,
     MockResourceRetriever,
 )
+
+
+class KeywordEmbedder(Embedder):
+    def __init__(self) -> None:
+        self.ingest_calls: list[list[str]] = []
+
+    async def ingest_embed(
+        self, inputs: list[str], max_attempts: int = 1
+    ) -> list[list[float]]:
+        self.ingest_calls.append(list(inputs))
+        embeddings: list[list[float]] = []
+        for text in inputs:
+            lowered = text.lower()
+            if "alpha" in lowered:
+                embeddings.append([1.0, 0.0])
+            elif "beta" in lowered:
+                embeddings.append([0.0, 1.0])
+            else:
+                embeddings.append([1.0, 1.0])
+        return embeddings
+
+    async def search_embed(
+        self, queries: list[str], max_attempts: int = 1
+    ) -> list[list[float]]:
+        raise NotImplementedError
+
+    @property
+    def model_id(self) -> str:
+        return "keyword-embedder"
+
+    @property
+    def dimensions(self) -> int:
+        return 2
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        return SimilarityMetric.COSINE
 
 
 async def _collect_feature_set(storage: SemanticStorage, **kwargs):
@@ -102,12 +150,14 @@ async def ingestion_service(
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
+    in_memory_cluster_state_storage,
 ) -> IngestionService:
     params = IngestionService.Params(
         semantic_storage=semantic_storage,
         history_store=episode_storage,
         resource_retriever=resource_retriever.get_resources,
         consolidated_threshold=2,
+        cluster_state_storage=in_memory_cluster_state_storage,
     )
     return IngestionService(params)
 
@@ -197,6 +247,7 @@ async def test_process_single_set_applies_commands(
     assert feature.tag == "car"
     assert feature.metadata.citations is not None
     assert list(feature.metadata.citations) == [message_id]
+    assert feature.metadata.other == {"cluster_id": "cluster_0"}
 
     filter_str = "set_id IN ('user-123') AND feature_name IN ('favorite_motorcycle')"
     remaining = await _collect_feature_set(
@@ -219,7 +270,203 @@ async def test_process_single_set_applies_commands(
         is_ingested=True,
     )
     assert list(ingested) == [message_id]
-    assert embedder_double.ingest_calls == [["blue"]]
+    assert embedder_double.ingest_calls == [["I love blue cars"], ["blue"]]
+
+
+@pytest.mark.asyncio
+async def test_delete_scopes_cluster_or_null_metadata(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    embedder_double: MockEmbedder,
+    semantic_category: SemanticCategory,
+):
+    feature_cluster = await semantic_storage.add_feature(
+        set_id="user-555",
+        category_name=semantic_category.name,
+        feature="favorite_food",
+        value="pizza",
+        tag="food",
+        embedding=np.array([1.0, 1.0]),
+        metadata={"cluster_id": "cluster_a"},
+    )
+    feature_null = await semantic_storage.add_feature(
+        set_id="user-555",
+        category_name=semantic_category.name,
+        feature="favorite_food",
+        value="pizza",
+        tag="food",
+        embedding=np.array([1.0, 1.0]),
+    )
+    feature_other = await semantic_storage.add_feature(
+        set_id="user-555",
+        category_name=semantic_category.name,
+        feature="favorite_food",
+        value="pizza",
+        tag="food",
+        embedding=np.array([1.0, 1.0]),
+        metadata={"cluster_id": "cluster_b"},
+    )
+
+    await ingestion_service._apply_commands(
+        commands=[
+            SemanticCommand(
+                command=SemanticCommandType.DELETE,
+                feature="favorite_food",
+                tag="food",
+                value="",
+            )
+        ],
+        set_id="user-555",
+        category_name=semantic_category.name,
+        citation_ids=None,
+        embedder=embedder_double,
+        cluster_id="cluster_a",
+    )
+
+    filter_str = (
+        f"set_id IN ('user-555') AND category_name IN ('{semantic_category.name}')"
+    )
+    remaining = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(filter_str),
+    )
+    remaining_ids = {feature.metadata.id for feature in remaining}
+    assert feature_other in remaining_ids
+    assert feature_cluster not in remaining_ids
+    assert feature_null not in remaining_ids
+
+
+@pytest.mark.asyncio
+async def test_clustered_messages_group_llm_calls(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    semantic_category: SemanticCategory,
+    llm_model,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
+    monkeypatch,
+):
+    embedder = KeywordEmbedder()
+    resources = Resources(
+        embedder=embedder,
+        language_model=llm_model,
+        semantic_categories=[semantic_category],
+    )
+    resource_retriever = MockResourceRetriever(resources)
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            cluster_state_storage=in_memory_cluster_state_storage,
+            cluster_params=ClusterParams(similarity_threshold=0.8),
+        )
+    )
+
+    msg1 = await add_history(episode_storage, content="alpha message 1")
+    msg2 = await add_history(episode_storage, content="alpha message 2")
+    await semantic_storage.add_history_to_set(set_id="user-abc", history_id=msg1)
+    await semantic_storage.add_history_to_set(set_id="user-abc", history_id=msg2)
+
+    llm_feature_update_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_feature_update_mock,
+    )
+
+    await ingestion_service._process_single_set("user-abc")
+
+    assert llm_feature_update_mock.await_count == 1
+    ingested = await _collect_history_messages(
+        semantic_storage,
+        set_ids=["user-abc"],
+        is_ingested=True,
+    )
+    assert set(ingested) == {msg1, msg2}
+
+
+@pytest.mark.asyncio
+async def test_distinct_clusters_call_llm_per_cluster(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    semantic_category: SemanticCategory,
+    llm_model,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
+    monkeypatch,
+):
+    embedder = KeywordEmbedder()
+    resources = Resources(
+        embedder=embedder,
+        language_model=llm_model,
+        semantic_categories=[semantic_category],
+    )
+    resource_retriever = MockResourceRetriever(resources)
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            cluster_state_storage=in_memory_cluster_state_storage,
+            cluster_params=ClusterParams(similarity_threshold=0.8),
+        )
+    )
+
+    msg1 = await add_history(episode_storage, content="alpha message")
+    msg2 = await add_history(episode_storage, content="beta message")
+    await semantic_storage.add_history_to_set(set_id="user-def", history_id=msg1)
+    await semantic_storage.add_history_to_set(set_id="user-def", history_id=msg2)
+
+    llm_feature_update_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_feature_update_mock,
+    )
+
+    await ingestion_service._process_single_set("user-def")
+
+    assert llm_feature_update_mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reingest_event_id_reuses_cluster(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
+    monkeypatch,
+):
+    message_id = await add_history(episode_storage, content="alpha message")
+    await semantic_storage.add_history_to_set(set_id="user-777", history_id=message_id)
+
+    now = datetime.now(tz=UTC)
+    state = ClusterState(
+        clusters={
+            "cluster_0": ClusterInfo(
+                centroid=[1.0, 0.0],
+                count=1,
+                last_ts=now,
+            )
+        },
+        event_to_cluster={message_id: "cluster_0"},
+        next_cluster_id=1,
+    )
+    await in_memory_cluster_state_storage.save_state(set_id="user-777", state=state)
+
+    llm_feature_update_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_feature_update_mock,
+    )
+
+    await ingestion_service._process_single_set("user-777")
+
+    llm_feature_update_mock.assert_awaited_once()
+    loaded = await in_memory_cluster_state_storage.get_state(set_id="user-777")
+    assert loaded is not None
+    assert loaded.next_cluster_id == 1
+    assert loaded.event_to_cluster[message_id] == "cluster_0"
+    assert loaded.clusters["cluster_0"].count == 1
 
 
 @pytest.mark.asyncio
@@ -268,6 +515,77 @@ async def test_consolidation_groups_by_tag(
     assert call.kwargs["set_id"] == "user-456"
     assert call.kwargs["semantic_category"] == semantic_category
     assert call.kwargs["resources"] == resources
+    assert call.kwargs["cluster_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_consolidation_separates_clusters(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
+    monkeypatch,
+):
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            cluster_state_storage=in_memory_cluster_state_storage,
+        )
+    )
+
+    await semantic_storage.add_feature(
+        set_id="user-999",
+        category_name=semantic_category.name,
+        feature="pizza_crust",
+        value="thin crust",
+        tag="food",
+        embedding=np.array([1.0, -1.0]),
+        metadata={"cluster_id": "cluster_a"},
+    )
+    await semantic_storage.add_feature(
+        set_id="user-999",
+        category_name=semantic_category.name,
+        feature="pizza_style",
+        value="deep dish",
+        tag="food",
+        embedding=np.array([2.0, -2.0]),
+        metadata={"cluster_id": "cluster_a"},
+    )
+    await semantic_storage.add_feature(
+        set_id="user-999",
+        category_name=semantic_category.name,
+        feature="favorite_drink",
+        value="tea",
+        tag="food",
+        embedding=np.array([3.0, -3.0]),
+        metadata={"cluster_id": "cluster_b"},
+    )
+    await semantic_storage.add_feature(
+        set_id="user-999",
+        category_name=semantic_category.name,
+        feature="favorite_snack",
+        value="chips",
+        tag="food",
+        embedding=np.array([4.0, -4.0]),
+        metadata={"cluster_id": "cluster_b"},
+    )
+
+    dedupe_mock = AsyncMock()
+    monkeypatch.setattr(ingestion_service, "_deduplicate_features", dedupe_mock)
+
+    await ingestion_service._consolidate_set_memories_if_applicable(
+        set_id="user-999",
+        resources=resources,
+    )
+
+    assert dedupe_mock.await_count == 2
+    cluster_ids = {call.kwargs["cluster_id"] for call in dedupe_mock.await_args_list}
+    assert cluster_ids == {"cluster_a", "cluster_b"}
 
 
 @pytest.mark.asyncio
@@ -277,6 +595,7 @@ async def test_consolidation_skips_small_groups(
     resource_retriever: MockResourceRetriever,
     resources: Resources,
     semantic_category: SemanticCategory,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
     monkeypatch,
 ):
     ingestion_service = IngestionService(
@@ -285,6 +604,7 @@ async def test_consolidation_skips_small_groups(
             history_store=episode_storage,
             resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=3,
+            cluster_state_storage=in_memory_cluster_state_storage,
         )
     )
 
@@ -323,6 +643,7 @@ async def test_consolidation_runs_when_threshold_met(
     resource_retriever: MockResourceRetriever,
     resources: Resources,
     semantic_category: SemanticCategory,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
     monkeypatch,
 ):
     ingestion_service = IngestionService(
@@ -331,6 +652,7 @@ async def test_consolidation_runs_when_threshold_met(
             history_store=episode_storage,
             resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=3,
+            cluster_state_storage=in_memory_cluster_state_storage,
         )
     )
 
@@ -439,6 +761,7 @@ async def test_deduplicate_features_merges_and_relabels(
         memories=memories,
         semantic_category=semantic_category,
         resources=resources,
+        cluster_id=None,
     )
 
     llm_consolidate_mock.assert_awaited_once()
@@ -468,3 +791,83 @@ async def test_deduplicate_features_merges_and_relabels(
     assert list(consolidated.metadata.citations) == [drop_history]
     embedder = cast(MockEmbedder, resources.embedder)
     assert embedder.ingest_calls == [["consolidated pizza"]]
+
+
+@pytest.mark.asyncio
+async def test_consolidation_preserves_cluster_metadata(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    keep_history = await add_history(episode_storage, content="keep")
+    drop_history = await add_history(episode_storage, content="drop")
+
+    keep_feature_id = await semantic_storage.add_feature(
+        set_id="user-888",
+        category_name=semantic_category.name,
+        feature="pizza",
+        value="original pizza",
+        tag="food",
+        embedding=np.array([1.0, 0.5]),
+        metadata={"cluster_id": "cluster_7"},
+    )
+    drop_feature_id = await semantic_storage.add_feature(
+        set_id="user-888",
+        category_name=semantic_category.name,
+        feature="pizza",
+        value="duplicate pizza",
+        tag="food",
+        embedding=np.array([2.0, 1.0]),
+        metadata={"cluster_id": "cluster_7"},
+    )
+
+    await semantic_storage.add_citations(keep_feature_id, [keep_history])
+    await semantic_storage.add_citations(drop_feature_id, [drop_history])
+
+    filter_str = (
+        f"set_id IN ('user-888') AND category_name IN ('{semantic_category.name}')"
+    )
+    memories = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(filter_str),
+        load_citations=True,
+    )
+
+    consolidated_feature = LLMReducedFeature(
+        tag="food",
+        feature="pizza",
+        value="consolidated pizza",
+    )
+    llm_consolidate_mock = AsyncMock(
+        return_value=SemanticConsolidateMemoryRes(
+            consolidated_memories=[consolidated_feature],
+            keep_memories=[keep_feature_id],
+        ),
+    )
+    monkeypatch.setattr(
+        "memmachine.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_consolidate_mock,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-888",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+        cluster_id="cluster_7",
+    )
+
+    all_features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(filter_str),
+        load_citations=True,
+    )
+    consolidated = next(
+        (feature for feature in all_features if feature.value == "consolidated pizza"),
+        None,
+    )
+    assert consolidated is not None
+    assert consolidated.metadata.other == {"cluster_id": "cluster_7"}
