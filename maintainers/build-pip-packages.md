@@ -103,7 +103,7 @@ pip install memmachine
 After installing `memmachine-client`:
 
 ```python
-from memmachine.rest_client import MemMachineClient, Memory
+from memmachine_server.rest_client import MemMachineClient, Memory
 
 client = MemMachineClient(base_url="http://localhost:8080")
 memory = client.memory(

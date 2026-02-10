@@ -4,9 +4,8 @@ import json
 from typing import cast
 
 from dotenv import load_dotenv
-
-from memmachine.episodic_memory.episodic_memory import EpisodicMemory
-from memmachine.episodic_memory.episodic_memory_manager import (
+from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
 

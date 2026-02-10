@@ -38,7 +38,7 @@ MemMachine is an open-source **long-term memory layer** for AI agents and LLM-po
 
 Get up and running in under 5 minutes:
 
-> **Prerequisites:** This code requires a running MemMachine Server.  
+> **Prerequisites:** This code requires a running MemMachine Server.
 > [Start a server locally](https://docs.memmachine.ai/getting_started/quickstart) or create a free account on the [MemMachine Platform](https://console.memmachine.ai/).
 
 ```bash
@@ -46,7 +46,7 @@ pip install memmachine-client
 ```
 
 ```python
-from memmachine import MemMachineClient
+from memmachine_client import import MemMachineClient
 
 # Initialize the client
 client = MemMachineClient(base_url="http://localhost:8080")

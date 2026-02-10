@@ -2,7 +2,7 @@
 # There are 2 copies of this file, please keep them both the same
 # 1. memmachine-test/benchmark/mem0_locomo/tests/memmachine
 # 2. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
-# ruff: noqa: PTH118, SIM108, G004, C901, SIM105, SIM102, ASYNC109, SIM117
+# ruff: noqa: PTH118, SIM108, G004, C901, SIM105, SIM102, SIM117
 
 import copy
 import os
