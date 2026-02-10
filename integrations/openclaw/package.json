@@ -1,0 +1,22 @@
+{
+  "name": "@memmachine/openclaw-memmachine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw MemMachine memory plugin",
+  "homepage": "https://memmachine.ai",
+  "main": "index.ts",
+  "dependencies": {
+    "@memmachine/client": "^0.2.5",
+    "@memmachine/openclaw-memmachine": "file:memmachine-openclaw-memmachine-0.1.0.tgz",
+    "@sinclair/typebox": "^0.34.48",
+    "jiti": "^2.6.1",
+    "openclaw": "^2026.2.6"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "license": "Apache-2.0"
+}
