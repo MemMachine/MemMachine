@@ -84,7 +84,7 @@ You will receive a JSON response containing the results of the operation.
 </Step>
 <Step title="Search for the Memory">
 
-Now let's find the memory we just added. The `POST /api/v2/memories/search` endpoint searches both episodic and semantic memory.
+Now let's find the memory we just added. The `POST /api/v2/memories/search` endpoint searches both episodic and semantic memory. Set `agent_mode` to `true` to use retrieval-agent search behavior.
 
 **Command:**
 
@@ -96,7 +96,8 @@ curl -X POST "http://127.0.0.1:8080/api/v2/memories/search" \
   "project_id": "my-first-project",
   "query": "simple test memory",
   "top_k": 5,
-  "types": ["episodic", "semantic"]
+  "types": ["episodic", "semantic"],
+  "agent_mode": false
 }'
 ```
 

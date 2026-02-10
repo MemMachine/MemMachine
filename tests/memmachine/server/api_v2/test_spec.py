@@ -206,6 +206,7 @@ def test_search_memories_spec():
     assert spec.filter == ""
     assert spec.set_metadata is None
     assert spec.types == []
+    assert spec.agent_mode is False
 
 
 def test_search_memories_spec_with_set_metadata():

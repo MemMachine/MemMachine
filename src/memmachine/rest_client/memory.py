@@ -365,6 +365,7 @@ class Memory:
         limit: int | None = None,
         expand_context: int = 0,
         score_threshold: float | None = None,
+        agent_mode: bool = False,
         filter_dict: dict[str, str] | None = None,
         set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
@@ -383,6 +384,7 @@ class Memory:
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
+            agent_mode: Whether to use retrieval-agent search orchestration.
             filter_dict: Additional filters for the search (key-value pairs as strings).
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
@@ -424,6 +426,7 @@ class Memory:
             top_k=limit or 10,
             expand_context=expand_context,
             score_threshold=score_threshold,
+            agent_mode=agent_mode,
             filter=filter_str,
             set_metadata=set_metadata,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types

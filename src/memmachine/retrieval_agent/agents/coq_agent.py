@@ -292,7 +292,6 @@ class ChainOfQueryAgent(AgentToolBase):
             # Step 1: Perform the query
             result, p_matrics = await self._do_default_query(policy, curr_query)
             self._update_perf_matrics(p_matrics, perf_matrics)
-            perf_matrics["memory_search_called"] += 1
 
             # Step 2: Check if the evidence is enough to answer the original query
             llm_start = time.time()

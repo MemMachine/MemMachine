@@ -13,7 +13,8 @@ Ready to go? Follow these simple steps:
 
 **C.** Once you have performed step 1 below, you can repeat the benchmark run by performing steps 2-4.  Once are you finished performing the benchmark, run step 5.
 
-**Note:** Please refer to the [Episodic Memory Tool Set](./locomo/episodic_memory/README.md) for exact commands.
+**Note:** For the recommended retrieval-agent benchmark workflow and
+cross-benchmark command references, see `evaluation/README.md`.
 
 ### Step 1: Ingest a Conversation
 

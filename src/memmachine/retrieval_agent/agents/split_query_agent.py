@@ -188,7 +188,6 @@ class SplitQueryAgent(AgentToolBase):
             {
                 "input_token": input_token,
                 "output_token": output_token,
-                "memory_search_called": len(sub_queries),
             },
             perf_matrics,
         )

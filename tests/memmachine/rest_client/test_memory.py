@@ -371,6 +371,7 @@ class TestMemory:
         assert json_data["project_id"] == "test_project"
         assert json_data["query"] == "test query"
         assert json_data["top_k"] == 10
+        assert json_data["agent_mode"] is False
         assert "episodic" in json_data["types"]
         assert "semantic" in json_data["types"]
 
@@ -394,6 +395,27 @@ class TestMemory:
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
         assert json_data["top_k"] == 20
+
+    def test_search_with_agent_mode(self, mock_client):
+        """Test search with agent_mode enabled."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.search("query", agent_mode=True)
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["agent_mode"] is True
 
     def test_search_with_filters(self, mock_client):
         """Test search with filter dictionary."""

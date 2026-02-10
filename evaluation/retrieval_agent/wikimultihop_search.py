@@ -105,6 +105,7 @@ async def run_wiki(
     results: dict[str, Any] = {}
     attribute_matrix = agent_utils.init_attribute_matrix()
     full_content = "\n".join(contexts)
+    num_processed = 0
     for q, a, t, f_list in zip(questions, answers, types, supporting_facts):
         t += 5 # Use locomo category 1-5, and wiki 6-9
         tasks.append(
@@ -122,10 +123,12 @@ async def run_wiki(
             )
         )
 
-        if len(tasks) % 30 == 0 or (q == questions[-1]):
+        if len(tasks) % 10 == 0 or (q == questions[-1]):
             responses = await asyncio.gather(*tasks)
             tasks = []
             agent_utils.update_results(responses, attribute_matrix, results)
+            num_processed += len(responses)
+            print(f"Completed searching {num_processed}/{len(questions)} questions...")
 
     agent_utils.update_final_attribute_matrix(
         "wiki",
