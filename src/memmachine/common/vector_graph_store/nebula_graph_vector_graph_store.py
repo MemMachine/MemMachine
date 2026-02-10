@@ -718,6 +718,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             mangled_prop = mangle_property_name(prop_name)
             param_name = f"start_{i}"
+            # Build Jinja2 placeholder for execute_py (double braces for Jinja2 syntax)
+            placeholder = f"{{{{{param_name}}}}}"
 
             # Build comparison operator
             if ascending:
@@ -730,11 +732,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 # Format datetime to match NebulaGraph's expected format (no microseconds, no timezone)
                 params[param_name] = start_value.strftime("%Y-%m-%dT%H:%M:%S")
                 where_clauses.append(
-                    f"n.{mangled_prop} {op} local_datetime({{{{{param_name}}}}})"
+                    f"n.{mangled_prop} {op} local_datetime({placeholder})"
                 )
             else:
                 params[param_name] = start_value
-                where_clauses.append(f"n.{mangled_prop} {op} {{{{{param_name}}}}}")
+                where_clauses.append(f"n.{mangled_prop} {op} {placeholder}")
 
         # Build ORDER BY clause
         order_parts = []
@@ -993,40 +995,30 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         """
         Delete all data from the graph.
 
-        This removes all nodes and edges from the current graph instance.
-        Note: The graph type schema is preserved (strong schema model).
+        This removes all nodes and edges by dropping and recreating the graph instance.
+        The graph type schema (node types, edge types, and their properties) is preserved.
+        Indexes are dropped and will be recreated when thresholds are met again.
         """
         await self._ensure_session_context()
 
-        # Delete all edges first, then all nodes
-        # We don't know what node/edge types exist, so we need to query them
-        # For now, use a simple approach: drop and recreate everything
+        # Drop the graph instance (clears all data and indexes)
         try:
             await self._client.execute(f"DROP GRAPH IF EXISTS {self._graph_name}")
         except Exception as e:
             logger.warning("Error dropping graph: %s", e)
 
-        # Also drop and recreate graph type for clean slate
-        try:
-            await self._client.execute(
-                f"DROP GRAPH TYPE IF EXISTS {self._graph_type_name}"
-            )
-        except Exception as e:
-            logger.warning("Error dropping graph type: %s", e)
-
-        # Recreate graph type and graph
-        await self._client.execute(f"CREATE GRAPH TYPE {self._graph_type_name} AS {{}}")
+        # Recreate graph from existing graph type (preserves schema)
         await self._client.execute(
-            f"CREATE GRAPH IF NOT EXISTS {self._graph_name} TYPED {self._graph_type_name}"
+            f"CREATE GRAPH {self._graph_name} TYPED {self._graph_type_name}"
         )
 
-        # Clear caches
-        self._graph_type_schemas.clear()
+        # Clear index and count caches (data is gone)
+        # Keep _graph_type_schemas cache (schema is preserved)
         self._index_state_cache.clear()
         self._collection_node_counts.clear()
         self._relation_edge_counts.clear()
 
-        logger.info("Deleted all data and reset schema")
+        logger.info("Deleted all data from graph, schema preserved")
 
     async def close(self) -> None:
         """
@@ -1280,37 +1272,73 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         """
         Ensure node type exists in graph type for this collection.
 
-        Creates node type on first encounter. Subsequent calls validate compatibility.
+        Creates node type on first encounter. On subsequent calls, evolves schema
+        by adding any new properties/embeddings not present in the existing schema.
+        Existing nodes will have NULL values for newly added properties.
 
         Args:
             collection: Collection name (node type)
-            properties: Node properties from first batch
-            embeddings: Embeddings from first batch (name -> (vector, metric))
+            properties: Node properties from current batch
+            embeddings: Embeddings from current batch (name -> (vector, metric))
 
         """
         async with self._schema_lock:
-            # Check if node type already exists in cache
-            if collection in self._graph_type_schemas:
-                # Node type exists - validate new data is compatible
-                # For now, we just proceed - NebulaGraph will error if schema mismatch
-                return
-
-            # First time seeing this collection - create node type
             sanitized_collection = self._sanitize_name(collection)
 
-            # Build schema from first batch
-            schema: dict[str, str] = {"uid": "STRING"}
+            # Build schema from incoming data
+            incoming_schema: dict[str, str] = {"uid": "STRING"}
             for prop_name, prop_value in properties.items():
                 mangled = mangle_property_name(prop_name)
-                schema[mangled] = self._infer_gql_type(prop_value)
+                incoming_schema[mangled] = self._infer_gql_type(prop_value)
 
             for emb_name, (vec, _metric) in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
-                schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
+                incoming_schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
 
+            # Check if node type already exists in cache
+            if collection in self._graph_type_schemas:
+                # Node type exists - check for schema evolution
+                cached_schema = self._graph_type_schemas[collection]
+                new_properties = {}
+
+                # Find properties/embeddings that aren't in the cached schema
+                for prop_name, prop_type in incoming_schema.items():
+                    if prop_name == "uid":
+                        continue  # Skip primary key
+                    if prop_name not in cached_schema:
+                        new_properties[prop_name] = prop_type
+
+                # If no new properties, we're done
+                if not new_properties:
+                    return
+
+                # Evolve schema: add new properties to existing node type
+                # Existing nodes will have NULL for these new properties
+                prop_defs = [
+                    f"{prop_name} {prop_type}"
+                    for prop_name, prop_type in new_properties.items()
+                ]
+
+                alter_stmt = f"""
+                ALTER GRAPH TYPE {self._graph_type_name} {{
+                    ALTER NODE TYPE {sanitized_collection} ADD PROPERTIES {{{", ".join(prop_defs)}}}
+                }}
+                """
+                await self._client.execute(alter_stmt)
+                logger.info(
+                    "Evolved schema for node type '%s': added %s new properties",
+                    sanitized_collection,
+                    len(new_properties),
+                )
+
+                # Update cached schema
+                self._graph_type_schemas[collection].update(new_properties)
+                return
+
+            # First time seeing this collection - create node type
             # Build property definitions
             prop_defs = []
-            for prop_name, prop_type in schema.items():
+            for prop_name, prop_type in incoming_schema.items():
                 if prop_name == "uid":
                     prop_defs.append(f"{prop_name} {prop_type} PRIMARY KEY")
                 else:
@@ -1330,7 +1358,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             logger.info("Added node type '%s' to graph type", sanitized_collection)
 
             # Cache the schema
-            self._graph_type_schemas[collection] = schema
+            self._graph_type_schemas[collection] = incoming_schema
 
     async def _ensure_graph_type_for_edges(
         self,
@@ -1342,38 +1370,73 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         """
         Ensure edge type exists in graph type for this relation.
 
-        Creates edge type on first encounter. Subsequent calls validate compatibility.
+        Creates edge type on first encounter. On subsequent calls, evolves schema
+        by adding any new properties not present in the existing schema.
+        Existing edges will have NULL values for newly added properties.
 
         Args:
             relation: Relation name (edge type)
             source_collection: Source node type
             target_collection: Target node type
-            properties: Edge properties from first batch
+            properties: Edge properties from current batch
 
         """
         async with self._schema_lock:
-            # Check if edge type already exists in cache
             edge_key = f"edge_{relation}"
-            if edge_key in self._graph_type_schemas:
-                # Edge type exists - validate new data is compatible
-                return
-
-            # First time seeing this relation - create edge type
             sanitized_relation = self._sanitize_name(relation)
             sanitized_source = self._sanitize_name(source_collection)
             sanitized_target = self._sanitize_name(target_collection)
 
-            # Build schema from first batch
-            schema: dict[str, str] = {}
+            # Build schema from incoming data
+            incoming_schema: dict[str, str] = {}
             for prop_name, prop_value in properties.items():
                 mangled = mangle_property_name(prop_name)
-                schema[mangled] = self._infer_gql_type(prop_value)
+                incoming_schema[mangled] = self._infer_gql_type(prop_value)
 
-            # Build property definitions
-            if schema:
+            # Check if edge type already exists in cache
+            if edge_key in self._graph_type_schemas:
+                # Edge type exists - check for schema evolution
+                cached_schema = self._graph_type_schemas[edge_key]
+                new_properties = {}
+
+                # Find properties that aren't in the cached schema
+                for prop_name, prop_type in incoming_schema.items():
+                    if prop_name not in cached_schema:
+                        new_properties[prop_name] = prop_type
+
+                # If no new properties, we're done
+                if not new_properties:
+                    return
+
+                # Evolve schema: add new properties to existing edge type
+                # Existing edges will have NULL for these new properties
                 prop_defs = [
                     f"{prop_name} {prop_type}"
-                    for prop_name, prop_type in schema.items()
+                    for prop_name, prop_type in new_properties.items()
+                ]
+
+                alter_stmt = f"""
+                ALTER GRAPH TYPE {self._graph_type_name} {{
+                    ALTER EDGE TYPE {sanitized_relation} ADD PROPERTIES {{{", ".join(prop_defs)}}}
+                }}
+                """
+                await self._client.execute(alter_stmt)
+                logger.info(
+                    "Evolved schema for edge type '%s': added %s new properties",
+                    sanitized_relation,
+                    len(new_properties),
+                )
+
+                # Update cached schema
+                self._graph_type_schemas[edge_key].update(new_properties)
+                return
+
+            # First time seeing this relation - create edge type
+            # Build property definitions
+            if incoming_schema:
+                prop_defs = [
+                    f"{prop_name} {prop_type}"
+                    for prop_name, prop_type in incoming_schema.items()
                 ]
                 props_clause = (
                     f"LABEL {sanitized_relation} {{ {', '.join(prop_defs)} }}"
@@ -1393,7 +1456,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             logger.info("Added edge type '%s' to graph type", sanitized_relation)
 
             # Cache the schema
-            self._graph_type_schemas[edge_key] = schema
+            self._graph_type_schemas[edge_key] = incoming_schema
 
     async def _create_vector_index_if_not_exists(
         self,
