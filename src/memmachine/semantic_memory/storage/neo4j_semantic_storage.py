@@ -871,7 +871,7 @@ class Neo4jSemanticStorage(SemanticStorage):
                 effective_limit or 0,
                 self._DEFAULT_VECTOR_QUERY_CANDIDATES,
             ),
-            min_distance=vector_search_opts.min_distance,
+            distance_threshold=vector_search_opts.distance_threshold,
             conditions=conditions,
         )
         query_text = self._vector_query_text(conditions)
@@ -896,7 +896,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         embedding: list[float],
         filter_params: dict[str, Any],
         candidate_limit: int,
-        min_distance: float | None,
+        distance_threshold: float | None,
         conditions: list[str],
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
@@ -904,9 +904,9 @@ class Neo4jSemanticStorage(SemanticStorage):
             "embedding": embedding,
             **filter_params,
         }
-        if min_distance is not None and min_distance > 0.0:
+        if distance_threshold is not None and distance_threshold > 0.0:
             conditions.append("score >= $min_distance")
-            params["min_distance"] = min_distance
+            params["min_distance"] = distance_threshold
         return params
 
     @staticmethod

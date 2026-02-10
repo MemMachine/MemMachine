@@ -743,7 +743,7 @@ class InMemorySemanticStorage(SemanticStorage):
             )
             if not self._passes_min_distance(
                 similarity,
-                vector_search_opts.min_distance,
+                vector_search_opts.distance_threshold,
             ):
                 continue
             scored_entries.append((similarity, entry))

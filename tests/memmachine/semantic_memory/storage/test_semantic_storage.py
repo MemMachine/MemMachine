@@ -389,7 +389,7 @@ async def test_get_feature_set_basic_vector_search(
         page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=embed_a,
-            min_distance=None,
+            distance_threshold=None,
         ),
     )
 
@@ -413,7 +413,7 @@ async def test_get_feature_set_min_cos_vector_search(
         page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=embed_a,
-            min_distance=0.5,
+            distance_threshold=0.5,
         ),
     )
 
@@ -895,7 +895,7 @@ async def test_complex_semantic_search_and_citations(
         page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=np.array([1.0, 0.0]),
-            min_distance=0.0,
+            distance_threshold=0.0,
         ),
         load_citations=True,
     )
@@ -911,7 +911,7 @@ async def test_complex_semantic_search_and_citations(
         page_size=1,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
             query_embedding=np.array([1.0, 0.0]),
-            min_distance=0.5,
+            distance_threshold=0.5,
         ),
         # include_citations=False,
     )

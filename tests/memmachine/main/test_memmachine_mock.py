@@ -259,6 +259,7 @@ async def test_query_search_runs_targeted_memory_tasks(
     minimal_conf, patched_resource_manager, monkeypatch
 ):
     dummy_session = DummySessionData("s1")
+    score_threshold = 0.42
 
     async_episodic = AsyncMock(
         return_value=EpisodicMemory.QueryResponse(
@@ -294,10 +295,25 @@ async def test_query_search_runs_targeted_memory_tasks(
         dummy_session,
         target_memories=[MemoryType.Episodic, MemoryType.Semantic],
         query="hello world",
+        score_threshold=score_threshold,
     )
 
-    async_episodic.assert_awaited_once()
-    semantic_manager.search.assert_awaited_once()
+    async_episodic.assert_awaited_once_with(
+        session_data=dummy_session,
+        query="hello world",
+        limit=None,
+        expand_context=0,
+        score_threshold=score_threshold,
+        search_filter=None,
+    )
+    semantic_manager.search.assert_awaited_once_with(
+        message="hello world",
+        session_data=dummy_session,
+        set_metadata=None,
+        limit=None,
+        distance_threshold=score_threshold,
+        search_filter=None,
+    )
 
     assert result.episodic_memory is async_episodic.return_value
     assert result.semantic_memory == semantic_manager.search.return_value
