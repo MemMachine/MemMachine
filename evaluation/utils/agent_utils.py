@@ -49,29 +49,42 @@ async def process_question(
     adversarial_answer: str = "",
     search_limit: int = 20,
     model_name: str = "gpt-5-mini",
+    full_content: str | None = None,
     extra_attributes: dict[str, Any] = {},
 ):
     perf_matrics: dict[str, Any] = {}
-    memory_start = time.time()
-    chunks, perf_matrics = await query_agent.do_query(
-        QueryPolicy(token_cost=10,
-                    time_cost=10,
-                    accuracy_score=10,
-                    confidence_score=10,
-                    max_attempts=3,
-                    max_return_len=10000),
-        QueryParam(query=question, limit = search_limit))
-    memory_end = time.time()
+    memory_start = 0
+    memory_end = 0
+    prompt = ""
+    formatted_context = ""
+    chunks = []
 
-    formatted_context = memory.string_from_episode_context(chunks)
+    if full_content is None:
+        memory_start = time.time()
+        chunks, perf_matrics = await query_agent.do_query(
+            QueryPolicy(token_cost=10,
+                        time_cost=10,
+                        accuracy_score=10,
+                        confidence_score=10,
+                        max_attempts=3,
+                        max_return_len=10000),
+            QueryParam(query=question, limit = search_limit))
+        memory_end = time.time()
+
+        formatted_context = memory.string_from_episode_context(chunks)
+    else:
+        formatted_context = full_content
+
     prompt = answer_prompt.format(memories=formatted_context, question=question)
 
+    rsp_start = time.time()
     rsp = await model.responses.create(
         model=model_name,
         max_output_tokens=4096,
         top_p=1,
         input=[{"role": "user", "content": prompt}],
     )
+    rsp_end = time.time()
 
     mem_retrieval_time = perf_matrics.get("memory_retrieval_time", 0)
     if mem_retrieval_time == 0:
@@ -80,9 +93,10 @@ async def process_question(
     print(
         f"Question: {question}\n"
         f"Agent used: {perf_matrics.get('agent', 'N/A')}\n"
-        f"Memory search called: {perf_matrics.get('memory_search_called', 1)} times\n"
+        f"Memory search called: {perf_matrics.get('memory_search_called', 0)} times\n"
         f"Memory retrieval time: {mem_retrieval_time:.2f} seconds\n"
-        f"LLM time cost during retrieval: {llm_time:.2f} seconds\n"
+        f"LLM time for retrieval: {llm_time:.2f} seconds\n"
+        f"LLM answering time: {rsp_end - rsp_start:.2f} seconds\n"
     )
 
     rsp_text = rsp.output_text
@@ -144,7 +158,7 @@ def update_results(
         fact_miss = []
         for fact in response["supporting_facts"]:
             # Remove leading and trailing quotes
-            if json.dumps(fact)[1:-1] in mem:
+            if (json.dumps(fact)[1:-1]) in mem or fact[1:-1] in mem:
                 attribute_matrix["tools_hits"][tool] += 1
                 fact_hits.append(f"[HIT] {fact}\n")
             else:

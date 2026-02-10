@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, cast
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 from memmachine.common.utils import async_with
@@ -38,32 +39,41 @@ Question: {question}
 Your short response to the question without fluff (no more than a couple of sentences):
 """
 
+def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
+    return datetime.strptime(locomo_time_str, "%I:%M %p on %d %B, %Y").replace(
+        tzinfo=UTC
+    )
+
 async def run_locomo(
     dpath: str | None = None,
-    tpath: str | None = None,
+    epath: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    print("Starting locomo test...")
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "--data-path", required=True, help="Path to the source data file"
     )
     parser.add_argument(
-        "--target-path", required=True, help="Path to the target data file"
+        "--eval-result-path", required=True, help="Path to save evaluation results", default=None
     )
     parser.add_argument(
-        "--test-target", required=True, help="Testing memmachine(bypass agent) or retrieval_agent", choices=["memmachine", "retrieval_agent"]
+        "--test-target", required=True, help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm", choices=["memmachine", "retrieval_agent", "llm"]
     )
 
     args = parser.parse_args()
 
+    print("Starting locomo test...")
+    print(f"Data path: {args.data_path}")
+    print(f"Evaluation result path: {args.eval_result_path}")
+    print(f"Test target: {args.test_target}")
+
     data_path = args.data_path
-    target_path = args.target_path
+    eval_result_path = args.eval_result_path
 
     if dpath:
         data_path = dpath
-    if tpath:
-        target_path = tpath
+    if epath:
+        eval_result_path = epath
 
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
@@ -96,6 +106,7 @@ async def run_locomo(
         group_id = f"group_{idx}"
 
         evidence_to_text = {}
+        full_content = []
         session_idx = 0
         while True:
             session_idx += 1
@@ -104,10 +115,15 @@ async def run_locomo(
                 break
 
             session = conversation[session_id]
+            session_datetime = datetime_from_locomo_time(
+                conversation[f"{session_id}_date_time"]
+            )
             for message in session:
                 dia_id = message["dia_id"]
                 text = message["text"]
                 evidence_to_text[dia_id] = text
+                speaker = message['speaker']
+                full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
         memory, model, query_agent = await agent_utils.init_memmachine_params(
             vector_graph_store=vector_graph_store,
@@ -116,7 +132,7 @@ async def run_locomo(
             agent_name="ToolSelectAgent" if args.test_target == "retrieval_agent" else "MemMachineAgent",
         )
 
-        async def respond_question(qa):
+        async def respond_question(qa, full_content):
             question = qa["question"]
             answer = qa.get("answer", "")
             category = qa["category"]
@@ -140,6 +156,8 @@ async def run_locomo(
                     evidence_str = evidence_to_text.get(ev.strip(), "")
                     stringified_evidence.append(evidence_str)
 
+            full_content_str = "\n".join(full_content)
+
             question_response = await agent_utils.process_question(
                 ANSWER_PROMPT,
                 query_agent,
@@ -152,6 +170,7 @@ async def run_locomo(
                 adversarial_answer,
                 20,
                 "gpt-5-mini",
+                full_content_str if args.test_target == "llm" else None,
             )
             return question_response
 
@@ -159,9 +178,9 @@ async def run_locomo(
         response_tasks = [
             async_with(
                 semaphore,
-                respond_question(qa),
+                respond_question(qa, full_content),
             )
-            for qa in qa_list
+            for qa in filtered_list
         ]
 
         responses = await asyncio.gather(*response_tasks)
@@ -172,11 +191,11 @@ async def run_locomo(
         attribute_matrix,
         results,
     )
-    return target_path, results
+    return eval_result_path, results
 
 async def main():
-    target_path, results = await run_locomo()
-    with open(target_path, "w") as f:
+    eval_result_path, results = await run_locomo()
+    with open(eval_result_path, "w") as f:
         json.dump(results, f, indent=4)
 
 

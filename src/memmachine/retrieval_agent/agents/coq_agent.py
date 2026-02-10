@@ -21,6 +21,8 @@ from memmachine.episodic_memory.declarative_memory import (
 logger = logging.getLogger(__name__)
 
 # Latest optimized version
+# Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
+# Reinforcement Learning", arXiv:2508.03680.
 COMBINED_SUFFICIENCY_AND_REWRITE_PROMPT = """You are a meticulous expert in retrieval-augmented question answering evaluation and query rewriting.
 
 Task: Given (1) an original user query, (2) rewritten queries already tried, and (3) retrieved documents, you must decide whether the documents are sufficient to answer the orig

@@ -22,6 +22,8 @@ from memmachine.episodic_memory.declarative_memory import (
 )
 from evaluation.utils import agent_utils
 
+# Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
+# Reinforcement Learning", arXiv:2508.03680.
 ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as the only source of knowledge.
 
 <instructions>
@@ -111,7 +113,12 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
                     tokens = 0
     print(f"Completed HotpotQA ingestion, added {total_questions} questions, {added_content} episodes.")
 
-async def hotpotqa_search(dataset: list[dict[str, any]], eval_result_path: str | None = None, agent_name: str = "ToolSelectAgent"):
+async def hotpotqa_search(
+    dataset: list[dict[str, any]],
+    eval_result_path: str | None = None,
+    agent_name: str = "ToolSelectAgent",
+    pure_llm: bool = False,
+):
     tasks = []
     attribute_matrix = agent_utils.init_attribute_matrix()
     index = -1
@@ -138,6 +145,12 @@ async def hotpotqa_search(dataset: list[dict[str, any]], eval_result_path: str |
             agent_name=agent_name,
         )
 
+        full_content = []
+        for sent_list in sentences:
+            for sent in sent_list:
+                full_content.append(sent)
+        full_content_str = "\n".join(full_content)
+
         tasks.append(
             agent_utils.process_question(
                 answer_prompt=ANSWER_PROMPT,
@@ -150,6 +163,7 @@ async def hotpotqa_search(dataset: list[dict[str, any]], eval_result_path: str |
                 supporting_facts=supporting_facts,
                 search_limit=20,
                 model_name="gpt-5-mini",
+                full_content=full_content_str if pure_llm else None,
                 extra_attributes={"level": data["level"]},
             )
         )
@@ -187,18 +201,22 @@ async def main():
     parser.add_argument("--run-type", required=False, help="Type of run: ingest or search", default="search")
     parser.add_argument("--length", required=False, help="Number of records to run on EACH n-needel dataset(total 3x length are testing)", type=int, default=30)
     parser.add_argument("--split-name", required=False, help="Dataset split name: train(90.4k questions, 20%% easy, 63%% medium, 17%% hard), validation(7.41k question, all hard)", default="validation")
-    parser.add_argument("--test-target", required=True, help="Testing memmachine(bypass agent) or retrieval_agent", choices=["memmachine", "retrieval_agent"])
+    parser.add_argument("--test-target", required=True, help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm", choices=["memmachine", "retrieval_agent", "llm"])
     args = parser.parse_args()
-
-    print(f"Starting HotpotQA test with run type {args.run_type} and length {args.length}...")
 
     dataset = load_hotpotqa_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
         await hotpotqa_ingest(dataset)
     elif args.run_type == "search":
+        print(f"Starting HotpotQA test...")
+        print(f"Evaluation result path: {args.eval_result_path}")
+        print(f"Length: {args.length}")
+        print(f"Dataset split: {args.split_name}")
+        print(f"Test target: {args.test_target}")
+
         agent_name = "MemMachineAgent" if args.test_target == "memmachine" else "ToolSelectAgent"
-        await hotpotqa_search(dataset, args.eval_result_path, agent_name)
+        await hotpotqa_search(dataset, args.eval_result_path, agent_name, args.test_target == "llm")
     else:
         raise ValueError(f"Unknown run type: {args.run_type}, please use 'ingest' or 'search'.")
 

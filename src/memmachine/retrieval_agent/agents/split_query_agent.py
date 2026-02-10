@@ -16,6 +16,8 @@ from memmachine.episodic_memory.declarative_memory import Episode
 
 logger = logging.getLogger(__name__)
 
+# Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
+# Reinforcement Learning", arXiv:2508.03680.
 SPLIT_QUERY_PROMPT = """You are a search expert. Transform the input query into either:
 - multiple single-hop sub-queries (2–6 lines), or
 - the original query unchanged (1 line),
