@@ -11,6 +11,11 @@ from memmachine.common.episode_store import EpisodeStorage
 from memmachine.common.errors import ResourceNotReadyError
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.resource_manager import CommonResourceManager
+from memmachine.semantic_memory.cluster_manager import ClusterParams
+from memmachine.semantic_memory.cluster_store.cluster_store import ClusterStateStorage
+from memmachine.semantic_memory.cluster_store.cluster_store_sqlalchemy import (
+    ClusterStateStorageSqlAlchemy,
+)
 from memmachine.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -52,6 +57,7 @@ class SemanticResourceManager:
 
         self._semantic_service: SemanticService | None = None
         self._semantic_session_manager: SemanticSessionManager | None = None
+        self._cluster_state_storage: ClusterStateStorage | None = None
 
     async def close(self) -> None:
         """Stop semantic services if they were started."""
@@ -100,6 +106,17 @@ class SemanticResourceManager:
 
         await storage.startup()
 
+        return storage
+
+    async def get_cluster_state_storage(self) -> ClusterStateStorage:
+        if self._cluster_state_storage is not None:
+            return self._cluster_state_storage
+
+        database = self._conf.config_database
+        sql_engine = await self._resource_manager.get_sql_engine(database)
+        storage = ClusterStateStorageSqlAlchemy(sql_engine)
+        await storage.startup()
+        self._cluster_state_storage = storage
         return storage
 
     def _get_default_embedder_name(self) -> str:
@@ -160,6 +177,11 @@ class SemanticResourceManager:
                 default_language_model=llm_model,
                 default_category_retriever=get_default_categories,
                 semantic_config_storage=config_store,
+                cluster_state_storage=await self.get_cluster_state_storage(),
+                cluster_params=ClusterParams(
+                    similarity_threshold=self._conf.cluster_similarity_threshold,
+                    max_time_gap=self._conf.cluster_max_time_gap,
+                ),
                 uningested_time_limit=self._conf.ingestion_trigger_age,
                 uningested_message_limit=self._conf.ingestion_trigger_messages,
             ),

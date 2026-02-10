@@ -81,6 +81,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     semantic_resource_manager,
     mock_llm_model,
     spy_embedder: SpyEmbedder,
+    in_memory_cluster_state_storage,
     monkeypatch,
 ):
     semantic_type = semantic_category_retriever("test")[0]
@@ -93,6 +94,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
         semantic_storage=semantic_storage,
         episode_storage=episode_storage,
         semantic_config_storage=semantic_config_storage,
+        cluster_state_storage=in_memory_cluster_state_storage,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
         default_embedder_name="default_embedder",
@@ -235,6 +237,7 @@ async def test_multiple_sets_processed_independently(
     semantic_resource_manager,
     mock_llm_model,
     spy_embedder: SpyEmbedder,
+    in_memory_cluster_state_storage,
     monkeypatch,
 ):
     semantic_type = semantic_category_retriever("test")[0]
@@ -247,6 +250,7 @@ async def test_multiple_sets_processed_independently(
         semantic_storage=semantic_storage,
         episode_storage=episode_storage,
         semantic_config_storage=semantic_config_storage,
+        cluster_state_storage=in_memory_cluster_state_storage,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
         default_embedder_name="default_embedder",

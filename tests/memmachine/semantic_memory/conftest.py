@@ -1,9 +1,14 @@
+from collections.abc import AsyncGenerator
+
 import pytest
 import pytest_asyncio
 
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeStorage
 from memmachine.common.language_model import LanguageModel
+from memmachine.semantic_memory.cluster_store.in_memory_cluster_store import (
+    InMemoryClusterStateStorage,
+)
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_memory import SemanticService
 from memmachine.semantic_memory.semantic_model import (
@@ -69,10 +74,21 @@ def semantic_category_retriever():
 
 
 @pytest_asyncio.fixture
+async def in_memory_cluster_state_storage() -> AsyncGenerator[
+    InMemoryClusterStateStorage, None
+]:
+    storage = InMemoryClusterStateStorage()
+    await storage.startup()
+    yield storage
+    await storage.delete_all()
+
+
+@pytest_asyncio.fixture
 async def semantic_service(
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     semantic_config_storage: SemanticConfigStorage,
+    in_memory_cluster_state_storage: InMemoryClusterStateStorage,
     semantic_resource_manager,
     mock_llm_model,
     spy_embedder: SpyEmbedder,
@@ -82,6 +98,7 @@ async def semantic_service(
         semantic_storage=semantic_storage,
         episode_storage=episode_storage,
         semantic_config_storage=semantic_config_storage,
+        cluster_state_storage=in_memory_cluster_state_storage,
         feature_update_interval_sec=0.05,
         uningested_message_limit=10,
         resource_manager=semantic_resource_manager,

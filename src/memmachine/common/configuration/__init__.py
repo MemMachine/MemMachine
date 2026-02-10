@@ -113,6 +113,17 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+    cluster_similarity_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity threshold for clustering semantic messages.",
+    )
+    cluster_max_time_gap: timedelta | None = Field(
+        default=None,
+        description="Maximum time gap between messages in a cluster."
+        " Set to null to disable time-based splitting.",
+    )
 
     @model_validator(mode="after")
     def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:

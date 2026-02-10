@@ -456,6 +456,14 @@ class SpecDoc:
     The maximum age (in seconds) of uningested messages before
     triggering an ingestion cycle."""
 
+    SEMANTIC_CLUSTER_SIMILARITY_THRESHOLD = """
+    Cosine similarity threshold for grouping messages into semantic clusters.
+    Higher values produce tighter clusters; lower values merge more messages."""
+
+    SEMANTIC_CLUSTER_MAX_TIME_GAP = """
+    Maximum time gap (in seconds) allowed between messages in the same cluster.
+    Set to null to disable time-based cluster splitting."""
+
     UPDATE_EPISODIC_MEMORY = """
     Partial update for episodic memory configuration. Only supplied
     fields are updated; omitted fields remain unchanged."""

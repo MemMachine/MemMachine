@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeIdT, EpisodeStorage
@@ -27,6 +27,8 @@ from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.utils import merge_async_iterators
 
+from .cluster_manager import ClusterParams
+from .cluster_store.cluster_store import ClusterStateStorage
 from .config_store.config_store import SemanticConfigStorage
 from .semantic_ingestion import IngestionService
 from .semantic_model import (
@@ -88,6 +90,8 @@ class SemanticService:
         semantic_storage: InstanceOf[SemanticStorage]
         episode_storage: InstanceOf[EpisodeStorage]
         semantic_config_storage: InstanceOf[SemanticConfigStorage]
+        cluster_state_storage: InstanceOf[ClusterStateStorage]
+        cluster_params: ClusterParams = Field(default_factory=ClusterParams)
         consolidation_threshold: int = 20
 
         feature_update_interval_sec: float = 2.0
@@ -114,6 +118,8 @@ class SemanticService:
         self._semantic_config_storage: SemanticConfigStorage = (
             params.semantic_config_storage
         )
+        self._cluster_state_storage = params.cluster_state_storage
+        self._cluster_params = params.cluster_params
         self._background_ingestion_interval_sec = params.feature_update_interval_sec
 
         self._resource_manager = params.resource_manager
@@ -771,6 +777,8 @@ class SemanticService:
                 semantic_storage=self._semantic_storage,
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
+                cluster_state_storage=self._cluster_state_storage,
+                cluster_params=self._cluster_params,
             ),
         )
 

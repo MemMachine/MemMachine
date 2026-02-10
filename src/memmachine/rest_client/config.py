@@ -441,6 +441,8 @@ class Config:
         embedding_model: str | None = None,
         ingestion_trigger_messages: int | None = None,
         ingestion_trigger_age_seconds: int | None = None,
+        cluster_similarity_threshold: float | None = None,
+        cluster_max_time_gap_seconds: int | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
         """
@@ -453,6 +455,8 @@ class Config:
             embedding_model: Name of the embedder to use for semantic similarity
             ingestion_trigger_messages: Number of messages before triggering ingestion
             ingestion_trigger_age_seconds: Age threshold in seconds for triggering ingestion
+            cluster_similarity_threshold: Cosine similarity threshold for clustering
+            cluster_max_time_gap_seconds: Maximum time gap in seconds for clustering
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -471,6 +475,8 @@ class Config:
             embedding_model=embedding_model,
             ingestion_trigger_messages=ingestion_trigger_messages,
             ingestion_trigger_age_seconds=ingestion_trigger_age_seconds,
+            cluster_similarity_threshold=cluster_similarity_threshold,
+            cluster_max_time_gap_seconds=cluster_max_time_gap_seconds,
         )
         payload = spec.model_dump(exclude_none=True)
         try:
