@@ -285,6 +285,7 @@ def test_search_memories(client, mock_memmachine):
         "org_id": "test_org",
         "project_id": "test_proj",
         "query": "hello",
+        "agent_mode": True,
     }
 
     with patch(
@@ -323,6 +324,8 @@ def test_search_memories(client, mock_memmachine):
             },
         }
         mock_search.assert_awaited_once()
+        search_call = mock_search.await_args.kwargs
+        assert search_call["spec"].agent_mode is True
 
         # Invalid argument
         mock_search.reset_mock()

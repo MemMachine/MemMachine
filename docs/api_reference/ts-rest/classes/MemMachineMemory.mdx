@@ -49,7 +49,7 @@ await memory.add(content: string, options?: AddMemoryOptions)
 Performs a semantic search to find relevant memories based on a natural language query.
 
 ```typescript
-await memory.search(query: string, options?: SearchMemoryOptions)
+await memory.search(query: string, options?: SearchMemoriesOptions)
 ```
 
 **Parameters**
@@ -57,11 +57,11 @@ await memory.search(query: string, options?: SearchMemoryOptions)
 | **Name**  | **Type**                                                     | **Description**                                |
 | --------- | ------------------------------------------------------------ | ---------------------------------------------- |
 | `query`   | `string`                                                     | The question or phrase to search for.          |
-| `options` | [`SearchMemoryOptions`](../interfaces/SearchMemoryResult) | Limits, filters, or minimum similarity scores. |
+| `options` | [`SearchMemoriesOptions`](../interfaces/SearchMemoryResult) | `top_k`, `filter`, `types`, and `agent_mode`. |
 
 **Returns**
 
-- `Promise<SearchMemoryResult>` — A list of relevant [EpisodicMemory](../interfaces/EpisodicMemory) objects.
+- `Promise<SearchMemoriesResult>` — Structured episodic and semantic retrieval output.
 
 ------
 
@@ -111,7 +111,10 @@ await memory.add('The user mentioned they live in Seattle and love hiking.');
 // 2. Retrieve information later
 const response = await memory.search('Where does the user live?');
 
-if (response.memories.length > 0) {
-  console.log(`Found memory: ${response.memories[0].content}`);
+if (response.status === 0 && response.content.episodic_memory) {
+  const recentMemories = response.content.episodic_memory.short_term_memory;
+  if (recentMemories.length > 0) {
+    console.log(`Found memory: ${recentMemories[0].content}`);
+  }
 }
 ```

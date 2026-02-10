@@ -205,6 +205,7 @@ def test_search_memories_spec():
     assert spec.query == "Find this"
     assert spec.filter == ""
     assert spec.types == []
+    assert spec.agent_mode is False
 
 
 def test_list_memories_spec():

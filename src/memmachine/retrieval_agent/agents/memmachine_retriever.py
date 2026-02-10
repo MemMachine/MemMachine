@@ -50,6 +50,7 @@ class MemMachineAgent(AgentToolBase):
         logger.info(f"CALLING {self.agent_name} with query: {query.query}")
 
         perf_matrics = {
+            "memory_search_called": 0,
             "memory_retrieval_time": 0.0,
             "agent": self.agent_name,
         }
@@ -60,6 +61,7 @@ class MemMachineAgent(AgentToolBase):
             expand_context=query.expand_context,
             property_filter=query.property_filter,
         )
+        perf_matrics["memory_search_called"] += 1
         perf_matrics["memory_retrieval_time"] += time.time() - mem_retrieval_start
 
         episodes = [episode for _, episode in scored_episodes]
