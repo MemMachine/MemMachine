@@ -1,0 +1,84 @@
+{
+  "id": "openclaw-memmachine",
+  "kind": "memory",
+  "uiHints": {
+    "apiKey": {
+      "label": "MemMachine API Key",
+      "sensitive": true,
+      "placeholder": "...",
+      "help": "API key from app.memmachine.ai. Only needed for platform mode."
+    },
+    "baseUrl": {
+      "label": "MemMachine Base URL",
+      "placeholder": "https://api.memmachine.ai",
+      "help": "Base URL for MemMachine service"
+    },
+    "userId": {
+      "label": "Default User ID",
+      "placeholder": "default",
+      "help": "User ID for scoping memories"
+    },
+    "orgId": {
+      "label": "Organization ID",
+      "placeholder": "org-...",
+      "advanced": true
+    },
+    "projectId": {
+      "label": "Project ID",
+      "placeholder": "proj-...",
+      "advanced": true
+    },
+    "autoCapture": {
+      "label": "Auto-Capture",
+      "help": "Automatically store conversation context after each agent turn"
+    },
+    "autoRecall": {
+      "label": "Auto-Recall",
+      "help": "Automatically inject relevant memories before each agent turn"
+    },
+    "searchThreshold": {
+      "label": "Search score Threshold",
+      "placeholder": "0.5",
+      "help": "Minimum reranking score for search results (0-1). Default: 0.5"
+    },
+    "topK": {
+      "label": "Top K Results",
+      "placeholder": "5",
+      "help": "Maximum number of memories to retrieve"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": {
+        "type": "string"
+      },
+      "baseUrl": {
+        "type": "string"
+      },
+      "userId": {
+        "type": "string"
+      },
+      "orgId": {
+        "type": "string"
+      },
+      "projectId": {
+        "type": "string"
+      },
+      "autoCapture": {
+        "type": "boolean"
+      },
+      "autoRecall": {
+        "type": "boolean"
+      },
+      "searchThreshold": {
+        "type": "number"
+      },
+      "topK": {
+        "type": "number"
+      }
+    },
+    "required": []
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@memmachine/openclaw-memmachine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenClaw MemMachine memory plugin",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@memmachine/client": "^0.2.5",
+    "@sinclair/typebox": "^0.34.48",
+    "jiti": "^2.6.1",
+    "openclaw": "^2026.2.6",
+    "pnpm": "^10.29.2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
