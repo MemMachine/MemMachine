@@ -1,26 +1,26 @@
-import asyncio
+# ruff: noqa: N999
+
 import argparse
+import asyncio
 import json
 import sys
 import time
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import tiktoken
 from dotenv import load_dotenv
-from huggingface_hub import hf_hub_download
-from openai import OpenAI
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine.episodic_memory.declarative_memory import (
+from evaluation.utils import agent_utils  # noqa: E402
+from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
     ContentType,
     Episode,
 )
-from evaluation.utils import agent_utils
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -68,7 +68,7 @@ def n_tokens(msg : str) -> int:
     return len(enc.encode(msg))
 
 async def hotpotqa_ingest(dataset: list[dict[str, any]]):
-    t1 = datetime.now(timezone.utc)
+    t1 = datetime.now(UTC)
     added_content = 0
     total_questions = 0
     per_batch = 1000
@@ -134,7 +134,9 @@ async def hotpotqa_search(
         # Get supporting facts in string
         supporting_facts = []
         fact_index_dict = data["supporting_facts"]
-        for title, sent_id in zip(fact_index_dict["title"], fact_index_dict["sent_id"]):
+        for title, sent_id in zip(
+            fact_index_dict["title"], fact_index_dict["sent_id"], strict=True
+        ):
             sent = sentences[titles.index(title)][sent_id]
             supporting_facts.append(sent)
 
@@ -145,10 +147,11 @@ async def hotpotqa_search(
             agent_name=agent_name,
         )
 
-        full_content = []
-        for sent_list in sentences:
-            for sent in sent_list:
-                full_content.append(sent)
+        full_content = [
+            sent
+            for sent_list in sentences
+            for sent in sent_list
+        ]
         full_content_str = "\n".join(full_content)
 
         tasks.append(
@@ -173,7 +176,7 @@ async def hotpotqa_search(
             num_searched += len(tasks)
             print(f"Completed HotpotQA searching {num_searched}/{len(dataset)} questions...")
             tasks = []
-    
+
     results: dict[str, any] = {}
     agent_utils.update_results(responses, attribute_matrix, results)
     agent_utils.update_final_attribute_matrix(
@@ -209,7 +212,7 @@ async def main():
     if args.run_type == "ingest":
         await hotpotqa_ingest(dataset)
     elif args.run_type == "search":
-        print(f"Starting HotpotQA test...")
+        print("Starting HotpotQA test...")
         print(f"Evaluation result path: {args.eval_result_path}")
         print(f"Length: {args.length}")
         print(f"Dataset split: {args.split_name}")

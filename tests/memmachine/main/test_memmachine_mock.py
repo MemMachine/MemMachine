@@ -242,6 +242,7 @@ async def test_create_session_passes_generated_config(
         long_term_memory=LongTermMemoryConfPartial(
             embedder="custom-embed",
             reranker="custom-reranker",
+            llm_model="default-llm-model",
         )
     )
     await memmachine.create_session(

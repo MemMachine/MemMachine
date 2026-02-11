@@ -1,22 +1,20 @@
 import argparse
 import asyncio
 import json
-import os
-import re
 import sys
-import time
-from pathlib import Path
-from typing import Any, cast
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
+
 from memmachine.common.utils import async_with
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.utils import agent_utils
+from evaluation.utils import agent_utils  # noqa: E402
 
 ANSWER_PROMPT = """
 You are asked to answer a question based on your memories of a conversation.
@@ -44,7 +42,7 @@ def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
         tzinfo=UTC
     )
 
-async def run_locomo(
+async def run_locomo(  # noqa: C901
     dpath: str | None = None,
     epath: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
@@ -86,7 +84,7 @@ async def run_locomo(
     for idx, item in enumerate(locomo_data):
         if idx < start_index:
             continue
-        
+
         if idx > end_index:
             break
 
@@ -122,7 +120,7 @@ async def run_locomo(
                 dia_id = message["dia_id"]
                 text = message["text"]
                 evidence_to_text[dia_id] = text
-                speaker = message['speaker']
+                speaker = message["speaker"]
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
         memory, model, query_agent = await agent_utils.init_memmachine_params(
@@ -144,13 +142,13 @@ async def run_locomo(
             for ev in evidence:
                 if "," in ev:
                     ids = ev.split(",")
-                    for id in ids:
-                        evidence_str = evidence_to_text.get(id.strip(), "")
+                    for evidence_id in ids:
+                        evidence_str = evidence_to_text.get(evidence_id.strip(), "")
                         stringified_evidence.append(evidence_str)
                 elif ";" in ev:
                     ids = ev.split(";")
-                    for id in ids:
-                        evidence_str = evidence_to_text.get(id.strip(), "")
+                    for evidence_id in ids:
+                        evidence_str = evidence_to_text.get(evidence_id.strip(), "")
                         stringified_evidence.append(evidence_str)
                 else:
                     evidence_str = evidence_to_text.get(ev.strip(), "")

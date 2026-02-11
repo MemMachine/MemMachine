@@ -1,23 +1,28 @@
+"""Shared interfaces and base implementation for retrieval-agent tools."""
 
-import time
-from abc import abstractmethod
 import asyncio
-from pydantic import BaseModel, InstanceOf, ConfigDict, JsonValue
-from datetime import datetime
+import logging
+from abc import abstractmethod
 from typing import Any
-from collections.abc import Iterable
-from memmachine.common.language_model.language_model import LanguageModel
-from memmachine.episodic_memory.declarative_memory import (
-    ContentType,
-    Episode,
-    DeclarativeMemory,
-)
-from memmachine.common.reranker.reranker import Reranker
+
+from pydantic import BaseModel, ConfigDict, InstanceOf
+
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
 )
+from memmachine.common.language_model.language_model import LanguageModel
+from memmachine.common.reranker.reranker import Reranker
+from memmachine.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    Episode,
+)
+
+logger = logging.getLogger(__name__)
+
 
 class QueryPolicy(BaseModel):
+    """Scoring and budget policy used by retrieval-agent tools."""
+
     token_cost: int
     time_cost: int
     accuracy_score: float
@@ -25,7 +30,10 @@ class QueryPolicy(BaseModel):
     max_attempts: int = 5
     max_return_len: int = 100000
 
+
 class QueryParam(BaseModel):
+    """Input parameters for a retrieval-agent query."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
     query: str
     limit: int | None = None
@@ -34,14 +42,20 @@ class QueryParam(BaseModel):
 
 
 class AgentToolBaseParam(BaseModel):
+    """Dependency bundle used to construct an agent tool."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    model: InstanceOf[LanguageModel] | None= None
-    children_tools: list[InstanceOf['AgentToolBase']] | None = None
+    model: InstanceOf[LanguageModel] | None = None
+    children_tools: list[InstanceOf["AgentToolBase"]] | None = None
     extra_params: dict[str, Any] | None = None
     reranker: InstanceOf[Reranker] | None = None
 
+
 class AgentToolBase:
-    def __init__(self, param: AgentToolBaseParam):
+    """Base class for retrieval-agent tool implementations."""
+
+    def __init__(self, param: AgentToolBaseParam) -> None:
+        """Initialize tool dependencies and aggregate child costs."""
         super().__init__()
         self._model = param.model
         self._children_tools = param.children_tools or []
@@ -62,7 +76,11 @@ class AgentToolBase:
     def agent_description(self) -> str:
         pass
 
-    def _update_perf_matrics(self, source: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    def _update_perf_matrics(
+        self,
+        source: dict[str, Any],
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
         for key, value in source.items():
             if key not in target:
                 target[key] = value
@@ -79,9 +97,10 @@ class AgentToolBase:
                 return episodes
             return sorted(episodes, key=lambda x: x.timestamp)
 
-        contents = []
-        for e in episodes:
-            contents.append(DeclarativeMemory.string_from_episode_context([e]))
+        contents = [
+            DeclarativeMemory.string_from_episode_context([episode])
+            for episode in episodes
+        ]
         success = False
         max_retry = 60
         scores = []
@@ -92,16 +111,18 @@ class AgentToolBase:
             except Exception as e:
                 max_retry -= 1
                 if max_retry == 0:
-                    print(f"ERROR: Reranker failed after maximum retries.")
-                    raise e
+                    logger.exception("Reranker failed after maximum retries.")
+                    raise
                 if "ThrottlingException" in str(e):
-                    print(f"WARNING: Reranker throttling exception, retrying after 5 second...")
-                    time.sleep(5)
+                    logger.warning(
+                        "Reranker throttling exception, retrying after 5 seconds..."
+                    )
+                    await asyncio.sleep(5)
                 else:
-                    raise e
+                    raise
 
         result = sorted(
-            zip(episodes, scores),
+            zip(episodes, scores, strict=True),
             key=lambda x: x[1],   # sort by score
             reverse=True          # highest score first
         )
@@ -141,5 +162,5 @@ class AgentToolBase:
     def time_cost(self) -> int:
         pass
 
-    def agent_tools(self) -> list['AgentToolBase']:
+    def agent_tools(self) -> list["AgentToolBase"]:
         return self._children_tools

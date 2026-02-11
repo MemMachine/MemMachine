@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.retrieval_agent.llm_judge import evaluate_llm_judge
+from evaluation.retrieval_agent.llm_judge import evaluate_llm_judge  # noqa: E402
 
 load_dotenv()
 
@@ -55,7 +55,7 @@ def process_item(item_data):
                     # Round to 3 decimal places
                     val = round(val, 3)
                 res[key] = val
-        
+
         local_results[k].append(res)
 
     return local_results

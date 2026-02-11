@@ -32,6 +32,7 @@ def test_update_long_term_memory_conf(long_term_memory_conf: LongTermMemoryConfP
     specific = LongTermMemoryConfPartial(
         session_id="session_123",
         embedder="embedder_v2",
+        llm_model="model_v1",
     )
 
     updated = specific.merge(long_term_memory_conf)

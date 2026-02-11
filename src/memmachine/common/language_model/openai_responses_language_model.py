@@ -197,14 +197,14 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         return response.output_parsed
 
-    async def generate_response(  # noqa: C901
+    async def generate_response(
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ):
+    ) -> tuple[str | None, list[dict[str, Any]]]:
         output, function_calls_arguments, _, _ = await self._generate_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -221,7 +221,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ):
+    ) -> tuple[str | None, list[dict[str, Any]], int, int]:
         return await self._generate_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -230,14 +230,14 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             max_attempts=max_attempts,
         )
 
-    async def _generate_response(
+    async def _generate_response(  # noqa: C901
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ) -> tuple[str, Any, int, int]:
+    ) -> tuple[str | None, list[dict[str, Any]], int, int]:
         """Generate a raw text response (and optional tool call)."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")

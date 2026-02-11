@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import time
@@ -12,30 +11,37 @@ from memmachine.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
 )
-from memmachine.common.reranker.reranker import Reranker
-from memmachine.common.reranker.amazon_bedrock_reranker import (
-    AmazonBedrockReranker,
-    AmazonBedrockRerankerParams,
-)
-from memmachine.common.utils import async_with
-from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
-    Neo4jVectorGraphStore,
-    Neo4jVectorGraphStoreParams,
-)
-from memmachine.episodic_memory.declarative_memory import (
-    ContentType,
-    Episode,
-    DeclarativeMemory,
-    DeclarativeMemoryParams,
-)
-
 from memmachine.common.language_model.language_model import LanguageModel
 from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
     OpenAIResponsesLanguageModelParams,
 )
-from memmachine.retrieval_agent.agents import ChainOfQueryAgent, MemMachineAgent, SplitQueryAgent, ToolSelectAgent
-from memmachine.retrieval_agent.common.agent_api import AgentToolBase, AgentToolBaseParam, QueryParam, QueryPolicy
+from memmachine.common.reranker.amazon_bedrock_reranker import (
+    AmazonBedrockReranker,
+    AmazonBedrockRerankerParams,
+)
+from memmachine.common.reranker.reranker import Reranker
+from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
+    Neo4jVectorGraphStore,
+    Neo4jVectorGraphStoreParams,
+)
+from memmachine.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    DeclarativeMemoryParams,
+)
+from memmachine.retrieval_agent.agents import (
+    ChainOfQueryAgent,
+    MemMachineAgent,
+    SplitQueryAgent,
+    ToolSelectAgent,
+)
+from memmachine.retrieval_agent.common.agent_api import (
+    AgentToolBase,
+    AgentToolBaseParam,
+    QueryParam,
+    QueryPolicy,
+)
+
 
 async def process_question(
     answer_prompt: str,
@@ -50,7 +56,7 @@ async def process_question(
     search_limit: int = 20,
     model_name: str = "gpt-5-mini",
     full_content: str | None = None,
-    extra_attributes: dict[str, Any] = {},
+    extra_attributes: dict[str, Any] | None = None,
 ):
     perf_matrics: dict[str, Any] = {}
     memory_start = 0
@@ -111,11 +117,8 @@ async def process_question(
         "num_episodes_retrieved": len(chunks),
     }
 
-    for key, val in perf_matrics.items():
-        res[key] = val
-
-    for key, val in extra_attributes.items():
-        res[key] = val
+    res.update(perf_matrics)
+    res.update(extra_attributes or {})
 
     return category, res
 
@@ -152,7 +155,7 @@ def update_results(
             attribute_matrix["tools_called"][tool] = 0
             attribute_matrix["tools_input_tokens"][tool] = 0
             attribute_matrix["tools_output_tokens"][tool] = 0
-        
+
         mem = response["conversation_memories"]
         fact_hits = []
         fact_miss = []
@@ -163,7 +166,7 @@ def update_results(
                 fact_hits.append(f"[HIT] {fact}\n")
             else:
                 fact_miss.append(f"[MISS] {fact}\n")
-        
+
         response["fact_hits"] = fact_hits
         response["fact_miss"] = fact_miss
 
@@ -208,7 +211,7 @@ def update_final_attribute_matrix(
     precision = f"{num_hits}/{num_episodes_retrieved} = {num_hits/num_episodes_retrieved*100:.2f}%" if num_episodes_retrieved > 0 else "N/A"
     average_episodes_retrieved = num_episodes_retrieved / num_questions if num_questions > 0 else 0.0
     tools_report = ""
-    for tool in tools_called.keys():
+    for tool in tools_called:
         tool_recall = f"{tools_hits[tool]}/{tools_facts[tool]} = {tools_hits[tool]/tools_facts[tool]*100:.2f}%" if tools_facts[tool] > 0 else "N/A"
         tool_precision = f"{tools_hits[tool]}/{tools_episodes[tool]} = {tools_hits[tool]/tools_episodes[tool]*100:.2f}%" if tools_episodes[tool] > 0 else "N/A"
         tools_report += f"""Tool: {tool}
@@ -240,7 +243,7 @@ ToolSelectAgent Avg Output Tokens per Question: {tools_output_tokens["ToolSelect
 """
 
     matrix_name = f"{test_preffix}_final_matrix"
-    for cat, res_list in results.items():
+    for res_list in results.values():
         res_list[0][matrix_name] = final_matrix
         break
     return final_matrix
@@ -272,7 +275,7 @@ async def init_agent(
 
     if agent_name == coq_agent.agent_name:
         return coq_agent
-    elif agent_name == split_agent.agent_name:
+    if agent_name == split_agent.agent_name:
         return split_agent
 
     param: AgentToolBaseParam = AgentToolBaseParam(

@@ -1,9 +1,12 @@
+"""Memory-retrieval agent that queries declarative memory directly."""
+
 import logging
 import time
+from typing import Any
+
 from memmachine.episodic_memory.declarative_memory import (
-    Episode,
     DeclarativeMemory,
-    DeclarativeMemoryParams,
+    Episode,
 )
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -11,12 +14,15 @@ from memmachine.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
 )
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 class MemMachineAgent(AgentToolBase):
-    def __init__(self, param: AgentToolBaseParam):
+    """Agent that uses declarative memory search without query rewriting."""
+
+    def __init__(self, param: AgentToolBaseParam) -> None:
+        """Initialize with a declarative-memory instance from extra params."""
         super().__init__(param)
         if param.extra_params is None:
             raise ValueError("Did not find extra params")
@@ -24,30 +30,37 @@ class MemMachineAgent(AgentToolBase):
         if not self._memory:
             raise ValueError("Did not find memory instance")
         if not isinstance(self._memory, DeclarativeMemory):
-            raise ValueError("The memory type is not DeclarativeMemory: %s", type(self._memory).__name__)
-    
+            raise TypeError(
+                "The memory type is not DeclarativeMemory: "
+                f"{type(self._memory).__name__}"
+            )
+
     @property
     def agent_name(self) -> str:
         return "MemMachineAgent"
-    
+
     @property
     def agent_description(self) -> str:
         return "This agent retrieve data from MemMachine memory directly"
-    
+
     @property
     def accuracy_score(self) -> int:
         return 0
-    
+
     @property
     def token_cost(self) -> int:
         return 0
-    
+
     @property
     def time_cost(self) -> int:
         return 0
-        
-    async def do_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
-        logger.info(f"CALLING {self.agent_name} with query: {query.query}")
+
+    async def do_query(
+        self,
+        _policy: QueryPolicy,
+        query: QueryParam,
+    ) -> tuple[list[Episode], dict[str, Any]]:
+        logger.info("CALLING %s with query: %s", self.agent_name, query.query)
 
         perf_matrics = {
             "memory_search_called": 0,

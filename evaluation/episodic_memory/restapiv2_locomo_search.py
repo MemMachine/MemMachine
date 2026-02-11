@@ -183,7 +183,7 @@ def main():
         "--max-workers", type=int, default=10, help="number of simultaneous queries"
     )
     parser.add_argument(
-        "--agent-mode", action='store_true', help="enable agent mode for memory search"
+        "--agent-mode", action="store_true", help="enable agent mode for memory search"
     )
     args = parser.parse_args()
 
