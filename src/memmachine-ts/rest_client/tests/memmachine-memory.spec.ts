@@ -77,6 +77,7 @@ describe('MemMachine Memory', () => {
       query: 'Test query',
       top_k: 10,
       filter: '',
+      expand_context: 0,
       types: ['episodic', 'semantic'],
       agent_mode: true
     })
