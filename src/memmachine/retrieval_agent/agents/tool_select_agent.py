@@ -78,6 +78,7 @@ CLASSIFICATION EXAMPLES (for calibration; do not output these)
 5) "Which is older: the founder of Company A or the CEO of Company B?" -> {coq}
 """
 
+
 class ToolSelectAgent(AgentToolBase):
     """Classify the query shape and select one retrieval tool."""
 
@@ -87,7 +88,9 @@ class ToolSelectAgent(AgentToolBase):
         if self._model is None:
             raise ValueError("Model is not set")
         self._extra_param = param.extra_params or {}
-        self._tool_select_prompt = self._extra_param.get("tool_select_prompt", TOOL_SELECT_PROMPT)
+        self._tool_select_prompt = self._extra_param.get(
+            "tool_select_prompt", TOOL_SELECT_PROMPT
+        )
         default_tool_name = self._extra_param.get("default_tool_name")
         self._default_tool: AgentToolBase | None = None
         # FIXME: Consider use global variables or import tool names. We need to do this because
@@ -104,8 +107,14 @@ class ToolSelectAgent(AgentToolBase):
                 self._memory_agent = tool
             if tool.agent_name == default_tool_name:
                 self._default_tool = tool
-        if self._coq_agent is None or self._split_agent is None or self._memory_agent is None:
-            raise ValueError("Tool select agent requires 'ChainOfQueryAgent', 'SplitQueryAgent' and 'MemMachineAgent' tools as child tools")
+        if (
+            self._coq_agent is None
+            or self._split_agent is None
+            or self._memory_agent is None
+        ):
+            raise ValueError(
+                "Tool select agent requires 'ChainOfQueryAgent', 'SplitQueryAgent' and 'MemMachineAgent' tools as child tools"
+            )
 
     @property
     def agent_name(self) -> str:
@@ -145,9 +154,12 @@ class ToolSelectAgent(AgentToolBase):
             memory_retrieval=self._memory_agent.agent_name,
         )
         model = cast(LanguageModel, self._model)
-        rsp, _, input_token, output_token = await model.generate_response_with_token_usage(
-            user_prompt=prompt
-        )
+        (
+            rsp,
+            _,
+            input_token,
+            output_token,
+        ) = await model.generate_response_with_token_usage(user_prompt=prompt)
         logger.debug("Selected tools: %s", rsp)
 
         selected_tool = None
@@ -168,7 +180,9 @@ class ToolSelectAgent(AgentToolBase):
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
         logger.info("CALLING %s with query: %s", self.agent_name, query.query)
-        tool, input_token, output_token = await self._select_tool_by_model(policy, query)
+        tool, input_token, output_token = await self._select_tool_by_model(
+            policy, query
+        )
         if tool is None:
             if self._default_tool is not None:
                 tool = self._default_tool

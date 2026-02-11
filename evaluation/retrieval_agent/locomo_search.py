@@ -37,10 +37,12 @@ Question: {question}
 Your short response to the question without fluff (no more than a couple of sentences):
 """
 
+
 def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
     return datetime.strptime(locomo_time_str, "%I:%M %p on %d %B, %Y").replace(
         tzinfo=UTC
     )
+
 
 async def run_locomo(  # noqa: C901
     dpath: str | None = None,
@@ -52,10 +54,16 @@ async def run_locomo(  # noqa: C901
         "--data-path", required=True, help="Path to the source data file"
     )
     parser.add_argument(
-        "--eval-result-path", required=True, help="Path to save evaluation results", default=None
+        "--eval-result-path",
+        required=True,
+        help="Path to save evaluation results",
+        default=None,
     )
     parser.add_argument(
-        "--test-target", required=True, help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm", choices=["memmachine", "retrieval_agent", "llm"]
+        "--test-target",
+        required=True,
+        help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
+        choices=["memmachine", "retrieval_agent", "llm"],
     )
 
     args = parser.parse_args()
@@ -80,7 +88,9 @@ async def run_locomo(  # noqa: C901
     attribute_matrix = agent_utils.init_attribute_matrix()
     start_index = 0
     end_index = 20
-    vector_graph_store = agent_utils.init_vector_graph_store(neo4j_uri="bolt://localhost:7687")
+    vector_graph_store = agent_utils.init_vector_graph_store(
+        neo4j_uri="bolt://localhost:7687"
+    )
     for idx, item in enumerate(locomo_data):
         if idx < start_index:
             continue
@@ -127,7 +137,9 @@ async def run_locomo(  # noqa: C901
             vector_graph_store=vector_graph_store,
             session_id=group_id,
             model_name="gpt-5-mini",
-            agent_name="ToolSelectAgent" if args.test_target == "retrieval_agent" else "MemMachineAgent",
+            agent_name="ToolSelectAgent"
+            if args.test_target == "retrieval_agent"
+            else "MemMachineAgent",
         )
 
         async def respond_question(qa, full_content):
@@ -190,6 +202,7 @@ async def run_locomo(  # noqa: C901
         results,
     )
     return eval_result_path, results
+
 
 async def main():
     eval_result_path, results = await run_locomo()

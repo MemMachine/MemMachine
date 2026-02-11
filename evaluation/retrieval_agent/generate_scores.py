@@ -15,7 +15,7 @@ categories = [
     "temporal",
     "open_domain",
     "single_hop",
-    "LOCOMO-IGNORED", # Locomo category 5 is ignored
+    "LOCOMO-IGNORED",  # Locomo category 5 is ignored
     "compositional",
     "comparison",
     "inference",

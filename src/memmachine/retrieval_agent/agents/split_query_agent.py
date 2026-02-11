@@ -121,6 +121,7 @@ Output Format (strict)
   - No duplicate attribute/entity/timeframe queries.
 """
 
+
 class SplitQueryAgent(AgentToolBase):
     """Split complex queries into single-hop sub-queries when beneficial."""
 
@@ -169,7 +170,9 @@ class SplitQueryAgent(AgentToolBase):
         }
         prompt = self._prompt.format(query=query.query)
         llm_start = time.time()
-        rsp, _, input_token, output_token = await cast(LanguageModel, self._model).generate_response_with_token_usage(user_prompt=prompt)
+        rsp, _, input_token, output_token = await cast(
+            LanguageModel, self._model
+        ).generate_response_with_token_usage(user_prompt=prompt)
         perf_matrics["llm_time"] += time.time() - llm_start
         sub_queries: list[str] = []
         for line in rsp.split("\n"):

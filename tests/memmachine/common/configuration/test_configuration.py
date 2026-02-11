@@ -76,7 +76,9 @@ def test_update_episodic_memory_conf(
     )
     specific = EpisodicMemoryConfPartial(
         session_key="session_123",
-        long_term_memory=LongTermMemoryConfPartial(embedder="embedder_v2", llm_model="model_v2"),
+        long_term_memory=LongTermMemoryConfPartial(
+            embedder="embedder_v2", llm_model="model_v2"
+        ),
     )
 
     updated = specific.merge(base)

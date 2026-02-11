@@ -67,7 +67,6 @@ def load_data(  # noqa: C901
                 "comparison": 2,
                 "inference": 3,
                 "bridge_comparison": 4,
-
             }
             types.append(type_map[obj["type"]])
 
@@ -100,19 +99,25 @@ async def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data-path", required=True, help="Path to the data file")
-    parser.add_argument("--length", type=int, default=500, help="Number of records to ingest")
+    parser.add_argument(
+        "--length", type=int, default=500, help="Number of records to ingest"
+    )
 
     args = parser.parse_args()
 
     data_path = args.data_path
 
-    vector_graph_store = agent_utils.init_vector_graph_store(neo4j_uri="bolt://localhost:7687")
+    vector_graph_store = agent_utils.init_vector_graph_store(
+        neo4j_uri="bolt://localhost:7687"
+    )
     memory, _, _ = await agent_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
-        session_id="group1", # Wikimultihop dataset does not have session concept
+        session_id="group1",  # Wikimultihop dataset does not have session concept
     )
 
-    contexts, _, _, _ , _= load_data(data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE")
+    contexts, _, _, _, _ = load_data(
+        data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
+    )
     print("Loaded", len(contexts), "contexts, start ingestion...")
 
     num_batch = 1000
@@ -143,12 +148,15 @@ async def main():
         if len(added_contexts) % num_batch == 0 or (c == contexts[-1]):
             t = time.perf_counter()
             await memory.add_episodes(episodes=episodes)
-            print(f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s")
+            print(
+                f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
+            )
             episodes = []
 
             print(f"Total added episodes: {len(added_contexts)}")
 
     print(f"Completed WIKI-Multihop ingestion, added {len(added_contexts)} episodes.")
+
 
 if __name__ == "__main__":
     load_dotenv()

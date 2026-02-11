@@ -80,7 +80,9 @@ def process_question(
             types = [mem_type]
         memory_start = time.time()
         mmai.log.debug(f"search memory conv={conv_num} q={q_num}")
-        data = mmai.search_memory(question, top_k=top_k, types=types, timeout=timeout, agent_mode=agent_mode)
+        data = mmai.search_memory(
+            question, top_k=top_k, types=types, timeout=timeout, agent_mode=agent_mode
+        )
         num_types, le_len, se_len, ss_len, sm_len = mmai.split_data_count(data)
         ctx_usage = f"le={le_len} se={se_len} ss={ss_len} sm={sm_len}"
         if mem_type == "episodic":
@@ -263,7 +265,9 @@ def main():
                         continue
                 except Exception:
                     continue
-                future = executor.submit(respond_question, qa, idx + 1, q_idx + 1, args.agent_mode)
+                future = executor.submit(
+                    respond_question, qa, idx + 1, q_idx + 1, args.agent_mode
+                )
                 futures.append(future)
             # wait for task completion
             for future in tqdm(

@@ -52,6 +52,7 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
 Question: {question}
 """
 
+
 async def run_wiki(
     dpath: str | None = None,
     epath: str | None = None,
@@ -62,13 +63,19 @@ async def run_wiki(
         "--data-path", required=True, help="Path to the source data file"
     )
     parser.add_argument(
-        "--eval-result-path", required=True, help="Path to save evaluation results", default=None
+        "--eval-result-path",
+        required=True,
+        help="Path to save evaluation results",
+        default=None,
     )
     parser.add_argument(
         "--length", type=int, default=500, help="Number of questions to search"
     )
     parser.add_argument(
-        "--test-target", required=True, help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm", choices=["memmachine", "retrieval_agent", "llm"]
+        "--test-target",
+        required=True,
+        help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
+        choices=["memmachine", "retrieval_agent", "llm"],
     )
 
     args = parser.parse_args()
@@ -87,15 +94,21 @@ async def run_wiki(
     if epath:
         eval_result_path = epath
 
-    vector_graph_store = agent_utils.init_vector_graph_store(neo4j_uri="bolt://localhost:7687")
+    vector_graph_store = agent_utils.init_vector_graph_store(
+        neo4j_uri="bolt://localhost:7687"
+    )
     memory, model, query_agent = await agent_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
-        session_id="group1", # Wikimultihop dataset does not have session concept
+        session_id="group1",  # Wikimultihop dataset does not have session concept
         model_name="gpt-5-mini",
-        agent_name="ToolSelectAgent" if args.test_target == "retrieval_agent" else "MemMachineAgent",
+        agent_name="ToolSelectAgent"
+        if args.test_target == "retrieval_agent"
+        else "MemMachineAgent",
     )
 
-    contexts, questions, answers, types, supporting_facts = load_data(data_path=data_path, start_line=1, end_line=args.length, randomize="NONE")
+    contexts, questions, answers, types, supporting_facts = load_data(
+        data_path=data_path, start_line=1, end_line=args.length, randomize="NONE"
+    )
     print(f"Loaded {len(questions)} questions, start querying...")
 
     tasks = []
@@ -106,7 +119,7 @@ async def run_wiki(
     for q, a, t, f_list in zip(
         questions, answers, types, supporting_facts, strict=True
     ):
-        t += 5 # Use locomo category 1-5, and wiki 6-9
+        t += 5  # Use locomo category 1-5, and wiki 6-9
         tasks.append(
             agent_utils.process_question(
                 ANSWER_PROMPT,
@@ -136,10 +149,12 @@ async def run_wiki(
     )
     return eval_result_path, results
 
+
 async def main():
     eval_result_path, results = await run_wiki()
     with open(eval_result_path, "w") as f:
         json.dump(results, f, indent=4)
+
 
 if __name__ == "__main__":
     load_dotenv()

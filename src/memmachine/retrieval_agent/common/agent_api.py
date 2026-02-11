@@ -91,7 +91,9 @@ class AgentToolBase:
                     target[key].extend(value)
         return target
 
-    async def _do_rerank(self, query: QueryParam, episodes: list[Episode]) -> list[Episode]:
+    async def _do_rerank(
+        self, query: QueryParam, episodes: list[Episode]
+    ) -> list[Episode]:
         if len(episodes) <= query.limit or self._reranker is None:
             if len(episodes) == 0:
                 return episodes
@@ -123,14 +125,16 @@ class AgentToolBase:
 
         result = sorted(
             zip(episodes, scores, strict=True),
-            key=lambda x: x[1],   # sort by score
-            reverse=True          # highest score first
+            key=lambda x: x[1],  # sort by score
+            reverse=True,  # highest score first
         )
 
-        res = [r[0] for r in result[:query.limit]]
+        res = [r[0] for r in result[: query.limit]]
         return sorted(res, key=lambda x: x.timestamp)
 
-    async def do_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
+    async def do_query(
+        self, policy: QueryPolicy, query: QueryParam
+    ) -> tuple[list[Episode], dict[str, Any]]:
         if len(self._children_tools) == 0:
             raise RuntimeError("No child tool to call")
         tasks = []
