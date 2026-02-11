@@ -452,3 +452,63 @@ async def test_deduplicate_features_merges_and_relabels(
     assert list(consolidated.metadata.citations) == [drop_history]
     embedder = cast(MockEmbedder, resources.embedder)
     assert embedder.ingest_calls == [["consolidated pizza"]]
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_handles_missing_episode_ids(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """Test that ingestion gracefully handles missing episode_ids."""
+    # Add one valid episode
+    valid_message_id = await add_history(episode_storage, content="Valid message")
+    await semantic_storage.add_history_to_set(
+        set_id="user-123", history_id=valid_message_id
+    )
+
+    # Add a reference to a non-existent episode_id in semantic storage
+    # This simulates a deleted or missing episode
+    invalid_episode_id = "missing-episode-999"
+    await semantic_storage.add_history_to_set(
+        set_id="user-123", history_id=invalid_episode_id
+    )
+
+    # Mock the LLM to return a simple command
+    commands = [
+        SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="test_feature",
+            tag="test",
+            value="test_value",
+        ),
+    ]
+
+    async def mock_llm_feature_update(*args, **kwargs):
+        return commands
+
+    monkeypatch.setattr(
+        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        mock_llm_feature_update,
+    )
+
+    # This should NOT raise an error, but should process the valid message
+    await ingestion_service._process_single_set("user-123")
+
+    # Verify that the valid message was processed
+    features = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(f"set_id IN ('user-123')")
+    )
+    assert len(features) == 1
+    assert features[0].feature_name == "test_feature"
+    assert features[0].value == "test_value"
+
+    # Verify that both valid and invalid messages were marked as ingested
+    # This prevents the invalid episode_id from being repeatedly retried
+    unprocessed = await semantic_storage.get_history_messages(
+        set_ids=["user-123"],
+        is_ingested=False,
+    )
+    assert len(unprocessed) == 0

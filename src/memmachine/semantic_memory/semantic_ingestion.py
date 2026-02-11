@@ -107,9 +107,16 @@ class IngestionService:
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
         if len(none_h_ids) != 0:
-            raise ValueError(
-                "Failed to retrieve messages. Invalid episode_ids exist for set_id "
-                f"{set_id}: {none_h_ids}"
+            logger.warning(
+                "Skipping invalid episode_ids for set_id %s: %s. "
+                "These episodes may have been deleted or failed to save.",
+                set_id,
+                none_h_ids,
+            )
+            # Mark invalid episode_ids as ingested to prevent repeated failures
+            await self._semantic_storage.mark_messages_ingested(
+                set_id=set_id,
+                history_ids=none_h_ids,
             )
 
         raw_messages = [m for m in raw_messages if m is not None]
