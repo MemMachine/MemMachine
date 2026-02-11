@@ -344,7 +344,7 @@ class IngestionService:
             ],
         )
         citation_ids = TypeAdapter(list[EpisodeIdT]).validate_python(
-            list(merged_citations),
+            list(set(merged_citations)),
         )
 
         async def _add_feature(f: LLMReducedFeature) -> None:
