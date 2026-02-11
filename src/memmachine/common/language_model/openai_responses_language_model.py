@@ -237,7 +237,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ) -> tuple[str, Any]:
+    ) -> tuple[str, Any, int, int]:
         """Generate a raw text response (and optional tool call)."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
@@ -348,7 +348,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         )
 
         if response.output is None:
-            return (response.output_text or "", [])
+            return (response.output_text or "", [], 0, 0)
 
         function_calls_arguments: list[dict[str, Any]] = []
         try:
@@ -373,8 +373,8 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         return (
             response.output_text,
             function_calls_arguments,
-            response.usage.input_tokens,
-            response.usage.output_tokens,
+            response.usage.input_tokens if response.usage else 0,
+            response.usage.output_tokens if response.usage else 0,
         )
 
     def _collect_metrics(

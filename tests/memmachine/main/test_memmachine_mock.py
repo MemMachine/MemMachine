@@ -80,8 +80,12 @@ def _minimal_conf(
     mock_embedders = MagicMock()
     mock_embedders.contains_embedder.return_value = True
 
+    mock_language_models = MagicMock()
+    mock_language_models.contains_language_model.return_value = True
+
     resource_conf = MagicMock()
     resource_conf.embedders = mock_embedders
+    resource_conf.language_models = mock_language_models
     resource_conf.rerankers = mock_rerankers
 
     ret = MagicMock()
@@ -96,12 +100,14 @@ def _minimal_conf(
             vector_graph_store=None,
             embedder="default-embedder",
             reranker="default-reranker",
+            llm_model="default-llm-model",
         ),
         short_term_memory_enabled=short_memory_enabled,
         long_term_memory_enabled=long_term_memory_enabled,
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    ret.default_long_term_memory_llm_model = "default-llm-model"
     prompt_conf = MagicMock()
     prompt_conf.episode_summary_system_prompt = "You are a helpful assistant."
     prompt_conf.episode_summary_user_prompt = (

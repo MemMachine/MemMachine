@@ -234,6 +234,8 @@ class MemMachine:
                     self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
                 if episodic_conf.long_term_memory.reranker is not None:
                     self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
+                if episodic_conf.long_term_memory.llm_model is not None:
+                    self._conf.check_llm_model(episodic_conf.long_term_memory.llm_model)
         except ValidationError as e:
             logger.exception(
                 "Faield to merge configuration: %s, %s",
