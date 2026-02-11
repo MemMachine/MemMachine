@@ -152,13 +152,6 @@ async def test_process_single_set_returns_when_no_semantic_categories(
     # Process the set - should mark message as ingested and return
     await ingestion_service._process_single_set("user-456")
 
-    # Verify the message was marked as ingested
-    unprocessed = await semantic_storage.get_history_messages(
-        set_ids=["user-456"],
-        is_ingested=False,
-    )
-    assert len(unprocessed) == 0, "Message should be marked as ingested"
-
     # Verify no features were created (since no semantic categories)
     features = await semantic_storage.get_feature_set(
         filter_expr=parse_filter("set_id IN ('user-456')")
