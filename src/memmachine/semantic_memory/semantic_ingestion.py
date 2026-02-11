@@ -93,6 +93,7 @@ class IngestionService:
                 set_id=set_id,
                 history_ids=history_ids,
             )
+            return
 
         if len(history_ids) == 0:
             return

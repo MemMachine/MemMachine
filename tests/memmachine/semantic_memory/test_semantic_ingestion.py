@@ -129,6 +129,51 @@ async def test_process_single_set_returns_when_no_messages(
 
 
 @pytest.mark.asyncio
+async def test_process_single_set_returns_when_no_semantic_categories(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+):
+    """Test that ingestion returns early when no semantic categories are configured.
+    
+    This test ensures that when there are messages to process but no semantic
+    categories configured, the messages are marked as ingested and the function
+    returns without attempting to process them. This prevents a race condition
+    where messages could be processed after being marked as ingested.
+    """
+    # Add a message to the semantic storage
+    message_id = await add_history(episode_storage, content="Test message")
+    await semantic_storage.add_history_to_set(set_id="user-456", history_id=message_id)
+
+    # Set up resource retriever to return empty semantic categories
+    resource_retriever.resources.semantic_categories = []
+
+    # Process the set - should mark message as ingested and return
+    await ingestion_service._process_single_set("user-456")
+
+    # Verify the message was marked as ingested
+    unprocessed = await semantic_storage.get_history_messages(
+        set_ids=["user-456"],
+        is_ingested=False,
+    )
+    assert len(unprocessed) == 0, "Message should be marked as ingested"
+
+    # Verify no features were created (since no semantic categories)
+    features = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter("set_id IN ('user-456')")
+    )
+    assert len(features) == 0, "No features should be created without semantic categories"
+
+    # Verify the message was marked as ingested
+    ingested = await semantic_storage.get_history_messages(
+        set_ids=["user-456"],
+        is_ingested=True,
+    )
+    assert list(ingested) == [message_id], "Message should be in ingested list"
+
+
+@pytest.mark.asyncio
 async def test_process_single_set_applies_commands(
     ingestion_service: IngestionService,
     semantic_storage: SemanticStorage,
