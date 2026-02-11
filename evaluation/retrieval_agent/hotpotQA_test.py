@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-import tiktoken
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -60,13 +59,6 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
 Question: {question}
 """
 
-def n_tokens(msg : str) -> int:
-    """
-    Count tokens in messages.
-    """
-    enc = tiktoken.get_encoding("o200k_base")
-    return len(enc.encode(msg))
-
 async def hotpotqa_ingest(dataset: list[dict[str, any]]):
     t1 = datetime.now(UTC)
     added_content = 0
@@ -87,11 +79,9 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
         sentences = context["sentences"]
         episodes = []
         total_questions += 1
-        tokens = 0
         for sent_list in sentences:
             for sent in sent_list:
                 added_content += 1
-                tokens += n_tokens(sent)
                 ts = t1 + timedelta(minutes=added_content)
                 episodes.append(
                     Episode(
@@ -103,14 +93,13 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
                     )
                 )
                 if added_content % per_batch == 0 or ((sent == sent_list[-1]) and (sent_list == sentences[-1])):
-                    print(f"Adding batch of {len(episodes)} episodes, tokens in batch: {tokens}...")
+                    print(f"Adding batch of {len(episodes)} episodes...")
                     t = time.perf_counter()
                     await memory.add_episodes(episodes=episodes)
                     print(f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s")
                     print(f"Total added episodes: {added_content}")
                     print(f"Total questions processed: {total_questions}/{len(dataset)}")
                     episodes = []
-                    tokens = 0
     print(f"Completed HotpotQA ingestion, added {total_questions} questions, {added_content} episodes.")
 
 async def hotpotqa_search(
