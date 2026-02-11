@@ -112,12 +112,13 @@ class LongTermMemory:
         model: LanguageModel,
         memory: DeclarativeMemory,
         reranker: Reranker,
-        agent_name: str) -> AgentToolBase:
+        agent_name: str,
+    ) -> AgentToolBase:
         param: AgentToolBaseParam = AgentToolBaseParam(
             model=None,
             children_tools=[],
             extra_params={"memory": cast(AgentToolBase, memory)},
-            reranker=reranker
+            reranker=reranker,
         )
         memory_agent: MemMachineAgent = MemMachineAgent(param)
         if agent_name == memory_agent.agent_name:
@@ -128,7 +129,7 @@ class LongTermMemory:
             children_tools=[memory_agent],
             backend=None,
             extra_params={},
-            reranker=reranker
+            reranker=reranker,
         )
 
         coq_agent: ChainOfQueryAgent = ChainOfQueryAgent(param)
@@ -233,7 +234,7 @@ class LongTermMemory:
                     accuracy_score=10,
                     confidence_score=10,
                     max_attempts=3,
-                    max_return_len=10000
+                    max_return_len=10000,
                 ),
                 QueryParam(
                     query=query,
@@ -244,7 +245,9 @@ class LongTermMemory:
                     ),
                 ),
             )
-            scored_declarative_memory_episodes = [(1.0, episode) for episode in res_episodes]
+            scored_declarative_memory_episodes = [
+                (1.0, episode) for episode in res_episodes
+            ]
         else:
             scored_declarative_memory_episodes = (
                 await self._declarative_memory.search_scored(

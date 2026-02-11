@@ -590,6 +590,7 @@ class MemMachine:
         semantic_task: Task | None = None
 
         import logging
+
         logger = logging.getLogger(__name__)
         logger.info(
             "MemMachine querying search: query=%s agent_mode=%s",

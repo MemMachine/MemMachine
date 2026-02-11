@@ -28,6 +28,7 @@ from memmachine.common.episode_store.episode_model import EpisodeEntry
 
 logger = logging.getLogger(__name__)
 
+
 # Placeholder dependency injection function
 async def get_memmachine(request: Request) -> MemMachine:
     """Get session data manager instance."""

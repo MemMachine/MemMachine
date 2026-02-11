@@ -127,6 +127,7 @@ Now perform the task using:
 Output the JSON object only.
 """
 
+
 class ChainOfQueryAgent(AgentToolBase):
     """Iteratively rewrite queries until evidence is sufficient."""
 
@@ -179,7 +180,7 @@ class ChainOfQueryAgent(AgentToolBase):
             elif ch == "{":
                 depth -= 1
                 if depth == 0:
-                    return text[i:end + 1]
+                    return text[i : end + 1]
         return None
 
     def _init_perf_matrics(self) -> dict[str, Any]:
@@ -207,16 +208,17 @@ class ChainOfQueryAgent(AgentToolBase):
         evidence = set(retrived_evidence)
         episodes = sorted(
             set(retrieved_episodes).union(retrived_evidence),
-            key=lambda e: (e.timestamp is None,
-                        e.timestamp)
+            key=lambda e: (e.timestamp is None, e.timestamp),
         )
         for idx, episode in enumerate(episodes):
-            context += f"[{idx}] {DeclarativeMemory.string_from_episode_context([episode])}"
+            context += (
+                f"[{idx}] {DeclarativeMemory.string_from_episode_context([episode])}"
+            )
         used_query_str = "\n".join(used_queries)
         prompt = self._combined_prompt.format(
             original_query=query.query,
             used_query=used_query_str,
-            retrieved_episodes=context
+            retrieved_episodes=context,
         )
         m = cast(LanguageModel, self._model)
         rsp, _, input_token, output_token = await m.generate_response_with_token_usage(
@@ -251,9 +253,7 @@ class ChainOfQueryAgent(AgentToolBase):
 
         final_episodes = set(evidence).union(retrieved_episodes)
         final_episodes = sorted(
-            final_episodes,
-            key=lambda e: (e.timestamp is None,
-                        e.timestamp)
+            final_episodes, key=lambda e: (e.timestamp is None, e.timestamp)
         )
         return {
             "is_sufficient": response.get("is_sufficient", False),
@@ -329,12 +329,24 @@ class ChainOfQueryAgent(AgentToolBase):
 
             perf_matrics["queries"].append(curr_query.query)
             perf_matrics["is_sufficient"].append(sufficiency_response["is_sufficient"])
-            perf_matrics["evidence"].append([DeclarativeMemory.string_from_episode_context([e]) for e in sufficiency_response["evidence"]])
-            perf_matrics["confidence_scores"].append(sufficiency_response["confidence_score"])
+            perf_matrics["evidence"].append(
+                [
+                    DeclarativeMemory.string_from_episode_context([e])
+                    for e in sufficiency_response["evidence"]
+                ]
+            )
+            perf_matrics["confidence_scores"].append(
+                sufficiency_response["confidence_score"]
+            )
             perf_matrics["input_token"] += sufficiency_response["input_token"]
             perf_matrics["output_token"] += sufficiency_response["output_token"]
-            if sufficiency_response["is_sufficient"] and sufficiency_response["confidence_score"] >= self._confidence_score:
-                logger.debug("The default agent can answer the query with enough confidence")
+            if (
+                sufficiency_response["is_sufficient"]
+                and sufficiency_response["confidence_score"] >= self._confidence_score
+            ):
+                logger.debug(
+                    "The default agent can answer the query with enough confidence"
+                )
                 # print(f"Enough evidence with rewrites: {used_query}")
                 break
 

@@ -38,6 +38,7 @@ class EmbedderNotFoundError(ResourceNotFoundError):
             f"Embedder '{embedder_name}' is not defined in the configuration."
         )
 
+
 class LanguageModelNotFoundError(ResourceNotFoundError):
     """Error when a specified language model is not found."""
 
@@ -47,6 +48,7 @@ class LanguageModelNotFoundError(ResourceNotFoundError):
         super().__init__(
             f"Language model '{llm_model_name}' is not defined in the configuration."
         )
+
 
 class ConfigurationError(MemMachineError):
     """Error related to system configuration."""
@@ -66,6 +68,7 @@ class DefaultEmbedderNotConfiguredError(ConfigurationError):
     def __init__(self) -> None:
         """Initialize the error."""
         super().__init__("No default embedder is configured.")
+
 
 class DefaultLLMModelNotConfiguredError(ConfigurationError):
     """Error when default language model is missing."""

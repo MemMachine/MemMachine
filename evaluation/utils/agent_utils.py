@@ -68,13 +68,16 @@ async def process_question(
     if full_content is None:
         memory_start = time.time()
         chunks, perf_matrics = await query_agent.do_query(
-            QueryPolicy(token_cost=10,
-                        time_cost=10,
-                        accuracy_score=10,
-                        confidence_score=10,
-                        max_attempts=3,
-                        max_return_len=10000),
-            QueryParam(query=question, limit = search_limit))
+            QueryPolicy(
+                token_cost=10,
+                time_cost=10,
+                accuracy_score=10,
+                confidence_score=10,
+                max_attempts=3,
+                max_return_len=10000,
+            ),
+            QueryParam(query=question, limit=search_limit),
+        )
         memory_end = time.time()
 
         formatted_context = memory.string_from_episode_context(chunks)
@@ -122,15 +125,20 @@ async def process_question(
 
     return category, res
 
+
 def init_attribute_matrix() -> dict[str, Any]:
     return {
-        "customize_attributes": {}, # dict[str, Any] for different dataset use
-        "tools_called": {}, # dict[str, int]
-        "tools_hits": {}, # dict[str, int]
-        "tools_facts": {}, # dict[str, int]
-        "tools_episodes": {}, # dict[str, int]
-        "tools_input_tokens": {"ToolSelectAgent": 0,}, # dict[str, int]
-        "tools_output_tokens": {"ToolSelectAgent": 0,}, # dict[str, int]
+        "customize_attributes": {},  # dict[str, Any] for different dataset use
+        "tools_called": {},  # dict[str, int]
+        "tools_hits": {},  # dict[str, int]
+        "tools_facts": {},  # dict[str, int]
+        "tools_episodes": {},  # dict[str, int]
+        "tools_input_tokens": {
+            "ToolSelectAgent": 0,
+        },  # dict[str, int]
+        "tools_output_tokens": {
+            "ToolSelectAgent": 0,
+        },  # dict[str, int]
         "num_facts": 0,
         "num_hits": 0,
         "num_episodes_retrieved": 0,
@@ -139,6 +147,7 @@ def init_attribute_matrix() -> dict[str, Any]:
         "llm_time_total": 0.0,
         "question_used_llm_total": 0,
     }
+
 
 def update_results(
     responses: list[tuple[str, dict[str, Any]]],
@@ -178,9 +187,15 @@ def update_results(
         attribute_matrix["tools_called"][tool] += 1
         attribute_matrix["tools_input_tokens"][tool] += response.get("input_token", 0)
         attribute_matrix["tools_output_tokens"][tool] += response.get("output_token", 0)
-        attribute_matrix["tools_input_tokens"]["ToolSelectAgent"] += response.get("tool_select_intput_token", 0)
-        attribute_matrix["tools_output_tokens"]["ToolSelectAgent"] += response.get("tool_select_output_token", 0)
-        attribute_matrix["memory_retrieval_time_total"] += response.get("memory_retrieval_time", 0)
+        attribute_matrix["tools_input_tokens"]["ToolSelectAgent"] += response.get(
+            "tool_select_intput_token", 0
+        )
+        attribute_matrix["tools_output_tokens"]["ToolSelectAgent"] += response.get(
+            "tool_select_output_token", 0
+        )
+        attribute_matrix["memory_retrieval_time_total"] += response.get(
+            "memory_retrieval_time", 0
+        )
         attribute_matrix["llm_time_total"] += response.get("llm_time", 0)
         if response.get("llm_time", 0) > 0:
             attribute_matrix["question_used_llm_total"] += 1
@@ -188,6 +203,7 @@ def update_results(
         category_result = results.get(category, [])
         category_result.append(response)
         results[category] = category_result
+
 
 def update_final_attribute_matrix(
     test_preffix: str,
@@ -204,22 +220,48 @@ def update_final_attribute_matrix(
     tools_input_tokens = attribute_matrix["tools_input_tokens"]
     tools_output_tokens = attribute_matrix["tools_output_tokens"]
     num_questions = attribute_matrix["num_questions"]
-    memory_retrieval_time_avg = attribute_matrix["memory_retrieval_time_total"] / num_questions if num_questions > 0 else 0.0
-    llm_time_avg = attribute_matrix["llm_time_total"] / attribute_matrix["question_used_llm_total"] if attribute_matrix["question_used_llm_total"] > 0 else 0.0
+    memory_retrieval_time_avg = (
+        attribute_matrix["memory_retrieval_time_total"] / num_questions
+        if num_questions > 0
+        else 0.0
+    )
+    llm_time_avg = (
+        attribute_matrix["llm_time_total"] / attribute_matrix["question_used_llm_total"]
+        if attribute_matrix["question_used_llm_total"] > 0
+        else 0.0
+    )
 
-    recall = f"{num_hits}/{num_facts} = {num_hits/num_facts*100:.2f}%" if num_facts > 0 else "N/A"
-    precision = f"{num_hits}/{num_episodes_retrieved} = {num_hits/num_episodes_retrieved*100:.2f}%" if num_episodes_retrieved > 0 else "N/A"
-    average_episodes_retrieved = num_episodes_retrieved / num_questions if num_questions > 0 else 0.0
+    recall = (
+        f"{num_hits}/{num_facts} = {num_hits / num_facts * 100:.2f}%"
+        if num_facts > 0
+        else "N/A"
+    )
+    precision = (
+        f"{num_hits}/{num_episodes_retrieved} = {num_hits / num_episodes_retrieved * 100:.2f}%"
+        if num_episodes_retrieved > 0
+        else "N/A"
+    )
+    average_episodes_retrieved = (
+        num_episodes_retrieved / num_questions if num_questions > 0 else 0.0
+    )
     tools_report = ""
     for tool in tools_called:
-        tool_recall = f"{tools_hits[tool]}/{tools_facts[tool]} = {tools_hits[tool]/tools_facts[tool]*100:.2f}%" if tools_facts[tool] > 0 else "N/A"
-        tool_precision = f"{tools_hits[tool]}/{tools_episodes[tool]} = {tools_hits[tool]/tools_episodes[tool]*100:.2f}%" if tools_episodes[tool] > 0 else "N/A"
+        tool_recall = (
+            f"{tools_hits[tool]}/{tools_facts[tool]} = {tools_hits[tool] / tools_facts[tool] * 100:.2f}%"
+            if tools_facts[tool] > 0
+            else "N/A"
+        )
+        tool_precision = (
+            f"{tools_hits[tool]}/{tools_episodes[tool]} = {tools_hits[tool] / tools_episodes[tool] * 100:.2f}%"
+            if tools_episodes[tool] > 0
+            else "N/A"
+        )
         tools_report += f"""Tool: {tool}
     Recall: {tool_recall}
     Precision: {tool_precision}
-    Avg Episodes Retrieved per Question: {tools_episodes[tool]/tools_called[tool]:.2f}
-    Avg Input Tokens per Question: {tools_input_tokens[tool]/tools_called[tool]:.2f}
-    Avg Output Tokens per Question: {tools_output_tokens[tool]/tools_called[tool]:.2f}
+    Avg Episodes Retrieved per Question: {tools_episodes[tool] / tools_called[tool]:.2f}
+    Avg Input Tokens per Question: {tools_input_tokens[tool] / tools_called[tool]:.2f}
+    Avg Output Tokens per Question: {tools_output_tokens[tool] / tools_called[tool]:.2f}
 """
 
     customize_msgs = None
@@ -237,8 +279,8 @@ def update_final_attribute_matrix(
 {test_preffix} Average Memory Retrieval Time per Question: {memory_retrieval_time_avg:.2f} seconds
 {test_preffix} Average LLM Time per Question (only for questions that used LLM): {llm_time_avg:.2f} seconds
 {tools_report}
-ToolSelectAgent Avg Input Tokens per Question: {tools_input_tokens["ToolSelectAgent"]/num_questions:.2f}
-ToolSelectAgent Avg Output Tokens per Question: {tools_output_tokens["ToolSelectAgent"]/num_questions:.2f}
+ToolSelectAgent Avg Input Tokens per Question: {tools_input_tokens["ToolSelectAgent"] / num_questions:.2f}
+ToolSelectAgent Avg Output Tokens per Question: {tools_output_tokens["ToolSelectAgent"] / num_questions:.2f}
 {customize_msgs if customize_msgs is not None else ""}
 """
 
@@ -248,26 +290,22 @@ ToolSelectAgent Avg Output Tokens per Question: {tools_output_tokens["ToolSelect
         break
     return final_matrix
 
+
 async def init_agent(
-    model: LanguageModel,
-    memory: DeclarativeMemory,
-    reranker: Reranker,
-    agent_name: str) -> AgentToolBase:
+    model: LanguageModel, memory: DeclarativeMemory, reranker: Reranker, agent_name: str
+) -> AgentToolBase:
     param: AgentToolBaseParam = AgentToolBaseParam(
         model=None,
         children_tools=[],
         extra_params={"memory": cast(AgentToolBase, memory)},
-        reranker=reranker
+        reranker=reranker,
     )
     memory_agent: MemMachineAgent = MemMachineAgent(param)
     if agent_name == memory_agent.agent_name:
         return memory_agent
 
     param: AgentToolBaseParam = AgentToolBaseParam(
-        model=model,
-        children_tools=[memory_agent],
-        extra_params={},
-        reranker=reranker
+        model=model, children_tools=[memory_agent], extra_params={}, reranker=reranker
     )
 
     coq_agent: ChainOfQueryAgent = ChainOfQueryAgent(param)
@@ -287,6 +325,7 @@ async def init_agent(
     select_agent: ToolSelectAgent = ToolSelectAgent(param)
 
     return select_agent
+
 
 def init_vector_graph_store(
     neo4j_uri: str = "bolt://localhost:7687",
