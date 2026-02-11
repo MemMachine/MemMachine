@@ -566,3 +566,56 @@ async def test_process_single_set_handles_missing_episode_ids(
         is_ingested=False,
     )
     assert len(unprocessed) == 0
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_returns_when_all_episode_ids_invalid(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    semantic_category: SemanticCategory,
+    caplog,
+):
+    """Test that ingestion returns early when all episode_ids are invalid.
+    
+    This ensures that if all referenced episodes are missing (deleted or failed
+    to save), the invalid episode_ids are marked as ingested and the function
+    returns without attempting to process empty message list.
+    """
+    # Add references to non-existent episode_ids in semantic storage
+    invalid_episode_id_1 = "missing-episode-001"
+    invalid_episode_id_2 = "missing-episode-002"
+    await semantic_storage.add_history_to_set(
+        set_id="user-789", history_id=invalid_episode_id_1
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-789", history_id=invalid_episode_id_2
+    )
+
+    # Process the set - should mark all as ingested and return early
+    await ingestion_service._process_single_set("user-789")
+
+    # Verify warnings were logged for both invalid episode_ids
+    assert any(
+        "Skipping invalid episode_ids" in record.message and "user-789" in record.message
+        for record in caplog.records
+    ), "Expected warning about invalid episode_ids"
+
+    # Verify that a log message indicates no valid messages to process
+    assert any(
+        "No valid messages to process" in record.message and "user-789" in record.message
+        for record in caplog.records
+    ), "Expected info log about no valid messages"
+
+    # Verify both invalid messages were marked as ingested
+    unprocessed = await semantic_storage.get_history_messages(
+        set_ids=["user-789"],
+        is_ingested=False,
+    )
+    assert len(unprocessed) == 0, "All invalid messages should be marked as ingested"
+
+    # Verify no features were created
+    features = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter("set_id IN ('user-789')")
+    )
+    assert len(features) == 0, "No features should be created from invalid episodes"

@@ -123,6 +123,10 @@ class IngestionService:
         raw_messages = [m for m in raw_messages if m is not None]
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
+        if len(messages) == 0:
+            logger.info("No valid messages to process for set %s", set_id)
+            return
+
         logger.info("Processing %d messages for set %s", len(messages), set_id)
 
         async def process_semantic_type(
