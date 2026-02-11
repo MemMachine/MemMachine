@@ -461,6 +461,7 @@ async def test_process_single_set_handles_missing_episode_ids(
     episode_storage: EpisodeStorage,
     semantic_category: SemanticCategory,
     monkeypatch,
+    caplog,
 ):
     """Test that ingestion gracefully handles missing episode_ids."""
     # Add one valid episode
@@ -496,6 +497,14 @@ async def test_process_single_set_handles_missing_episode_ids(
 
     # This should NOT raise an error, but should process the valid message
     await ingestion_service._process_single_set("user-123")
+
+    # Verify that a warning was logged for the invalid episode_id
+    assert any(
+        "Skipping invalid episode_ids" in record.message
+        and "user-123" in record.message
+        and invalid_episode_id in record.message
+        for record in caplog.records
+    ), "Expected warning about invalid episode_ids was not logged"
 
     # Verify that the valid message was processed
     features = await semantic_storage.get_feature_set(
