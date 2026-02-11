@@ -127,7 +127,6 @@ class LongTermMemory:
         param: AgentToolBaseParam = AgentToolBaseParam(
             model=model,
             children_tools=[memory_agent],
-            backend=None,
             extra_params={},
             reranker=reranker,
         )
@@ -143,7 +142,6 @@ class LongTermMemory:
         param: AgentToolBaseParam = AgentToolBaseParam(
             model=model,
             children_tools=[split_agent, coq_agent, memory_agent],
-            backend=None,
             extra_params={"default_tool_name": coq_agent.agent_name},
         )
 

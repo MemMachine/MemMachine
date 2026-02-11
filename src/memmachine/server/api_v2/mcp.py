@@ -228,6 +228,7 @@ class Params(BaseModel):
             filter="",
             set_metadata=None,
             types=ALL_MEMORY_TYPES,
+            agent_mode=False,
         )
 
     def to_delete_memories_spec(

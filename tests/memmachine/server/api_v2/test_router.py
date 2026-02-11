@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -324,7 +324,9 @@ def test_search_memories(client, mock_memmachine):
             },
         }
         mock_search.assert_awaited_once()
-        search_call = mock_search.await_args.kwargs
+        await_args = mock_search.await_args
+        assert await_args is not None
+        search_call = cast(dict[str, Any], await_args.kwargs)
         assert search_call["spec"].agent_mode is True
 
         # Invalid argument

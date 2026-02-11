@@ -57,12 +57,13 @@ class MemMachineAgent(AgentToolBase):
 
     async def do_query(
         self,
-        _policy: QueryPolicy,
+        policy: QueryPolicy,
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
+        _ = policy
         logger.info("CALLING %s with query: %s", self.agent_name, query.query)
 
-        perf_matrics = {
+        perf_matrics: dict[str, Any] = {
             "memory_search_called": 0,
             "memory_retrieval_time": 0.0,
             "agent": self.agent_name,
