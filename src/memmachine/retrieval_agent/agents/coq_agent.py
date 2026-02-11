@@ -1,21 +1,23 @@
-import copy
-import logging
-import json
-import time
-from typing import Any, cast
-from collections.abc import Iterable
+"""Chain-of-query agent for iterative retrieval sufficiency checking."""
 
+import asyncio
+import copy
+import json
+import logging
+import time
+from collections.abc import Iterable
+from typing import Any, cast
+
+from memmachine.common.language_model.language_model import LanguageModel
+from memmachine.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    Episode,
+)
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
-    QueryPolicy,
     QueryParam,
-)
-from memmachine.common.language_model.language_model import LanguageModel
-from memmachine.episodic_memory.declarative_memory import (
-    Episode,
-    DeclarativeMemory,
-    DeclarativeMemoryParams,
+    QueryPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,10 +61,10 @@ Identify ALL required informational components needed to answer every part of th
 - Key entities (people/organizations/places/products)
 - Required attributes (names/dates/locations/numbers/definitions/specs)
 - Required relationships / multi-hop chains (each hop/link)
-- Constraints (time range, “latest”, comparisons, “list all”, counts, completeness scope)
+- Constraints (time range, "latest", comparisons, "list all", counts, completeness scope)
 
 3) Evidence scan and relevance:
-- A document is “relevant” ONLY if it explicitly contains at least one required fact OR explicitly establishes an intermediate link in a required multi-hop chain.
+- A document is "relevant" ONLY if it explicitly contains at least one required fact OR explicitly establishes an intermediate link in a required multi-hop chain.
 - Collect evidence_indices as the set of all relevant documents that contribute required facts/links.
 - If no document contributes any required fact/link, evidence_indices must be [].
 
@@ -71,20 +73,20 @@ Set is_sufficient = true ONLY if:
 - The retrieved documents explicitly contain all facts needed to answer every component of the original query, AND
 - Any required multi-hop chain has EVERY link explicitly supported in the documents, AND
 - Any requirement for exact details (names/dates/locations/numbers/specs) is explicitly present, AND
-- Any “how many / list all / compare / full coverage” requirement is satisfiable from documents that clearly cover the complete scope.
+- Any "how many / list all / compare / full coverage" requirement is satisfiable from documents that clearly cover the complete scope.
 Otherwise set is_sufficient = false.
 If uncertain at any point, choose is_sufficient = false.
 
 NEXT BEST query objective (only when is_sufficient=false):
 Generate ONE single-line new_query that maximizes the chance of retrieving the missing evidence, using this ranking priority:
-1) Earliest blocking hop: Target the first missing link that prevents completion of the query’s required chain(s).
+1) Earliest blocking hop: Target the first missing link that prevents completion of the query's required chain(s).
 2) Specificity: Use the most specific entity names and relation terms available from the retrieved documents (and original query) to reduce ambiguity.
 3) Minimality: Ask for exactly the missing fact/link (not the whole original question).
 4) Novelty vs tried queries: Avoid repeating prior rewritten queries.
 
 Missing-evidence identification (internal only; do NOT output):
 - Determine the minimal missing fact(s) that, if retrieved, would allow answering using (retrieved documents + missing evidence).
-- Prefer missing evidence framed as a single subject-focused fact (e.g., “X’s manager”, “Y’s birthplace”, “Z battery capacity”).
+- Prefer missing evidence framed as a single subject-focused fact (e.g., "X's manager", "Y's birthplace", "Z battery capacity").
 
 Rewritten query generation rules:
 - If is_sufficient = true:
@@ -101,10 +103,10 @@ Rewritten query generation rules:
 Confidence score calibration:
 - confidence_score reflects certainty in your is_sufficient decision (not answer correctness).
 - Use these anchors:
-  - 0.90–1.00: Very clear sufficiency/insufficiency with explicit supporting/absent facts.
-  - 0.60–0.89: Moderate clarity; some ambiguity but decision is still well-supported.
-  - 0.30–0.59: Low clarity; documents are noisy/partial; you still must err insufficient.
-  - 0.00–0.29: Extremely unclear; empty/unreadable docs or severe mismatch.
+  - 0.90-1.00: Very clear sufficiency/insufficiency with explicit supporting/absent facts.
+  - 0.60-0.89: Moderate clarity; some ambiguity but decision is still well-supported.
+  - 0.30-0.59: Low clarity; documents are noisy/partial; you still must err insufficient.
+  - 0.00-0.29: Extremely unclear; empty/unreadable docs or severe mismatch.
 - If you chose is_sufficient=false due to uncertainty, keep confidence_score below 0.70.
 
 Edge cases:
@@ -126,10 +128,16 @@ Output the JSON object only.
 """
 
 class ChainOfQueryAgent(AgentToolBase):
-    def __init__(self, param: AgentToolBaseParam):
+    """Iteratively rewrite queries until evidence is sufficient."""
+
+    def __init__(self, param: AgentToolBaseParam) -> None:
+        """Initialize rewrite prompt and stopping thresholds."""
         super().__init__(param)
         extra_params = param.extra_params or {}
-        self._combined_prompt: str = extra_params.get("combined_prompt", COMBINED_SUFFICIENCY_AND_REWRITE_PROMPT)
+        self._combined_prompt: str = extra_params.get(
+            "combined_prompt",
+            COMBINED_SUFFICIENCY_AND_REWRITE_PROMPT,
+        )
         self._max_attempts: int = extra_params.get("max_attempts", 3)
         self._confidence_score: float = extra_params.get("confidence_score", 0.8)
         if self._model is None:
@@ -141,8 +149,11 @@ class ChainOfQueryAgent(AgentToolBase):
 
     @property
     def agent_description(self) -> str:
-        return description
-    
+        return (
+            "This agent checks evidence sufficiency and rewrites the query "
+            "for the next missing retrieval hop."
+        )
+
     @property
     def accuracy_score(self) -> int:
         return 10
@@ -199,10 +210,8 @@ class ChainOfQueryAgent(AgentToolBase):
             key=lambda e: (e.timestamp is None,
                         e.timestamp)
         )
-        idx = 0
-        for episode in episodes:
+        for idx, episode in enumerate(episodes):
             context += f"[{idx}] {DeclarativeMemory.string_from_episode_context([episode])}"
-            idx += 1
         used_query_str = "\n".join(used_queries)
         prompt = self._combined_prompt.format(
             original_query=query.query,
@@ -210,8 +219,10 @@ class ChainOfQueryAgent(AgentToolBase):
             retrieved_episodes=context
         )
         m = cast(LanguageModel, self._model)
-        rsp, _, input_token, output_token = await m.generate_response_with_token_usage(user_prompt=prompt)
-        logger.debug(f"Combined Check and Rewrite: {rsp}")
+        rsp, _, input_token, output_token = await m.generate_response_with_token_usage(
+            user_prompt=prompt
+        )
+        logger.debug("Combined Check and Rewrite: %s", rsp)
         json_parsable_str = ""
         response = {}
         retry = True
@@ -222,8 +233,14 @@ class ChainOfQueryAgent(AgentToolBase):
                 response = json.loads(json_parsable_str)
                 break
             except Exception as e:
-                print(f"WARNING: Failed to parse combined check and rewrite response JSON: {rsp}\nFinal string used: {json_parsable_str} error: {e}")
-                if retry == False:
+                logger.warning(
+                    "Failed to parse combined check and rewrite response JSON: "
+                    "response=%s final_string=%s error=%s",
+                    rsp,
+                    json_parsable_str,
+                    e,
+                )
+                if not retry:
                     break
                 retry = False
                 continue
@@ -231,7 +248,7 @@ class ChainOfQueryAgent(AgentToolBase):
             if idx_val < 0 or idx_val >= len(episodes):
                 continue
             evidence.add(episodes[idx_val])
-        
+
         final_episodes = set(evidence).union(retrieved_episodes)
         final_episodes = sorted(
             final_episodes,
@@ -248,7 +265,11 @@ class ChainOfQueryAgent(AgentToolBase):
             "output_token": output_token,
         }
 
-    async def _do_default_query(self, policy: QueryPolicy, query: QueryParam) -> tuple[list[Episode], dict[str, Any]]:
+    async def _do_default_query(
+        self,
+        policy: QueryPolicy,
+        query: QueryParam,
+    ) -> tuple[list[Episode], dict[str, Any]]:
         q = copy.deepcopy(query)
         # TODO: make this self-adaptive
         # if q.limit >= 15:
@@ -262,13 +283,15 @@ class ChainOfQueryAgent(AgentToolBase):
             except Exception as e:
                 max_retry -= 1
                 if max_retry == 0:
-                    print(f"ERROR: Reranker failed after maximum retries.")
-                    raise e
+                    logger.exception("Reranker failed after maximum retries.")
+                    raise
                 if "ThrottlingException" in str(e):
-                    print(f"WARNING: Reranker throttling exception, retrying after 5 second...")
-                    time.sleep(5)
+                    logger.warning(
+                        "Reranker throttling exception, retrying after 5 seconds..."
+                    )
+                    await asyncio.sleep(5)
                 else:
-                    raise e
+                    raise
         return result, matrics
 
     async def do_query(
@@ -276,7 +299,7 @@ class ChainOfQueryAgent(AgentToolBase):
         policy: QueryPolicy,
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
-        logger.info(f"CALLING {self.agent_name} with query: {query.query}")
+        logger.info("CALLING %s with query: %s", self.agent_name, query.query)
         perf_matrics = self._init_perf_matrics()
         retrieved_evidence: set[Episode] = set()
         sufficiency_response: dict[str, Any] = {}
@@ -295,7 +318,12 @@ class ChainOfQueryAgent(AgentToolBase):
 
             # Step 2: Check if the evidence is enough to answer the original query
             llm_start = time.time()
-            sufficiency_response = await self.combined_check_and_rewrite(query, result, retrieved_evidence, used_query)
+            sufficiency_response = await self.combined_check_and_rewrite(
+                query,
+                result,
+                retrieved_evidence,
+                used_query,
+            )
             perf_matrics["llm_time"] += time.time() - llm_start
             retrieved_evidence.update(sufficiency_response["evidence"])
 

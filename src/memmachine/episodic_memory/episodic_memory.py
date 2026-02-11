@@ -327,6 +327,7 @@ class EpisodicMemory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
+            agent_mode: Whether to use retrieval-agent mode for long-term memory.
 
         Returns:
             A tuple containing a list of short term memory Episode objects,
@@ -339,7 +340,11 @@ class EpisodicMemory:
         start_time = time.monotonic_ns()
         search_limit = limit if limit is not None else 20
 
-        logger.info(f"EpisodicMemory querying memory:\nquery={query}\nagent_mode={agent_mode}")
+        logger.info(
+            "EpisodicMemory querying memory: query=%s agent_mode=%s",
+            query,
+            agent_mode,
+        )
         if self._short_term_memory is None:
             short_episode: list[Episode] = []
             short_summary = ""

@@ -245,6 +245,7 @@ def memmachine_config(
                 vector_graph_store=neo4j_db,
                 embedder=embedder_id,
                 reranker=reranker_id,
+                llm_model=language_model_id,
             ),
             short_term_memory=ShortTermMemoryConfPartial(
                 llm_model=language_model_id,

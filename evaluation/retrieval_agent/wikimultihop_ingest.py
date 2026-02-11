@@ -1,30 +1,27 @@
 import argparse
 import asyncio
 import json
-import os
 import random
 import sys
 import time
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-import boto3
-import neo4j
-import openai
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine.episodic_memory.declarative_memory import (
+from evaluation.utils import agent_utils  # noqa: E402
+from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
     ContentType,
     Episode,
 )
-from evaluation.utils import agent_utils
 
-def load_data(
+
+def load_data(  # noqa: C901
     data_path: str,
     start_line: int = 1,
     end_line: int = 100,
@@ -73,7 +70,7 @@ def load_data(
 
             }
             types.append(type_map[obj["type"]])
-            
+
             cur_facts = json.loads(obj["supporting_facts"])
             fact_sents = []
             for fact in cur_facts:
@@ -95,7 +92,7 @@ def load_data(
             contexts = []
             for seg in keyword_list:
                 contexts.extend(seg)
-    
+
     return contexts, questions, answers, types, supporting_facts
 
 
@@ -117,12 +114,11 @@ async def main():
 
     contexts, _, _, _ , _= load_data(data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE")
     print("Loaded", len(contexts), "contexts, start ingestion...")
-    
+
     num_batch = 1000
-    em_tasks = []
     episodes = []
     added_contexts = set()
-    t1 = datetime.now(timezone.utc)
+    t1 = datetime.now(UTC)
     episodes = []
     for c in contexts:
         # Wikimultihop dataset may have duplicate sentences, skip them
@@ -151,7 +147,7 @@ async def main():
             episodes = []
 
             print(f"Total added episodes: {len(added_contexts)}")
-    
+
     print(f"Completed WIKI-Multihop ingestion, added {len(added_contexts)} episodes.")
 
 if __name__ == "__main__":

@@ -25,11 +25,11 @@ from memmachine.common.configuration.mixin_confs import (
 from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
-    DefaultRerankerNotConfiguredError,
     DefaultLLMModelNotConfiguredError,
+    DefaultRerankerNotConfiguredError,
     EmbedderNotFoundError,
-    RerankerNotFoundError,
     LanguageModelNotFoundError,
+    RerankerNotFoundError,
 )
 from memmachine.semantic_memory.semantic_model import SemanticCategory
 from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager

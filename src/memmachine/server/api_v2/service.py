@@ -1,6 +1,7 @@
 """API v2 service implementations."""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import cast
 
@@ -25,7 +26,6 @@ from memmachine.common.api.spec import (
 )
 from memmachine.common.episode_store.episode_model import EpisodeEntry
 
-import logging
 logger = logging.getLogger(__name__)
 
 # Placeholder dependency injection function
@@ -95,7 +95,11 @@ async def _search_target_memories(
     spec: SearchMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
-    logger.info(f"Service received search:\nquery={spec.query}\nagent_mode={spec.agent_mode}")
+    logger.info(
+        "Service received search: query=%s agent_mode=%s",
+        spec.query,
+        spec.agent_mode,
+    )
     results = await memmachine.query_search(
         session_data=_SessionData(
             org_id=spec.org_id,

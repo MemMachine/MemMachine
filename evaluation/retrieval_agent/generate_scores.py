@@ -84,9 +84,8 @@ for item in all_items:
         tools_correct[tool] = tools_correct.get(tool, 0) + 1
 
 tools_overall = "Tools Overall Accuracy:\n"
-for tool in tools_called.keys():
+for tool, called in tools_called.items():
     correct = tools_correct.get(tool, 0)
-    called = tools_called[tool]
     accuracy = correct / called * 100 if called > 0 else 0.0
     tools_overall += f"Tool: {tool}\n  Accuracy: {correct}/{called} = {accuracy:.2f}%\n"
 

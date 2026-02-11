@@ -12,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.utils import agent_utils
-from memmachine.episodic_memory.declarative_memory import (
+from evaluation.utils import agent_utils  # noqa: E402
+from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
     ContentType,
     Episode,
 )

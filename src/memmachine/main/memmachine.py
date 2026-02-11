@@ -527,6 +527,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
+            agent_mode: Whether to use retrieval-agent mode for episodic search.
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -579,6 +580,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
+            agent_mode: Whether to use retrieval-agent mode for episodic search.
 
         Returns:
             Aggregated search results across memory types.
@@ -589,7 +591,11 @@ class MemMachine:
 
         import logging
         logger = logging.getLogger(__name__)
-        logger.info(f"MemMachine querying search:\nquery={query}\nagent_mode={agent_mode}")
+        logger.info(
+            "MemMachine querying search: query=%s agent_mode=%s",
+            query,
+            agent_mode,
+        )
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
             episodic_task = asyncio.create_task(

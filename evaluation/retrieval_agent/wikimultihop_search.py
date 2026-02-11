@@ -1,11 +1,9 @@
 import argparse
 import asyncio
 import json
-import os
 import sys
-import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -13,9 +11,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.retrieval_agent.wikimultihop_ingest import load_data
-
-from evaluation.utils import agent_utils
+from evaluation.retrieval_agent.wikimultihop_ingest import load_data  # noqa: E402
+from evaluation.utils import agent_utils  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -106,7 +103,9 @@ async def run_wiki(
     attribute_matrix = agent_utils.init_attribute_matrix()
     full_content = "\n".join(contexts)
     num_processed = 0
-    for q, a, t, f_list in zip(questions, answers, types, supporting_facts):
+    for q, a, t, f_list in zip(
+        questions, answers, types, supporting_facts, strict=True
+    ):
         t += 5 # Use locomo category 1-5, and wiki 6-9
         tasks.append(
             agent_utils.process_question(

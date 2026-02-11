@@ -14,8 +14,8 @@ from memmachine.common.filter.filter_parser import (
     map_filter_fields,
     normalize_filter_field,
 )
-from memmachine.common.reranker import Reranker
 from memmachine.common.language_model import LanguageModel
+from memmachine.common.reranker import Reranker
 from memmachine.common.vector_graph_store import VectorGraphStore
 from memmachine.episodic_memory.declarative_memory import (
     DeclarativeMemory,
@@ -27,13 +27,18 @@ from memmachine.episodic_memory.declarative_memory.data_types import (
 from memmachine.episodic_memory.declarative_memory.data_types import (
     Episode as DeclarativeMemoryEpisode,
 )
+from memmachine.retrieval_agent.agents import (
+    ChainOfQueryAgent,
+    MemMachineAgent,
+    SplitQueryAgent,
+    ToolSelectAgent,
+)
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
     QueryParam,
     QueryPolicy,
 )
-from memmachine.retrieval_agent.agents import ChainOfQueryAgent, MemMachineAgent, SplitQueryAgent, ToolSelectAgent
 
 
 class LongTermMemoryParams(BaseModel):
@@ -131,7 +136,7 @@ class LongTermMemory:
 
         if agent_name == coq_agent.agent_name:
             return coq_agent
-        elif agent_name == split_agent.agent_name:
+        if agent_name == split_agent.agent_name:
             return split_agent
 
         param: AgentToolBaseParam = AgentToolBaseParam(
@@ -220,11 +225,8 @@ class LongTermMemory:
     ) -> list[tuple[float, Episode]]:
         scored_declarative_memory_episodes = []
 
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"LongTermMemory querying scored:\nquery={query}\nagent_mode={agent_mode}")
         if agent_mode:
-            res_episodes, perf_matrics = await self._retrieval_agent.do_query(
+            res_episodes, _ = await self._retrieval_agent.do_query(
                 QueryPolicy(
                     token_cost=10,
                     time_cost=10,
@@ -242,7 +244,6 @@ class LongTermMemory:
                     ),
                 ),
             )
-            logger.info(f"Retrieval agent performance metrics: {perf_matrics}")
             scored_declarative_memory_episodes = [(1.0, episode) for episode in res_episodes]
         else:
             scored_declarative_memory_episodes = (
