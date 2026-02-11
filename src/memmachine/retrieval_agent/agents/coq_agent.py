@@ -167,10 +167,10 @@ class ChainOfQueryAgent(AgentToolBase):
     def time_cost(self) -> int:
         return 10
 
-    def _last_brace_block(self, text: str) -> str | None:
+    def _last_brace_block(self, text: str) -> str:
         end = text.rfind("}")
         if end == -1:
-            return None
+            return ""
 
         depth = 0
         for i in range(end, -1, -1):
@@ -181,7 +181,7 @@ class ChainOfQueryAgent(AgentToolBase):
                 depth -= 1
                 if depth == 0:
                     return text[i : end + 1]
-        return None
+        return ""
 
     def _init_perf_matrics(self) -> dict[str, Any]:
         return {

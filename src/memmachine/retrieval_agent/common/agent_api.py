@@ -36,7 +36,7 @@ class QueryParam(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
     query: str
-    limit: int | None = None
+    limit: int = 0
     expand_context: int = 0
     property_filter: FilterExpr | None = None
 
@@ -94,6 +94,9 @@ class AgentToolBase:
     async def _do_rerank(
         self, query: QueryParam, episodes: list[Episode]
     ) -> list[Episode]:
+        if query.limit <= 0:
+            return sorted(episodes, key=lambda x: x.timestamp)
+
         if len(episodes) <= query.limit or self._reranker is None:
             if len(episodes) == 0:
                 return episodes
@@ -129,7 +132,8 @@ class AgentToolBase:
             reverse=True,  # highest score first
         )
 
-        res = [r[0] for r in result[: query.limit]]
+        result = result[:query.limit] if query.limit > 0 else result
+        res = [r[0] for r in result]
         return sorted(res, key=lambda x: x.timestamp)
 
     async def do_query(

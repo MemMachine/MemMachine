@@ -227,6 +227,7 @@ class Params(BaseModel):
             score_threshold=score_threshold,
             filter="",
             types=ALL_MEMORY_TYPES,
+            agent_mode=False,
         )
 
     def to_delete_memories_spec(

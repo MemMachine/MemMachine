@@ -204,7 +204,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    ) -> tuple[str, list[dict[str, Any]]]:
         output, function_calls_arguments, _, _ = await self._generate_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -221,7 +221,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ) -> tuple[str | None, list[dict[str, Any]], int, int]:
+    ) -> tuple[str, list[dict[str, Any]], int, int]:
         return await self._generate_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -237,7 +237,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
-    ) -> tuple[str | None, list[dict[str, Any]], int, int]:
+    ) -> tuple[str, list[dict[str, Any]], int, int]:
         """Generate a raw text response (and optional tool call)."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
@@ -371,7 +371,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             ) from e
 
         return (
-            response.output_text,
+            response.output_text or "",
             function_calls_arguments,
             response.usage.input_tokens if response.usage else 0,
             response.usage.output_tokens if response.usage else 0,

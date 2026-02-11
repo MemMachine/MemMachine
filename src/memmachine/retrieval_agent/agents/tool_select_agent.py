@@ -139,14 +139,14 @@ class ToolSelectAgent(AgentToolBase):
     def time_cost(self) -> int:
         return 8
 
-    def add_tool(self, tool: AgentToolBase) -> None:
-        super().add_tool(tool)
-
     async def _select_tool_by_model(
         self,
         _policy: QueryPolicy,
         query: QueryParam,
     ) -> tuple[AgentToolBase | None, int, int]:
+        assert self._coq_agent is not None
+        assert self._split_agent is not None
+        assert self._memory_agent is not None
         prompt = self._tool_select_prompt.format(
             query=query,
             coq=self._coq_agent.agent_name,

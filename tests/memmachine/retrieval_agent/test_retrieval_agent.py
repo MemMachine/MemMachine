@@ -34,7 +34,7 @@ class DummyLanguageModel(LanguageModel):
         self._responses = responses
         self.call_count = 0
 
-    async def generate_parsed_response(  # type: ignore[override]
+    async def generate_parsed_response(
         self,
         output_format: type[Any],
         system_prompt: str | None = None,
@@ -43,7 +43,7 @@ class DummyLanguageModel(LanguageModel):
     ) -> Any | None:
         return None
 
-    async def generate_response(  # type: ignore[override]
+    async def generate_response(
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
