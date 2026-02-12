@@ -150,6 +150,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         self._collection_node_counts: dict[str, int] = {}
         # Maps relation name -> edge count (for threshold triggers)
         self._relation_edge_counts: dict[str, int] = {}
+        # Track if we've discovered existing indexes from NebulaGraph
+        self._indexes_discovered: bool = False
 
         # Concurrency control
         self._background_tasks: set[asyncio.Task] = set()
@@ -185,7 +187,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if not nodes_list:
             return
 
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         # Collect all properties and embeddings from all nodes to build schema
         all_properties: dict[str, PropertyValue] = {}
@@ -290,7 +292,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if not edges_list:
             return
 
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         # Collect all properties from all edges
         all_properties: dict[str, PropertyValue] = {}
@@ -367,13 +369,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             List of Node objects ordered by similarity
 
         """
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         sanitized_collection = self._sanitize_name(collection)
         mangled_embedding = mangle_embedding_name(embedding_name)
 
         # Check if vector index exists
-        index_name = f"idx_{sanitized_collection}_{embedding_name}"
+        # Use mangled and sanitized embedding name to ensure valid identifier
+        index_name = f"idx_{sanitized_collection}_{self._sanitize_name(mangled_embedding)}"
         has_index = (
             index_name in self._index_state_cache
             and self._index_state_cache[index_name] == self.CacheIndexState.ONLINE
@@ -579,7 +582,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             List of related Node objects
 
         """
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         sanitized_relation = self._sanitize_name(relation)
         sanitized_this = self._sanitize_name(this_collection)
@@ -680,7 +683,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             List of Node objects ordered by specified properties
 
         """
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         by_properties_list = list(by_properties)
         starting_at_list = list(starting_at)
@@ -800,7 +803,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             List of matching Node objects
 
         """
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         sanitized_collection = self._sanitize_name(collection)
 
@@ -857,7 +860,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if not node_uids_list:
             return []
 
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         sanitized_collection = self._sanitize_name(collection)
 
@@ -960,7 +963,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if not node_uids_list:
             return
 
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         sanitized_collection = self._sanitize_name(collection)
 
@@ -999,7 +1002,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         The graph type schema (node types, edge types, and their properties) is preserved.
         Indexes are dropped and will be recreated when thresholds are met again.
         """
-        await self._ensure_session_context()
+        await self._discover_existing_indexes()
 
         # Drop the graph instance (clears all data and indexes)
         try:
@@ -1258,10 +1261,54 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         where_clause = render(filter_expr)
         return where_clause
 
-    async def _ensure_session_context(self) -> None:
-        """Set active schema and graph for session."""
-        await self._client.execute(f"SESSION SET SCHEMA {self._schema_name}")
-        await self._client.execute(f"SESSION SET GRAPH {self._graph_name}")
+    async def _discover_existing_indexes(self) -> None:
+        """
+        Discover existing indexes in NebulaGraph and populate cache.
+
+        Queries NebulaGraph for all indexes on the current graph and populates
+        _index_state_cache with their states. This ensures that after a restart,
+        existing indexes are recognized and ANN search can be used.
+
+        Called on first operation. Session context (schema/graph) is already set
+        by database_manager during client initialization.
+        """
+        if self._indexes_discovered:
+            return
+
+        try:
+            # Query all indexes for current graph
+            result = await self._client.execute("SHOW INDEXES")
+
+            for row in result:
+                index_name = row["name"]
+                state = row["state"]
+                index_type = row["index_type"]
+
+                # Only track vector and normal indexes that are valid
+                if state == "Valid":
+                    if isinstance(index_type, str) and index_type.startswith("Vector"):
+                        # Vector index is online and ready
+                        self._index_state_cache[index_name] = (
+                            self.CacheIndexState.ONLINE
+                        )
+                        logger.info("Discovered vector index: %s", index_name)
+                    elif index_type == "Normal":
+                        # Normal (range) index
+                        self._index_state_cache[index_name] = (
+                            self.CacheIndexState.ONLINE
+                        )
+                        logger.debug("Discovered normal index: %s", index_name)
+
+            self._indexes_discovered = True
+            logger.info(
+                "Index discovery complete: found %s indexes",
+                len(self._index_state_cache),
+            )
+
+        except Exception as e:
+            # Don't fail if index discovery fails - allow retry on next operation
+            # This handles transient failures (network issues, temporary unavailability)
+            logger.warning("Failed to discover existing indexes, will retry: %s", e)
 
     async def _ensure_graph_type_for_nodes(
         self,
@@ -1477,7 +1524,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             similarity_metric: COSINE or EUCLIDEAN
 
         """
-        index_name = f"idx_{self._sanitize_name(node_or_edge_type)}_{embedding_name}"
+        # Use mangled and sanitized embedding name to ensure valid identifier
+        mangled_embedding = mangle_embedding_name(embedding_name)
+        index_name = f"idx_{self._sanitize_name(node_or_edge_type)}_{self._sanitize_name(mangled_embedding)}"
 
         # Check cache
         if index_name in self._index_state_cache:
@@ -1497,7 +1546,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             try:
                 sanitized_type = self._sanitize_name(node_or_edge_type)
-                mangled_embedding = mangle_embedding_name(embedding_name)
                 metric = self._similarity_metric_to_nebula(similarity_metric)
 
                 # Build index options based on type
