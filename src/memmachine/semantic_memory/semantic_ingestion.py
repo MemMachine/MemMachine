@@ -3,6 +3,7 @@
 import asyncio
 import itertools
 import logging
+from collections.abc import AsyncIterator, Sequence
 from itertools import chain
 
 import numpy as np
@@ -55,33 +56,57 @@ class IngestionService:
         self._consolidation_threshold = params.consolidated_threshold
         self._debug_fail_loudly = params.debug_fail_loudly
 
-    async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
-        async def _run(set_id: SetIdT) -> None:
-            try:
-                await self._process_single_set(set_id)
-            except Exception:
-                logger.exception("Failed to process set_id %s", set_id)
-                raise
+    async def process_set_ids(
+        self, set_ids: Sequence[SetIdT] | AsyncIterator[SetIdT]
+    ) -> None:
+        if isinstance(set_ids, Sequence):
+            logger.info("Starting ingestion processing for set ids: %s", set_ids)
+        else:
+            logger.info("Starting ingestion processing for streamed set ids")
 
-        logger.info("Starting ingestion processing for set ids: %s", set_ids)
+        tasks = [
+            asyncio.create_task(self._run_set_id(set_id))
+            async for set_id in self._iter_set_ids(set_ids)
+        ]
 
-        results = await asyncio.gather(
-            *[_run(set_id) for set_id in set_ids],
-            return_exceptions=True,
-        )
+        if not tasks:
+            return
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         errors = [r for r in results if isinstance(r, Exception)]
         if len(errors) > 0:
             raise ExceptionGroup("Failed to process set ids", errors)
 
+    async def _run_set_id(self, set_id: SetIdT) -> None:
+        try:
+            await self._process_single_set(set_id)
+        except Exception:
+            logger.exception("Failed to process set_id %s", set_id)
+            raise
+
+    @staticmethod
+    async def _iter_set_ids(
+        set_ids: Sequence[SetIdT] | AsyncIterator[SetIdT],
+    ) -> AsyncIterator[SetIdT]:
+        if isinstance(set_ids, AsyncIterator):
+            async for set_id in set_ids:
+                yield set_id
+        else:
+            for set_id in set_ids:
+                yield set_id
+
     async def _process_single_set(self, set_id: str) -> None:  # noqa: C901
         resources = await self._resource_retriever(set_id)
 
-        history_ids = await self._semantic_storage.get_history_messages(
-            set_ids=[set_id],
-            limit=50,
-            is_ingested=False,
-        )
+        history_ids = [
+            history_id
+            async for history_id in self._semantic_storage.get_history_messages(
+                set_ids=[set_id],
+                limit=50,
+                is_ingested=False,
+            )
+        ]
 
         if len(resources.semantic_categories) == 0:
             logger.info(
@@ -125,7 +150,6 @@ class IngestionService:
                     logger.error(
                         "Message ID is None for message %s", message.model_dump()
                     )
-
                     raise ValueError(
                         f"Message ID is None for message {message.model_dump()}"
                     )
@@ -133,13 +157,16 @@ class IngestionService:
                 filter_expr = And(
                     left=Comparison(field="set_id", op="=", value=set_id),
                     right=Comparison(
-                        field="category", op="=", value=semantic_category.name
+                        field="category_name", op="=", value=semantic_category.name
                     ),
                 )
 
-                features = await self._semantic_storage.get_feature_set(
-                    filter_expr=filter_expr,
-                )
+                features = [
+                    feature
+                    async for feature in self._semantic_storage.get_feature_set(
+                        filter_expr=filter_expr,
+                    )
+                ]
 
                 try:
                     commands = await llm_feature_update(
@@ -163,13 +190,13 @@ class IngestionService:
                     commands=commands,
                     set_id=set_id,
                     category_name=semantic_category.name,
-                    citation_id=message.uid,
+                    citation_ids=[message.uid],
                     embedder=resources.embedder,
                 )
 
-                mark_messages.append(message.uid)
+                mark_messages.add(message.uid)
 
-        mark_messages: list[EpisodeIdT] = []
+        mark_messages: set[EpisodeIdT] = set()
         semantic_category_runners = []
         for t in resources.semantic_categories:
             task = process_semantic_type(t)
@@ -189,7 +216,7 @@ class IngestionService:
 
         await self._semantic_storage.mark_messages_ingested(
             set_id=set_id,
-            history_ids=mark_messages,
+            history_ids=list(mark_messages),
         )
 
         await self._consolidate_set_memories_if_applicable(
@@ -200,10 +227,10 @@ class IngestionService:
     async def _apply_commands(
         self,
         *,
-        commands: list[SemanticCommand],
+        commands: Sequence[SemanticCommand],
         set_id: SetIdT,
         category_name: str,
-        citation_id: EpisodeIdT | None,
+        citation_ids: Sequence[EpisodeIdT] | None,
         embedder: InstanceOf[Embedder],
     ) -> None:
         for command in commands:
@@ -220,22 +247,24 @@ class IngestionService:
                         embedding=np.array(value_embedding),
                     )
 
-                    if citation_id is not None:
-                        await self._semantic_storage.add_citations(f_id, [citation_id])
+                    if citation_ids:
+                        await self._semantic_storage.add_citations(f_id, citation_ids)
 
                 case SemanticCommandType.DELETE:
                     filter_expr = And(
-                        left=And(
-                            left=Comparison(field="set_id", op="=", value=set_id),
-                            right=Comparison(
-                                field="category_name", op="=", value=category_name
-                            ),
-                        ),
+                        left=Comparison(field="set_id", op="=", value=set_id),
                         right=And(
                             left=Comparison(
                                 field="feature", op="=", value=command.feature
                             ),
-                            right=Comparison(field="tag", op="=", value=command.tag),
+                            right=And(
+                                left=Comparison(field="tag", op="=", value=command.tag),
+                                right=Comparison(
+                                    field="category_name",
+                                    op="=",
+                                    value=category_name,
+                                ),
+                            ),
                         ),
                     )
 
@@ -264,13 +293,16 @@ class IngestionService:
                 ),
             )
 
-            features = await self._semantic_storage.get_feature_set(
-                filter_expr=filter_expr,
-                tag_threshold=self._consolidation_threshold,
-                load_citations=True,
-            )
+            features = [
+                feature
+                async for feature in self._semantic_storage.get_feature_set(
+                    filter_expr=filter_expr,
+                    tag_threshold=self._consolidation_threshold,
+                    load_citations=True,
+                )
+            ]
 
-            consolidation_sections: list[list[SemanticFeature]] = list(
+            consolidation_sections: list[Sequence[SemanticFeature]] = list(
                 SemanticFeature.group_features_by_tag(features).values(),
             )
 
@@ -304,7 +336,7 @@ class IngestionService:
         self,
         *,
         set_id: str,
-        memories: list[SemanticFeature],
+        memories: Sequence[SemanticFeature],
         semantic_category: InstanceOf[SemanticCategory],
         resources: InstanceOf[Resources],
     ) -> None:
