@@ -146,6 +146,28 @@ class MemMachine:
         if ltm.vector_graph_store is None:
             ltm.vector_graph_store = "default_store"
 
+        if ltm.llm_model is None:
+            candidates: list[str] = []
+            stm = self._conf.episodic_memory.short_term_memory
+            if stm is not None and stm.llm_model is not None:
+                candidates.append(stm.llm_model)
+            if self._conf.semantic_memory.llm_model is not None:
+                candidates.append(self._conf.semantic_memory.llm_model)
+
+            for llm_name in candidates:
+                if self._conf.resources.language_models.contains_language_model(
+                    llm_name
+                ):
+                    ltm.llm_model = llm_name
+                    break
+
+            if ltm.llm_model is None:
+                logger.warning(
+                    "No default language model configured; disabling long-term episodic memory."
+                )
+                self._conf.episodic_memory.long_term_memory_enabled = False
+                return
+
     def _resolve_stm_defaults(self) -> None:
         """Resolve short-term memory defaults."""
         stm = self._conf.episodic_memory.short_term_memory

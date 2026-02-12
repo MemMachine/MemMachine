@@ -122,7 +122,7 @@ class ToolSelectAgent(AgentToolBase):
 
     @property
     def agent_description(self) -> str:
-        return """This agent selects tools from a list of avaible tools to perform the query. The selection
+        return """This agent selects tools from a list of available tools to perform the query. The selection
         is based on a few factors, including: the query, the accuracy requirement, the token cost constraint,
         the time cost constraint and the functionalities of available tools. It aggregates the result from each tool and return the final result.
         """

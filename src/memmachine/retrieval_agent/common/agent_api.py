@@ -132,7 +132,7 @@ class AgentToolBase:
             reverse=True,  # highest score first
         )
 
-        result = result[:query.limit] if query.limit > 0 else result
+        result = result[: query.limit] if query.limit > 0 else result
         res = [r[0] for r in result]
         return sorted(res, key=lambda x: x.timestamp)
 
