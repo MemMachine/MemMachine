@@ -132,7 +132,7 @@ class MockLanguageModel(LanguageModel):
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        tools: list | None = None,
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
@@ -145,6 +145,23 @@ class MockLanguageModel(LanguageModel):
         await asyncio.sleep(0.1)
         user_input = self.parse_summary(prompt)
         return f"summary:{user_input}", ""
+
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, Any, int, int]:
+        response, tool_output = await self.generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+        return response, tool_output, 0, 0
 
     async def generate_parsed_response(
         self,

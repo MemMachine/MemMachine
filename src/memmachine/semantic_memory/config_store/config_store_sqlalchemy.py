@@ -590,6 +590,18 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         else:
             raise NotImplementedError
 
+        resources_upsert: PgInsert | SQliteInsert
+        if dialect_name == "postgresql":
+            resources_upsert = pg_insert(SetIdResources)
+        else:
+            resources_upsert = sqlite_insert(SetIdResources)
+
+        resources_stmt = resources_upsert.values(
+            set_id=set_id,
+        ).on_conflict_do_nothing(
+            index_elements=["set_id"],
+        )
+
         stmt = ins.values(
             set_id=set_id,
             disabled_category=category_name,
@@ -598,6 +610,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         )
 
         async with self._create_session() as session:
+            resources_result = await session.execute(resources_stmt)
+            resources_result.close()
             result = await session.execute(stmt)
             result.close()
             await session.commit()
