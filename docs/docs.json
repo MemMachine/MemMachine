@@ -60,7 +60,8 @@
               "install_guide/integrate/crewai",
               "install_guide/integrate/n8n",
               "install_guide/integrate/dify",
-              "install_guide/integrate/Google_ADK"
+              "install_guide/integrate/Google_ADK",
+              "install_guide/integrate/LlamaIndex"
             ]
           },
           {
