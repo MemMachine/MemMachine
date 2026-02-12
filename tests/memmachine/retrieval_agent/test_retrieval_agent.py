@@ -135,7 +135,7 @@ async def test_memmachine_agent_returns_episodes(query_policy: QueryPolicy) -> N
     )
 
     assert result == [episode]
-    assert metrics["memory_retrieval_time"] > 0.0
+    assert metrics["memory_search_called"] == 1
 
 
 @pytest.mark.asyncio
@@ -184,6 +184,7 @@ async def test_split_query_agent_aggregates_sub_queries(
 
     assert results == [episode_a, episode_b]
     assert metrics["queries"] == ["Q1?", "Q2?"]
+    assert metrics["memory_search_called"] == 2
 
 
 @pytest.mark.asyncio
@@ -316,6 +317,7 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
     assert coq_model.call_count == 3
     assert memory.queries == ["original_query?", "sub_query_1", "sub_query_2"]
     assert metrics["queries"] == ["original_query?", "sub_query_1", "sub_query_2"]
+    assert metrics["memory_search_called"] == 3
 
 
 @pytest.mark.asyncio
