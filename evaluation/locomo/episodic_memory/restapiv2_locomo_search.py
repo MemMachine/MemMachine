@@ -378,7 +378,7 @@ if __name__ == "__main__":
     openai_api_key = os.getenv("OPENAI_API_KEY", "none")
     openai_api_base = os.getenv("OPENAI_API_BASE", None)
     openai_base_url = os.getenv("OPENAI_BASE_URL", None)
-    openai_model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4o-mini")
+    openai_model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-5-mini")
     openai_no_think = os.getenv("OPENAI_NO_THINK")
     openai_strip_think = os.getenv("OPENAI_STRIP_THINK")
     openai_embedder_base = os.getenv("OPENAI_EMBEDDER_BASE", None)

@@ -166,7 +166,7 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     assert conf.long_term_memory.embedder == "default-embedder"
     assert conf.long_term_memory.reranker == "default-reranker"
     assert conf.long_term_memory.vector_graph_store == "default_store"
-    assert conf.short_term_memory.llm_model == "gpt-4.1"
+    assert conf.short_term_memory.llm_model == "gpt-5.2"
     assert conf.short_term_memory.summary_prompt_system.startswith(
         "You are a helpful assistant."
     )

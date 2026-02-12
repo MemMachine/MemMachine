@@ -39,10 +39,10 @@ def mock_resource_manager():
 
     # Mock language model manager
     lm_manager = MagicMock()
-    lm_manager.get_all_names.return_value = {"gpt-4"}
+    lm_manager.get_all_names.return_value = {"gpt-5.2"}
     lm_manager.get_resource_status.return_value = ResourceStatus.READY
     lm_manager.get_resource_error.return_value = None
-    lm_manager.conf.openai_responses_language_model_confs = {"gpt-4": MagicMock()}
+    lm_manager.conf.openai_responses_language_model_confs = {"gpt-5.2": MagicMock()}
     lm_manager.conf.openai_chat_completions_language_model_confs = {}
     lm_manager.conf.amazon_bedrock_language_model_confs = {}
     resource_manager.language_model_manager = lm_manager
@@ -133,7 +133,7 @@ def test_get_config(client, mock_resource_manager):
     assert resources["embedders"][0]["status"] == "ready"
 
     assert len(resources["language_models"]) == 1
-    assert resources["language_models"][0]["name"] == "gpt-4"
+    assert resources["language_models"][0]["name"] == "gpt-5.2"
     assert resources["language_models"][0]["status"] == "ready"
 
     assert len(resources["rerankers"]) == 1
@@ -234,7 +234,7 @@ def test_add_language_model_success(client, mock_resource_manager):
         "provider": "openai-responses",
         "config": {
             "api_key": "test-key",
-            "model": "gpt-4",
+            "model": "gpt-5.2",
         },
     }
 
@@ -276,7 +276,7 @@ def test_delete_language_model_success(client, mock_resource_manager):
         return_value=True
     )
 
-    response = client.delete("/api/v2/config/resources/language_models/gpt-4")
+    response = client.delete("/api/v2/config/resources/language_models/gpt-5.2")
     assert response.status_code == 200
 
     data = response.json()
@@ -309,7 +309,7 @@ def test_retry_language_model_success(client, mock_resource_manager):
     """Test POST /api/v2/config/resources/language_models/{name}/retry retries build."""
     mock_resource_manager.language_model_manager.retry_build = AsyncMock()
 
-    response = client.post("/api/v2/config/resources/language_models/gpt-4/retry")
+    response = client.post("/api/v2/config/resources/language_models/gpt-5.2/retry")
     assert response.status_code == 200
 
     data = response.json()
@@ -397,7 +397,7 @@ def test_add_language_model_persists_config(client, mock_resource_manager):
         "provider": "openai-responses",
         "config": {
             "api_key": "test-key",
-            "model": "gpt-4",
+            "model": "gpt-5.2",
         },
     }
 
@@ -427,7 +427,7 @@ def test_delete_language_model_persists_config(client, mock_resource_manager):
         return_value=True
     )
 
-    response = client.delete("/api/v2/config/resources/language_models/gpt-4")
+    response = client.delete("/api/v2/config/resources/language_models/gpt-5.2")
     assert response.status_code == 200
 
     # Verify save_config was called
@@ -776,7 +776,7 @@ def test_update_semantic_memory_config_all_fields(client, mock_resource_manager)
     payload = {
         "enabled": True,
         "database": "postgres-db",
-        "llm_model": "gpt-4",
+        "llm_model": "gpt-5.2",
         "embedding_model": "openai-embedder",
         "ingestion_trigger_messages": 10,
         "ingestion_trigger_age_seconds": 3600,
@@ -789,7 +789,7 @@ def test_update_semantic_memory_config_all_fields(client, mock_resource_manager)
     assert data["success"] is True
     assert "enabled=True" in data["message"]
     assert "database=postgres-db" in data["message"]
-    assert "llm_model=gpt-4" in data["message"]
+    assert "llm_model=gpt-5.2" in data["message"]
     assert "embedding_model=openai-embedder" in data["message"]
     assert "ingestion_trigger_messages=10" in data["message"]
     assert "ingestion_trigger_age=3600s" in data["message"]
@@ -798,7 +798,7 @@ def test_update_semantic_memory_config_all_fields(client, mock_resource_manager)
 def test_update_semantic_memory_config_partial(client, mock_resource_manager):
     """Test PUT /api/v2/config/memory/semantic with partial fields."""
     payload = {
-        "llm_model": "gpt-4o",
+        "llm_model": "gpt-5.2",
     }
 
     response = client.put("/api/v2/config/memory/semantic", json=payload)
@@ -806,7 +806,7 @@ def test_update_semantic_memory_config_partial(client, mock_resource_manager):
 
     data = response.json()
     assert data["success"] is True
-    assert "llm_model=gpt-4o" in data["message"]
+    assert "llm_model=gpt-5.2" in data["message"]
 
 
 def test_get_episodic_memory_config(client, mock_resource_manager):

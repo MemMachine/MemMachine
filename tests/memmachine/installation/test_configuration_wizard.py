@@ -37,7 +37,7 @@ def test_configuration_with_prompt(mock_input, conf_args):
     conf_args.prompt = True
     inputs = {
         "language model provider": "openai",
-        "openai llm model": "gpt-40-mini",
+        "openai llm model": "gpt-5-mini",
         "openai api key": "api_key_value",
         "openai base url": "https://api.my-openai.com/v1",
         "embedding model name": "text-embedding-3-small",

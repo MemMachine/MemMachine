@@ -41,7 +41,7 @@ This example provides a simple chatbot interface that showcases:
 - Preview before ingesting into MemMachine
 
 ### Multi-Provider LLM Support
-- **OpenAI**: GPT-4.1 Mini, GPT-5, GPT-5 Mini, GPT-5 Nano
+- **OpenAI**: GPT-5, GPT-5.2, GPT-5 Mini, GPT-5 Nano
 - **Anthropic (Through AWS Bedrock)**: Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4
 - **Google Gemini**: Gemini 3 Pro (Preview), Gemini 2.5 Pro
 
