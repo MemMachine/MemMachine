@@ -26,6 +26,11 @@ def test_configuration_wizard_all_default(mock_input, conf_args):
     assert Path(conf_file).exists()
     config = Configuration.load_yml_file(conf_file)
     assert config is not None
+    assert config.episodic_memory.long_term_memory is not None
+    assert (
+        config.episodic_memory.long_term_memory.llm_model
+        == ConfigurationWizard.LANGUAGE_MODEL_NAME
+    )
     lm_confs = config.resources.language_models.openai_responses_language_model_confs
     assert len(lm_confs) == 1
     for lm_conf in lm_confs.values():

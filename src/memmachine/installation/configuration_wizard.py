@@ -142,6 +142,7 @@ class ConfigurationWizard:
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
             vector_graph_store=self.NEO4J_DB_ID,
+            llm_model=self.LANGUAGE_MODEL_NAME,
         )
 
     @cached_property

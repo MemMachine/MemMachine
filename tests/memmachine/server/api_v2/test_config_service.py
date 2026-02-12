@@ -199,6 +199,7 @@ def memory_resource_manager():
             embedder="old-embedder",
             reranker="old-reranker",
             vector_graph_store="old-store",
+            llm_model="old-model",
         ),
         short_term_memory=ShortTermMemoryConfPartial(
             llm_model="old-model",

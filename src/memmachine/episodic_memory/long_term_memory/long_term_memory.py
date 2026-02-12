@@ -21,6 +21,7 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
+from memmachine.common.language_model import LanguageModel
 from memmachine.common.reranker import Reranker
 from memmachine.common.vector_graph_store import VectorGraphStore
 from memmachine.episodic_memory.declarative_memory import (
@@ -32,6 +33,18 @@ from memmachine.episodic_memory.declarative_memory.data_types import (
 )
 from memmachine.episodic_memory.declarative_memory.data_types import (
     Episode as DeclarativeMemoryEpisode,
+)
+from memmachine.retrieval_agent.agents import (
+    ChainOfQueryAgent,
+    MemMachineAgent,
+    SplitQueryAgent,
+    ToolSelectAgent,
+)
+from memmachine.retrieval_agent.common.agent_api import (
+    AgentToolBase,
+    AgentToolBaseParam,
+    QueryParam,
+    QueryPolicy,
 )
 
 
@@ -68,6 +81,10 @@ class LongTermMemoryParams(BaseModel):
         ...,
         description="Reranker instance for reranking search results",
     )
+    llm_model: InstanceOf[LanguageModel] = Field(
+        ...,
+        description="LanguageModel instance for retrieval agent",
+    )
     message_sentence_chunking: bool = Field(
         False,
         description="Whether to chunk message episodes into sentences for embedding",
@@ -90,6 +107,54 @@ class LongTermMemory:
                 message_sentence_chunking=params.message_sentence_chunking,
             ),
         )
+        self._retrieval_agent = self._init_retrieval_agent(
+            model=params.llm_model,
+            memory=self._declarative_memory,
+            reranker=params.reranker,
+            agent_name="ToolSelectAgent",
+        )
+
+    def _init_retrieval_agent(
+        self,
+        model: LanguageModel,
+        memory: DeclarativeMemory,
+        reranker: Reranker,
+        agent_name: str,
+    ) -> AgentToolBase:
+        param: AgentToolBaseParam = AgentToolBaseParam(
+            model=None,
+            children_tools=[],
+            extra_params={"memory": cast(AgentToolBase, memory)},
+            reranker=reranker,
+        )
+        memory_agent: MemMachineAgent = MemMachineAgent(param)
+        if agent_name == memory_agent.agent_name:
+            return memory_agent
+
+        param: AgentToolBaseParam = AgentToolBaseParam(
+            model=model,
+            children_tools=[memory_agent],
+            extra_params={},
+            reranker=reranker,
+        )
+
+        coq_agent: ChainOfQueryAgent = ChainOfQueryAgent(param)
+        split_agent: SplitQueryAgent = SplitQueryAgent(param)
+
+        if agent_name == coq_agent.agent_name:
+            return coq_agent
+        if agent_name == split_agent.agent_name:
+            return split_agent
+
+        param: AgentToolBaseParam = AgentToolBaseParam(
+            model=model,
+            children_tools=[split_agent, coq_agent, memory_agent],
+            extra_params={"default_tool_name": coq_agent.agent_name},
+        )
+
+        select_agent: ToolSelectAgent = ToolSelectAgent(param)
+
+        return select_agent
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         declarative_memory_episodes = [
@@ -142,6 +207,7 @@ class LongTermMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        agent_mode: bool = False,
     ) -> list[Episode]:
         scored_episodes = await self.search_scored(
             query,
@@ -149,6 +215,7 @@ class LongTermMemory:
             expand_context=expand_context,
             score_threshold=score_threshold,
             property_filter=property_filter,
+            agent_mode=agent_mode,
         )
         return [episode for _, episode in scored_episodes]
 
@@ -160,17 +227,43 @@ class LongTermMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        agent_mode: bool = False,
     ) -> list[tuple[float, Episode]]:
-        scored_declarative_memory_episodes = (
-            await self._declarative_memory.search_scored(
-                query,
-                max_num_episodes=num_episodes_limit,
-                expand_context=expand_context,
-                property_filter=LongTermMemory._sanitize_property_filter(
-                    property_filter
+        scored_declarative_memory_episodes = []
+
+        if agent_mode:
+            res_episodes, _ = await self._retrieval_agent.do_query(
+                QueryPolicy(
+                    token_cost=10,
+                    time_cost=10,
+                    accuracy_score=10,
+                    confidence_score=10,
+                    max_attempts=3,
+                    max_return_len=10000,
+                ),
+                QueryParam(
+                    query=query,
+                    limit=num_episodes_limit,
+                    expand_context=expand_context,
+                    property_filter=LongTermMemory._sanitize_property_filter(
+                        property_filter
+                    ),
                 ),
             )
-        )
+            scored_declarative_memory_episodes = [
+                (1.0, episode) for episode in res_episodes
+            ]
+        else:
+            scored_declarative_memory_episodes = (
+                await self._declarative_memory.search_scored(
+                    query,
+                    max_num_episodes=num_episodes_limit,
+                    expand_context=expand_context,
+                    property_filter=LongTermMemory._sanitize_property_filter(
+                        property_filter
+                    ),
+                )
+            )
         return [
             (
                 score,

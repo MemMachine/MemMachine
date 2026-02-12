@@ -25,8 +25,10 @@ from memmachine.common.configuration.mixin_confs import (
 from memmachine.common.configuration.reranker_conf import RerankersConf
 from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
+    DefaultLLMModelNotConfiguredError,
     DefaultRerankerNotConfiguredError,
     EmbedderNotFoundError,
+    LanguageModelNotFoundError,
     RerankerNotFoundError,
 )
 from memmachine.semantic_memory.semantic_model import SemanticCategory
@@ -447,6 +449,20 @@ class Configuration(BaseModel):
         if not long_term_memory or not long_term_memory.reranker:
             raise DefaultRerankerNotConfiguredError
         return long_term_memory.reranker
+
+    def check_llm_model(self, llm_model_name: str) -> None:
+        long_term_memory = self.episodic_memory.long_term_memory
+        if not llm_model_name or not long_term_memory:
+            raise DefaultLLMModelNotConfiguredError
+        if not self.resources.language_models.contains_language_model(llm_model_name):
+            raise LanguageModelNotFoundError(llm_model_name)
+
+    @property
+    def default_long_term_memory_llm_model(self) -> str:
+        long_term_memory = self.episodic_memory.long_term_memory
+        if not long_term_memory or not long_term_memory.llm_model:
+            raise DefaultLLMModelNotConfiguredError
+        return long_term_memory.llm_model
 
     def to_yaml(self) -> str:
         data = {

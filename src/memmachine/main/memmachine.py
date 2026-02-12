@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Task
-from collections.abc import Coroutine, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import Any, Final, Protocol, cast
 
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -123,28 +123,74 @@ class MemMachine:
         ltm = self._conf.episodic_memory.long_term_memory
         assert ltm is not None
 
+        ltm.embedder = self._resolve_ltm_resource_default(
+            current_value=ltm.embedder,
+            default_getter=lambda: self._conf.default_long_term_memory_embedder,
+            missing_warning=(
+                "No default embedder configured; disabling long-term episodic memory."
+            ),
+        )
         if ltm.embedder is None:
-            try:
-                ltm.embedder = self._conf.default_long_term_memory_embedder
-            except (ConfigurationError, Exception):
-                logger.warning(
-                    "No default embedder configured; disabling long-term episodic memory."
-                )
-                self._conf.episodic_memory.long_term_memory_enabled = False
-                return
+            return
 
+        ltm.reranker = self._resolve_ltm_resource_default(
+            current_value=ltm.reranker,
+            default_getter=lambda: self._conf.default_long_term_memory_reranker,
+            missing_warning=(
+                "No default reranker configured; disabling long-term episodic memory."
+            ),
+        )
         if ltm.reranker is None:
-            try:
-                ltm.reranker = self._conf.default_long_term_memory_reranker
-            except (ConfigurationError, Exception):
-                logger.warning(
-                    "No default reranker configured; disabling long-term episodic memory."
-                )
-                self._conf.episodic_memory.long_term_memory_enabled = False
-                return
+            return
 
         if ltm.vector_graph_store is None:
             ltm.vector_graph_store = "default_store"
+
+        if ltm.llm_model is None:
+            ltm.llm_model = self._resolve_ltm_llm_model_fallback()
+            if ltm.llm_model is None:
+                self._disable_long_term_memory(
+                    "No default language model configured; disabling long-term episodic memory."
+                )
+                return
+
+    def _disable_long_term_memory(self, warning_message: str) -> None:
+        """Disable long-term memory and emit a warning message."""
+        logger.warning(warning_message)
+        self._conf.episodic_memory.long_term_memory_enabled = False
+
+    def _resolve_ltm_resource_default(
+        self,
+        *,
+        current_value: str | None,
+        default_getter: Callable[[], str],
+        missing_warning: str,
+    ) -> str | None:
+        """Return configured value or fallback default; disable long-term memory on failure."""
+        if current_value is not None:
+            return current_value
+        try:
+            return default_getter()
+        except (ConfigurationError, Exception):
+            self._disable_long_term_memory(missing_warning)
+            return None
+
+    def _resolve_ltm_llm_model_fallback(self) -> str | None:
+        """Resolve an LLM for long-term memory from available configured candidates."""
+        candidates: list[str] = []
+        stm = self._conf.episodic_memory.short_term_memory
+        if stm is not None and stm.llm_model is not None:
+            candidates.append(stm.llm_model)
+
+        semantic_llm = self._conf.semantic_memory.llm_model
+        if semantic_llm is not None:
+            candidates.append(semantic_llm)
+
+        for llm_name in candidates:
+            if self._conf.resources.language_models.contains_language_model(llm_name):
+                return llm_name
+
+        return None
 
     def _resolve_stm_defaults(self) -> None:
         """Resolve short-term memory defaults."""
@@ -234,6 +280,8 @@ class MemMachine:
                     self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
                 if episodic_conf.long_term_memory.reranker is not None:
                     self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
+                if episodic_conf.long_term_memory.llm_model is not None:
+                    self._conf.check_llm_model(episodic_conf.long_term_memory.llm_model)
         except ValidationError as e:
             logger.exception(
                 "Faield to merge configuration: %s, %s",
@@ -513,6 +561,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
+        agent_mode: bool = False,
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -524,6 +573,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
+            agent_mode: Whether to use retrieval-agent mode for episodic search.
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -545,6 +595,7 @@ class MemMachine:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=search_filter,
+                agent_mode=agent_mode,
             )
 
         return response
@@ -561,6 +612,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
+        agent_mode: bool = False,
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -574,6 +626,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
+            agent_mode: Whether to use retrieval-agent mode for episodic search.
 
         Returns:
             Aggregated search results across memory types.
@@ -582,6 +635,14 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "MemMachine querying search: query=%s agent_mode=%s",
+            query,
+            agent_mode,
+        )
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
             episodic_task = asyncio.create_task(
@@ -592,6 +653,7 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     search_filter=property_filter,
+                    agent_mode=agent_mode,
                 )
             )
 

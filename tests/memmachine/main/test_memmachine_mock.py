@@ -80,8 +80,12 @@ def _minimal_conf(
     mock_embedders = MagicMock()
     mock_embedders.contains_embedder.return_value = True
 
+    mock_language_models = MagicMock()
+    mock_language_models.contains_language_model.return_value = True
+
     resource_conf = MagicMock()
     resource_conf.embedders = mock_embedders
+    resource_conf.language_models = mock_language_models
     resource_conf.rerankers = mock_rerankers
 
     ret = MagicMock()
@@ -96,12 +100,17 @@ def _minimal_conf(
             vector_graph_store=None,
             embedder="default-embedder",
             reranker="default-reranker",
+            llm_model="default-llm-model",
         ),
         short_term_memory_enabled=short_memory_enabled,
         long_term_memory_enabled=long_term_memory_enabled,
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    ret.default_long_term_memory_llm_model = "default-llm-model"
+    semantic_conf = MagicMock()
+    semantic_conf.llm_model = None
+    ret.semantic_memory = semantic_conf
     prompt_conf = MagicMock()
     prompt_conf.episode_summary_system_prompt = "You are a helpful assistant."
     prompt_conf.episode_summary_user_prompt = (
@@ -175,6 +184,27 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     )
 
 
+def test_with_default_ltm_llm_falls_back_to_stm_model(
+    minimal_conf_factory, patched_resource_manager
+):
+    min_conf = minimal_conf_factory()
+    assert min_conf.episodic_memory.long_term_memory is not None
+    assert min_conf.episodic_memory.short_term_memory is not None
+
+    min_conf.episodic_memory.long_term_memory.llm_model = None
+    min_conf.episodic_memory.short_term_memory.llm_model = "fallback-llm"
+    min_conf.semantic_memory.llm_model = None
+    min_conf.resources.language_models.contains_language_model.side_effect = (
+        lambda model_name: model_name == "fallback-llm"
+    )
+
+    memmachine = MemMachine(min_conf, patched_resource_manager)
+
+    conf = memmachine._with_default_episodic_memory_conf(session_key="session-llm")
+    assert conf.long_term_memory is not None
+    assert conf.long_term_memory.llm_model == "fallback-llm"
+
+
 def test_with_default_short_conf_enable_status(
     minimal_conf_factory, patched_resource_manager
 ):
@@ -236,6 +266,7 @@ async def test_create_session_passes_generated_config(
         long_term_memory=LongTermMemoryConfPartial(
             embedder="custom-embed",
             reranker="custom-reranker",
+            llm_model="default-llm-model",
         )
     )
     await memmachine.create_session(

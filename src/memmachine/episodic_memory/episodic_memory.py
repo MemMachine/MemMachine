@@ -309,6 +309,7 @@ class EpisodicMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        agent_mode: bool = False,
     ) -> QueryResponse | None:
         """
         Retrieve relevant context for a given query from all memory stores.
@@ -326,6 +327,7 @@ class EpisodicMemory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
+            agent_mode: Whether to use retrieval-agent mode for long-term memory.
 
         Returns:
             A tuple containing a list of short term memory Episode objects,
@@ -338,6 +340,11 @@ class EpisodicMemory:
         start_time = time.monotonic_ns()
         search_limit = limit if limit is not None else 20
 
+        logger.info(
+            "EpisodicMemory querying memory: query=%s agent_mode=%s",
+            query,
+            agent_mode,
+        )
         if self._short_term_memory is None:
             short_episode: list[Episode] = []
             short_summary = ""
@@ -349,6 +356,7 @@ class EpisodicMemory:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
+                agent_mode=agent_mode,
             )
         elif self._long_term_memory is None:
             session_result = (
@@ -374,6 +382,7 @@ class EpisodicMemory:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=property_filter,
+                    agent_mode=agent_mode,
                 ),
             )
             short_episode, short_summary = session_result

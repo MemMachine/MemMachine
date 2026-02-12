@@ -301,7 +301,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
         )
         return parsed_response if parsed_response is not None else response
 
-    async def generate_response(  # noqa: C901
+    async def generate_response(
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
@@ -309,6 +309,39 @@ class AmazonBedrockLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
+        output, function_calls_arguments, _, _ = await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+        return output, function_calls_arguments
+
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, Any, int, int]:
+        return await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+
+    async def _generate_response(  # noqa: C901
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, list[dict[str, Any]], int, int]:
         """Generate a raw text response (and optional tool call) from Bedrock."""
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
@@ -340,6 +373,7 @@ class AmazonBedrockLanguageModel(LanguageModel):
         generate_response_call_uuid = uuid4()
 
         start_time = time.monotonic()
+        response: dict[str, Any] | None = None
 
         sleep_seconds = 1
         for attempt in range(1, max_attempts + 1):
@@ -385,12 +419,15 @@ class AmazonBedrockLanguageModel(LanguageModel):
                 sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
                 continue
 
+        if response is None:
+            raise RuntimeError("Amazon Bedrock response was not generated")
+
         end_time = time.monotonic()
 
         self._collect_metrics(response, start_time, end_time)
 
-        text_block_strings = []
-        function_calls_arguments = []
+        text_block_strings: list[str] = []
+        function_calls_arguments: list[dict[str, Any]] = []
 
         content_blocks = response["output"]["message"]["content"]
         for content_block in content_blocks:
@@ -420,10 +457,19 @@ class AmazonBedrockLanguageModel(LanguageModel):
 
         # This approach is similar to how OpenAI handles multiple text blocks.
         output_text = "\n".join(text_block_strings)
+        usage = response.get("usage", {})
+        input_tokens = (
+            int(usage.get("inputTokens", 0)) if isinstance(usage, dict) else 0
+        )
+        output_tokens = (
+            int(usage.get("outputTokens", 0)) if isinstance(usage, dict) else 0
+        )
 
         return (
             output_text,
             function_calls_arguments,
+            input_tokens,
+            output_tokens,
         )
 
     @staticmethod

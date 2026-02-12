@@ -24,6 +24,7 @@ def long_term_memory_conf() -> LongTermMemoryConfPartial:
         embedder="embedder_v1",
         reranker="reranker_v1",
         vector_graph_store="store_v1",
+        llm_model="model_v1",
     )
 
 
@@ -31,6 +32,7 @@ def test_update_long_term_memory_conf(long_term_memory_conf: LongTermMemoryConfP
     specific = LongTermMemoryConfPartial(
         session_id="session_123",
         embedder="embedder_v2",
+        llm_model="model_v1",
     )
 
     updated = specific.merge(long_term_memory_conf)
@@ -38,6 +40,7 @@ def test_update_long_term_memory_conf(long_term_memory_conf: LongTermMemoryConfP
     assert updated.embedder == "embedder_v2"
     assert updated.reranker == "reranker_v1"
     assert updated.vector_graph_store == "store_v1"
+    assert updated.llm_model == "model_v1"
 
 
 @pytest.fixture
@@ -73,7 +76,9 @@ def test_update_episodic_memory_conf(
     )
     specific = EpisodicMemoryConfPartial(
         session_key="session_123",
-        long_term_memory=LongTermMemoryConfPartial(embedder="embedder_v2"),
+        long_term_memory=LongTermMemoryConfPartial(
+            embedder="embedder_v2", llm_model="model_v2"
+        ),
     )
 
     updated = specific.merge(base)
@@ -81,6 +86,7 @@ def test_update_episodic_memory_conf(
     assert updated.short_term_memory is not None
     assert updated.long_term_memory.embedder == "embedder_v2"
     assert updated.long_term_memory.reranker == "reranker_v1"
+    assert updated.long_term_memory.llm_model == "model_v2"
     assert updated.short_term_memory.session_key == "session_123"
     assert updated.short_term_memory.message_capacity == 12345
 
