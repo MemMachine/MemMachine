@@ -1089,7 +1089,7 @@ def test_configure_semantic_set(client, mock_memmachine):
         "project_id": "test_proj",
         "set_id": "mem_user_set_abc",
         "embedder_name": "openai-embed",
-        "llm_name": "gpt-4",
+        "llm_name": "gpt-5.2",
     }
 
     response = client.post("/api/v2/memories/semantic/set/configure", json=payload)
@@ -1099,7 +1099,7 @@ def test_configure_semantic_set(client, mock_memmachine):
     call_args = mock_memmachine.configure_semantic_set.call_args[1]
     assert call_args["set_id"] == "mem_user_set_abc"
     assert call_args["embedder_name"] == "openai-embed"
-    assert call_args["llm_name"] == "gpt-4"
+    assert call_args["llm_name"] == "gpt-5.2"
 
 
 def test_configure_semantic_set_partial(client, mock_memmachine):

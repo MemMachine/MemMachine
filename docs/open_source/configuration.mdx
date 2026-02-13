@@ -336,7 +336,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         openai_model:
           provider: openai-responses
           config:
-            model: "gpt-4o-mini"
+            model: "gpt-5-mini"
             api_key: <YOUR_API_KEY>
             base_url: "https://api.openai.com/v1"
         aws_model:
@@ -361,7 +361,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         openai_model: # Language Model ID
           provider: openai-responses # The language model provider type
           config: # A dictionary containing provider-specific configuration
-            model: "gpt-4o-mini" # Model name
+            model: "gpt-5-mini" # Model name
             api_key: <YOUR_API_KEY> # API key for OpenAI.
             base_url: "https://api.openai.com/v1" # The base URL for the model
         aws_model: # Language Model ID
@@ -385,7 +385,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     |-------------------|----------------------------------------------------------------------|--------------------------|
     | `provider`        | The language model provider type: `openai-responses`, `openai-chat-completions`, `amazon-bedrock`. | *Required*               |
     | `config`          | A dictionary containing provider-specific configuration.             | *Required*               |
-    | `config.model`    | Model name (e.g., `gpt-4o-mini` for OpenAI).                         | Depends on provider      |
+    | `config.model`    | Model name (e.g., `gpt-5-mini` for OpenAI).                         | Depends on provider      |
     | `config.api_key`  | API key for OpenAI.                                                  | *Required for OpenAI*    |
     | `config.base_url`  | The base URL for the model                                          | Depends on provider      |
     | `config.region`   | AWS region for Bedrock.                                              | *Required for Bedrock*   |

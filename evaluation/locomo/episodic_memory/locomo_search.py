@@ -115,7 +115,7 @@ async def process_question(
 
     llm_start = time.time()
     rsp = await model.responses.create(
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         max_output_tokens=4096,
         temperature=0.0,
         top_p=1,
