@@ -229,7 +229,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         self._count_edges_latency_summary = None
         self._populate_index_state_cache_calls_counter = None
         self._populate_index_state_cache_latency_summary = None
-        self._create_initial_indexes_if_not_exist_calls_counter = None
+        self._calls_counter = None
         self._create_initial_indexes_if_not_exist_latency_summary = None
         self._create_range_index_if_not_exists_calls_counter = None
         self._create_range_index_if_not_exists_latency_summary = None

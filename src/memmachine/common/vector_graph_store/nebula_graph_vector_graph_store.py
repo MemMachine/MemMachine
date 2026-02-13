@@ -55,6 +55,7 @@ class NebulaGraphVectorGraphStoreParams:
         force_exact_similarity_search: If True, always use KNN exact search (no ANN)
         filtered_similarity_search_fudge_factor: Multiplier for ANN limit when filtering
         exact_similarity_search_fallback_threshold: Ratio threshold for fallback to exact search
+        range_index_hierarchies: List of property hierarchies for range indexes (e.g., [["timestamp"], ["user_id", "timestamp"]])
         range_index_creation_threshold: Min entities before creating property index
         vector_index_creation_threshold: Min entities before creating vector index.
             Vector indexes enable ANN (Approximate Nearest Neighbor) search.
@@ -78,6 +79,7 @@ class NebulaGraphVectorGraphStoreParams:
     force_exact_similarity_search: bool = False
     filtered_similarity_search_fudge_factor: int = 4
     exact_similarity_search_fallback_threshold: float = 0.5
+    range_index_hierarchies: list[list[str]] = field(default_factory=list)
     range_index_creation_threshold: int = 10_000
     vector_index_creation_threshold: int = 10_000
 
@@ -128,8 +130,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         self._force_exact_similarity_search = params.force_exact_similarity_search
         self._fudge_factor = params.filtered_similarity_search_fudge_factor
         self._fallback_threshold = params.exact_similarity_search_fallback_threshold
-        self._vector_index_threshold = params.vector_index_creation_threshold
+        self._range_index_hierarchies = params.range_index_hierarchies
         self._range_index_threshold = params.range_index_creation_threshold
+        self._vector_index_threshold = params.vector_index_creation_threshold
 
         # Vector index tuning
         self._ann_index_type = params.ann_index_type
@@ -260,13 +263,22 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
 
+        # Create range indexes based on configured hierarchies
         # Note: We don't create a range index on 'uid' because it's declared as PRIMARY KEY
-        # in the node type schema, and NebulaGraph Enterprise automatically creates
-        # a primary key index on all properties that form the primary key.
-        # See: nebula-ent-docs CREATE GRAPH TYPE statement documentation.
-        #
-        # Range indexes for other commonly filtered properties can be added here
-        # when needed based on query patterns.
+        # in the node type schema, and NebulaGraph automatically indexes primary keys.
+        if (
+            self._range_index_threshold
+            and new_count >= self._range_index_threshold
+            and current_count < self._range_index_threshold
+        ):
+            task = asyncio.create_task(
+                self._create_initial_indexes_if_not_exist(
+                    EntityType.NODE,
+                    collection,
+                )
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     async def add_edges(
         self,
@@ -338,6 +350,21 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         new_count = current_count + len(edges_list)
         self._relation_edge_counts[relation] = new_count
 
+        # Create range indexes based on configured hierarchies when threshold is reached
+        if (
+            self._range_index_threshold
+            and new_count >= self._range_index_threshold
+            and current_count < self._range_index_threshold
+        ):
+            task = asyncio.create_task(
+                self._create_initial_indexes_if_not_exist(
+                    EntityType.EDGE,
+                    relation,
+                )
+            )
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
     async def search_similar_nodes(
         self,
         *,
@@ -392,11 +419,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         # Build query based on search mode
         if use_ann:
-            # ANN search using APPROXIMATE
-            search_limit = limit
+            # ANN search requires a finite limit (default to 1000 like Neo4j)
+            effective_limit = limit if limit is not None else 1000
+
+            # Use fudge factor when filtering to get more candidates
             if property_filter:
-                # Use fudge factor when filtering
-                search_limit = (limit or 100) * self._fudge_factor
+                search_limit = int(effective_limit * self._fudge_factor)
+            else:
+                search_limit = effective_limit
 
             # Choose similarity function and order
             metric_name = self._similarity_metric_to_nebula(similarity_metric)
@@ -1602,6 +1632,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
     async def _create_range_index_if_not_exists(
         self,
+        entity_type: EntityType,
         node_or_edge_type: str,
         properties: list[str],
     ) -> None:
@@ -1609,6 +1640,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         Create normal (range) index if it doesn't exist.
 
         Args:
+            entity_type: NODE or EDGE
             node_or_edge_type: Type name
             properties: List of property names to index
 
@@ -1641,9 +1673,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 mangled_props = [mangle_property_name(p) for p in properties]
                 prop_list = ", ".join(f"{p} ASC" for p in mangled_props)
 
+                # Create index on NODE or EDGE
+                entity_keyword = "NODE" if entity_type == EntityType.NODE else "EDGE"
                 create_stmt = f"""
                 CREATE NORMAL INDEX IF NOT EXISTS {index_name}
-                ON NODE {sanitized_type} ({prop_list})
+                ON {entity_keyword} {sanitized_type} ({prop_list})
                 """
                 await self._client.execute(create_stmt)
 
@@ -1656,3 +1690,38 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 self._index_state_cache.pop(index_name, None)
                 logger.exception("Failed to create range index %s", index_name)
                 raise
+
+    async def _create_initial_indexes_if_not_exist(
+        self,
+        entity_type: EntityType,
+        node_or_edge_type: str,
+    ) -> None:
+        """
+        Create initial range indexes based on configured hierarchies.
+
+        Creates composite indexes for each hierarchy prefix. For example,
+        [["user_id", "timestamp"]] creates indexes on:
+        - (user_id)
+        - (user_id, timestamp)
+
+        Args:
+            entity_type: NODE or EDGE
+            node_or_edge_type: Type name
+
+        """
+        # Create indexes for each property hierarchy
+        tasks = []
+        for range_index_hierarchy in self._range_index_hierarchies:
+            # Create index for each prefix of the hierarchy
+            for i in range(len(range_index_hierarchy)):
+                property_name_hierarchy = range_index_hierarchy[: i + 1]
+                tasks.append(
+                    self._create_range_index_if_not_exists(
+                        entity_type=entity_type,
+                        node_or_edge_type=node_or_edge_type,
+                        properties=property_name_hierarchy,
+                    )
+                )
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
