@@ -64,6 +64,13 @@
             ]
           },
           {
+            "group": "Tools",
+            "icon": "screwdriver-wrench",
+            "pages": [
+              "tools/ChatGPT2MemMachine"
+            ]
+          },
+          {
             "group": "Core Concepts",
             "icon": "brain",
             "pages": [
