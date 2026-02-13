@@ -9,6 +9,13 @@ from memmachine.common.utils import (
 )
 
 
+@pytest.fixture(autouse=True)
+def setup_nltk_data():
+    import nltk
+
+    nltk.download("punkt_tab")
+
+
 def test_chunk_text():
     text = ""
     assert chunk_text(text, max_length=5) == []
