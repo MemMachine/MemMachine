@@ -1113,6 +1113,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             GQL type string
 
         """
+        # Check bool before int (bool is subclass of int in Python)
         if isinstance(value, bool):
             return "BOOL"
         if isinstance(value, int):
@@ -1126,12 +1127,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if isinstance(value, list):
             if not value:
                 return "LIST<STRING>"
+            # Check bool before int (bool is subclass of int in Python)
             if all(isinstance(x, bool) for x in value):
                 return "LIST<BOOL>"
-            if all(isinstance(x, int) for x in value):
+            if all(isinstance(x, int) and not isinstance(x, bool) for x in value):
                 return "LIST<INT64>"
             if all(isinstance(x, float) for x in value):
                 return "LIST<DOUBLE>"
+            if all(isinstance(x, datetime) for x in value):
+                return "LIST<LOCAL DATETIME>"
             return "LIST<STRING>"
         raise ValueError(f"Unsupported property type: {type(value)}")
 
@@ -1149,9 +1153,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if isinstance(value, str):
             escaped = value.replace("\\", "\\\\").replace('"', '\\"')
             return f'"{escaped}"'
+        # Check bool before int/float (bool is subclass of int in Python)
         if isinstance(value, bool):
             return str(value).lower()
-        if isinstance(value, (int, float)):
+        if (isinstance(value, int) and not isinstance(value, bool)) or isinstance(
+            value, float
+        ):
             return str(value)
         if isinstance(value, datetime):
             # Use local_datetime() function for proper type conversion
