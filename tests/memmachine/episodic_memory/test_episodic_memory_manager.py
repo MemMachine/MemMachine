@@ -10,6 +10,7 @@ from memmachine.common.configuration.episodic_config import EpisodicMemoryConf
 from memmachine.common.errors import (
     EpisodicMemoryManagerClosedError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionInUseError,
 )
 from memmachine.common.language_model import LanguageModel
@@ -523,3 +524,51 @@ async def test_manager_methods_after_close_raise_error(manager: EpisodicMemoryMa
 
     with pytest.raises(EpisodicMemoryManagerClosedError, match=close_err_msg):
         await manager.close_session("s")
+
+
+@pytest.mark.asyncio
+@patch("memmachine.episodic_memory.episodic_memory_manager.EpisodicMemory")
+async def test_open_deleted_session_raises_error(
+    mock_episodic_memory_cls,
+    manager: EpisodicMemoryManager,
+    mock_episodic_memory_conf,
+    mock_episodic_memory_instance,
+    mock_session_storage,
+):
+    """Test that opening a deleted session raises SessionDeletedError."""
+    session_key = "deleted_session"
+    mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
+
+    # Create session
+    async with manager.create_episodic_memory(
+        session_key,
+        mock_episodic_memory_conf,
+        "",
+        {},
+    ):
+        pass
+
+    # Close session to ensure it is removed from cache
+    await manager.close_session(session_key)
+
+    # Mark session as deleted
+    await mock_session_storage.update_session_status(session_key, "delete")
+
+    # Try to open via open_episodic_memory
+    with pytest.raises(
+        SessionDeletedError, match=f"Session '{session_key}' has been deleted"
+    ):
+        async with manager.open_episodic_memory(session_key):
+            pass
+
+    # Try to open via open_or_create_episodic_memory
+    with pytest.raises(
+        SessionDeletedError, match=f"Session '{session_key}' has been deleted"
+    ):
+        async with manager.open_or_create_episodic_memory(
+            session_key,
+            mock_episodic_memory_conf,
+            "",
+            {},
+        ):
+            pass

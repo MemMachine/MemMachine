@@ -60,6 +60,9 @@ class SessionDataManagerSQL(SessionDataManager):
         param_data: Mapped[JSONColumn]
         description: Mapped[StringColumn]
         user_metadata: Mapped[JSONColumn]
+        status: Mapped[str] = mapped_column(
+            String, default="active", server_default=text("'active'")
+        )
         __table_args__ = (PrimaryKeyConstraint("session_key"),)
         short_term_memory_data = relationship(
             "ShortTermMemoryData",
@@ -91,10 +94,22 @@ class SessionDataManagerSQL(SessionDataManager):
             for table in Base.metadata.tables.values():
                 table.schema = schema
 
+    def _check_status_column(self, conn: AsyncConnection) -> bool:
+        inspector = inspect(conn)
+        assert inspector is not None
+
+        schema = self.SessionConfig.__table__.schema
+        table_name = "sessions"
+        table_names = inspector.get_table_names(schema=schema)
+        if table_name not in table_names:
+            return False
+        columns = inspector.get_columns(table_name, schema=schema)
+        return all(column["name"] != "status" for column in columns)
+
     async def create_tables(self) -> None:
         """Create the necessary tables in the database."""
 
-        def _check_migration_needed(conn: AsyncConnection) -> bool:
+        def _check_pickle_migration_needed(conn: AsyncConnection) -> bool:
             inspector = inspect(conn)
             assert inspector is not None
 
@@ -110,9 +125,14 @@ class SessionDataManagerSQL(SessionDataManager):
             return False
 
         async with self._engine.begin() as conn:
-            if await conn.run_sync(_check_migration_needed):
-                await self._migrate_pickle_to_json()
-                return
+            pickle_needed = await conn.run_sync(_check_pickle_migration_needed)
+            statu_needed = await conn.run_sync(self._check_status_column)
+        if pickle_needed:
+            await self._migrate_pickle_to_json()
+        if statu_needed:
+            await self._add_status_column()
+
+        async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
     async def drop_tables(self) -> None:
@@ -172,6 +192,18 @@ class SessionDataManagerSQL(SessionDataManager):
                 text(f"ALTER TABLE {table_name} DROP COLUMN param_data_blob")
             )
 
+    async def _add_status_column(self) -> None:
+        """Add status column to sessions table."""
+        schema = self.SessionConfig.__table__.schema
+        table_name = f"{schema}.sessions" if schema else "sessions"
+
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} ADD COLUMN status VARCHAR DEFAULT 'active'"
+                )
+            )
+
     async def create_new_session(
         self,
         session_key: str,
@@ -210,6 +242,31 @@ class SessionDataManagerSQL(SessionDataManager):
             dbsession.add(new_session)
             await dbsession.commit()
 
+    async def update_session_status(
+        self,
+        session_key: str,
+        status: str,
+    ) -> None:
+        """Update the status of a session."""
+        async with self._async_session() as dbsession:
+            row = await dbsession.get(self.SessionConfig, session_key)
+            if row is None:
+                raise SessionNotFoundError(session_key)
+            row.status = status
+            await dbsession.commit()
+
+    async def get_sessions_by_status(
+        self,
+        status: str,
+    ) -> list[str]:
+        """Get a list of session keys by status."""
+        async with self._async_session() as dbsession:
+            stmt = select(self.SessionConfig.session_key).where(
+                self.SessionConfig.status == status
+            )
+            sessions = await dbsession.execute(stmt)
+            return list(sessions.scalars().all())
+
     async def delete_session(self, session_key: str) -> None:
         """Delete a session and its related data from the database."""
         async with self._async_session() as dbsession:
@@ -224,6 +281,7 @@ class SessionDataManagerSQL(SessionDataManager):
     async def get_session_info(
         self,
         session_key: str,
+        status: SessionDataManager.SessionStatus | None = None,
     ) -> SessionDataManager.SessionInfo | None:
         """Retrieve a session's configuration, metadata, and params."""
         async with self._async_session() as dbsession:
@@ -235,6 +293,8 @@ class SessionDataManagerSQL(SessionDataManager):
             session = sessions.scalars().first()
             if session is None:
                 return None
+            if status is not None and session.status != status:
+                return None
             param = EpisodicMemoryConf(**session.param_data)
 
             return SessionDataManager.SessionInfo(
@@ -242,6 +302,7 @@ class SessionDataManagerSQL(SessionDataManager):
                 description=session.description,
                 user_metadata=session.user_metadata,
                 episode_memory_conf=param,
+                status=session.status,
             )
 
     def _json_contains(
