@@ -8,6 +8,7 @@ import pytest
 from memmachine import MemMachine
 from memmachine.common.episode_store import EpisodeEntry
 from memmachine.common.filter.filter_parser import parse_filter
+from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.main.memmachine import MemoryType
 
 # TODO (@o-love): Blanket mark all tests in this file as integration tests for now
@@ -190,7 +191,11 @@ async def test_memmachine_create_get_and_delete_session(memmachine: MemMachine):
 
         await memmachine.delete_session(delete_handle)
         deleted = True
-        assert await memmachine.get_session(session_key) is None
+        session_info = await memmachine.get_session(session_key)
+        assert (
+            session_info is None
+            or session_info.status == SessionDataManager.SessionStatus.Deleted
+        )
     finally:
         if not deleted:
             remaining = await memmachine.get_session(session_key)

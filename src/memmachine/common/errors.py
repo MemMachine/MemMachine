@@ -101,6 +101,19 @@ class SessionInUseError(MemMachineError):
         return f"SessionInUseError('{self.session_key}')"
 
 
+class SessionDeletedError(MemMachineError):
+    """Error when trying to retrieve a deleted session."""
+
+    def __init__(self, session_key: str) -> None:
+        """Initialize with the session key that has been deleted."""
+        self.session_key = session_key
+        super().__init__(f"Session '{session_key}' has been deleted.")
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"SessionDeletedError('{self.session_key}')"
+
+
 class ShortTermMemoryClosedError(MemMachineError):
     """Error when trying to access closed short-term memory."""
 
