@@ -91,6 +91,7 @@ async def test_delete_session_clears_semantic_history_and_citations(
         assert episode_id in before_citations
 
         await memmachine.delete_session(session_data)
+        await memmachine._deletion_queue.join()
         deleted = True
 
         remaining_history = [
@@ -146,15 +147,23 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     conf.semantic_memory.enabled = False
 
     resources = MagicMock()
-    resources.get_episode_storage = AsyncMock(return_value=episode_store)
-    resources.get_session_data_manager = AsyncMock(
-        return_value=MagicMock(get_session_info=AsyncMock(return_value=MagicMock()))
+    resources.close = AsyncMock()
+    session_manager = MagicMock()
+    session_manager.get_session_info = AsyncMock(
+        return_value=MagicMock(status="active")
     )
+    session_manager.update_session_status = AsyncMock()
+    session_manager.delete_session = AsyncMock()
+    resources.get_episode_storage = AsyncMock(return_value=episode_store)
+    resources.get_session_data_manager = AsyncMock(return_value=session_manager)
 
     mm = MemMachine(conf=conf, resources=resources)
     mm._cleanup_semantic_history = cleanup_mock  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
+    await mm.start()
     await mm.delete_session(_SD())
+    await mm._deletion_queue.join()
+    await mm.stop()
 
     # get_episode_ids called 4 times (3 non-empty + 1 empty sentinel)
     assert get_episode_ids_mock.call_count == 4
