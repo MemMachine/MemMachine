@@ -42,8 +42,8 @@ memory = client.memory(
 )
 
 # Add memories
-memory.add("I like pizza", metadata={"type": "preference"})
-memory.add("I work as a software engineer", metadata={"type": "fact"})
+memory.add("I like pizza", properties={"type": "preference"})
+memory.add("I work as a software engineer", properties={"type": "fact"})
 
 # Search memories
 results = memory.search("What do I like to eat?")
@@ -101,8 +101,8 @@ memory = client.memory(
 )
 
 # Add memories with metadata
-memory.add("I like pizza", metadata={"type": "preference", "category": "food"})
-memory.add("I work as a software engineer", metadata={"type": "fact", "category": "work"})
+memory.add("I like pizza", properties={"type": "preference", "category": "food"})
+memory.add("I work as a software engineer", properties={"type": "fact", "category": "work"})
 
 # Search memories
 results = memory.search("What do I like to eat?")
@@ -133,9 +133,9 @@ for user in users:
     )
 
 # Add user-specific memories
-memories["alice"].add("I'm a frontend developer", metadata={"role": "frontend"})
-memories["bob"].add("I'm a backend developer", metadata={"role": "backend"})
-memories["charlie"].add("I'm a DevOps engineer", metadata={"role": "devops"})
+memories["alice"].add("I'm a frontend developer", properties={"role": "frontend"})
+memories["bob"].add("I'm a backend developer", properties={"role": "backend"})
+memories["charlie"].add("I'm a DevOps engineer", properties={"role": "devops"})
 
 # Search across users
 for user, memory in memories.items():

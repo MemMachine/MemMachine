@@ -137,7 +137,7 @@ def test_memory_message_required_fields():
     assert message.produced_for == ""
     assert message.timestamp
     assert message.role == ""
-    assert message.metadata == {}
+    assert message.properties == {}
     assert message.episode_type is None
 
 

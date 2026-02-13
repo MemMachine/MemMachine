@@ -1,11 +1,12 @@
 """Module for parsing filter strings into dictionaries."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import NamedTuple, Protocol
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import PropertyValue
 
 
 class FilterParseError(ValueError):
@@ -18,11 +19,26 @@ class FilterExpr(Protocol):
 
 @dataclass(frozen=True)
 class Comparison(FilterExpr):
-    """Filter comparison of a field against a value or list of values."""
+    """Scalar comparison of a field against a value."""
 
     field: str
-    op: str  # "=", "in", ">", "<", ">=", "<=", "is_null", "is_not_null"
-    value: FilterablePropertyValue | list[FilterablePropertyValue]
+    op: str  # "=", "!=", ">", "<", ">=", "<="
+    value: PropertyValue
+
+
+@dataclass(frozen=True)
+class In(FilterExpr):
+    """Membership test of a field against a list of values."""
+
+    field: str
+    values: list[int] | list[str]
+
+
+@dataclass(frozen=True)
+class IsNull(FilterExpr):
+    """Nullity check on a field (field IS NULL)."""
+
+    field: str
 
 
 @dataclass(frozen=True)
@@ -39,6 +55,13 @@ class Or(FilterExpr):
 
     left: FilterExpr
     right: FilterExpr
+
+
+@dataclass(frozen=True)
+class Not(FilterExpr):
+    """Logical negation of a filter expression."""
+
+    expr: FilterExpr
 
 
 class Token(NamedTuple):
@@ -58,6 +81,7 @@ _TOKEN_SPEC = [
     ("LPAREN", r"\("),
     ("RPAREN", r"\)"),
     ("COMMA", r","),
+    ("NE", r"!=|<>"),
     ("GE", r">="),
     ("LE", r"<="),
     ("EQ", r"="),
@@ -94,6 +118,9 @@ def _tokenize(s: str) -> list[Token]:
         else:
             tokens.append(Token(kind, value))
     return tokens
+
+
+_SCALAR_OPS = {"EQ": "=", "NE": "!=", "GE": ">=", "LE": "<=", "GT": ">", "LT": "<"}
 
 
 class _Parser:
@@ -154,43 +181,54 @@ class _Parser:
             expr = self._parse_expression()
             self._expect("RPAREN")
             return expr
-        return self._parse_comparison()
+        if self._accept("NOT"):
+            return Not(expr=self._parse_primary())
+        return self._parse_predicate()
 
-    def _parse_comparison(self) -> FilterExpr:
+    def _parse_predicate(self) -> FilterExpr:
         field_tok = self._expect("IDENT")
         field = field_tok.value
 
-        op_tok = self._accept("EQ", "GE", "LE", "GT", "LT")
+        op_tok = self._accept("EQ", "NE", "GE", "LE", "GT", "LT")
         if op_tok:
-            # field =/>=/>/</<= value
             value = self._parse_value()
-            op = {"EQ": "=", "GE": ">=", "LE": "<=", "GT": ">", "LT": "<"}[op_tok.type]
-            return Comparison(field=field, op=op, value=value)
+            return Comparison(field=field, op=_SCALAR_OPS[op_tok.type], value=value)
 
+        # IN / NOT IN
+        negate = self._accept("NOT") is not None
         if self._accept("IN"):
-            self._expect("LPAREN")
-            values: list[FilterablePropertyValue] = []
-            values.append(self._parse_value())
-            while self._accept("COMMA"):
-                values.append(self._parse_value())
-            self._expect("RPAREN")
-            return Comparison(field=field, op="in", value=values)
+            values = self._parse_value_list()
+            expr: FilterExpr = In(field=field, values=values)
+            return Not(expr=expr) if negate else expr
+        if negate:
+            raise FilterParseError(f"Expected IN after NOT for field {field}")
 
+        # IS NULL / IS NOT NULL
         if self._accept("IS"):
             negate = self._accept("NOT") is not None
             null_tok = self._expect("IDENT")
             if null_tok.value.upper() != "NULL":
                 raise FilterParseError(
-                    "Expected NULL after IS/IS NOT. NOT doesn't support other operations as of now",
+                    "Expected NULL after IS/IS NOT",
                 )
-            op = "is_not_null" if negate else "is_null"
-            return Comparison(field=field, op=op, value=None)
+            expr = IsNull(field=field)
+            return Not(expr=expr) if negate else expr
 
         raise FilterParseError(
-            f"Expected comparison operator (=, IN, >, <, >=, <=, IS) after field {field}"
+            f"Expected operator after field {field}: "
+            "comparison (=, !=, <>, >, <, >=, <=), "
+            "membership (IN, NOT IN), or nullity (IS NULL, IS NOT NULL)"
         )
 
-    def _parse_value(self) -> FilterablePropertyValue:
+    def _parse_value_list(self) -> list[int] | list[str]:
+        self._expect("LPAREN")
+        values: list[int] | list[str] = [self._parse_value()]  # type: ignore[list-item]
+        while self._accept("COMMA"):
+            values.append(self._parse_value())  # type: ignore[arg-type]
+        self._expect("RPAREN")
+        return values
+
+    def _parse_value(self) -> PropertyValue:
         tok = self._expect("IDENT", "STRING")
         raw = tok.value
         # If it's a string literal, return it as-is
@@ -225,6 +263,72 @@ def _looks_like_float(value: str) -> bool:
     return bool(left) and bool(right) and left.isdigit() and right.isdigit()
 
 
+# ---------------------------------------------------------------------------
+# Centralized field name normalization utilities
+# ---------------------------------------------------------------------------
+
+# Query language prefixes for user-defined properties
+USER_PROPERTY_QUERY_PREFIXES = ("p.", "properties.")
+
+# Internal storage prefix for user properties (database-safe)
+USER_PROPERTY_STORAGE_PREFIX = "p_"
+
+
+def normalize_filter_field(field: str) -> tuple[str, bool]:
+    """Normalize a query field name to internal storage name.
+
+    Returns (internal_name, is_user_property).
+    - User property (p.foo, properties.foo): returns ("p_foo", True)
+    - System field (producer_id): returns ("producer_id", False)
+    """
+    for prefix in USER_PROPERTY_QUERY_PREFIXES:
+        if field.startswith(prefix):
+            key = field[len(prefix) :]
+            return f"{USER_PROPERTY_STORAGE_PREFIX}{key}", True
+    return field, False
+
+
+def mangle_user_property_key(key: str) -> str:
+    """Add user property prefix to a key for storage."""
+    return USER_PROPERTY_STORAGE_PREFIX + key
+
+
+def demangle_user_property_key(mangled_key: str) -> str:
+    """Remove user property prefix from a storage key."""
+    return mangled_key.removeprefix(USER_PROPERTY_STORAGE_PREFIX)
+
+
+def is_user_property_key(candidate_key: str) -> bool:
+    """Check if a key has the user property prefix."""
+    return candidate_key.startswith(USER_PROPERTY_STORAGE_PREFIX)
+
+
+def map_filter_fields(
+    expr: FilterExpr,
+    transform: Callable[[str], str],
+) -> FilterExpr:
+    """Apply a field name transformation to all fields in a FilterExpr tree."""
+    if isinstance(expr, Comparison):
+        return Comparison(field=transform(expr.field), op=expr.op, value=expr.value)
+    if isinstance(expr, In):
+        return In(field=transform(expr.field), values=expr.values)
+    if isinstance(expr, IsNull):
+        return IsNull(field=transform(expr.field))
+    if isinstance(expr, And):
+        return And(
+            left=map_filter_fields(expr.left, transform),
+            right=map_filter_fields(expr.right, transform),
+        )
+    if isinstance(expr, Or):
+        return Or(
+            left=map_filter_fields(expr.left, transform),
+            right=map_filter_fields(expr.right, transform),
+        )
+    if isinstance(expr, Not):
+        return Not(expr=map_filter_fields(expr.expr, transform))
+    raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+
 def parse_filter(spec: str | None) -> FilterExpr | None:
     """Parse the given textual filter specification."""
     if spec is None:
@@ -238,7 +342,7 @@ def parse_filter(spec: str | None) -> FilterExpr | None:
 
 def to_property_filter(
     expr: FilterExpr | None,
-) -> dict[str, FilterablePropertyValue] | None:
+) -> dict[str, PropertyValue | None] | None:
     """Convert a filter expression into a legacy equality mapping."""
     if expr is None:
         return None
@@ -247,19 +351,13 @@ def to_property_filter(
     if not comparisons:
         return None
 
-    property_filter: dict[str, FilterablePropertyValue] = {}
+    property_filter: dict[str, PropertyValue | None] = {}
     for comp in comparisons:
         if comp.op != "=":
-            op_name = "IN" if comp.op == "in" else comp.op
             raise TypeError(
-                f"Legacy property filters only support '=' comparisons, not {op_name}",
+                f"Legacy property filters only support '=' comparisons, not {comp.op}",
             )
-        value = comp.value
-        if isinstance(value, list):
-            raise TypeError(
-                "Legacy property filters do not support 'IN' values",
-            )
-        property_filter[comp.field] = value
+        property_filter[comp.field] = comp.value
     return property_filter
 
 

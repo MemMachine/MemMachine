@@ -63,6 +63,7 @@ from memmachine.common.api.spec import (
     SemanticSetTypeEntry,
     UpdateFeatureSpec,
 )
+from memmachine.common.data_types import PropertyValue
 
 if TYPE_CHECKING:
     from .client import MemMachineClient
@@ -88,9 +89,9 @@ class Memory:
         # Or create a new project
         # project = client.create_project(org_id="my_org", project_id="my_project")
 
-        # Create memory from project with metadata
+        # Create memory from project with properties
         memory = project.memory(
-            metadata={
+            properties={
                 "user_id": "user123",
                 "agent_id": "my_agent",
                 "group_id": "my_group",
@@ -99,8 +100,8 @@ class Memory:
         )
 
         # Add a memory (role defaults to "user")
-        # Instance metadata is merged with additional metadata
-        memory.add("I like pizza", metadata={"type": "preference"})
+        # Instance properties are merged with additional properties
+        memory.add("I like pizza", properties={"type": "preference"})
 
         # Add assistant response
         memory.add("I understand you like pizza", role="assistant")
@@ -108,7 +109,7 @@ class Memory:
         # Add system message
         memory.add("System initialized", role="system")
 
-        # Search memories (filters based on metadata are automatically applied)
+        # Search memories (filters based on properties are automatically applied)
         results = memory.search("What do I like to eat?")
         ```
 
@@ -119,7 +120,7 @@ class Memory:
         client: MemMachineClient,
         org_id: str,
         project_id: str,
-        metadata: dict[str, str] | None = None,
+        properties: dict[str, PropertyValue] | None = None,
         **kwargs: dict[str, Any],
     ) -> None:
         """
@@ -129,9 +130,10 @@ class Memory:
             client: MemMachineClient instance
             org_id: Organization identifier (required for v2 API)
             project_id: Project identifier (required for v2 API)
-            metadata: Metadata dictionary that will be merged with metadata
+            properties: Properties dictionary that will be merged with properties
                      in add() and search() operations. Common keys include:
                      user_id, agent_id, group_id, session_id, etc.
+                     Values must be bool, int, float, str, or datetime.
             **kwargs: Additional configuration options
 
         """
@@ -148,8 +150,8 @@ class Memory:
         self.__org_id = org_id
         self.__project_id = project_id
 
-        # Store metadata dictionary
-        self.__metadata = metadata.copy() if metadata else {}
+        # Store properties dictionary
+        self.__properties = properties.copy() if properties else {}
 
     @property
     def org_id(self) -> str:
@@ -174,37 +176,37 @@ class Memory:
         return self.__project_id
 
     @property
-    def metadata(self) -> dict[str, str]:
+    def properties(self) -> dict[str, PropertyValue]:
         """
-        Get the metadata dictionary (read-only).
+        Get the properties dictionary (read-only).
 
         Returns:
-            Metadata dictionary
+            Properties dictionary
 
         """
-        return self.__metadata.copy()
+        return self.__properties.copy()
 
-    def _build_metadata(
-        self, additional_metadata: dict[str, str] | None = None
-    ) -> dict[str, str]:
+    def _build_properties(
+        self, additional_properties: dict[str, PropertyValue] | None = None
+    ) -> dict[str, PropertyValue]:
         """
-        Build metadata dictionary by merging instance metadata with additional metadata.
+        Build properties dictionary by merging instance properties with additional properties.
 
         Args:
-            additional_metadata: Additional metadata to merge (takes precedence)
+            additional_properties: Additional properties to merge (takes precedence)
 
         Returns:
-            Dictionary with merged metadata (additional_metadata overrides instance metadata)
+            Dictionary with merged properties (additional_properties overrides instance properties)
 
         """
-        # Start with instance metadata
-        merged_metadata = self.__metadata.copy()
+        # Start with instance properties
+        merged_properties = self.__properties.copy()
 
-        # Merge additional metadata (additional_metadata takes precedence)
-        if additional_metadata:
-            merged_metadata.update(additional_metadata)
+        # Merge additional properties (additional_properties takes precedence)
+        if additional_properties:
+            merged_properties.update(additional_properties)
 
-        return merged_metadata
+        return merged_properties
 
     def _validate_role(self, role: str) -> None:
         """Validate the role provided."""
@@ -223,20 +225,20 @@ class Memory:
         producer: str | None,
         produced_for: str | None,
         episode_type: EpisodeType | None,
-        metadata: dict[str, str] | None,
+        properties: dict[str, PropertyValue] | None,
         timestamp: datetime | None,
     ) -> MemoryMessage:
         """Build a MemoryMessage object from parameters."""
-        # Build metadata including old context fields and episode_type
-        combined_metadata = self._build_metadata(metadata)
+        # Build properties including old context fields and episode_type
+        combined_properties = self._build_properties(properties)
         if episode_type is not None:
-            combined_metadata["episode_type"] = episode_type.value
+            combined_properties["episode_type"] = episode_type.value
 
         # Use shared API Pydantic models
         message = MemoryMessage(  # type: ignore[call-arg,arg-type]
             content=content,
             role=role,
-            metadata=combined_metadata,
+            properties=combined_properties,
         )
 
         # Only set fields if explicitly provided (let server defaults work for None)
@@ -259,7 +261,7 @@ class Memory:
         produced_for: str | None = None,
         episode_type: EpisodeType | None = None,
         memory_types: builtins.list[MemoryType] | None = None,
-        metadata: dict[str, str] | None = None,
+        properties: dict[str, PropertyValue] | None = None,
         timestamp: datetime | None = None,
         timeout: int | None = None,
     ) -> builtins.list[AddMemoryResult]:
@@ -273,7 +275,7 @@ class Memory:
             produced_for: Who this content is for (default: "" if not provided)
             episode_type: Type of episode (default: None, server will use "message")
             memory_types: List of MemoryType to store this memory under (default: both episodic and semantic)
-            metadata: Additional metadata for the episode
+            properties: Additional properties for the episode
             timestamp: Optional timestamp for the memory. If not provided, server will use current UTC time.
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -296,25 +298,25 @@ class Memory:
 
         # Log the request details for debugging
         logger.debug(
-            ("Adding memory: org_id=%s, project_id=%s, producer=%s, metadata=%s"),
+            ("Adding memory: org_id=%s, project_id=%s, producer=%s, properties=%s"),
             self.__org_id,
             self.__project_id,
             producer,
-            self.__metadata,
+            self.__properties,
         )
 
         try:
             # Validate role
             self._validate_role(role)
 
-            # Build metadata including old context fields and episode_type
+            # Build properties including old context fields and episode_type
             message = self._build_memory_message(
                 content=content,
                 role=role,
                 producer=producer,
                 produced_for=produced_for,
                 episode_type=episode_type,
-                metadata=metadata,
+                properties=properties,
                 timestamp=timestamp,
             )
 
@@ -372,7 +374,7 @@ class Memory:
         Search for memories.
 
         This method automatically applies built-in filters based on the Memory instance's
-        metadata via `get_default_filter_dict()`. These built-in filters are merged with any
+        properties via `get_default_filter_dict()`. These built-in filters are merged with any
         user-provided `filter_dict`, with user-provided filters taking precedence if there
         are key conflicts.
 
@@ -383,7 +385,7 @@ class Memory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
             filter_dict: Additional filters for the search (key-value pairs as strings).
-                        These filters will be merged with built-in filters from metadata.
+                        These filters will be merged with built-in filters from properties.
                         User-provided filters take precedence over built-in filters
                         if there are key conflicts.
             timeout: Request timeout in seconds (uses client default if not provided)
@@ -399,7 +401,7 @@ class Memory:
         if self._client_closed:
             raise RuntimeError("Cannot search memories: client has been closed")
 
-        # Get built-in filters from metadata
+        # Get built-in filters from properties
         built_in_filters = self.get_default_filter_dict()
 
         # Merge built-in filters with user-provided filters
@@ -521,22 +523,22 @@ class Memory:
         Get the current memory context.
 
         Returns:
-            Dictionary containing the context information (org_id, project_id, and metadata).
-            The metadata field is a dict[str, str].
+            Dictionary containing the context information (org_id, project_id, and properties).
+            The properties field is a dict[str, str].
 
         """
         return {
             "org_id": self.__org_id,
             "project_id": self.__project_id,
-            "metadata": self.__metadata.copy(),  # dict[str, str]
+            "properties": self.__properties.copy(),  # dict[str, str]
         }
 
-    def get_current_metadata(self) -> dict[str, Any]:
+    def get_current_properties(self) -> dict[str, Any]:
         """
-        Get current Memory instance metadata and built-in filters for logging/debugging.
+        Get current Memory instance properties and built-in filters for logging/debugging.
 
         This method returns a dictionary containing:
-        - Context information (org_id, project_id, metadata)
+        - Context information (org_id, project_id, properties)
         - Built-in filter dictionary (from get_default_filter_dict())
         - Built-in filter string (SQL-like format)
 
@@ -545,8 +547,8 @@ class Memory:
 
         Returns:
             Dictionary containing:
-            - "context": Context information (org_id, project_id, metadata)
-            - "built_in_filters": Built-in filter dictionary (metadata.* keys)
+            - "context": Context information (org_id, project_id, properties)
+            - "built_in_filters": Built-in filter dictionary (properties.* keys)
             - "built_in_filter_string": Built-in filter string in SQL-like format
 
         """
@@ -852,30 +854,30 @@ class Memory:
 
     def get_default_filter_dict(self) -> dict[str, str]:
         """
-        Get default filter_dict based on Memory metadata.
+        Get default filter_dict based on Memory properties.
 
-        This method returns a dictionary with metadata filters for the current Memory
-        instance's metadata. These filters are automatically applied in the `search()` method
+        This method returns a dictionary with property filters for the current Memory
+        instance's properties. These filters are automatically applied in the `search()` method
         and merged with any user-provided filters.
 
         Note: You don't need to manually merge this with your filter_dict when calling
         search() - it's done automatically. This method is mainly useful for:
-        - Debugging/logging (see `get_current_metadata()`)
+        - Debugging/logging (see `get_current_properties()`)
         - Understanding what filters are being applied
         - Manual filter construction if needed
 
         Only includes fields that are strings (for filter compatibility).
 
         Returns:
-            Dictionary with metadata filters (keys prefixed with "metadata.")
+            Dictionary with property filters (keys prefixed with "properties.")
 
         """
         default_filter: dict[str, str] = {}
 
-        # Convert metadata values to filter format (only string values)
-        for key, value in self.__metadata.items():
+        # Convert property values to filter format (only string values)
+        for key, value in self.__properties.items():
             if isinstance(value, str):
-                default_filter[f"metadata.{key}"] = value
+                default_filter[f"properties.{key}"] = value
 
         return default_filter
 
@@ -893,7 +895,7 @@ class Memory:
             TypeError: If any value in filter_dict is not a string
 
         Examples:
-            {"metadata.user_id": "test"} -> "metadata.user_id='test'"
+            {"properties.user_id": "test"} -> "properties.user_id='test'"
             {"category": "work", "type": "preference"} -> "category='work' AND type='preference'"
             {"name": "O'Brien"} -> "name='O''Brien'"  # Single quotes are escaped
 
@@ -1811,5 +1813,5 @@ class Memory:
         return (
             f"Memory(org_id='{self.org_id}', "
             f"project_id='{self.project_id}', "
-            f"metadata={self.__metadata})"
+            f"properties={self.__properties})"
         )

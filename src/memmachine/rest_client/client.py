@@ -62,7 +62,7 @@ class MemMachineClient:
 
         # Create a memory instance from project
         memory = project.memory(
-            metadata={
+            properties={
                 "user_id": "user123",
                 "agent_id": "my_agent",
                 "group_id": "my_group",

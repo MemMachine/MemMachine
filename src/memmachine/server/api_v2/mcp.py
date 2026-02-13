@@ -201,7 +201,7 @@ class Params(BaseModel):
                     produced_for="unknown",
                     timestamp=datetime.now().astimezone(),
                     role="user",
-                    metadata={
+                    properties={
                         "user_id": self.user_id,
                     },
                     episode_type=None,

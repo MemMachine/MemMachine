@@ -5,7 +5,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import InstanceOf
@@ -13,13 +13,24 @@ from pydantic import InstanceOf
 from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.errors import InvalidArgumentError
 from memmachine.common.filter.filter_parser import (
+    USER_PROPERTY_STORAGE_PREFIX,
+    FilterExpr,
+    normalize_filter_field,
+)
+from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
 from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
 from memmachine.common.filter.filter_parser import (
-    FilterExpr,
+    In as FilterIn,
+)
+from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine.common.filter.filter_parser import (
+    Not as FilterNot,
 )
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
@@ -604,97 +615,60 @@ class InMemorySemanticStorage(SemanticStorage):
         entry: _FeatureEntry,
         expr: FilterExpr,
     ) -> bool:
+        if isinstance(expr, FilterIsNull):
+            value, _ = self._resolve_entry_field(entry, expr.field)
+            return value is None
+        if isinstance(expr, FilterIn):
+            value, _ = self._resolve_entry_field(entry, expr.field)
+            return value in expr.values
         if isinstance(expr, FilterComparison):
             return self._evaluate_comparison(entry, expr)
         if isinstance(expr, FilterAnd):
             return self._evaluate_filter_expr(
                 entry, expr.left
-            ) and self._evaluate_filter_expr(
-                entry,
-                expr.right,
-            )
+            ) and self._evaluate_filter_expr(entry, expr.right)
         if isinstance(expr, FilterOr):
             return self._evaluate_filter_expr(
                 entry, expr.left
-            ) or self._evaluate_filter_expr(
-                entry,
-                expr.right,
-            )
+            ) or self._evaluate_filter_expr(entry, expr.right)
+        if isinstance(expr, FilterNot):
+            return not self._evaluate_filter_expr(entry, expr.expr)
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+    _COMPARE_OPS: ClassVar[dict[str, Callable[[Any, Any], bool]]] = {
+        "=": lambda lhs, rhs: lhs == rhs,
+        "!=": lambda lhs, rhs: lhs != rhs,
+        ">": lambda lhs, rhs: lhs > rhs,
+        "<": lambda lhs, rhs: lhs < rhs,
+        ">=": lambda lhs, rhs: lhs >= rhs,
+        "<=": lambda lhs, rhs: lhs <= rhs,
+    }
 
     def _evaluate_comparison(
         self,
         entry: _FeatureEntry,
         comparison: FilterComparison,
     ) -> bool:
-        value, is_metadata = self._resolve_entry_field(entry, comparison.field)
-        match comparison.op:
-            case "=":
-                return self._compare_equals(value, comparison.value, is_metadata)
-            case "in":
-                return self._compare_in(value, comparison.value, is_metadata)
-            case ">" | "<" | ">=" | "<=":
-                return self._compare_order(
-                    value,
-                    comparison.value,
-                    is_metadata,
-                    comparison.op,
-                )
-            case "is_null":
-                return value is None
-            case "is_not_null":
-                return value is not None
-            case _:
-                raise ValueError(f"Unsupported operator: {comparison.op}")
-
-    def _compare_equals(self, value: Any, expected: Any, is_metadata: bool) -> bool:
-        if isinstance(expected, list):
-            raise TypeError("'=' comparison cannot accept list values")
-        if is_metadata and expected is not None:
-            expected = self._normalize_metadata_value(expected)
-        if is_metadata and value is not None:
-            value = self._normalize_metadata_value(value)
-        return value == expected
-
-    def _compare_in(self, value: Any, candidates: Any, is_metadata: bool) -> bool:
-        if not isinstance(candidates, list):
-            raise TypeError("IN comparison requires a list of values")
-        if is_metadata:
-            candidates = [
-                self._normalize_metadata_value(v) if v is not None else None
-                for v in candidates
-            ]
-            if value is not None:
-                value = self._normalize_metadata_value(value)
-        return value in candidates
-
-    def _compare_order(
-        self,
-        value: Any,
-        expected: Any,
-        is_metadata: bool,
-        op: str,
-    ) -> bool:
-        if isinstance(expected, list):
-            raise TypeError(f"'{op}' comparison cannot accept list values")
-        if value is None:
+        value, _ = self._resolve_entry_field(entry, comparison.field)
+        expected: Any = comparison.value
+        if comparison.op != "=" and value is None:
             return False
-        if is_metadata:
-            expected = self._normalize_metadata_value(expected)
-            value = self._normalize_metadata_value(value)
-        operations: dict[str, Callable[[Any, Any], bool]] = {
-            ">": lambda lhs, rhs: lhs > rhs,
-            "<": lambda lhs, rhs: lhs < rhs,
-            ">=": lambda lhs, rhs: lhs >= rhs,
-            "<=": lambda lhs, rhs: lhs <= rhs,
-        }
-        return operations[op](value, expected)
+        op_fn = self._COMPARE_OPS.get(comparison.op)
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {comparison.op}")
+        return op_fn(value, expected)
 
     def _resolve_entry_field(
         self,
         entry: _FeatureEntry,
         field: str,
     ) -> tuple[Any, bool]:
+        internal_name, is_user_metadata = normalize_filter_field(field)
+        if is_user_metadata:
+            key = internal_name[len(USER_PROPERTY_STORAGE_PREFIX) :]
+            metadata = entry.metadata or {}
+            return metadata.get(key), True
+
         field_mapping: dict[str, Any] = {
             "set_id": entry.set_id,
             "set": entry.set_id,
@@ -709,23 +683,10 @@ class InMemorySemanticStorage(SemanticStorage):
             "created_at": entry.created_at,
             "updated_at": entry.updated_at,
         }
-        if field in field_mapping:
-            return field_mapping[field], False
-
-        if field.startswith(("m.", "metadata.")):
-            key = field.split(".", 1)[1]
-            metadata = entry.metadata or {}
-            return metadata.get(key), True
+        if internal_name in field_mapping:
+            return field_mapping[internal_name], False
 
         return None, False
-
-    @staticmethod
-    def _normalize_metadata_value(value: Any) -> str:
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if value is None:
-            return ""
-        return str(value)
 
     def _apply_vector_filter(
         self,

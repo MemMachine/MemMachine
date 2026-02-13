@@ -8,6 +8,7 @@ to enable AI agents with persistent memory capabilities.
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from memmachine.common.data_types import PropertyValue
 from memmachine.rest_client.client import MemMachineClient
 
 if TYPE_CHECKING:
@@ -40,10 +41,10 @@ class MemMachineTools:
             base_url: Base URL for MemMachine server
             org_id: Organization ID for v2 API (required)
             project_id: Project ID for v2 API (required)
-            group_id: Optional group ID (stored in metadata)
-            agent_id: Optional agent ID (stored in metadata)
-            user_id: Optional user ID (stored in metadata)
-            session_id: Optional session ID (stored in metadata)
+            group_id: Optional group ID (stored in properties)
+            agent_id: Optional agent ID (stored in properties)
+            user_id: Optional user ID (stored in properties)
+            session_id: Optional session ID (stored in properties)
 
         """
         self.client = client or MemMachineClient(base_url=base_url)
@@ -54,15 +55,15 @@ class MemMachineTools:
         self.user_id = user_id
         self.session_id = session_id
 
-    def _build_metadata(
+    def _build_properties(
         self,
         group_id: str | None = None,
         agent_id: str | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, PropertyValue]:
         """
-        Build metadata dict from context fields, using overrides or instance defaults.
+        Build properties dict from context fields, using overrides or instance defaults.
 
         Args:
             group_id: Group ID override
@@ -71,25 +72,25 @@ class MemMachineTools:
             session_id: Session ID override
 
         Returns:
-            Metadata dictionary with non-None values
+            Properties dictionary with non-None values
 
         """
-        metadata: dict[str, str] = {}
+        properties = {}
         resolved_group_id = group_id or self.group_id
         resolved_agent_id = agent_id or self.agent_id
         resolved_user_id = user_id or self.user_id
         resolved_session_id = session_id or self.session_id
 
         if resolved_group_id:
-            metadata["group_id"] = resolved_group_id
+            properties["group_id"] = resolved_group_id
         if resolved_agent_id:
-            metadata["agent_id"] = resolved_agent_id
+            properties["agent_id"] = resolved_agent_id
         if resolved_user_id:
-            metadata["user_id"] = resolved_user_id
+            properties["user_id"] = resolved_user_id
         if resolved_session_id:
-            metadata["session_id"] = resolved_session_id
+            properties["session_id"] = resolved_session_id
 
-        return metadata
+        return properties
 
     def get_memory(
         self,
@@ -106,10 +107,10 @@ class MemMachineTools:
         Args:
             org_id: Organization ID (overrides default)
             project_id: Project ID (overrides default)
-            user_id: User ID (overrides default, stored in metadata)
-            agent_id: Agent ID (overrides default, stored in metadata)
-            group_id: Group ID (overrides default, stored in metadata)
-            session_id: Session ID (overrides default, stored in metadata)
+            user_id: User ID (overrides default, stored in properties)
+            agent_id: Agent ID (overrides default, stored in properties)
+            group_id: Group ID (overrides default, stored in properties)
+            session_id: Session ID (overrides default, stored in properties)
 
         Returns:
             Memory instance
@@ -121,14 +122,14 @@ class MemMachineTools:
             project_id=project_id or self.project_id,
         )
 
-        metadata = self._build_metadata(
+        properties = self._build_properties(
             group_id=group_id,
             agent_id=agent_id,
             user_id=user_id,
             session_id=session_id,
         )
 
-        return project.memory(metadata=metadata)
+        return project.memory(properties=properties)
 
     def add_memory(
         self,
@@ -140,7 +141,7 @@ class MemMachineTools:
         agent_id: str | None = None,
         group_id: str | None = None,
         session_id: str | None = None,
-        metadata: dict[str, str] | None = None,
+        properties: dict[str, PropertyValue] | None = None,
     ) -> dict[str, Any]:
         """
         Add a memory to MemMachine.
@@ -154,11 +155,11 @@ class MemMachineTools:
             role: Message role - "user", "assistant", or "system" (default: "user")
             org_id: Organization ID (overrides default)
             project_id: Project ID (overrides default)
-            user_id: User ID (overrides default, stored in metadata)
-            agent_id: Agent ID (overrides default, stored in metadata)
-            group_id: Group ID (overrides default, stored in metadata)
-            session_id: Session ID (overrides default, stored in metadata)
-            metadata: Additional metadata for the episode
+            user_id: User ID (overrides default, stored in properties)
+            agent_id: Agent ID (overrides default, stored in properties)
+            group_id: Group ID (overrides default, stored in properties)
+            session_id: Session ID (overrides default, stored in properties)
+            properties: Additional properties for the episode (values must be bool, int, float, str, or datetime)
 
         Returns:
             Dictionary with success status and message
@@ -171,7 +172,7 @@ class MemMachineTools:
             results = memory.add(
                 content=content,
                 role=role,
-                metadata=metadata or {},
+                properties=properties or {},
             )
             if results:
                 return {
@@ -217,10 +218,10 @@ class MemMachineTools:
             query: Search query string
             org_id: Organization ID (overrides default)
             project_id: Project ID (overrides default)
-            user_id: User ID (overrides default, stored in metadata)
-            agent_id: Agent ID (overrides default, stored in metadata)
-            group_id: Group ID (overrides default, stored in metadata)
-            session_id: Session ID (overrides default, stored in metadata)
+            user_id: User ID (overrides default, stored in properties)
+            agent_id: Agent ID (overrides default, stored in properties)
+            group_id: Group ID (overrides default, stored in properties)
+            session_id: Session ID (overrides default, stored in properties)
             limit: Maximum number of results to return (default: 20)
             score_threshold: Minimum score to include in results
             filter_dict: Additional filters for the search
@@ -371,7 +372,7 @@ def create_add_memory_tool(
     def add_memory_tool(
         content: str,
         user_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        properties: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Tool to add a memory to MemMachine.
@@ -379,7 +380,7 @@ def create_add_memory_tool(
         Args:
             content: The content to store in memory
             user_id: Optional user ID override
-            metadata: Optional metadata for the memory
+            properties: Optional properties for the memory
 
         Returns:
             Result dictionary with status and message
@@ -388,7 +389,7 @@ def create_add_memory_tool(
         return tools.add_memory(
             content=content,
             user_id=user_id,
-            metadata=metadata,
+            properties=properties,
         )
 
     return add_memory_tool

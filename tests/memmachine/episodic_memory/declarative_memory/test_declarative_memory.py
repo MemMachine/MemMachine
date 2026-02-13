@@ -12,6 +12,9 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
@@ -150,8 +153,7 @@ async def test_add_episodes(declarative_memory):
             source="Alice",
             content_type=ContentType.MESSAGE,
             content="This test is broken. Who wrote this test?",
-            filterable_properties={"project": "memmachine", "length": "short"},
-            user_metadata={"some_key": "some_value"},
+            properties={"project": "memmachine", "length": "short"},
         ),
         Episode(
             uid="episode2",
@@ -159,7 +161,6 @@ async def test_add_episodes(declarative_memory):
             source="Bob",
             content_type=ContentType.MESSAGE,
             content=("Edwin Yu: https://github.com/edwinyyyu\n"),
-            user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
             uid="episode3",
@@ -167,7 +168,7 @@ async def test_add_episodes(declarative_memory):
             source="textbook",
             content_type=ContentType.TEXT,
             content="The mitochondria is the powerhouse of the cell.",
-            filterable_properties={"project": "other", "length": "short"},
+            properties={"project": "other", "length": "short"},
         ),
         Episode(
             uid="episode4",
@@ -199,7 +200,7 @@ async def test_search(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -214,7 +215,7 @@ async def test_search(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -225,8 +226,7 @@ async def test_search(declarative_memory):
             source="Alice",
             content_type=ContentType.MESSAGE,
             content="This test is broken. Who wrote this test?",
-            filterable_properties={"project": "memmachine", "length": "short"},
-            user_metadata={"some_key": "some_value"},
+            properties={"project": "memmachine", "length": "short"},
         ),
         Episode(
             uid="episode2",
@@ -234,8 +234,7 @@ async def test_search(declarative_memory):
             source="Bob",
             content_type=ContentType.MESSAGE,
             content="Charlie.",
-            filterable_properties={"project": "other", "length": "short"},
-            user_metadata={"some_other_key": "some_other_value"},
+            properties={"project": "other", "length": "short"},
         ),
         Episode(
             uid="episode3",
@@ -257,7 +256,7 @@ async def test_search(declarative_memory):
             source="Charlie",
             content_type=ContentType.MESSAGE,
             content="Edwin Yu: https://github.com/edwinyyyu\n",
-            filterable_properties={"project": "memmachine"},
+            properties={"project": "memmachine"},
         ),
         Episode(
             uid="episode6",
@@ -265,7 +264,7 @@ async def test_search(declarative_memory):
             source="Edwin",
             content_type=ContentType.MESSAGE,
             content="I wrote this test.",
-            filterable_properties={"project": "memmachine", "length": "short"},
+            properties={"project": "memmachine", "length": "short"},
         ),
     ]
     episodes += [
@@ -279,7 +278,7 @@ async def test_search(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -294,7 +293,7 @@ async def test_search(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -380,7 +379,7 @@ async def test_get_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -395,7 +394,7 @@ async def test_get_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -406,8 +405,7 @@ async def test_get_episodes(declarative_memory):
             source="Alice",
             content_type=ContentType.MESSAGE,
             content="This test is broken. Who wrote this test?",
-            filterable_properties={"project": "memmachine", "length": "short"},
-            user_metadata={"some_key": "some_value"},
+            properties={"project": "memmachine", "length": "short"},
         ),
         Episode(
             uid="episode2",
@@ -415,8 +413,7 @@ async def test_get_episodes(declarative_memory):
             source="Bob",
             content_type=ContentType.MESSAGE,
             content="Charlie.",
-            filterable_properties={"project": "other", "length": "short"},
-            user_metadata={"some_other_key": "some_other_value"},
+            properties={"project": "other", "length": "short"},
         ),
         Episode(
             uid="episode3",
@@ -438,7 +435,7 @@ async def test_get_episodes(declarative_memory):
             source="Charlie",
             content_type=ContentType.MESSAGE,
             content="Edwin Yu: https://github.com/edwinyyyu\n",
-            filterable_properties={"project": "memmachine"},
+            properties={"project": "memmachine"},
         ),
     ]
     episodes += special_episodes
@@ -453,7 +450,7 @@ async def test_get_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -468,7 +465,7 @@ async def test_get_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -505,7 +502,7 @@ async def test_get_matching_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -520,7 +517,7 @@ async def test_get_matching_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -531,8 +528,7 @@ async def test_get_matching_episodes(declarative_memory):
             source="Alice",
             content_type=ContentType.MESSAGE,
             content="This test is broken. Who wrote this test?",
-            filterable_properties={"project": "memmachine", "length": "short"},
-            user_metadata={"some_key": "some_value"},
+            properties={"project": "memmachine", "length": "short"},
         ),
         Episode(
             uid="episode2",
@@ -540,8 +536,7 @@ async def test_get_matching_episodes(declarative_memory):
             source="Bob",
             content_type=ContentType.MESSAGE,
             content="Charlie.",
-            filterable_properties={"project": "other", "length": "short"},
-            user_metadata={"some_other_key": "some_other_value"},
+            properties={"project": "other", "length": "short"},
         ),
         Episode(
             uid="episode3",
@@ -563,7 +558,7 @@ async def test_get_matching_episodes(declarative_memory):
             source="Charlie",
             content_type=ContentType.MESSAGE,
             content="Edwin Yu: https://github.com/edwinyyyu\n",
-            filterable_properties={"project": "memmachine"},
+            properties={"project": "memmachine"},
         ),
     ]
     episodes += [
@@ -577,7 +572,7 @@ async def test_get_matching_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -592,7 +587,7 @@ async def test_get_matching_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -615,10 +610,8 @@ async def test_get_matching_episodes(declarative_memory):
                 op="=",
                 value="memmachine",
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="length",
-                op="is_null",
-                value=None,
             ),
         ),
     )
@@ -668,7 +661,7 @@ async def test_delete_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -683,7 +676,7 @@ async def test_delete_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -694,8 +687,7 @@ async def test_delete_episodes(declarative_memory):
             source="Alice",
             content_type=ContentType.MESSAGE,
             content="This test is broken. Who wrote this test?",
-            filterable_properties={"project": "memmachine", "length": "short"},
-            user_metadata={"some_key": "some_value"},
+            properties={"project": "memmachine", "length": "short"},
         ),
         Episode(
             uid="episode2",
@@ -703,8 +695,7 @@ async def test_delete_episodes(declarative_memory):
             source="Bob",
             content_type=ContentType.MESSAGE,
             content="Charlie.",
-            filterable_properties={"project": "other", "length": "short"},
-            user_metadata={"some_other_key": "some_other_value"},
+            properties={"project": "other", "length": "short"},
         ),
         Episode(
             uid="episode3",
@@ -726,7 +717,7 @@ async def test_delete_episodes(declarative_memory):
             source="Charlie",
             content_type=ContentType.MESSAGE,
             content="Edwin Yu: https://github.com/edwinyyyu\n",
-            filterable_properties={"project": "memmachine"},
+            properties={"project": "memmachine"},
         ),
     ]
     episodes += special_episodes
@@ -741,7 +732,7 @@ async def test_delete_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "testing", "length": "medium"},
+            properties={"project": "testing", "length": "medium"},
         )
         for i in range(1, 11)
     ]
@@ -756,7 +747,7 @@ async def test_delete_episodes(declarative_memory):
             + str(uuid4())
             + str(uuid4())
             + str(uuid4()),
-            filterable_properties={"project": "memmachine", "length": "medium"},
+            properties={"project": "memmachine", "length": "medium"},
         )
         for i in range(1, 11)
     ]

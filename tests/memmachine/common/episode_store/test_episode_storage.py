@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from pydantic import JsonValue
 
 from memmachine.common.episode_store import (
     EpisodeEntry,
@@ -31,7 +30,7 @@ async def create_history_entry(
     producer_id: str | None = None,
     producer_role: str | None = None,
     produced_for_id: str | None = None,
-    metadata: dict[str, JsonValue] | None = None,
+    properties: dict[str, str] | None = None,
     created_at: datetime | None = None,
     episode_type: EpisodeType | None = None,
 ) -> EpisodeIdT:
@@ -46,7 +45,7 @@ async def create_history_entry(
                 content=content,
                 episode_type=episode_type,
                 produced_for_id=produced_for_id,
-                metadata=metadata,
+                properties=properties,
                 created_at=created_at,
                 **params,
             ),
@@ -66,7 +65,7 @@ async def timestamped_history(episode_storage: EpisodeStorage):
     history_id = await create_history_entry(
         episode_storage,
         content="first",
-        metadata={"source": "chat"},
+        properties={"source": "chat"},
         created_at=created_at,
     )
 
@@ -83,7 +82,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
     history_id = await create_history_entry(
         episode_storage,
         content="hello",
-        metadata={"role": "user"},
+        properties={"role": "user"},
         session_key="chat-session",
         producer_id="user-123",
         producer_role="assistant",
@@ -96,7 +95,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
     history = await episode_storage.get_episode(history_id)
     assert history is not None
     assert history.uid == history_id
-    assert history.metadata == {"role": "user"}
+    assert history.properties == {"role": "user"}
     assert history.content == "hello"
     assert history.session_key == "chat-session"
     assert history.producer_id == "user-123"
@@ -116,7 +115,7 @@ async def test_add_multiple_episodes_returns_models(
             producer_id="p-1",
             producer_role="role-1",
             produced_for_id="consumer-1",
-            metadata={"key": "value"},
+            properties={"key": "value"},
             created_at=created_at,
         ),
         EpisodeEntry(
@@ -133,7 +132,7 @@ async def test_add_multiple_episodes_returns_models(
         assert [e.content for e in episodes] == ["first", "second"]
         assert all(e.session_key == "batch-session" for e in episodes)
         assert episodes[0].created_at == created_at
-        assert episodes[0].metadata == {"key": "value"}
+        assert episodes[0].properties == {"key": "value"}
         assert episodes[0].produced_for_id == "consumer-1"
         assert episodes[1].episode_type == EpisodeType.MESSAGE
     finally:
@@ -264,16 +263,16 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
     first = await create_history_entry(
         episode_storage,
         content="alpha",
-        metadata={"scope": "a"},
+        properties={"scope": "a"},
     )
     second = await create_history_entry(
         episode_storage,
         content="beta",
-        metadata={"scope": "b"},
+        properties={"scope": "b"},
     )
 
     results = await episode_storage.get_episode_messages(
-        filter_expr=_filter("metadata.scope = 'b'"),
+        filter_expr=_filter("properties.scope = 'b'"),
     )
     assert [entry.uid for entry in results] == [second]
 
@@ -377,20 +376,20 @@ async def test_history_time_window_workflow(episode_storage: EpisodeStorage):
     first = await create_history_entry(
         episode_storage,
         content="first",
-        metadata={"rank": "low"},
+        properties={"rank": "low"},
     )
     await asyncio.sleep(0)
     second = await create_history_entry(
         episode_storage,
         content="second",
-        metadata={"rank": "mid"},
+        properties={"rank": "mid"},
     )
     cutoff = datetime.now(UTC)
     await asyncio.sleep(1)
     third = await create_history_entry(
         episode_storage,
         content="third",
-        metadata={"rank": "high"},
+        properties={"rank": "high"},
     )
 
     before_third = await episode_storage.get_episode_messages(end_time=cutoff)

@@ -162,7 +162,7 @@ class TestHistoryMessage:
         assert msg.content == "Test message"
         assert msg.created_at == now
         assert msg.uid == "123"
-        assert msg.metadata is None
+        assert msg.properties is None
 
     def test_history_message_with_metadata(self):
         from datetime import datetime
@@ -172,7 +172,7 @@ class TestHistoryMessage:
             content="Test message",
             created_at=now,
             uid="123",
-            metadata={"source": "test", "priority": "high"},
+            properties={"source": "test", "priority": "high"},
             session_key="session_key",
             producer_id="profile_id",
             producer_role="user_role",
@@ -181,7 +181,7 @@ class TestHistoryMessage:
         assert msg.content == "Test message"
         assert msg.created_at == now
         assert msg.uid == "123"
-        assert msg.metadata == {"source": "test", "priority": "high"}
+        assert msg.properties == {"source": "test", "priority": "high"}
 
 
 class TestSemanticFeature:

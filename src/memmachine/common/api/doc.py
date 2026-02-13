@@ -89,7 +89,7 @@ class SpecDoc:
 
     EPISODE_TYPE = "The type of episode being stored (e.g., message)."
 
-    EPISODE_METADATA = "Optional metadata associated with the episode."
+    EPISODE_PROPERTIES = "Optional properties associated with the episode."
 
     EPISODE_CREATED_AT = "Timestamp when the episode was created."
 
@@ -103,7 +103,7 @@ class SpecDoc:
 
     EPISODE_CONTENT_TYPE = "Content type of the episode."
 
-    EPISODE_FILTERABLE_METADATA = "Metadata indexed for filtering."
+    EPISODE_FILTERABLE_PROPERTIES = "Properties indexed for filtering."
 
     SEMANTIC_SET_ID = "Identifier of the semantic set."
 
@@ -186,11 +186,11 @@ class SpecDoc:
     'system'). Optional; defaults to an empty string.
     """
 
-    MEMORY_METADATA = """
-    Additional metadata associated with the message, represented as key-value
+    MEMORY_PROPERTIES = """
+    Additional properties associated with the message, represented as key-value
     pairs. Optional; defaults to an empty object.
-    Retrieval operations may utilize this metadata for filtering.
-    Use 'metadata.{key}' to filter based on specific metadata keys.
+    Retrieval operations may utilize these properties for filtering.
+    Use 'properties.{key}' to filter based on specific property keys.
     """
 
     MEMORY_EPISODIC_TYPE = """
@@ -225,10 +225,10 @@ class SpecDoc:
     """
 
     FILTER_MEM = """
-    An optional string filter applied to the memory metadata. This uses a
-    simple query language (e.g., 'metadata.user_id=123') for exact matches.
-    Multiple conditions can be combined using AND operators.  The metadata
-    fields are prefixed with 'metadata.' to distinguish them from other fields.
+    An optional string filter applied to the memory properties. This uses a
+    simple query language (e.g., 'properties.user_id=123') for exact matches.
+    Multiple conditions can be combined using AND operators.  The properties
+    fields are prefixed with 'properties.' to distinguish them from other fields.
     """
 
     MEMORY_TYPES = """
@@ -602,7 +602,7 @@ class Examples:
         "What was the user's last conversation about finance?"
     ]
     FILTER_MEM: ClassVar[list[str]] = [
-        "metadata.user_id=123 AND metadata.session_id=abc",
+        "properties.user_id=123 AND properties.session_id=abc",
     ]
     MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
     MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
@@ -722,7 +722,7 @@ class RouterDoc:
     System returns the top K relevant memories matching the natural language query.
     The result is sorted by timestamp to help with context.
 
-    The filter field allows for filtering based on metadata key-value pairs.
+    The filter field allows for filtering based on property key-value pairs.
     The types field allows specifying which memory types to include in the search.
     """
 
@@ -732,7 +732,7 @@ class RouterDoc:
     System returns a paginated list of memories stored in the project.
     The page_size and page_num fields control pagination.
 
-    The filter field allows for filtering based on metadata key-value pairs.
+    The filter field allows for filtering based on property key-value pairs.
     The type field allows specifying which memory type to list.
     """
 

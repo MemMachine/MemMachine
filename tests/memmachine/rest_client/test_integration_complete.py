@@ -210,7 +210,7 @@ class TestMemMachineIntegration:
         )
 
         return project.memory(
-            metadata={
+            properties={
                 "group_id": unique_test_ids["group_id"],
                 "agent_id": unique_test_ids["agent_id"],
                 "user_id": unique_test_ids["user_id"],
@@ -223,7 +223,7 @@ class TestMemMachineIntegration:
         result = memory.add(
             content="I love pizza and Italian food",
             role="user",
-            metadata={"preference": "food", "category": "cuisine"},
+            properties={"preference": "food", "category": "cuisine"},
         )
 
         assert isinstance(result, list)
@@ -261,12 +261,12 @@ class TestMemMachineIntegration:
         assert isinstance(result[0], AddMemoryResult)
         assert hasattr(result[0], "uid")
 
-    def test_add_memory_with_metadata(self, memory):
-        """Test adding memory with custom metadata."""
+    def test_add_memory_with_properties(self, memory):
+        """Test adding memory with custom properties."""
         result = memory.add(
             content="User prefers morning meetings",
             role="user",
-            metadata={
+            properties={
                 "preference": "schedule",
                 "time": "morning",
                 "type": "meeting",
@@ -332,12 +332,12 @@ class TestMemMachineIntegration:
         memory.add(
             "I like coffee in the morning",
             role="user",
-            metadata={"category": "preference", "time": "morning"},
+            properties={"category": "preference", "time": "morning"},
         )
         memory.add(
             "I prefer tea in the afternoon",
             role="user",
-            metadata={"category": "preference", "time": "afternoon"},
+            properties={"category": "preference", "time": "afternoon"},
         )
 
         # Wait for indexing
@@ -367,15 +367,15 @@ class TestMemMachineIntegration:
             # Check all returned episodic memories match the filter
             for episode in filtered_episodes:
                 if isinstance(episode, dict):
-                    metadata = episode.get("metadata", {})
+                    metadata = episode.get("properties", {})
                     if metadata and "time" in metadata:
                         assert metadata["time"] == "morning", (
                             f"Found episode with time='{metadata.get('time')}' but filter requires 'morning'"
                         )
-                elif hasattr(episode, "metadata") and episode.metadata:
-                    if "time" in episode.metadata:
-                        assert episode.metadata["time"] == "morning", (
-                            f"Found episode with time='{episode.metadata.get('time')}' but filter requires 'morning'"
+                elif hasattr(episode, "properties") and episode.properties:
+                    if "time" in episode.properties:
+                        assert episode.properties["time"] == "morning", (
+                            f"Found episode with time='{episode.properties.get('time')}' but filter requires 'morning'"
                         )
 
             # Verify that we got fewer or equal results with filter
@@ -399,27 +399,27 @@ class TestMemMachineIntegration:
         # Get default filter dict
         default_filters = memory.get_default_filter_dict()
 
-        # Should contain metadata filters for all non-None context fields
+        # Should contain properties filters for all non-None context fields
         assert isinstance(default_filters, dict)
-        # Check if metadata fields exist and match
-        user_id = memory.metadata.get("user_id")
-        agent_id = memory.metadata.get("agent_id")
-        session_id = memory.metadata.get("session_id")
+        # Check if properties fields exist and match
+        user_id = memory.properties.get("user_id")
+        agent_id = memory.properties.get("agent_id")
+        session_id = memory.properties.get("session_id")
 
         if user_id:
-            assert "metadata.user_id" in default_filters
-            assert default_filters["metadata.user_id"] == user_id
+            assert "properties.user_id" in default_filters
+            assert default_filters["properties.user_id"] == user_id
         if agent_id:
-            assert "metadata.agent_id" in default_filters
-            assert default_filters["metadata.agent_id"] == agent_id
+            assert "properties.agent_id" in default_filters
+            assert default_filters["properties.agent_id"] == agent_id
         if session_id:
-            assert "metadata.session_id" in default_filters
-            assert default_filters["metadata.session_id"] == session_id
+            assert "properties.session_id" in default_filters
+            assert default_filters["properties.session_id"] == session_id
 
-    def test_get_current_metadata(self, memory):
-        """Test get_current_metadata method returns context, filters, and filter string."""
+    def test_get_current_properties(self, memory):
+        """Test get_current_properties returns context, filters, and filter string."""
         # Get current metadata
-        metadata = memory.get_current_metadata()
+        metadata = memory.get_current_properties()
 
         # Check structure
         assert "context" in metadata
@@ -430,40 +430,40 @@ class TestMemMachineIntegration:
         context = metadata["context"]
         assert context["org_id"] == memory._Memory__org_id
         assert context["project_id"] == memory._Memory__project_id
-        context_metadata = context["metadata"]
-        assert context_metadata.get("user_id") == memory.metadata.get("user_id")
-        assert context_metadata.get("agent_id") == memory.metadata.get("agent_id")
-        assert context_metadata.get("session_id") == memory.metadata.get("session_id")
+        context_metadata = context["properties"]
+        assert context_metadata.get("user_id") == memory.properties.get("user_id")
+        assert context_metadata.get("agent_id") == memory.properties.get("agent_id")
+        assert context_metadata.get("session_id") == memory.properties.get("session_id")
 
         # Check built-in filters
         filters = metadata["built_in_filters"]
         assert isinstance(filters, dict)
-        user_id = memory.metadata.get("user_id")
-        agent_id = memory.metadata.get("agent_id")
-        session_id = memory.metadata.get("session_id")
+        user_id = memory.properties.get("user_id")
+        agent_id = memory.properties.get("agent_id")
+        session_id = memory.properties.get("session_id")
 
         if user_id:
-            assert "metadata.user_id" in filters
-            assert filters["metadata.user_id"] == user_id
+            assert "properties.user_id" in filters
+            assert filters["properties.user_id"] == user_id
         if agent_id:
-            assert "metadata.agent_id" in filters
-            assert filters["metadata.agent_id"] == agent_id
+            assert "properties.agent_id" in filters
+            assert filters["properties.agent_id"] == agent_id
         if session_id:
-            assert "metadata.session_id" in filters
-            assert filters["metadata.session_id"] == session_id
+            assert "properties.session_id" in filters
+            assert filters["properties.session_id"] == session_id
 
         # Check filter string
         filter_str = metadata["built_in_filter_string"]
         assert isinstance(filter_str, str)
         if user_id:
-            assert "metadata.user_id" in filter_str
-            assert f"metadata.user_id='{user_id}'" in filter_str
+            assert "properties.user_id" in filter_str
+            assert f"properties.user_id='{user_id}'" in filter_str
         if agent_id:
-            assert "metadata.agent_id" in filter_str
-            assert f"metadata.agent_id='{agent_id}'" in filter_str
+            assert "properties.agent_id" in filter_str
+            assert f"properties.agent_id='{agent_id}'" in filter_str
         if session_id:
-            assert "metadata.session_id" in filter_str
-            assert f"metadata.session_id='{session_id}'" in filter_str
+            assert "properties.session_id" in filter_str
+            assert f"properties.session_id='{session_id}'" in filter_str
 
     def test_search_with_default_filter_dict(self, memory):
         """Test search automatically applies built-in filters and merges with custom filters."""
@@ -471,12 +471,12 @@ class TestMemMachineIntegration:
         memory.add(
             "I work as a software engineer",
             role="user",
-            metadata={"category": "profession"},
+            properties={"category": "profession"},
         )
         memory.add(
             "I enjoy reading books",
             role="user",
-            metadata={"category": "hobby"},
+            properties={"category": "hobby"},
         )
 
         # Wait for indexing
@@ -506,15 +506,15 @@ class TestMemMachineIntegration:
             # Check all returned episodic memories match the filter
             for episode in filtered_episodes:
                 if isinstance(episode, dict):
-                    metadata = episode.get("metadata", {})
+                    metadata = episode.get("properties", {})
                     if metadata and "category" in metadata:
                         assert metadata["category"] == "profession", (
                             f"Found episode with category='{metadata.get('category')}' but filter requires 'profession'"
                         )
-                elif hasattr(episode, "metadata") and episode.metadata:
-                    if "category" in episode.metadata:
-                        assert episode.metadata["category"] == "profession", (
-                            f"Found episode with category='{episode.metadata.get('category')}' but filter requires 'profession'"
+                elif hasattr(episode, "properties") and episode.properties:
+                    if "category" in episode.properties:
+                        assert episode.properties["category"] == "profession", (
+                            f"Found episode with category='{episode.properties.get('category')}' but filter requires 'profession'"
                         )
 
             # Verify that we got fewer or equal results with filter
@@ -534,17 +534,17 @@ class TestMemMachineIntegration:
             raise
 
     def _verify_episode_user_id(self, episode: Any, expected_user_id: str) -> None:
-        """Verify that an episode has the expected user_id in its metadata."""
+        """Verify that an episode has the expected user_id in its properties."""
         if isinstance(episode, dict):
-            metadata = episode.get("metadata", {})
+            metadata = episode.get("properties", {})
             if metadata and "user_id" in metadata:
                 assert metadata["user_id"] == expected_user_id, (
                     f"Found episode with user_id='{metadata.get('user_id')}' but filter requires '{expected_user_id}'"
                 )
-        elif hasattr(episode, "metadata") and episode.metadata:
-            if "user_id" in episode.metadata:
-                assert episode.metadata["user_id"] == expected_user_id, (
-                    f"Found episode with user_id='{episode.metadata.get('user_id')}' but filter requires '{expected_user_id}'"
+        elif hasattr(episode, "properties") and episode.properties:
+            if "user_id" in episode.properties:
+                assert episode.properties["user_id"] == expected_user_id, (
+                    f"Found episode with user_id='{episode.properties.get('user_id')}' but filter requires '{expected_user_id}'"
                 )
 
     def _verify_filtered_results(
@@ -575,7 +575,7 @@ class TestMemMachineIntegration:
 
         # Memory instance for user1
         memory_user1 = project.memory(
-            metadata={
+            properties={
                 "user_id": user1_id,
                 "agent_id": unique_test_ids["agent_id"],
                 "session_id": unique_test_ids["session_id"],
@@ -584,7 +584,7 @@ class TestMemMachineIntegration:
 
         # Memory instance for user2
         memory_user2 = project.memory(
-            metadata={
+            properties={
                 "user_id": user2_id,
                 "agent_id": unique_test_ids["agent_id"],
                 "session_id": unique_test_ids["session_id"],
@@ -595,24 +595,24 @@ class TestMemMachineIntegration:
         memory_user1.add(
             "I love Python programming",
             role="user",
-            metadata={"topic": "programming", "language": "Python"},
+            properties={"topic": "programming", "language": "Python"},
         )
         memory_user1.add(
             "I enjoy machine learning",
             role="user",
-            metadata={"topic": "AI", "interest": "high"},
+            properties={"topic": "AI", "interest": "high"},
         )
 
         # Add memories for user2
         memory_user2.add(
             "I prefer JavaScript for web development",
             role="user",
-            metadata={"topic": "programming", "language": "JavaScript"},
+            properties={"topic": "programming", "language": "JavaScript"},
         )
         memory_user2.add(
             "I like data science",
             role="user",
-            metadata={"topic": "data", "interest": "high"},
+            properties={"topic": "data", "interest": "high"},
         )
 
         # Wait for indexing
@@ -627,8 +627,8 @@ class TestMemMachineIntegration:
 
         # Search with user1 - built-in filters are automatically applied
         default_filters_user1 = memory_user1.get_default_filter_dict()
-        assert "metadata.user_id" in default_filters_user1
-        assert default_filters_user1["metadata.user_id"] == user1_id
+        assert "properties.user_id" in default_filters_user1
+        assert default_filters_user1["properties.user_id"] == user1_id
 
         # Search without explicit filter_dict - built-in filters are automatically applied
         results_user1 = memory_user1.search(
@@ -645,8 +645,8 @@ class TestMemMachineIntegration:
 
         # Search with user2 - built-in filters are automatically applied
         default_filters_user2 = memory_user2.get_default_filter_dict()
-        assert "metadata.user_id" in default_filters_user2
-        assert default_filters_user2["metadata.user_id"] == user2_id
+        assert "properties.user_id" in default_filters_user2
+        assert default_filters_user2["properties.user_id"] == user2_id
 
         # Search without explicit filter_dict - built-in filters are automatically applied
         results_user2 = memory_user2.search(
@@ -730,7 +730,7 @@ class TestMemMachineIntegration:
                 result = memory.delete_semantic(semantic_id)
                 assert result is True
 
-    # ==================== Context and Metadata Tests ====================
+    # ==================== Context and Properties Tests ====================
 
     def test_memory_context_preservation(self, memory):
         """Test that memory context (user_id, agent_id, etc.) is preserved."""
@@ -738,11 +738,11 @@ class TestMemMachineIntegration:
 
         assert context["org_id"] == memory.org_id
         assert context["project_id"] == memory.project_id
-        context_metadata = context["metadata"]
-        assert context_metadata.get("group_id") == memory.metadata.get("group_id")
-        assert context_metadata.get("user_id") == memory.metadata.get("user_id")
-        assert context_metadata.get("agent_id") == memory.metadata.get("agent_id")
-        assert context_metadata.get("session_id") == memory.metadata.get("session_id")
+        context_metadata = context["properties"]
+        assert context_metadata.get("group_id") == memory.properties.get("group_id")
+        assert context_metadata.get("user_id") == memory.properties.get("user_id")
+        assert context_metadata.get("agent_id") == memory.properties.get("agent_id")
+        assert context_metadata.get("session_id") == memory.properties.get("session_id")
 
     def test_memory_with_string_ids(self, client, unique_test_ids):
         """Test memory with string-based user_id and agent_id."""
@@ -751,13 +751,13 @@ class TestMemMachineIntegration:
             project_id=unique_test_ids["project_id"],
         )
 
-        memory = project.memory(metadata={"user_id": "user1", "agent_id": "agent1"})
+        memory = project.memory(properties={"user_id": "user1", "agent_id": "agent1"})
 
-        assert isinstance(memory.metadata.get("user_id"), str)
-        assert memory.metadata.get("user_id") == "user1"
+        assert isinstance(memory.properties.get("user_id"), str)
+        assert memory.properties.get("user_id") == "user1"
 
-        assert isinstance(memory.metadata.get("agent_id"), str)
-        assert memory.metadata.get("agent_id") == "agent1"
+        assert isinstance(memory.properties.get("agent_id"), str)
+        assert memory.properties.get("agent_id") == "agent1"
 
     # ==================== Error Handling Tests ====================
 
@@ -856,14 +856,14 @@ class TestMemMachineIntegration:
         )
 
         # Create first memory instance and add memory
-        memory1 = project.memory(metadata={"user_id": unique_test_ids["user_id"]})
+        memory1 = project.memory(properties={"user_id": unique_test_ids["user_id"]})
         memory1.add("This is a persistent memory", role="user")
 
         # Wait for indexing
         time.sleep(1)
 
         # Create second memory instance and search
-        memory2 = project.memory(metadata={"user_id": unique_test_ids["user_id"]})
+        memory2 = project.memory(properties={"user_id": unique_test_ids["user_id"]})
         results = memory2.search("persistent memory", limit=5)
 
         # Should find the memory added via memory1
@@ -986,7 +986,7 @@ class TestMemMachineIntegration:
 
         # Step 2: Create memory instance
         memory = project.memory(
-            metadata={
+            properties={
                 "user_id": unique_test_ids["user_id"],
                 "agent_id": unique_test_ids["agent_id"],
             }
@@ -1629,7 +1629,7 @@ class TestMemMachineToolsIntegration:
         context = tools.get_context()
         assert context["org_id"] == unique_test_ids["org_id"]
         assert context["project_id"] == unique_test_ids["project_id"]
-        metadata = context["metadata"]
+        metadata = context["properties"]
         assert metadata.get("user_id") == unique_test_ids["user_id"]
         assert metadata.get("agent_id") == unique_test_ids["agent_id"]
         assert metadata.get("group_id") == unique_test_ids["group_id"]
