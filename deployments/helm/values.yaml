@@ -1,0 +1,121 @@
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  registry: ""
+  repository: "memmachine/memmachine"
+  tag: "v0.2.5-cpu"
+  pullPolicy: "IfNotPresent"
+  pullSecrets: []
+
+service:
+  type: ClusterIP
+  port: 8080
+
+postgres:
+  image:
+    registry: "docker.io"
+    repository: "pgvector/pgvector"
+    tag: "pg16"
+    pullPolicy: "IfNotPresent"
+    pullSecrets: []
+  port: 5432
+  env:
+    POSTGRES_DB: "memmachine"
+    POSTGRES_USER: "memmachine"
+    POSTGRES_PASSWORD: "memmachine_password"
+  resources: {}
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: ["ReadWriteOnce"]
+    size: "10Gi"
+    mountPath: "/var/lib/postgresql/data"
+
+neo4j:
+  image:
+    registry: "docker.io"
+    repository: "neo4j"
+    tag: "5.23-community"
+    pullPolicy: "IfNotPresent"
+    pullSecrets: []
+  ports:
+    http: 7474
+    https: 7473
+    bolt: 7687
+  env:
+    NEO4J_AUTH: "neo4j/neo4j_password"
+  resources: {}
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessModes: ["ReadWriteOnce"]
+    size: "10Gi"
+    mounts:
+      data: "/data"
+      logs: "/logs"
+      import: "/var/lib/neo4j/import"
+      plugins: "/plugins"
+
+serviceAccount:
+  create: false
+  name: ""
+  automountServiceAccountToken: false
+
+env: {}
+extraEnv: []
+extraEnvFrom: []
+
+model:
+  # Optional. Remove this entire block to start without configured models.
+  # Model-dependent endpoints will return 503 until models are configured at runtime.
+  embedding:
+    baseUrl: ""
+    apiKey: ""
+    model: ""
+    dimensions: 0
+  chat:
+    baseUrl: ""
+    apiKey: ""
+    model: ""
+
+resources: {}
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes: ["ReadWriteOnce"]
+  size: "10Gi"
+  mountPath: "/tmp/memory_logs"
+
+extraVolumes: []
+extraVolumeMounts: []
+
+livenessProbe:
+  httpGet:
+    path: /api/v2/health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/v2/health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3

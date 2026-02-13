@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "memmachine.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "memmachine.labels" . | nindent 4 }}
+data:
+  configuration.yml: |
+    logging:
+      path: /tmp/memmachine.log
+      level: info
+
+    episode_store:
+      database: profile_storage
+
+    episodic_memory:
+      long_term_memory:
+        embedder: openai_compatible_embedder
+        reranker: default_reranker
+        vector_graph_store: graph_storage
+      short_term_memory:
+        llm_model: openai_compatible_model
+        message_capacity: 500
+
+    semantic_memory:
+      llm_model: openai_compatible_model
+      embedding_model: openai_compatible_embedder
+      database: profile_storage
+      config_database: profile_storage
+
+    session_manager:
+      database: profile_storage
+
+    prompt:
+      session:
+      - profile_prompt
+
+    {{ $model := .Values.model | default dict }}
+    resources:
+      databases:
+        profile_storage:
+          provider: postgres
+          config:
+            host: localhost
+            port: {{ .Values.postgres.port }}
+            user: {{ .Values.postgres.env.POSTGRES_USER | quote }}
+            password: {{ .Values.postgres.env.POSTGRES_PASSWORD | quote }}
+            db_name: {{ .Values.postgres.env.POSTGRES_DB | quote }}
+        graph_storage:
+          provider: neo4j
+          config:
+            uri: "bolt://localhost:{{ .Values.neo4j.ports.bolt }}"
+            {{- $neo4jAuth := splitList "/" .Values.neo4j.env.NEO4J_AUTH }}
+            {{- if gt (len $neo4jAuth) 0 }}
+            username: {{ index $neo4jAuth 0 | quote }}
+            {{- else }}
+            username: "neo4j"
+            {{- end }}
+            {{- if gt (len $neo4jAuth) 1 }}
+            password: {{ index $neo4jAuth 1 | quote }}
+            {{- else }}
+            password: "neo4j_password"
+            {{- end }}
+      embedders:
+        openai_compatible_embedder:
+          provider: openai
+          {{ with $model.embedding }}
+          config:
+            model: {{ .model | default "" | quote }}
+            api_key: {{ .apiKey | default "" | quote }}
+            base_url: {{ .baseUrl | default "" | quote }}
+            dimensions: {{ .dimensions | default 0 }}
+          {{ end }}
+      language_models:
+        openai_compatible_model:
+          provider: openai-chat-completions
+          {{ with $model.chat }}
+          config:
+            model: {{ .model | default "" | quote }}
+            api_key: {{ .apiKey | default "" | quote }}
+            base_url: {{ .baseUrl | default "" | quote }}
+          {{ end }}
+      rerankers:
+        default_reranker:
+          provider: embedder
+          config:
+            embedder_id: openai_compatible_embedder

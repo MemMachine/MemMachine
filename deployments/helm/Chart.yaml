@@ -1,0 +1,7 @@
+apiVersion: v2
+name: memmachine
+description: MemMachine memory service
+home: https://github.com/MemMachine/MemMachine
+type: application
+version: 0.1.0
+appVersion: v0.2.5-cpu
