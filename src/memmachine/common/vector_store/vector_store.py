@@ -9,12 +9,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
 from uuid import UUID
 
-from memmachine.common.data_types import SimilarityMetric
+from memmachine.common.data_types import PropertyValue, SimilarityMetric
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
 )
 
-from .data_types import PropertyValue, QueryResult, Record
+from .data_types import QueryResult, Record
 
 
 class Collection(ABC):

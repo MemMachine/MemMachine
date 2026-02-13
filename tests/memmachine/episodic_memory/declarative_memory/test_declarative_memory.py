@@ -12,6 +12,9 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
@@ -615,10 +618,8 @@ async def test_get_matching_episodes(declarative_memory):
                 op="=",
                 value="memmachine",
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="length",
-                op="is_null",
-                value=None,
             ),
         ),
     )
