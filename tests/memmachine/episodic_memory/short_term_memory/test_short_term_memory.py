@@ -403,13 +403,13 @@ class TestSessionMemoryPublicAPI:
             content="a" * 6,
             producer_id="user1",
             producer_role="user",
-            metadata={"type": "message"},
+            filterable_metadata={"type": "message"},
         )
         ep2 = create_test_episode(
             content="b" * 6,
             producer_id="user2",
             producer_role="assistant",
-            metadata={"type": "message", "category": "greeting"},
+            filterable_metadata={"type": "message", "category": "greeting"},
         )
         await memory.add_episodes([ep1, ep2])
 

@@ -3,7 +3,14 @@
 from datetime import datetime
 from enum import Enum
 
-FilterablePropertyValue = bool | int | float | str | datetime | None
+PropertyValue = bool | int | float | str | datetime
+"""Type for stored property values."""
+
+FilterValue = bool | int | float | str | datetime | list[int] | list[str]
+"""Type for filter expression values (includes list types for IN clauses)."""
+
+OrderedValue = int | float | str | datetime
+"""Type for values that can be ordered/sorted."""
 
 
 class SimilarityMetric(Enum):
