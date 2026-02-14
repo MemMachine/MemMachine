@@ -36,6 +36,7 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory import EpisodicMemory
+from memmachine.multimodal.image_summarizer import ImageSummarizer
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
@@ -46,7 +47,9 @@ from memmachine.semantic_memory.semantic_model import (
     SetTypeEntry,
     TagIdT,
 )
-from memmachine.semantic_memory.semantic_session_manager import SemanticSessionManager
+from memmachine.semantic_memory.semantic_session_manager import (
+    SemanticSessionManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +91,23 @@ class MemMachine:
             self._resources = resources
         else:
             self._resources = ResourceManagerImpl(conf)
+
+        self.image_summarizer = ImageSummarizer(
+            config=self._conf,
+            resources=self._resources,
+        )
         self._initialize_default_episodic_configuration()
         self._started = False
+
+    @property
+    def config(self) -> Configuration:
+        """Return the active MemMachine configuration."""
+        return self._conf
+
+    @property
+    def resources(self) -> ResourceManagerImpl:
+        """Return the resource manager used by this MemMachine instance."""
+        return self._resources
 
     def _initialize_default_episodic_configuration(self) -> None:
         """
