@@ -30,6 +30,8 @@ from pydantic import (
     model_validator,
 )
 
+from memmachine.common.data_types import PropertyValue
+
 from . import EpisodeType, MemoryType
 from .doc import Examples, SpecDoc
 
@@ -148,7 +150,7 @@ class Episode(BaseModel):
         Field(default=ContentType.STRING, description=SpecDoc.EPISODE_CONTENT_TYPE),
     ]
     filterable_metadata: Annotated[
-        dict[str, Any] | None,
+        dict[str, PropertyValue] | None,
         Field(default=None, description=SpecDoc.EPISODE_FILTERABLE_METADATA),
     ]
     metadata: Annotated[
