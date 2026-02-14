@@ -98,6 +98,7 @@ class MockShortTermMemoryDataManager(SessionDataManager):
             episode_memory_conf=EpisodicMemoryConf(
                 metrics_factory_id="prometheus", session_key=session_key
             ),
+            status="active",
         )
 
     async def get_sessions(self, filters: dict[str, object] | None = None) -> list[str]:
@@ -111,6 +112,19 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         short_term_memory_enabled: bool | None = None,
     ) -> None:
         pass
+
+    async def update_session_status(
+        self,
+        session_key: str,
+        status: str,
+    ) -> None:
+        pass
+
+    async def get_sessions_by_status(
+        self,
+        status: str,
+    ) -> list[str]:
+        return []
 
 
 T = TypeVar("T")

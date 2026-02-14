@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -20,6 +22,7 @@ from memmachine.common.episode_store import Episode, EpisodeEntry
 from memmachine.common.errors import SessionNotFoundError
 from memmachine.common.filter.filter_parser import And as FilterAnd
 from memmachine.common.filter.filter_parser import Comparison as FilterComparison
+from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
 from memmachine.semantic_memory.semantic_model import SemanticFeature
@@ -600,3 +603,90 @@ async def test_delete_features_forwards_to_semantic_manager(
     await memmachine.delete_features(["feat1", "feat2"])
 
     semantic_manager.delete_features.assert_awaited_once_with(["feat1", "feat2"])
+
+
+@pytest.mark.asyncio
+async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_manager):
+    """Test that start deletes sessions marked as deleted."""
+
+    @dataclass(frozen=True)
+    class TestSessionData:
+        org_id: str
+        project_id: str
+
+        @property
+        def session_key(self) -> str:
+            return f"{self.org_id}-{self.project_id}"
+
+    test_session_data = TestSessionData(org_id="deleted", project_id="session")
+
+    session_key = test_session_data.session_key
+
+    def test_key_to_session(key: str) -> TestSessionData:
+        return test_session_data
+
+    # Mock SessionDataManager
+    session_manager = MagicMock()
+    session_manager.get_sessions_by_status = AsyncMock(return_value=[session_key])
+    session_manager.delete_session = AsyncMock()
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+
+    # Mock EpisodeStorage
+    episode_storage = MagicMock()
+    episode_storage.delete_episode_messages = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    # Mock EpisodicMemoryManager
+    episodic_manager = MagicMock()
+    episodic_manager.delete_episodic_session = AsyncMock()
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    # Mock SemanticSessionManager
+    semantic_manager = MagicMock()
+    semantic_manager.delete_feature_set = AsyncMock()
+    semantic_manager.delete_all_project_messages = AsyncMock()
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+
+    # Mock SemanticService
+    semantic_service = MagicMock()
+    semantic_service.start = AsyncMock()
+    semantic_service.stop = AsyncMock()
+    patched_resource_manager.get_semantic_service = AsyncMock(
+        return_value=semantic_service
+    )
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    await memmachine.start(test_key_to_session)
+    await asyncio.sleep(1)
+    await memmachine.stop()
+
+    session_manager.get_sessions_by_status.assert_awaited_once_with(
+        SessionDataManager.SessionStatus.Deleted
+    )
+
+    # Verify deletion calls
+    episode_storage.delete_episode_messages.assert_awaited_once()
+    call_args = episode_storage.delete_episode_messages.await_args
+    assert call_args.kwargs["filter_expr"].value == session_key
+
+    episodic_manager.delete_episodic_session.assert_awaited_once_with(
+        session_key=session_key
+    )
+
+    semantic_manager.delete_feature_set.assert_awaited_once_with(
+        session_data=test_session_data
+    )
+    semantic_manager.delete_all_project_messages.assert_awaited_once_with(
+        session_data=test_session_data
+    )
+
+    session_manager.delete_session.assert_awaited_once_with(session_key=session_key)
