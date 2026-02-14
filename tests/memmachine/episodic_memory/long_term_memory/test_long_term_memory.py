@@ -14,6 +14,9 @@ from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
 from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
@@ -525,10 +528,8 @@ async def test_get_matching_episodes(long_term_memory):
     assert set(results) == {episodes[0], episodes[2]}
 
     results = await long_term_memory.get_matching_episodes(
-        property_filter=FilterComparison(
+        property_filter=FilterIsNull(
             field="m.length",
-            op="is_null",
-            value=None,
         )
     )
     assert len(results) == 1
@@ -569,10 +570,8 @@ async def test_get_matching_episodes(long_term_memory):
     assert set(results) == {episodes[0], episodes[1], episodes[2]}
 
     results = await long_term_memory.get_matching_episodes(
-        property_filter=FilterComparison(
+        property_filter=FilterIsNull(
             field="m.project",
-            op="is_null",
-            value=None,
         )
     )
     assert len(results) == 0
@@ -677,10 +676,8 @@ async def test_delete_matching_episodes(long_term_memory):
     await long_term_memory.add_episodes(episodes)
 
     await long_term_memory.delete_matching_episodes(
-        property_filter=FilterComparison(
+        property_filter=FilterIsNull(
             field="m.length",
-            op="is_null",
-            value=None,
         )
     )
     all_episodes = await long_term_memory.get_matching_episodes()
