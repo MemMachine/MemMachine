@@ -423,7 +423,6 @@ class DatabaseManager:
             ok = row["ok"]
             # Normalize wrapped values: some versions return ValueWrapper, others return primitives
             ok_value = ok.cast_primitive() if hasattr(ok, "cast_primitive") else ok
-            logger.info("NebulaGraph client '%s' validated successfully", name)
         except Exception as e:
             await client.close()
             raise ValueError(
@@ -435,6 +434,7 @@ class DatabaseManager:
             raise ValueError(
                 f"Verification failed for NebulaGraph config '{name}'",
             )
+        logger.info("NebulaGraph client '%s' validated successfully", name)
 
     async def _validate_nebula_clients(self) -> None:
         """Validate connectivity to each NebulaGraph instance."""

@@ -306,14 +306,19 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         await self._discover_existing_indexes()
 
-        # Collect all properties from all edges
+        # Collect all properties and embeddings from all edges
         all_properties: dict[str, PropertyValue] = {}
+        all_embeddings: dict[str, tuple[list[float], SimilarityMetric]] = {}
+
         for edge in edges_list:
             all_properties.update(edge.properties)
+            # Merge embeddings - later edges with same embedding name override earlier ones
+            for emb_name, (emb_vec, metric) in edge.embeddings.items():
+                all_embeddings[emb_name] = (emb_vec, metric)
 
         # Ensure edge type exists in graph type
         await self._ensure_graph_type_for_edges(
-            relation, source_collection, target_collection, all_properties
+            relation, source_collection, target_collection, all_properties, all_embeddings
         )
 
         sanitized_relation = self._sanitize_name(relation)
@@ -328,6 +333,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 mangled = mangle_property_name(prop_name)
                 formatted_value = self._format_value(prop_value)
                 prop_assignments.append(f"{mangled}: {formatted_value}")
+
+            # Build embedding assignments
+            for emb_name, (emb_vec, _metric) in edge.embeddings.items():
+                mangled = mangle_embedding_name(emb_name)
+                vec_literal = self._vector_to_gql_literal(emb_vec)
+                prop_assignments.append(f"{mangled}: {vec_literal}")
 
             # Build INSERT statement with embedded values
             if prop_assignments:
@@ -349,6 +360,26 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         current_count = self._relation_edge_counts.get(relation, 0)
         new_count = current_count + len(edges_list)
         self._relation_edge_counts[relation] = new_count
+
+        # Check if we should create indexes
+        if (
+            self._vector_index_threshold
+            and new_count >= self._vector_index_threshold
+            and current_count < self._vector_index_threshold
+        ):
+            # Create vector indexes for edge embeddings
+            for emb_name, (emb_vec, metric) in all_embeddings.items():
+                task = asyncio.create_task(
+                    self._create_vector_index_if_not_exists(
+                        EntityType.EDGE,
+                        relation,
+                        emb_name,
+                        len(emb_vec),
+                        metric,
+                    )
+                )
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
         # Create range indexes based on configured hierarchies when threshold is reached
         if (
@@ -1045,6 +1076,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             f"CREATE GRAPH {self._graph_name} TYPED {self._graph_type_name}"
         )
 
+        # Dropping the graph invalidates the session's working graph context.
+        # Re-establish it so subsequent queries can find the graph.
+        await self._client.execute(f"SESSION SET GRAPH `{self._graph_name}`")
+
         # Clear index and count caches (data is gone)
         # Keep _graph_type_schemas cache (schema is preserved)
         self._index_state_cache.clear()
@@ -1450,12 +1485,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         source_collection: str,
         target_collection: str,
         properties: dict[str, PropertyValue],
+        embeddings: dict[str, tuple[list[float], SimilarityMetric]],
     ) -> None:
         """
         Ensure edge type exists in graph type for this relation.
 
         Creates edge type on first encounter. On subsequent calls, evolves schema
-        by adding any new properties not present in the existing schema.
+        by adding any new properties/embeddings not present in the existing schema.
         Existing edges will have NULL values for newly added properties.
 
         Args:
@@ -1463,6 +1499,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             source_collection: Source node type
             target_collection: Target node type
             properties: Edge properties from current batch
+            embeddings: Embeddings from current batch (name -> (vector, metric))
 
         """
         async with self._schema_lock:
@@ -1476,6 +1513,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             for prop_name, prop_value in properties.items():
                 mangled = mangle_property_name(prop_name)
                 incoming_schema[mangled] = self._infer_gql_type(prop_value)
+
+            for emb_name, (vec, _metric) in embeddings.items():
+                mangled = mangle_embedding_name(emb_name)
+                incoming_schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
 
             # Check if edge type already exists in cache
             if edge_key in self._graph_type_schemas:
