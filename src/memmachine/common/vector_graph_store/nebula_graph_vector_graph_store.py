@@ -219,8 +219,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             uid_formatted = self._format_value(node.uid)
             prop_assignments.append(f"uid: {uid_formatted}")
 
-            # Add properties
+            # Add properties (skip None — column not created in schema for None values)
             for prop_name, prop_value in node.properties.items():
+                if prop_value is None:
+                    continue
                 mangled = mangle_property_name(prop_name)
                 formatted_value = self._format_value(prop_value)
                 prop_assignments.append(f"{mangled}: {formatted_value}")
@@ -653,20 +655,25 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         sanitized_other = self._sanitize_name(other_collection)
         node_uid_formatted = self._format_value(this_node_uid)
 
-        # Build pattern based on direction
-        if find_sources and find_targets:
-            pattern = f"(m:{sanitized_this} {{uid: {node_uid_formatted}}})<-[r:{sanitized_relation}]-(n:{sanitized_other})"
-            pattern2 = f"(m:{sanitized_this} {{uid: {node_uid_formatted}}})-[r:{sanitized_relation}]->(n:{sanitized_other})"
-        elif find_sources:
-            pattern = f"(n:{sanitized_other})-[r:{sanitized_relation}]->(m:{sanitized_this} {{uid: {node_uid_formatted}}})"
-            pattern2 = None
-        elif find_targets:
-            pattern = f"(m:{sanitized_this} {{uid: {node_uid_formatted}}})-[r:{sanitized_relation}]->(n:{sanitized_other})"
-            pattern2 = None
-        else:
+        # Collect the patterns to run.  Each pattern is one traversal direction.
+        # We run them as separate queries rather than a GQL UNION so that NS239
+        # (edge type not defined in that direction) can be caught per-direction and
+        # treated as "0 results" instead of failing the whole call.
+        patterns: list[str] = []
+        if find_sources:
+            patterns.append(
+                f"(n:{sanitized_other})-[r:{sanitized_relation}]->"
+                f"(m:{sanitized_this} {{uid: {node_uid_formatted}}})"
+            )
+        if find_targets:
+            patterns.append(
+                f"(m:{sanitized_this} {{uid: {node_uid_formatted}}})"
+                f"-[r:{sanitized_relation}]->(n:{sanitized_other})"
+            )
+        if not patterns:
             return []
 
-        # Build WHERE clauses
+        # Build WHERE clauses (shared across all patterns)
         where_clauses = []
 
         if edge_property_filter:
@@ -679,44 +686,45 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if node_clause:
                 where_clauses.append(node_clause)
 
-        # Build query
-        if pattern2:
-            # Need to UNION two patterns
-            query_parts1 = [f"MATCH {pattern}"]
+        def _build_query(pattern: str) -> str:
+            parts = [f"MATCH {pattern}"]
             if where_clauses:
-                query_parts1.append(f"WHERE {' AND '.join(where_clauses)}")
-            query_parts1.append("RETURN DISTINCT n")
+                parts.append(f"WHERE {' AND '.join(where_clauses)}")
+            parts.append("RETURN DISTINCT n")
+            return "\n".join(parts)
 
-            query_parts2 = [f"MATCH {pattern2}"]
-            if where_clauses:
-                query_parts2.append(f"WHERE {' AND '.join(where_clauses)}")
-            query_parts2.append("RETURN DISTINCT n")
+        # Execute each direction; NS239 means the edge type doesn't exist in that
+        # direction in the schema → treat as empty result set.
+        seen_uids: set[str] = set()
+        nodes: list[Node] = []
 
-            query_parts = [*query_parts1, "UNION", *query_parts2]
-        else:
-            query_parts = [f"MATCH {pattern}"]
-            if where_clauses:
-                query_parts.append(f"WHERE {' AND '.join(where_clauses)}")
-            query_parts.append("RETURN DISTINCT n")
+        for pat in patterns:
+            query = _build_query(pat)
+            try:
+                result = await self._client.execute(query)
+            except Exception as exc:
+                exc_str = str(exc)
+                if "NS239" in exc_str or "No element type matching" in exc_str:
+                    logger.debug(
+                        "search_related_nodes: direction not in schema (%s), skipping",
+                        pat,
+                    )
+                    continue
+                raise
+
+            for row in result:
+                node_data = row["n"]
+                if hasattr(node_data, "cast_primitive"):
+                    node_data = node_data.cast_primitive()
+                    if "properties" in node_data:
+                        node_data = node_data["properties"]
+                node = self._nebula_result_to_node(other_collection, node_data)
+                if node.uid not in seen_uids:
+                    seen_uids.add(node.uid)
+                    nodes.append(node)
 
         if limit is not None:
-            query_parts.append(f"LIMIT {limit}")
-
-        query = "\n".join(query_parts)
-
-        result = await self._client.execute(query)
-
-        # Convert results to Node objects
-        nodes = []
-        for row in result:
-            node_data = row["n"]
-            # Unwrap ValueWrapper if needed
-            if hasattr(node_data, "cast_primitive"):
-                node_data = node_data.cast_primitive()
-                # execute returns node with structure: {id, type, labels, properties}
-                if "properties" in node_data:
-                    node_data = node_data["properties"]
-            nodes.append(self._nebula_result_to_node(other_collection, node_data))
+            nodes = nodes[:limit]
 
         return nodes
 
@@ -774,36 +782,72 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if filter_clause:
                 where_clauses.append(filter_clause)
 
-        # Build range conditions
-        for i, (prop_name, start_value, ascending) in enumerate(
-            zip(
-                by_properties_list, starting_at_list, order_ascending_list, strict=False
+        # Build lexicographic range conditions for cursor-based pagination.
+        #
+        # Simple per-property AND (e.g. ts >= T1 AND seq >= S2) is wrong for
+        # multi-property cursors because it excludes rows where a later property
+        # moves backwards while an earlier one moved forward (e.g. (T2, S1) with
+        # cursor (T1, S2)).
+        #
+        # The correct condition for cursor (V1, V2, ..., VN) is:
+        #   (P1 > V1)
+        #   OR (P1 = V1 AND P2 > V2)
+        #   OR ...
+        #   OR (P1 = V1 AND ... AND PN-1 = VN-1 AND PN >= VN)   ← last uses >=/>
+        #
+        # For a single property this reduces to the simple (P1 >= V1) form.
+
+        # Collect only properties that have a non-None starting value, preserving
+        # their original index so parameter names stay unique.
+        active = [
+            (i, prop, val, asc)
+            for i, (prop, val, asc) in enumerate(
+                zip(by_properties_list, starting_at_list, order_ascending_list, strict=False)
             )
-        ):
-            if start_value is None:
-                continue
+            if val is not None
+        ]
 
-            mangled_prop = mangle_property_name(prop_name)
-            param_name = f"start_{i}"
-            # Build Jinja2 placeholder for execute_py (double braces for Jinja2 syntax)
+        def _cursor_expr(idx: int, value: object) -> str:
+            """Store value in params and return the GQL expression fragment."""
+            param_name = f"start_{idx}"
             placeholder = f"{{{{{param_name}}}}}"
+            if isinstance(value, datetime):
+                params[param_name] = value.strftime("%Y-%m-%dT%H:%M:%S")
+                return f"local_datetime({placeholder})"
+            params[param_name] = value
+            return placeholder
 
-            # Build comparison operator
-            if ascending:
-                op = ">=" if include_equal_start else ">"
-            else:
-                op = "<=" if include_equal_start else "<"
+        if active:
+            or_clauses: list[str] = []
 
-            # Handle datetime values specially
-            if isinstance(start_value, datetime):
-                # Format datetime to match NebulaGraph's expected format (no microseconds, no timezone)
-                params[param_name] = start_value.strftime("%Y-%m-%dT%H:%M:%S")
-                where_clauses.append(
-                    f"n.{mangled_prop} {op} local_datetime({placeholder})"
+            for k, (k_idx, k_prop, k_val, k_asc) in enumerate(active):
+                k_mangled = mangle_property_name(k_prop)
+                k_expr = _cursor_expr(k_idx, k_val)
+                is_last = k == len(active) - 1
+
+                sub_conds: list[str] = []
+
+                # Equality prefix: all active properties before position k
+                for j_idx, j_prop, j_val, _ in active[:k]:
+                    j_mangled = mangle_property_name(j_prop)
+                    j_expr = _cursor_expr(j_idx, j_val)
+                    sub_conds.append(f"n.{j_mangled} = {j_expr}")
+
+                # Comparison at position k
+                if is_last:
+                    op = (">=" if k_asc else "<=") if include_equal_start else (">" if k_asc else "<")
+                else:
+                    op = ">" if k_asc else "<"
+                sub_conds.append(f"n.{k_mangled} {op} {k_expr}")
+
+                or_clauses.append(
+                    sub_conds[0] if len(sub_conds) == 1 else "(" + " AND ".join(sub_conds) + ")"
                 )
+
+            if len(or_clauses) == 1:
+                where_clauses.append(or_clauses[0])
             else:
-                params[param_name] = start_value
-                where_clauses.append(f"n.{mangled_prop} {op} {placeholder}")
+                where_clauses.append("(" + " OR ".join(or_clauses) + ")")
 
         # Build ORDER BY clause
         order_parts = []
@@ -887,7 +931,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         query = "\n".join(query_parts)
 
-        result = await self._client.execute(query)
+        try:
+            result = await self._client.execute(query)
+        except Exception as exc:
+            # NS228: node label not found – collection was never written to (e.g.
+            # add_nodes was called with an empty list).  Treat as empty result set.
+            if "NS228" in str(exc) or "not found in graph type" in str(exc):
+                return []
+            raise
 
         # Convert results to Node objects
         nodes = []
@@ -1077,7 +1128,17 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             MATCH (n:{sanitized_collection} {{uid: {uid_formatted}}})
             DELETE n
             """
-            await self._client.execute(delete_node_query)
+            try:
+                await self._client.execute(delete_node_query)
+            except Exception as exc:
+                # NS228: collection doesn't exist in the graph type → nothing to delete.
+                if "NS228" in str(exc) or "not found in graph type" in str(exc):
+                    logger.debug(
+                        "delete_nodes: collection '%s' not in graph type, skipping",
+                        collection,
+                    )
+                    continue
+                raise
 
         # Update node count cache
         if collection in self._collection_node_counts:
@@ -1404,6 +1465,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     value_strs = [self._format_value(v) for v in expr.value]
                     values_list = ", ".join(value_strs)
                     return f"{prop_ref} IN [{values_list}]"
+                if expr.op == "is_null":
+                    return f"{prop_ref} IS NULL"
                 raise ValueError(f"Unsupported operator: {expr.op}")
 
             if isinstance(expr, And):
@@ -1492,9 +1555,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         async with self._schema_lock:
             sanitized_collection = self._sanitize_name(collection)
 
-            # Build schema from incoming data
+            # Build schema from incoming data.
+            # Properties with None values are skipped: we cannot infer a GQL type
+            # from None, and NebulaGraph uses NULL as the default for absent columns.
             incoming_schema: dict[str, str] = {"uid": "STRING"}
             for prop_name, prop_value in properties.items():
+                if prop_value is None:
+                    continue
                 mangled = mangle_property_name(prop_name)
                 incoming_schema[mangled] = self._infer_gql_type(prop_value)
 
