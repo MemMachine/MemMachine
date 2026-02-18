@@ -70,7 +70,7 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
 
 
 class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
-    """Configuration options for a NebulaGraph Enterprise 5.0 instance."""
+    """Configuration options for a NebulaGraph Enterprise instance."""
 
     hosts: list[str] = Field(
         default_factory=lambda: ["127.0.0.1:9669"],
@@ -86,7 +86,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         ),
     )
 
-    # Schema and Graph (Enterprise 5.0 model - no "space" concept)
+    # Schema and Graph (Enterprise model)
     schema_name: str = Field(
         default="/default_schema",
         description=(

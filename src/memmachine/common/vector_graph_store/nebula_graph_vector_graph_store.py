@@ -1,8 +1,8 @@
 """
-NebulaGraph Enterprise 5.0 implementation of VectorGraphStore interface.
+NebulaGraph Enterprise implementation of VectorGraphStore interface.
 
 This module provides a complete implementation of the VectorGraphStore abstract
-interface using NebulaGraph Enterprise 5.0 as the backend. It supports:
+interface using NebulaGraph Enterprise as the backend. It supports:
 - Graph data model with Schema + Graph
 - Native VECTOR data type with IVF/HNSW indexes
 - GQL (Graph Query Language - ISO/IEC 76120 standard)
@@ -98,9 +98,9 @@ class NebulaGraphVectorGraphStoreParams:
 
 class NebulaGraphVectorGraphStore(VectorGraphStore):
     """
-    NebulaGraph Enterprise 5.0 implementation of VectorGraphStore.
+    NebulaGraph Enterprise implementation of VectorGraphStore.
 
-    This implementation uses NebulaGraph Enterprise 5.0's native vector support
+    This implementation uses NebulaGraph Enterprise's native vector support
     with GQL (ISO Graph Query Language) instead of Cypher. Key differences:
     - Schema + Graph model
     - Native VECTOR<N, FLOAT> data type
