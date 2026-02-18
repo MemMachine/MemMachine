@@ -339,6 +339,40 @@ def test_search_memories(client, mock_memmachine):
         assert response.json()["detail"]["message"] == "Project does not exist"
 
 
+def test_search_memories_with_set_metadata(client, mock_memmachine):
+    """set_metadata in the request body is forwarded to _search_target_memories."""
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "query": "hello",
+        "set_metadata": {"user_id": "user123", "tenant": "acme"},
+    }
+
+    with patch(
+        "memmachine.server.api_v2.router._search_target_memories"
+    ) as mock_search:
+        mock_search.return_value = SearchResult.model_validate(
+            {
+                "status": 0,
+                "content": {
+                    "episodic_memory": None,
+                    "semantic_memory": [],
+                },
+            }
+        )
+
+        response = client.post("/api/v2/memories/search", json=payload)
+        assert response.status_code == 200
+
+        mock_search.assert_awaited_once()
+        # The spec passed to _search_target_memories must carry set_metadata
+        _, call_kwargs = mock_search.call_args
+        assert call_kwargs["spec"].set_metadata == {
+            "user_id": "user123",
+            "tenant": "acme",
+        }
+
+
 def test_list_memories(client, mock_memmachine):
     payload = {
         "org_id": "test_org",
@@ -376,6 +410,27 @@ def test_list_memories(client, mock_memmachine):
     assert "semantic_memory" not in data["content"]
 
     mock_memmachine.list_search.assert_awaited_once()
+
+
+def test_list_memories_with_set_metadata(client, mock_memmachine):
+    """set_metadata in the request body is forwarded to list_search via _list_target_memories."""
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "set_metadata": {"user_id": "user456", "region": "us-east"},
+    }
+
+    mock_results = MagicMock()
+    mock_results.episodic_memory = None
+    mock_results.semantic_memory = None
+    mock_memmachine.list_search.return_value = mock_results
+
+    response = client.post("/api/v2/memories/list", json=payload)
+    assert response.status_code == 200
+
+    mock_memmachine.list_search.assert_awaited_once()
+    call_kwargs = mock_memmachine.list_search.call_args[1]
+    assert call_kwargs["set_metadata"] == {"user_id": "user456", "region": "us-east"}
 
 
 def test_delete_episodic_memory(client, mock_memmachine):
@@ -980,6 +1035,24 @@ def test_get_semantic_set_id(client, mock_memmachine):
     assert call_args["session_data"].session_key == "test_org/test_proj"
     assert call_args["metadata_tags"] == ["user_id"]
     assert call_args["is_org_level"] is False
+    assert call_args["set_metadata"] == {"user_id": "user123"}
+
+
+def test_get_semantic_set_id_with_set_metadata(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "metadata_tags": ["user_id"],
+        "set_metadata": {"user_id": "user123"},
+    }
+
+    mock_memmachine.semantic_get_set_id.return_value = "mem_user_set_legacy"
+
+    response = client.post("/api/v2/memories/semantic/set_id/get", json=payload)
+    assert response.status_code == 200
+    assert response.json()["set_id"] == "mem_user_set_legacy"
+
+    call_args = mock_memmachine.semantic_get_set_id.call_args[1]
     assert call_args["set_metadata"] == {"user_id": "user123"}
 
 
