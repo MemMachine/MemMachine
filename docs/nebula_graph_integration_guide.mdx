@@ -16,7 +16,7 @@ MemMachine now supports NebulaGraph Enterprise for episodic memory storage. Nebu
 
 ### 1. NebulaGraph Enterprise
 
-You need NebulaGraph Enterprise 5.2.0 or later. NebulaGraph is designed to handle graphs with trillions of edges and vertices and delivers millisecond latency at high concurrency, enabling real-time insights where performance matters most. 
+You need NebulaGraph Enterprise 5.2.1 or later. NebulaGraph is designed to handle graphs with trillions of edges and vertices and delivers millisecond latency at high concurrency, enabling real-time insights where performance matters most. 
 
 
 ### 2. Python Dependencies
@@ -24,7 +24,7 @@ You need NebulaGraph Enterprise 5.2.0 or later. NebulaGraph is designed to handl
 Install the NebulaGraph Python client:
 
 ```bash
-pip install nebula5-python>=5.2.0
+pip install nebula5-python>=5.2.1
 ```
 
 
@@ -160,6 +160,23 @@ config:
 - `hnsw_max_degree`: 16 (default), 32 (high accuracy), 64 (maximum accuracy)
 - `hnsw_ef_construction`: 200 (default), 400 (better quality)
 - `hnsw_ef_search`: 40 (default), 100 (higher recall), 200 (maximum recall)
+
+### Similarity Metric Support
+
+NebulaGraph has native support for three of the four similarity metrics. The search mode
+(ANN or KNN) depends on both index availability and the metric's capabilities:
+
+| Metric | NebulaGraph Function | Index Metric | ANN Supported? |
+|--------|---------------------|--------------|----------------|
+| `EUCLIDEAN` | `euclidean()` ASC | L2 | Yes — vector index required |
+| `DOT` | `inner_product()` DESC | IP | Yes — vector index required |
+| `COSINE` | `cosine()` DESC | — | No — KNN only (NebulaGraph limitation) |
+| `MANHATTAN` | — | — | No — unsupported, raises error |
+
+**Key points:**
+- `COSINE` always uses exact KNN search regardless of whether an index exists. NebulaGraph's `cosine()` function does not support the `APPROXIMATE` keyword.
+- `DOT` (inner product) and `COSINE` are mathematically different: DOT is the raw dot product; COSINE normalizes by vector magnitudes.
+- `MANHATTAN` is not supported by NebulaGraph and will raise an error.
 
 ### Force Exact Search
 

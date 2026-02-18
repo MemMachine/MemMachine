@@ -1771,7 +1771,7 @@ requires-dist = [
     { name = "langchain-aws", specifier = ">=0.2.33" },
     { name = "memmachine-client", editable = "packages/client" },
     { name = "memmachine-server", editable = "packages/server" },
-    { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.0" },
+    { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1" },
     { name = "neo4j", specifier = ">=5.28.2" },
     { name = "nltk", specifier = ">=3.9.1" },
     { name = "openai", specifier = ">=1.104.2" },

@@ -225,11 +225,16 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 formatted_value = self._format_value(prop_value)
                 prop_assignments.append(f"{mangled}: {formatted_value}")
 
-            # Add embeddings (metric is tracked in all_embeddings for index creation)
-            for emb_name, (emb_vec, _) in node.embeddings.items():
+            # Add embeddings with companion metric property
+            for emb_name, (emb_vec, metric) in node.embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 vec_literal = self._vector_to_gql_literal(emb_vec)
                 prop_assignments.append(f"{mangled}: {vec_literal}")
+                # Store metric as companion STRING property (mirrors Neo4j pattern)
+                metric_prop = self._similarity_metric_property_name(emb_name)
+                mangled_metric = mangle_property_name(metric_prop)
+                metric_value = self._format_value(metric.value)
+                prop_assignments.append(f"{mangled_metric}: {metric_value}")
 
             insert_stmt = f"""
             INSERT (n@{sanitized_collection} {{
@@ -334,11 +339,16 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 formatted_value = self._format_value(prop_value)
                 prop_assignments.append(f"{mangled}: {formatted_value}")
 
-            # Build embedding assignments
-            for emb_name, (emb_vec, _metric) in edge.embeddings.items():
+            # Build embedding assignments with companion metric property
+            for emb_name, (emb_vec, metric) in edge.embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 vec_literal = self._vector_to_gql_literal(emb_vec)
                 prop_assignments.append(f"{mangled}: {vec_literal}")
+                # Store metric as companion STRING property (mirrors Neo4j pattern)
+                metric_prop = self._similarity_metric_property_name(emb_name)
+                mangled_metric = mangle_property_name(metric_prop)
+                metric_value = self._format_value(metric.value)
+                prop_assignments.append(f"{mangled_metric}: {metric_value}")
 
             # Build INSERT statement with embedded values
             if prop_assignments:
@@ -440,8 +450,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             and self._index_state_cache[index_name] == self.CacheIndexState.ONLINE
         )
 
-        # Decide on search mode
-        use_ann = has_index and not self._force_exact_similarity_search
+        # Decide on search mode.
+        # ANN requires both a vector index AND a function that supports APPROXIMATE.
+        # cosine() is KNN-only in NebulaGraph, so COSINE must always use exact search.
+        metric_supports_ann = self._similarity_metric_to_nebula(similarity_metric) is not None
+        use_ann = has_index and not self._force_exact_similarity_search and metric_supports_ann
 
         # Build WHERE clause from property filter
         where_clause = ""
@@ -459,14 +472,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             else:
                 search_limit = effective_limit
 
-            # Choose similarity function and order
+            # Choose similarity function, order, and index metric
+            distance_func, order_dir = self._get_distance_func_and_order(similarity_metric)
             metric_name = self._similarity_metric_to_nebula(similarity_metric)
-            if similarity_metric == SimilarityMetric.EUCLIDEAN:
-                distance_func = "euclidean"
-                order_dir = "ASC"
-            else:  # COSINE
-                distance_func = "inner_product"
-                order_dir = "DESC"
 
             # Build vector literal
             vec_literal = self._vector_to_gql_literal(query_embedding)
@@ -575,13 +583,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         # Build vector literal
         vec_literal = self._vector_to_gql_literal(query_embedding)
 
-        # Choose similarity function
-        if similarity_metric == SimilarityMetric.EUCLIDEAN:
-            distance_func = "euclidean"
-            order_dir = "ASC"
-        else:  # COSINE
-            distance_func = "inner_product"
-            order_dir = "DESC"
+        # Choose similarity function and order direction
+        distance_func, order_dir = self._get_distance_func_and_order(similarity_metric)
 
         # Build query (no APPROXIMATE keyword = exact search)
         query_parts = [f"MATCH (n:{sanitized_collection})"]
@@ -974,16 +977,44 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         properties = {}
         embeddings = {}
 
+        # Build set of metric companion mangled keys to exclude from regular properties
+        embedding_keys = {k for k in node_data if is_mangled_embedding_name(k)}
+        metric_companion_keys = {
+            mangle_property_name(
+                self._similarity_metric_property_name(demangle_embedding_name(emb_key))
+            )
+            for emb_key in embedding_keys
+        }
+
         for key, value in node_data.items():
             if key == "uid":
                 continue
             if is_mangled_property_name(key):
+                if key in metric_companion_keys:
+                    continue  # Skip metric companions - read alongside embeddings below
                 prop_name = demangle_property_name(key)
                 properties[prop_name] = value
             elif is_mangled_embedding_name(key):
                 emb_name = demangle_embedding_name(key)
-                # Value should be a vector - extract it and wrap with metric
-                # Note: We don't store the metric in DB, so default to COSINE
+
+                # Read metric from companion STRING property
+                metric_prop = self._similarity_metric_property_name(emb_name)
+                mangled_metric = mangle_property_name(metric_prop)
+                metric_str = node_data.get(mangled_metric)
+                if metric_str is not None:
+                    try:
+                        sim_metric = SimilarityMetric(metric_str)
+                    except ValueError:
+                        logger.warning(
+                            "Unknown similarity metric '%s' for embedding '%s', defaulting to COSINE",
+                            metric_str,
+                            emb_name,
+                        )
+                        sim_metric = SimilarityMetric.COSINE
+                else:
+                    sim_metric = SimilarityMetric.COSINE  # fallback for legacy data
+
+                # Extract vector value
                 vec = None
                 if isinstance(value, NVector):
                     vec = value.get_values()
@@ -995,8 +1026,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     logger.warning("Unexpected embedding value type: %s", type(value))
 
                 if vec is not None:
-                    # Return tuple with vector and default COSINE metric
-                    embeddings[emb_name] = (vec, SimilarityMetric.COSINE)
+                    embeddings[emb_name] = (vec, sim_metric)
 
         return Node(
             uid=uid,
@@ -1251,22 +1281,80 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         vec_str = ", ".join(str(v) for v in vec)
         return f"VECTOR<{len(vec)}, FLOAT>([{vec_str}])"
 
-    def _similarity_metric_to_nebula(self, metric: SimilarityMetric) -> str:
+    @staticmethod
+    def _similarity_metric_property_name(embedding_name: str) -> str:
         """
-        Convert SimilarityMetric to NebulaGraph metric name.
+        Return the companion property name for storing an embedding's similarity metric.
+
+        Args:
+            embedding_name: Demangled embedding name
+
+        Returns:
+            Property name for the metric companion (e.g., "similarity_metric_for_vec")
+
+        """
+        return f"similarity_metric_for_{embedding_name}"
+
+    @staticmethod
+    def _similarity_metric_to_nebula(metric: SimilarityMetric) -> str | None:
+        """
+        Convert SimilarityMetric to NebulaGraph vector index METRIC option.
+
+        NebulaGraph vector indexes support only L2 (Euclidean distance) and
+        IP (Inner Product). MANHATTAN has no equivalent index type and returns
+        None, signalling that no vector index can be created for that metric.
 
         Args:
             metric: Similarity metric
 
         Returns:
-            NebulaGraph metric name (L2 or IP)
+            NebulaGraph METRIC string ("L2" or "IP"), or None if not indexable.
 
         """
         if metric == SimilarityMetric.EUCLIDEAN:
             return "L2"
-        if metric == SimilarityMetric.COSINE:
+        if metric == SimilarityMetric.DOT:
+            # Dot product == inner product; IP indexes support ANN for this metric.
             return "IP"
-        raise ValueError(f"Unsupported similarity metric: {metric}")
+        # COSINE: cosine() is KNN-only in NebulaGraph — APPROXIMATE is not supported,
+        # so no vector index can be created for cosine similarity.
+        # MANHATTAN: no NebulaGraph vector index type exists.
+        # Both return None to signal that no vector index should be created.
+        return None
+
+    @staticmethod
+    def _get_distance_func_and_order(metric: SimilarityMetric) -> tuple[str, str]:
+        """
+        Return the GQL distance function name and ORDER BY direction for a metric.
+
+        NebulaGraph supports three distance functions:
+        - euclidean(): KNN and ANN (with L2 index)
+        - inner_product(): KNN and ANN (with IP index)
+        - cosine(): KNN only — APPROXIMATE is not supported for this function
+
+        MANHATTAN has no native NebulaGraph distance function and raises ValueError.
+
+        Args:
+            metric: Similarity metric
+
+        Returns:
+            (distance_function_name, order_direction) e.g. ("euclidean", "ASC")
+
+        Raises:
+            ValueError: If the metric has no native NebulaGraph distance function.
+
+        """
+        if metric == SimilarityMetric.EUCLIDEAN:
+            return "euclidean", "ASC"
+        if metric == SimilarityMetric.DOT:
+            return "inner_product", "DESC"
+        if metric == SimilarityMetric.COSINE:
+            # cosine() is KNN-only; callers must not use APPROXIMATE with this function.
+            return "cosine", "DESC"
+        raise ValueError(
+            f"Similarity metric '{metric.value}' is not supported by NebulaGraph. "
+            "Supported metrics: COSINE, DOT, EUCLIDEAN."
+        )
 
     def _render_filter_expr(
         self,
@@ -1413,6 +1501,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             for emb_name, (vec, _metric) in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 incoming_schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
+                # Add companion STRING property to persist the similarity metric
+                metric_prop = self._similarity_metric_property_name(emb_name)
+                incoming_schema[mangle_property_name(metric_prop)] = "STRING"
 
             # Check if node type already exists in cache
             if collection in self._graph_type_schemas:
@@ -1517,6 +1608,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             for emb_name, (vec, _metric) in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 incoming_schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
+                # Add companion STRING property to persist the similarity metric
+                metric_prop = self._similarity_metric_property_name(emb_name)
+                incoming_schema[mangle_property_name(metric_prop)] = "STRING"
 
             # Check if edge type already exists in cache
             if edge_key in self._graph_type_schemas:
@@ -1599,9 +1693,23 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             node_or_edge_type: Type name
             embedding_name: Embedding property name
             dimensions: Vector dimensions
-            similarity_metric: COSINE or EUCLIDEAN
+            similarity_metric: COSINE, DOT, or EUCLIDEAN (MANHATTAN is not supported)
 
         """
+        # NebulaGraph only supports L2 and IP index metrics.
+        # MANHATTAN has no equivalent; skip index creation so search falls back to KNN.
+        nebula_metric = self._similarity_metric_to_nebula(similarity_metric)
+        if nebula_metric is None:
+            logger.warning(
+                "Skipping vector index creation for '%s' on '%s': "
+                "metric '%s' is not supported by NebulaGraph vector indexes "
+                "(supported: COSINE, DOT, EUCLIDEAN). ANN search will be unavailable.",
+                embedding_name,
+                node_or_edge_type,
+                similarity_metric.value,
+            )
+            return
+
         # Use mangled and sanitized embedding name to ensure valid identifier
         mangled_embedding = mangle_embedding_name(embedding_name)
         index_name = f"idx_{self._sanitize_name(node_or_edge_type)}_{self._sanitize_name(mangled_embedding)}"
@@ -1624,7 +1732,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             try:
                 sanitized_type = self._sanitize_name(node_or_edge_type)
-                metric = self._similarity_metric_to_nebula(similarity_metric)
+                metric = nebula_metric
 
                 # Build index options based on type
                 if self._ann_index_type == "IVF":
