@@ -6,20 +6,13 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import PropertyValue
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import ContentType, Episode, EpisodeType
 from memmachine.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine.common.filter.filter_parser import (
     FilterExpr,
-)
-from memmachine.common.filter.filter_parser import (
-    Or as FilterOr,
+    map_filter_fields,
+    normalize_filter_field,
 )
 from memmachine.common.reranker import Reranker
 from memmachine.common.vector_graph_store import VectorGraphStore
@@ -102,7 +95,7 @@ class LongTermMemory:
                 ),
                 content=episode.content,
                 filterable_properties=cast(
-                    dict[str, FilterablePropertyValue],
+                    dict[str, PropertyValue],
                     {
                         key: value
                         for key, value in {
@@ -307,8 +300,7 @@ class LongTermMemory:
             not in declarative_memory_episode.filterable_properties
             else None,
             metadata=cast(
-                "dict[str, JsonValue] | None",
-                declarative_memory_episode.user_metadata,
+                "dict[str, JsonValue] | None", declarative_memory_episode.user_metadata
             ),
         )
 
@@ -340,27 +332,10 @@ class LongTermMemory:
         return LongTermMemory._sanitize_filter_expr(property_filter)
 
     @staticmethod
+    def _sanitize_field(field: str) -> str:
+        internal_name, _ = normalize_filter_field(field)
+        return internal_name
+
+    @staticmethod
     def _sanitize_filter_expr(expr: FilterExpr) -> FilterExpr:
-        if isinstance(expr, FilterComparison):
-            if expr.field.startswith("m."):
-                sanitized_field = LongTermMemory._mangle_filterable_metadata_key(
-                    expr.field.removeprefix("m.")
-                )
-            else:
-                sanitized_field = expr.field
-            return FilterComparison(
-                field=sanitized_field,
-                op=expr.op,
-                value=expr.value,
-            )
-        if isinstance(expr, FilterAnd):
-            return FilterAnd(
-                left=LongTermMemory._sanitize_filter_expr(expr.left),
-                right=LongTermMemory._sanitize_filter_expr(expr.right),
-            )
-        if isinstance(expr, FilterOr):
-            return FilterOr(
-                left=LongTermMemory._sanitize_filter_expr(expr.left),
-                right=LongTermMemory._sanitize_filter_expr(expr.right),
-            )
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        return map_filter_fields(expr, LongTermMemory._sanitize_field)

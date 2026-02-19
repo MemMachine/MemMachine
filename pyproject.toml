@@ -34,6 +34,7 @@ dependencies = [
     "pydantic>=2.11.7",
     "pyyaml>=6.0.2",
     "rank-bm25>=0.2.2",
+    "sqlite-vec>=0.1.6",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
     "greenlet>=3.2.4",
