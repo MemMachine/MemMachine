@@ -74,7 +74,7 @@ jobs:
         run: |
           set -eo pipefail
           whl_name=$(ls *server*.whl)
-          python -m pip install "$whl_name"
+          python -m pip install --find-links . "$whl_name"
 
       #
       # ─────────────────────────────────────
@@ -106,7 +106,7 @@ jobs:
           set -eo pipefail
           export PYTHONUTF8=1
           whl_name=$(ls *server*.whl)
-          python -m pip install "$whl_name"
+          python -m pip install --find-links . "$whl_name"
 
       #
       # ─────────────────────────────────────
@@ -125,7 +125,7 @@ jobs:
         run: |
           set -eo pipefail
           whl_name=$(ls *server*.whl)
-          python -m pip install "$whl_name"
+          python -m pip install --find-links . "$whl_name"
 
       #
       # ─────────────────────────────────────
@@ -262,7 +262,7 @@ jobs:
         shell: bash
         run: |
           uv pip install pytest
-          uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v -m integration
+          uv run pytest packages/client/client_tests/test_integration_complete.py -v -m integration
 
       - name: Stop memmachine-server
         if: always()

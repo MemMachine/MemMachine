@@ -11,10 +11,10 @@ from typing import Any
 from uuid import uuid4
 
 try:
-    from memmachine.rest_client import MemMachineClient
+    from memmachine_client import MemMachineClient
 except ImportError as e:
     raise ImportError(
-        "memmachine package is required. Install it with: pip install memmachine"
+        "memmachine-client package is required. Install it with: pip install memmachine-client"
     ) from e
 
 logger = logging.getLogger(__name__)

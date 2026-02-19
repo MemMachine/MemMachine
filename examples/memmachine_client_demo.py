@@ -21,7 +21,7 @@ import json
 import os
 import sys
 
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 
 def print_section(title) -> None:

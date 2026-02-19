@@ -6,8 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "memmachine-client"
 dynamic = ["version"]
 dependencies = [
+    "memmachine-common",
     "pydantic>=2.0.0",
-    "regex>=2023.0.0",
     "requests>=2.31.0",
     "typing-extensions>=4.0.0",
     "urllib3>=2.6.3",
@@ -34,14 +34,18 @@ license = "Apache-2.0"
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.setuptools_scm]
 root = "../.."
 
-[tool.setuptools]
-packages = ["memmachine", "memmachine.common.api", "memmachine.rest_client"]
+[tool.uv]
+package = true
 
-[tool.setuptools.package-data]
-"*" = ["*.md", "*.txt", "*.yml", "*.yaml"]
+[tool.ty.environment]
+python-version = "3.10"
 
-[tool.setuptools.package-dir]
-"" = "src"
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py310"

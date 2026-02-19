@@ -53,9 +53,9 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from memmachine.main.memmachine import MemMachine, MemoryType
-from memmachine.common.episode_store import EpisodeEntry
-from memmachine.server.api_v2.mcp import initialize_resource
+from memmachine_server.main.memmachine import MemMachine, MemoryType
+from memmachine_server.common.episode_store import EpisodeEntry
+from memmachine_server.server.api_v2.mcp import initialize_resource
 
 class SessionDataWrapper:
     """Wrapper to adapt SessionInfo to SessionData protocol."""
@@ -86,15 +86,15 @@ async def main():
         sys.exit(1)
 
     print(f"Initializing MemMachine using {config_file}...")
-    
+
     try:
         # Initialize MemMachine using the helper from mcp module which handles config loading
         mem_machine = await initialize_resource(config_file)
-        
+
         # Create or get session
         session_key = "hello_session"
         print(f"Checking for session: {session_key}")
-        
+
         session_info = await mem_machine.get_session(session_key=session_key)
         if session_info:
             print(f"Session {session_key} already exists, using it.")
@@ -102,10 +102,10 @@ async def main():
             print(f"Creating session: {session_key}")
             # Note: create_session might fail if DBs are not reachable
             session_info = await mem_machine.create_session(session_key=session_key)
-        
+
         # Wrap session info to satisfy SessionData protocol
         session = SessionDataWrapper(session_info)
-        
+
         # Add a memory
         print("Adding memory...")
         episode = EpisodeEntry(
@@ -119,7 +119,7 @@ async def main():
             episode_entries=[episode],
             target_memories=[MemoryType.Episodic]
         )
-        
+
         # Search memory
         print("Searching memory...")
         results = await mem_machine.query_search(
@@ -127,19 +127,19 @@ async def main():
             query="What am I learning?",
             limit=1
         )
-        
+
         found = False
         if results.episodic_memory:
             # Check short-term memory
             if results.episodic_memory.short_term_memory and results.episodic_memory.short_term_memory.episodes:
                 print(f"Found in Short Term Memory: {results.episodic_memory.short_term_memory.episodes[0].content}")
                 found = True
-            
+
             # Check long-term memory
             if results.episodic_memory.long_term_memory and results.episodic_memory.long_term_memory.episodes:
                 print(f"Found in Long Term Memory: {results.episodic_memory.long_term_memory.episodes[0].content}")
                 found = True
-                
+
         if not found:
             print("No memory found (might need time to index or mock setup)")
 
@@ -202,7 +202,7 @@ This method is intended for testing only; it should not be used for developing a
 cat > my_file.py << 'EOF'
 # Paste your code here
 EOF
-``` 
+```
 
 ## Core Concepts
 

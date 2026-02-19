@@ -22,13 +22,13 @@ jobs:
         # Each integration test is a separate job to allow for parallel execution
         test-paths: [
           # Common tests
-          "tests/memmachine/common/",
+          "packages/server/server_tests/memmachine_server/common/",
           # Episodic Memory tests
-          "tests/memmachine/episodic_memory/",
+          "packages/server/server_tests/memmachine_server/episodic_memory/",
           # Main MemMachine tests
-          "tests/memmachine/main/",
+          "packages/server/server_tests/memmachine_server/main/",
           # Semantic Memory tests
-          "tests/memmachine/semantic_memory/",
+          "packages/server/server_tests/memmachine_server/semantic_memory/",
         ]
         os: [ ubuntu-latest, ubuntu-24.04-arm ]
         # Test on the oldest and newest supported Python versions
@@ -54,7 +54,7 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --cov=memmachine
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --cov=memmachine_server
           else
-            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --cov=memmachine
+            uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --cov=memmachine_server
           fi

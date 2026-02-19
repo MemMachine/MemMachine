@@ -79,7 +79,7 @@ This complete example demonstrates the core workflow: connecting to the server, 
 
 ```python title="MemMachineClient Hello World" Expandable
 import time
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 def main():
     # 1. Initialize the Client
@@ -110,14 +110,14 @@ def main():
 
     # 4. Add Memories (Simulating a conversation)
     print("Adding memories...")
-    
+
     # User states a preference
     memory.add(
         content="I am strictly vegetarian and I love spicy food.",
         role="user",
         metadata={"topic": "food_preference"}
     )
-    
+
     # Agent acknowledges
     memory.add(
         content="Noted, I will recommend vegetarian spicy options.",
@@ -141,7 +141,7 @@ if __name__ == "__main__":
 
 The expected output from running the above Hello World script should look like this:
 ```bash title="Hello World Expected Output"
-python sample.py 
+python sample.py
 Initializing Project...
 Connected to Project: acme-corp/support-bot-v1
 Adding memories...

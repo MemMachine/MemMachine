@@ -6,11 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "memmachine-server"
 dynamic = ["version"]
 dependencies = [
+    "memmachine-common",
     "alembic>=1.17.1",
     "asyncpg>=0.31.0",
     "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
     "boto3-stubs==1.40.64",
+    "cohere>=5.20.0",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
     "fastmcp>=2.14.0",
@@ -25,6 +27,7 @@ dependencies = [
     "pydantic>=2.11.7",
     "pyyaml>=6.0.2",
     "rank-bm25>=0.2.2",
+    "regex>=2023.0.0",
     "sqlalchemy>=2.0.43",
     "uvicorn>=0.35.0",
     "greenlet>=3.2.4",
@@ -40,6 +43,9 @@ readme = "README.md"
 keywords = ["memmachine", "server", "memory", "ai", "agent"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 license = "Apache-2.0"
@@ -50,54 +56,28 @@ gpu = [
 ]
 
 [project.scripts]
-memmachine-server = "memmachine.server.app:main"
-memmachine-nltk-setup = "memmachine:setup_nltk"
-memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
-memmachine-mcp-http = "memmachine.server.mcp_http:main"
-memmachine-configure = "memmachine.installation.memmachine_configure:main"
+memmachine-server = "memmachine_server.server.app:main"
+memmachine-nltk-setup = "memmachine_server:setup_nltk"
+memmachine-mcp-stdio = "memmachine_server.server.mcp_stdio:main"
+memmachine-mcp-http = "memmachine_server.server.mcp_http:main"
+memmachine-configure = "memmachine_server.installation.memmachine_configure:main"
 
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
 
-[tool.setuptools]
-packages = [
-    "memmachine",
-    "memmachine.common",
-    "memmachine.common.api",
-    "memmachine.common.configuration",
-    "memmachine.common.embedder",
-    "memmachine.common.episode_store",
-    "memmachine.common.filter",
-    "memmachine.common.language_model",
-    "memmachine.common.metrics_factory",
-    "memmachine.common.reranker",
-    "memmachine.common.resource_manager",
-    "memmachine.common.session_manager",
-    "memmachine.common.vector_graph_store",
-    "memmachine.episodic_memory",
-    "memmachine.episodic_memory.declarative_memory",
-    "memmachine.episodic_memory.long_term_memory",
-    "memmachine.episodic_memory.short_term_memory",
-    "memmachine.installation",
-    "memmachine.rest_client",
-    "memmachine.server",
-    "memmachine.main",
-    "memmachine.server.prompt",
-    "memmachine.server.api_v2",
-    "memmachine.semantic_memory",
-    "memmachine.semantic_memory.config_store",
-    "memmachine.semantic_memory.util",
-    "memmachine.semantic_memory.storage",
-    "memmachine.semantic_memory.storage.alembic_pg",
-    "memmachine.semantic_memory.storage.alembic_pg.versions",
-]
-
-[tool.setuptools.package-data]
-"*" = ["*.md", "*.txt", "*.yml", "*.yaml", "*.sql"]
-
-[tool.setuptools.package-dir]
-"" = "src"
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools_scm]
 root = "../.."
+
+[tool.uv]
+package = true
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py312"
