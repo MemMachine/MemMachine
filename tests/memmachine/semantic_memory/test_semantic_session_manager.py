@@ -23,6 +23,23 @@ from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import 
 pytestmark = pytest.mark.asyncio
 
 
+async def _collect_async(iterator):
+    return [item async for item in iterator]
+
+
+async def _aiter(items):
+    for item in items:
+        yield item
+
+
+async def _collect_feature_set(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_feature_set(**kwargs)]
+
+
+async def _collect_history_messages(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_history_messages(**kwargs)]
+
+
 @dataclass
 class _SessionData:
     org_id: str
@@ -52,12 +69,12 @@ async def session_manager(
 def mock_semantic_service() -> MagicMock:
     service = MagicMock(spec=SemanticService)
     service.add_message_to_sets = AsyncMock()
-    service.search = AsyncMock(return_value=[])
+    service.search = MagicMock(return_value=_aiter([]))
     service.number_of_uningested = AsyncMock(return_value=0)
     service.add_new_feature = AsyncMock(return_value=101)
     service.get_feature = AsyncMock(return_value="feature")
     service.update_feature = AsyncMock()
-    service.get_set_features = AsyncMock(return_value=["features"])
+    service.get_set_features = MagicMock(return_value=_aiter(["features"]))
     return service
 
 
@@ -103,11 +120,13 @@ async def test_add_message_records_history_and_uningested_counts(
         metadata={},
     )
 
-    profile_messages = await semantic_storage.get_history_messages(
+    profile_messages = await _collect_history_messages(
+        semantic_storage,
         set_ids=[profile_id],
         is_ingested=False,
     )
-    session_messages = await semantic_storage.get_history_messages(
+    session_messages = await _collect_history_messages(
+        semantic_storage,
         set_ids=[session_id],
         is_ingested=False,
     )
@@ -154,8 +173,8 @@ async def test_search_returns_relevant_features(
     )
 
     # When searching with an alpha-focused query
-    matches = list(
-        await session_manager.search(
+    matches = await _collect_async(
+        session_manager.search(
             message="Why does alpha stay calm?",
             session_data=session_data,
             min_distance=0.5,
@@ -187,11 +206,13 @@ async def test_add_feature_isolation(
     )
 
     # When retrieving features for each set id
-    a_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{set_id_a}')")
+    a_features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(f"set_id IN ('{set_id_a}')"),
     )
-    b_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{set_id_b}')")
+    b_features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(f"set_id IN ('{set_id_b}')"),
     )
 
     # Then only the profile receives the new feature and embeddings were generated
@@ -245,11 +266,13 @@ async def test_delete_feature_set_removes_filtered_entries(
     )
 
     # Then profile features are cleared while session-scoped entries remain
-    org_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{set_type_id}')")
+    org_features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(f"set_id IN ('{set_type_id}')"),
     )
-    project_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(f"set_id IN ('{project_set_id}')")
+    project_features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(f"set_id IN ('{project_set_id}')"),
     )
 
     assert org_features == []
@@ -348,19 +371,21 @@ async def test_search_passes_set_ids_and_filters(
     mock_semantic_service: MagicMock,
     session_data,
 ):
-    mock_semantic_service.search.return_value = ["result"]
+    mock_semantic_service.search.return_value = _aiter(["result"])
 
     filter_str = "tag IN ('facts') AND feature_name IN ('alpha_fact')"
-    result = await mock_session_manager.search(
-        message="Find alpha info",
-        session_data=session_data,
-        search_filter=parse_filter(filter_str),
-        limit=5,
-        load_citations=True,
+    result = await _collect_async(
+        mock_session_manager.search(
+            message="Find alpha info",
+            session_data=session_data,
+            search_filter=parse_filter(filter_str),
+            limit=5,
+            load_citations=True,
+        )
     )
 
-    mock_semantic_service.search.assert_awaited_once()
-    kwargs = mock_semantic_service.search.await_args.kwargs
+    mock_semantic_service.search.assert_called_once()
+    kwargs = mock_semantic_service.search.call_args.kwargs
 
     set_type_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,
@@ -480,15 +505,17 @@ async def test_get_set_features_wraps_opts(
     session_data,
 ):
     filter_str = "tag IN ('facts') AND feature_name IN ('alpha_fact')"
-    result = await mock_session_manager.get_set_features(
-        session_data=session_data,
-        search_filter=parse_filter(filter_str),
-        page_size=7,
-        load_citations=True,
+    result = await _collect_async(
+        mock_session_manager.get_set_features(
+            session_data=session_data,
+            search_filter=parse_filter(filter_str),
+            page_size=7,
+            load_citations=True,
+        )
     )
 
-    mock_semantic_service.get_set_features.assert_awaited_once()
-    kwargs = mock_semantic_service.get_set_features.await_args.kwargs
+    mock_semantic_service.get_set_features.assert_called_once()
+    kwargs = mock_semantic_service.get_set_features.call_args.kwargs
     assert kwargs["page_size"] == 7
     assert kwargs["with_citations"] is True
     assert result == ["features"]
@@ -857,10 +884,12 @@ async def test_search_with_time_filter_str(
     session_data,
 ):
     filter_str = "created_at < date('2026-01-19T01:56:41.513342Z')"
-    _ = await session_manager.search(
-        message="Find alpha info",
-        session_data=session_data,
-        search_filter=parse_filter(filter_str),
+    _ = await _collect_async(
+        session_manager.search(
+            message="Find alpha info",
+            session_data=session_data,
+            search_filter=parse_filter(filter_str),
+        )
     )
 
     # Add features
@@ -880,8 +909,10 @@ async def test_search_with_time_filter_str(
         value="alpha_value",
     )
 
-    _ = await session_manager.search(
-        message="Find alpha info",
-        session_data=session_data,
-        search_filter=parse_filter(filter_str),
+    _ = await _collect_async(
+        session_manager.search(
+            message="Find alpha info",
+            session_data=session_data,
+            search_filter=parse_filter(filter_str),
+        )
     )

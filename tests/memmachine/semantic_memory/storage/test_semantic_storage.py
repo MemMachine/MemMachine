@@ -18,6 +18,22 @@ def _expr(spec: str | None) -> FilterExpr | None:
     return parse_filter(spec) if spec else None
 
 
+async def _collect(iterator):
+    return [item async for item in iterator]
+
+
+async def _collect_feature_set(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_feature_set(**kwargs)]
+
+
+async def _collect_history_messages(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_history_messages(**kwargs)]
+
+
+async def _collect_set_ids_starts_with(storage: SemanticStorage, prefix: str):
+    return [item async for item in storage.get_set_ids_starts_with(prefix)]
+
+
 async def _add_episode(
     episode_storage: EpisodeStorage,
     *,
@@ -72,9 +88,7 @@ async def test_get_set_ids_starts_with(
         embedding=np.array([0.0] * 1536, dtype=float),
     )
 
-    set_ids = await semantic_storage.get_set_ids_starts_with("user")
-
-    set_ids = sorted(set_ids)
+    set_ids = sorted(await _collect(semantic_storage.get_set_ids_starts_with("user")))
     assert set_ids == ["user1", "user2"]
 
 
@@ -82,7 +96,7 @@ async def test_get_set_ids_starts_with(
 async def test_get_set_ids_starts_with_with_no_results(
     semantic_storage: SemanticStorage,
 ):
-    set_ids = await semantic_storage.get_set_ids_starts_with("no_results")
+    set_ids = await _collect(semantic_storage.get_set_ids_starts_with("no_results"))
     assert set_ids == []
 
 
@@ -112,9 +126,7 @@ async def test_get_set_ids_starts_with_with_cross_table(
         history_id="episode_id_c",
     )
 
-    set_ids = await semantic_storage.get_set_ids_starts_with("user")
-
-    set_ids = sorted(set_ids)
+    set_ids = sorted(await _collect(semantic_storage.get_set_ids_starts_with("user")))
     assert set_ids == ["user1", "user2"]
 
 
@@ -149,7 +161,8 @@ async def test_add_features_with_different_embedding_lengths(
     assert id_b is not None
 
     # Expect to be able to search the memory without errors
-    res = await semantic_storage.get_feature_set(
+    res = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("set_id IN (user_a)"),
         vector_search_opts=SemanticStorage.VectorSearchOpts(query_embedding=embed_a),
     )
@@ -161,7 +174,10 @@ async def test_add_features_with_different_embedding_lengths(
 @pytest.mark.asyncio
 async def test_empty_storage(semantic_storage: SemanticStorage):
     assert (
-        await semantic_storage.get_feature_set(filter_expr=_expr("set_id IN (user)"))
+        await _collect_feature_set(
+            semantic_storage,
+            filter_expr=_expr("set_id IN (user)"),
+        )
         == []
     )
 
@@ -173,8 +189,9 @@ async def test_multiple_features(
 ):
     # Given a storage with two features
     # When we retrieve the profile
-    profile_result = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user)")
+    profile_result = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user)"),
     )
     grouped_profile = SemanticFeature.group_features(profile_result)
 
@@ -206,12 +223,14 @@ async def test_feature_value_comparison_filters(semantic_storage: SemanticStorag
     ]
 
     try:
-        greater_than_one = await semantic_storage.get_feature_set(
+        greater_than_one = await _collect_feature_set(
+            semantic_storage,
             filter_expr=_expr("value > '1'"),
         )
         assert {f.value for f in greater_than_one} == {"2", "3"}
 
-        up_to_two = await semantic_storage.get_feature_set(
+        up_to_two = await _collect_feature_set(
+            semantic_storage,
             filter_expr=_expr("value <= '2'"),
         )
         assert {f.value for f in up_to_two} == {"1", "2"}
@@ -231,8 +250,9 @@ async def test_delete_feature(semantic_storage: SemanticStorage):
     )
 
     # Given a storage with a single feature
-    features = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user)")
+    features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user)"),
     )
     assert len(features) == 1
     assert features[0].value == "pizza"
@@ -240,8 +260,9 @@ async def test_delete_feature(semantic_storage: SemanticStorage):
     # When we delete the feature
     await semantic_storage.delete_features([idx_a])
 
-    features = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user)")
+    features = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user)"),
     )
 
     # Then the feature should no longer exist
@@ -254,13 +275,15 @@ async def test_delete_feature_set_by_set_id(
     with_multiple_sets,
 ):
     # Given a storage with two sets
-    res_a = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user1)")
+    res_a = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user1)"),
     )
     grouped_a = SemanticFeature.group_features(res_a)
 
-    res_b = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user2)")
+    res_b = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user2)"),
     )
     grouped_b = SemanticFeature.group_features(res_b)
 
@@ -276,14 +299,16 @@ async def test_delete_feature_set_by_set_id(
     await semantic_storage.delete_feature_set(filter_expr=_expr("set_id IN (user1)"))
 
     # Then the first set should be empty
-    res_delete_a = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user1)")
+    res_delete_a = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user1)"),
     )
     assert res_delete_a == []
 
     # And the second set should still exist
-    res_delete_b = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user2)")
+    res_delete_b = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user2)"),
     )
     grouped_delete_b = SemanticFeature.group_features(res_delete_b)
     set_delete_b = [{"value": f.value} for f in grouped_delete_b[key]]
@@ -307,17 +332,20 @@ async def test_get_feature_set_with_page_offset(
     ]
 
     try:
-        first_page = await semantic_storage.get_feature_set(
+        first_page = await _collect_feature_set(
+            semantic_storage,
             filter_expr=_expr("set_id IN (user)"),
             page_size=2,
             page_num=0,
         )
-        second_page = await semantic_storage.get_feature_set(
+        second_page = await _collect_feature_set(
+            semantic_storage,
             filter_expr=_expr("set_id IN (user)"),
             page_size=2,
             page_num=1,
         )
-        final_page = await semantic_storage.get_feature_set(
+        final_page = await _collect_feature_set(
+            semantic_storage,
             filter_expr=_expr("set_id IN (user)"),
             page_size=2,
             page_num=2,
@@ -335,7 +363,10 @@ async def test_get_feature_set_offset_without_limit_errors(
     semantic_storage: SemanticStorage,
 ):
     with pytest.raises(InvalidArgumentError):
-        await semantic_storage.get_feature_set(page_num=1)
+        await _collect_feature_set(
+            semantic_storage,
+            page_num=1,
+        )
 
 
 @pytest_asyncio.fixture
@@ -384,7 +415,8 @@ async def test_get_feature_set_basic_vector_search(
     _embed_b, value_b = oposite_vector_features[1]
 
     # When doing a vector search
-    results = await semantic_storage.get_feature_set(
+    results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("set_id IN (user)"),
         page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
@@ -408,7 +440,8 @@ async def test_get_feature_set_min_cos_vector_search(
     embed_a, value_a = oposite_vector_features[0]
 
     # When doing a vector search with a min_cos threshold
-    results = await semantic_storage.get_feature_set(
+    results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("set_id IN (user)"),
         page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
@@ -637,8 +670,8 @@ async def test_delete_history_removes_set_associations(
     await semantic_storage.delete_history([h2_id, h3_id])
 
     assert await semantic_storage.get_history_messages_count(set_ids=None) == 1
-    alpha_history = await semantic_storage.get_history_messages(set_ids=["alpha"])
-    beta_history = await semantic_storage.get_history_messages(set_ids=["beta"])
+    alpha_history = await _collect_history_messages(semantic_storage, set_ids=["alpha"])
+    beta_history = await _collect_history_messages(semantic_storage, set_ids=["beta"])
 
     assert alpha_history == [h1_id]
     assert beta_history == []
@@ -657,14 +690,16 @@ async def test_delete_history_set_removes_target_set(
     await semantic_storage.add_history_to_set(set_id="beta", history_id=h1_id)
     await semantic_storage.add_history_to_set(set_id="beta", history_id=h2_id)
 
-    assert set(await semantic_storage.get_history_set_ids()) == {"alpha", "beta"}
+    set_ids = {sid async for sid in semantic_storage.get_history_set_ids()}
+    assert set_ids == {"alpha", "beta"}
 
     await semantic_storage.delete_history_set(set_ids=["alpha"])
 
-    assert await semantic_storage.get_history_messages(set_ids=["alpha"]) == []
-    remaining = await semantic_storage.get_history_messages(set_ids=["beta"])
+    assert await _collect_history_messages(semantic_storage, set_ids=["alpha"]) == []
+    remaining = await _collect_history_messages(semantic_storage, set_ids=["beta"])
     assert set(map(str, remaining)) == {str(h1_id), str(h2_id)}
-    assert set(await semantic_storage.get_history_set_ids()) == {"beta"}
+    set_ids = {sid async for sid in semantic_storage.get_history_set_ids()}
+    assert set_ids == {"beta"}
 
 
 @pytest.mark.asyncio
@@ -695,12 +730,17 @@ async def test_delete_history_set_handles_multiple_ids(
     await semantic_storage.delete_history_set(set_ids=["alpha", "beta", "missing"])
 
     assert await semantic_storage.get_history_messages_count(set_ids=None) == 2
-    assert set(map(str, await semantic_storage.get_history_set_ids())) == {
+    set_ids = {str(sid) async for sid in semantic_storage.get_history_set_ids()}
+    assert set_ids == {
         "gamma",
         "delta",
     }
-    assert await semantic_storage.get_history_messages(set_ids=["gamma"]) == [h3_id]
-    assert await semantic_storage.get_history_messages(set_ids=["delta"]) == [h2_id]
+    assert await _collect_history_messages(semantic_storage, set_ids=["gamma"]) == [
+        h3_id
+    ]
+    assert await _collect_history_messages(semantic_storage, set_ids=["delta"]) == [
+        h2_id
+    ]
 
 
 @pytest.mark.asyncio
@@ -732,22 +772,23 @@ async def test_complex_feature_lifecycle(semantic_storage: SemanticStorage):
         embedding=embed,
     )
 
-    profile_default = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user)")
+    profile_default = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user)"),
     )
     grouped_default = SemanticFeature.group_features(profile_default)
     assert ("default", "food", "likes") in grouped_default
 
-    likes_entries = grouped_default[("default", "food", "likes")]
-    if not isinstance(likes_entries, list):
-        likes_entries = [likes_entries]
+    likes_entries = list(grouped_default[("default", "food", "likes")])
     assert {item.value for item in likes_entries} == {"pizza", "sushi"}
 
-    tenant_profile = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user) AND category_name IN (tenant_A)")
+    tenant_profile = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user) AND category_name IN (tenant_A)"),
     )
     grouped_tenant = SemanticFeature.group_features(tenant_profile)
-    assert grouped_tenant[("tenant_A", "prefs", "color")][0].value == "blue"
+    tenant_entries = list(grouped_tenant[("tenant_A", "prefs", "color")])
+    assert tenant_entries[0].value == "blue"
 
     await semantic_storage.delete_feature_set(
         filter_expr=_expr(
@@ -755,8 +796,9 @@ async def test_complex_feature_lifecycle(semantic_storage: SemanticStorage):
         )
     )
 
-    after_delete = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user)")
+    after_delete = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user)"),
     )
     grouped_after_delete = SemanticFeature.group_features(after_delete)
     assert ("default", "food", "likes") not in grouped_after_delete
@@ -764,14 +806,18 @@ async def test_complex_feature_lifecycle(semantic_storage: SemanticStorage):
     await semantic_storage.delete_feature_set(
         filter_expr=_expr("set_id IN (user) AND category_name IN (tenant_A)")
     )
-    tenant_only = await semantic_storage.get_feature_set(
-        filter_expr=_expr("set_id IN (user) AND category_name IN (tenant_A)")
+    tenant_only = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=_expr("set_id IN (user) AND category_name IN (tenant_A)"),
     )
     assert tenant_only == []
 
     await semantic_storage.delete_feature_set(filter_expr=_expr("set_id IN (user)"))
     assert (
-        await semantic_storage.get_feature_set(filter_expr=_expr("set_id IN (user)"))
+        await _collect_feature_set(
+            semantic_storage,
+            filter_expr=_expr("set_id IN (user)"),
+        )
         == []
     )
 
@@ -807,12 +853,14 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
         embedding=embed,
     )
 
-    null_results = await semantic_storage.get_feature_set(
+    null_results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("metadata.details IS NULL"),
     )
     assert {feature.value for feature in null_results} == {"second", "third"}
 
-    not_null_results = await semantic_storage.get_feature_set(
+    not_null_results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("metadata.details IS NOT NULL"),
     )
     assert [feature.value for feature in not_null_results] == ["first"]
@@ -832,7 +880,8 @@ async def test_get_feature_set_unknown_filter_column_errors(
     )
 
     # No errors occurs
-    await semantic_storage.get_feature_set(
+    await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("missing_column IN (foo)"),
     )
 
@@ -890,7 +939,8 @@ async def test_complex_semantic_search_and_citations(
         embedding=np.array([0.0, 1.0]),
     )
 
-    results = await semantic_storage.get_feature_set(
+    results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("set_id IN (user)"),
         page_size=10,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
@@ -906,7 +956,8 @@ async def test_complex_semantic_search_and_citations(
     assert results[0].metadata.citations is not None
     assert results[0].metadata.citations[0] == history_id
 
-    filtered = await semantic_storage.get_feature_set(
+    filtered = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr("set_id IN (user)"),
         page_size=1,
         vector_search_opts=SemanticStorage.VectorSearchOpts(
@@ -930,10 +981,11 @@ async def test_complex_semantic_search_and_citations(
         entry.metadata.id for entry in results if entry.metadata.id is not None
     ]
     await semantic_storage.delete_features(feature_ids[:1])
-    remaining = await semantic_storage.get_feature_set(
+    remaining = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr(
             "set_id IN (user) AND category_name IN (default) AND tag IN (facts) AND feature IN (topic)"
-        )
+        ),
     )
     assert len(remaining) == 1
     assert remaining[0].value == "music"
@@ -995,7 +1047,7 @@ async def test_get_set_ids(
         history_id="fake_c",
     )
 
-    set_ids = await semantic_storage.get_history_set_ids()
+    set_ids = [sid async for sid in semantic_storage.get_history_set_ids()]
     set_ids.sort()
 
     assert set_ids == ["user_a", "user_b", "user_c"]
@@ -1035,22 +1087,31 @@ async def test_get_set_ids_with_min_uningested(
         history_ids=["fake_c"],
     )
 
-    set_ids = await semantic_storage.get_history_set_ids(
-        min_uningested_messages=0,
-    )
+    set_ids = [
+        sid
+        async for sid in semantic_storage.get_history_set_ids(
+            min_uningested_messages=0,
+        )
+    ]
     set_ids.sort()
 
     assert set_ids == ["user_a", "user_b", "user_c"]
 
-    set_ids = await semantic_storage.get_history_set_ids(
-        min_uningested_messages=1,
-    )
+    set_ids = [
+        sid
+        async for sid in semantic_storage.get_history_set_ids(
+            min_uningested_messages=1,
+        )
+    ]
     set_ids.sort()
     assert set_ids == ["user_a", "user_c"]
 
-    set_ids = await semantic_storage.get_history_set_ids(
-        min_uningested_messages=2,
-    )
+    set_ids = [
+        sid
+        async for sid in semantic_storage.get_history_set_ids(
+            min_uningested_messages=2,
+        )
+    ]
     assert set_ids == ["user_c"]
 
 
@@ -1075,11 +1136,9 @@ async def test_get_set_ids_with_older_than(
         history_id=recent_history_id,
     )
 
-    set_ids = set(
-        await semantic_storage.get_history_set_ids(
-            older_than=cutoff,
-        )
-    )
+    set_ids = {
+        sid async for sid in semantic_storage.get_history_set_ids(older_than=cutoff)
+    }
 
     assert set_ids == {"old_user"}
 
@@ -1088,11 +1147,9 @@ async def test_get_set_ids_with_older_than(
         history_ids=[early_history_id],
     )
 
-    set_ids_after_ingest = set(
-        await semantic_storage.get_history_set_ids(
-            older_than=cutoff,
-        )
-    )
+    set_ids_after_ingest = {
+        sid async for sid in semantic_storage.get_history_set_ids(older_than=cutoff)
+    }
 
     assert set_ids_after_ingest == set()
 
@@ -1127,12 +1184,13 @@ async def test_get_set_ids_with_older_than_and_min_uningested(
         history_id=fresh_history_id,
     )
 
-    set_ids = set(
-        await semantic_storage.get_history_set_ids(
+    set_ids = {
+        sid
+        async for sid in semantic_storage.get_history_set_ids(
             min_uningested_messages=2,
             older_than=cutoff,
         )
-    )
+    }
 
     assert set_ids == {"old_user", "busy_user"}
 
@@ -1141,10 +1199,13 @@ async def test_get_set_ids_with_older_than_and_min_uningested(
         history_ids=[early_history_id],
     )
 
-    set_ids = await semantic_storage.get_history_set_ids(
-        min_uningested_messages=2,
-        older_than=cutoff,
-    )
+    set_ids = [
+        sid
+        async for sid in semantic_storage.get_history_set_ids(
+            min_uningested_messages=2,
+            older_than=cutoff,
+        )
+    ]
 
     assert set_ids == ["busy_user"]
 
@@ -1179,14 +1240,16 @@ async def test_filter_features_by_created_at_date(
     )
 
     # Filter for features created before cutoff
-    old_features = await semantic_storage.get_feature_set(
+    old_features = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr(f"created_at<date('{cutoff.isoformat()}')"),
     )
     assert len(old_features) == 1
     assert old_features[0].value == "old_note"
 
     # Filter for features created after cutoff
-    new_features = await semantic_storage.get_feature_set(
+    new_features = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr(f"created_at>=date('{cutoff.isoformat()}')"),
     )
     assert len(new_features) == 1
@@ -1241,7 +1304,8 @@ async def test_filter_features_by_created_at_with_other_filters(
     )
 
     # Filter for user1's important features created before cutoff
-    results = await semantic_storage.get_feature_set(
+    results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr(
             f"set_id='user1' AND tag='important' AND created_at<date('{cutoff.isoformat()}')"
         ),
@@ -1250,7 +1314,8 @@ async def test_filter_features_by_created_at_with_other_filters(
     assert results[0].value == "user1_old"
 
     # Filter for features created after cutoff
-    new_results = await semantic_storage.get_feature_set(
+    new_results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr(f"created_at>=date('{cutoff.isoformat()}')"),
     )
     assert len(new_results) == 2
@@ -1300,7 +1365,8 @@ async def test_filter_features_by_created_at_range(
     )
 
     # Filter for features in the middle time range
-    results = await semantic_storage.get_feature_set(
+    results = await _collect_feature_set(
+        semantic_storage,
         filter_expr=_expr(
             f"created_at>=date('{start_time.isoformat()}') AND created_at<date('{end_time.isoformat()}')"
         ),

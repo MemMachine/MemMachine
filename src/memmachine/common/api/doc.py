@@ -450,11 +450,28 @@ class SpecDoc:
     Must reference an embedder configured in the resources section."""
 
     SEMANTIC_INGESTION_MESSAGES = """
-    The number of uningested messages that triggers an ingestion cycle."""
+    The number of pending messages in a semantic cluster that triggers ingestion
+    for that cluster."""
 
     SEMANTIC_INGESTION_AGE = """
-    The maximum age (in seconds) of uningested messages before
-    triggering an ingestion cycle."""
+    The maximum age (in seconds) of the oldest pending message in a semantic
+    cluster before triggering ingestion for that cluster."""
+
+    SEMANTIC_CLUSTER_IDLE_TTL = """
+    The idle time-to-live (in seconds) for empty semantic clusters before they are
+    garbage collected. Set to null to disable cluster GC."""
+
+    SEMANTIC_CLUSTER_SIMILARITY_THRESHOLD = """
+    Cosine similarity threshold for grouping messages into semantic clusters.
+    Higher values produce tighter clusters; lower values merge more messages."""
+
+    SEMANTIC_CLUSTER_MAX_TIME_GAP = """
+    Maximum time gap (in seconds) allowed between messages in the same cluster.
+    Set to null to disable time-based cluster splitting."""
+
+    SEMANTIC_CLUSTER_SPLIT_RERANKER = """
+    Reranker ID used to score cluster split boundaries during ingestion.
+    Defaults to the long-term memory reranker when unset."""
 
     UPDATE_EPISODIC_MEMORY = """
     Partial update for episodic memory configuration. Only supplied
@@ -1109,8 +1126,9 @@ class RouterDoc:
     - database: The database resource to use for storing semantic memories
     - llm_model: The language model to use for feature extraction
     - embedding_model: The embedder to use for semantic similarity
-    - ingestion_trigger_messages: Number of messages before triggering ingestion
-    - ingestion_trigger_age_seconds: Age threshold for triggering ingestion
+    - ingestion_trigger_messages: Pending messages in a cluster before ingestion
+    - ingestion_trigger_age_seconds: Oldest pending message age before ingestion
+    - cluster_idle_ttl_seconds: Idle TTL before empty clusters are garbage collected
     """
 
     # --- Semantic Set Type API Router Docs ---

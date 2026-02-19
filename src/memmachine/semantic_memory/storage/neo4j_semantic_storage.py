@@ -6,7 +6,14 @@ import asyncio
 import json
 import re
 from asyncio import Lock
-from collections.abc import Callable, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+)
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, LiteralString, cast
@@ -52,8 +59,8 @@ class _FeatureEntry:
     feature_name: str
     value: str
     embedding: np.ndarray
-    metadata: dict[str, Any] | None
-    citations: list[EpisodeIdT]
+    metadata: Mapping[str, Any] | None
+    citations: Sequence[EpisodeIdT]
     created_at_ts: float
     updated_at_ts: float
 
@@ -115,12 +122,12 @@ class Neo4jSemanticStorage(SemanticStorage):
         self._owns_driver = owns_driver
         # Exposed for fixtures to know which backend is in use
         self.backend_name = "neo4j"
-        self._vector_index_by_set: dict[str, int] = {}
-        self._set_embedding_dimensions: dict[str, int] = {}
+        self._vector_index_by_set: MutableMapping[str, int] = {}
+        self._set_embedding_dimensions: MutableMapping[str, int] = {}
         self._filter_param_counter = 0
 
         self._vector_global_lock = Lock()
-        self._vector_index_creation_lock: dict[str, Lock] = {}
+        self._vector_index_creation_lock: MutableMapping[str, Lock] = {}
 
     async def startup(self) -> None:
         await self._driver.execute_query(
@@ -199,7 +206,7 @@ class Neo4jSemanticStorage(SemanticStorage):
                 set_id=set_id,
             )
 
-    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+    async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         async with asyncio.TaskGroup() as tg:
             for set_id in set_ids:
                 tg.create_task(self._drop_set_id_vector_index(set_id))
@@ -207,13 +214,13 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def add_feature(
         self,
         *,
-        set_id: str,
+        set_id: SetIdT,
         category_name: str,
         feature: str,
         value: str,
         tag: str,
         embedding: InstanceOf[np.ndarray],
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> FeatureIdT:
         timestamp = _utc_timestamp()
         dimensions = len(np.array(embedding, dtype=float))
@@ -265,13 +272,13 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         feature_id: FeatureIdT,
         *,
-        set_id: str | None = None,
+        set_id: SetIdT | None = None,
         category_name: str | None = None,
         feature: str | None = None,
         value: str | None = None,
         tag: str | None = None,
         embedding: InstanceOf[np.ndarray] | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         record = await self._get_feature_dimensions(feature_id)
         if record is None:
@@ -340,11 +347,11 @@ class Neo4jSemanticStorage(SemanticStorage):
         value: str | None,
         tag: str | None,
         embedding: InstanceOf[np.ndarray] | None,
-        metadata: dict[str, Any] | None,
+        metadata: Mapping[str, Any] | None,
         target_dimensions: int,
-    ) -> tuple[list[str], dict[str, Any], dict[str, Any] | None]:
+    ) -> tuple[Sequence[str], MutableMapping[str, Any], Mapping[str, Any] | None]:
         assignments = ["f.updated_at_ts = $updated_at_ts"]
-        params: dict[str, Any] = {
+        params: MutableMapping[str, Any] = {
             "feature_id": str(feature_id),
             "updated_at_ts": _utc_timestamp(),
             "embedding_dimensions": target_dimensions,
@@ -369,7 +376,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             assignments.append("f.embedding = $embedding")
             params["embedding"] = embedding_param
 
-        metadata_props: dict[str, Any] | None = None
+        metadata_props: MutableMapping[str, Any] | None = None
         if metadata is not None:
             metadata_json, metadata_props = self._prepare_metadata_storage(metadata)
             assignments.append("f.metadata_json = $metadata_json")
@@ -384,7 +391,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     @staticmethod
     def _embedding_param(
         embedding: InstanceOf[np.ndarray] | None,
-    ) -> list[float] | None:
+    ) -> Sequence[float] | None:
         if embedding is None:
             return None
         return [float(x) for x in np.array(embedding, dtype=float).tolist()]
@@ -393,7 +400,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         existing_set_id: str | None,
         new_set_id: str | None,
-    ) -> list[str]:
+    ) -> Sequence[str]:
         if new_set_id is None or new_set_id == existing_set_id:
             return []
 
@@ -425,7 +432,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         entry = self._node_to_entry(records[0]["f"])
         return self._entry_to_model(entry, load_citations=load_citations)
 
-    async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
         if not feature_ids:
             return
 
@@ -449,7 +456,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         tag_threshold: int | None = None,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         if page_num is not None:
             if page_size is None:
                 raise InvalidArgumentError("Cannot specify offset without limit")
@@ -457,17 +464,18 @@ class Neo4jSemanticStorage(SemanticStorage):
                 raise InvalidArgumentError("Offset must be non-negative")
 
         page_offset = page_num or 0
+        entries: list[_FeatureEntry]
         if vector_search_opts is not None:
-            entries = await self._vector_search_entries(
-                limit=page_size,
-                offset=page_offset,
-                vector_search_opts=vector_search_opts,
-                filter_expr=filter_expr,
+            entries = list(
+                await self._vector_search_entries(
+                    limit=page_size,
+                    offset=page_offset,
+                    vector_search_opts=vector_search_opts,
+                    filter_expr=filter_expr,
+                )
             )
         else:
-            entries = await self._load_feature_entries(
-                filter_expr=filter_expr,
-            )
+            entries = list(await self._load_feature_entries(filter_expr=filter_expr))
             entries.sort(key=lambda e: (e.created_at_ts, str(e.feature_id)))
             if page_size is not None:
                 start = page_size * page_offset
@@ -479,10 +487,8 @@ class Neo4jSemanticStorage(SemanticStorage):
             counts = Counter(entry.tag for entry in entries)
             entries = [entry for entry in entries if counts[entry.tag] >= tag_threshold]
 
-        return [
-            self._entry_to_model(entry, load_citations=load_citations)
-            for entry in entries
-        ]
+        for entry in entries:
+            yield self._entry_to_model(entry, load_citations=load_citations)
 
     async def delete_feature_set(
         self,
@@ -492,13 +498,16 @@ class Neo4jSemanticStorage(SemanticStorage):
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         filter_expr: FilterExpr | None = None,
     ) -> None:
-        entries = await self.get_feature_set(
-            page_size=limit,
-            vector_search_opts=vector_search_opts,
-            tag_threshold=thresh,
-            filter_expr=filter_expr,
-            load_citations=False,
-        )
+        entries = [
+            entry
+            async for entry in self.get_feature_set(
+                page_size=limit,
+                vector_search_opts=vector_search_opts,
+                tag_threshold=thresh,
+                filter_expr=filter_expr,
+                load_citations=False,
+            )
+        ]
         await self.delete_features(
             [FeatureIdT(entry.metadata.id) for entry in entries if entry.metadata.id],
         )
@@ -506,7 +515,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         if not history_ids:
             return
@@ -542,10 +551,10 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def get_history_messages(
         self,
         *,
-        set_ids: list[str] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> AsyncIterator[EpisodeIdT]:
         query = ["MATCH (h:SetHistory)"]
         conditions = []
         params: dict[str, Any] = {}
@@ -565,12 +574,13 @@ class Neo4jSemanticStorage(SemanticStorage):
             _neo4j_query("\n".join(query)),
             **params,
         )
-        return [EpisodeIdT(record["history_id"]) for record in records]
+        for record in records:
+            yield EpisodeIdT(record["history_id"])
 
     async def get_history_messages_count(
         self,
         *,
-        set_ids: list[str] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         is_ingested: bool | None = None,
     ) -> int:
         query = ["MATCH (h:SetHistory)"]
@@ -591,68 +601,103 @@ class Neo4jSemanticStorage(SemanticStorage):
         )
         return int(records[0]["cnt"]) if records else 0
 
-    async def get_history_set_ids(
+    @staticmethod
+    def _extract_unique_set_ids(
+        records: Sequence[Mapping[str, Any]],
+        seen: set[str],
+    ) -> Sequence[SetIdT]:
+        yielded: list[SetIdT] = []
+        for record in records:
+            raw_set_id = record.get("set_id")
+            if raw_set_id is None:
+                continue
+            set_id = str(raw_set_id)
+            if set_id in seen:
+                continue
+            seen.add(set_id)
+            yielded.append(SetIdT(set_id))
+        return yielded
+
+    async def _fetch_set_ids_min_uningested(
+        self,
+        min_uningested_messages: int,
+    ) -> Sequence[Mapping[str, Any]]:
+        records, _, _ = await self._driver.execute_query(
+            _neo4j_query(
+                """
+                MATCH (h:SetHistory)
+                WITH h.set_id AS set_id,
+                     sum(CASE WHEN coalesce(h.is_ingested, false) = false THEN 1 ELSE 0 END) AS uningested_count
+                WHERE uningested_count >= $min_uningested_messages
+                RETURN set_id
+                """
+            ),
+            min_uningested_messages=min_uningested_messages,
+        )
+        return records
+
+    async def _fetch_set_ids_older_than(
+        self,
+        older_than: datetime,
+    ) -> Sequence[Mapping[str, Any]]:
+        records, _, _ = await self._driver.execute_query(
+            """
+            MATCH (h:SetHistory)
+            WHERE coalesce(h.is_ingested, false) = false
+              AND h.created_at <= $older_than
+            RETURN DISTINCT h.set_id AS set_id
+            """,
+            older_than=older_than,
+        )
+        return records
+
+    async def _fetch_set_ids_all(self) -> Sequence[Mapping[str, Any]]:
+        records, _, _ = await self._driver.execute_query(
+            """
+            MATCH (h:SetHistory)
+            RETURN DISTINCT h.set_id AS set_id
+            """,
+        )
+        return records
+
+    async def _iter_history_set_ids(
         self,
         *,
         min_uningested_messages: int | None = None,
         older_than: datetime | None = None,
-    ) -> list[str]:
-        set_ids: set[str] = set()
+    ) -> AsyncIterator[SetIdT]:
+        seen: set[str] = set()
         filters_applied = False
 
         if min_uningested_messages is not None and min_uningested_messages > 0:
             filters_applied = True
-            records, _, _ = await self._driver.execute_query(
-                _neo4j_query(
-                    """
-                    MATCH (h:SetHistory)
-                    WITH h.set_id AS set_id,
-                         sum(CASE WHEN coalesce(h.is_ingested, false) = false THEN 1 ELSE 0 END) AS uningested_count
-                    WHERE uningested_count >= $min_uningested_messages
-                    RETURN set_id
-                    """
-                ),
-                min_uningested_messages=min_uningested_messages,
-            )
-            set_ids.update(
-                str(record.get("set_id"))
-                for record in records
-                if record.get("set_id") is not None
-            )
+            records = await self._fetch_set_ids_min_uningested(min_uningested_messages)
+            for set_id in self._extract_unique_set_ids(records, seen):
+                yield set_id
 
         if older_than is not None:
             filters_applied = True
-            records, _, _ = await self._driver.execute_query(
-                """
-                MATCH (h:SetHistory)
-                WHERE coalesce(h.is_ingested, false) = false
-                  AND h.created_at <= $older_than
-                RETURN DISTINCT h.set_id AS set_id
-                """,
-                older_than=older_than,
-            )
-            set_ids.update(
-                str(record.get("set_id"))
-                for record in records
-                if record.get("set_id") is not None
-            )
+            records = await self._fetch_set_ids_older_than(older_than)
+            for set_id in self._extract_unique_set_ids(records, seen):
+                yield set_id
 
         if not filters_applied:
-            records, _, _ = await self._driver.execute_query(
-                """
-                MATCH (h:SetHistory)
-                RETURN DISTINCT h.set_id AS set_id
-                """,
-            )
-            set_ids.update(
-                str(record.get("set_id"))
-                for record in records
-                if record.get("set_id") is not None
-            )
+            records = await self._fetch_set_ids_all()
+            for set_id in self._extract_unique_set_ids(records, seen):
+                yield set_id
 
-        return list(set_ids)
+    def get_history_set_ids(
+        self,
+        *,
+        min_uningested_messages: int | None = None,
+        older_than: datetime | None = None,
+    ) -> AsyncIterator[SetIdT]:
+        return self._iter_history_set_ids(
+            min_uningested_messages=min_uningested_messages,
+            older_than=older_than,
+        )
 
-    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+    async def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         records, _, _ = await self._driver.execute_query(
             """
             MATCH (f:Feature)
@@ -665,13 +710,12 @@ class Neo4jSemanticStorage(SemanticStorage):
             """,
             prefix=prefix,
         )
-        return [
-            SetIdT(str(record["set_id"]))
-            for record in records
-            if record.get("set_id") is not None
-        ]
+        for record in records:
+            if record.get("set_id") is None:
+                continue
+            yield SetIdT(str(record["set_id"]))
 
-    async def add_history_to_set(self, set_id: str, history_id: EpisodeIdT) -> None:
+    async def add_history_to_set(self, set_id: SetIdT, history_id: EpisodeIdT) -> None:
         await self._driver.execute_query(
             """
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
@@ -683,7 +727,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             created_at=datetime.now(UTC),
         )
 
-    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
         if not history_ids:
             return
 
@@ -696,7 +740,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             history_ids=[str(history_id) for history_id in history_ids],
         )
 
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+    async def delete_history_set(self, set_ids: Sequence[SetIdT]) -> None:
         if not set_ids:
             return
 
@@ -712,8 +756,8 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def mark_messages_ingested(
         self,
         *,
-        set_id: str,
-        history_ids: list[EpisodeIdT],
+        set_id: SetIdT,
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         if not history_ids:
             raise ValueError("No ids provided")
@@ -731,7 +775,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         *,
         filter_expr: FilterExpr | None,
-    ) -> list[_FeatureEntry]:
+    ) -> Sequence[_FeatureEntry]:
         query = ["MATCH (f:Feature)"]
         conditions, params = self._build_filter_conditions(
             alias="f",
@@ -772,7 +816,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         )
 
     @staticmethod
-    def _parse_metadata(props: Mapping[str, Any]) -> dict[str, Any] | None:
+    def _parse_metadata(props: Mapping[str, Any]) -> Mapping[str, Any] | None:
         metadata_json = props.get("metadata_json")
         if isinstance(metadata_json, str) and metadata_json:
             try:
@@ -790,12 +834,12 @@ class Neo4jSemanticStorage(SemanticStorage):
 
     def _prepare_metadata_storage(
         self,
-        metadata: dict[str, Any] | None,
-    ) -> tuple[str | None, dict[str, Any]]:
+        metadata: Mapping[str, Any] | None,
+    ) -> tuple[str | None, MutableMapping[str, Any]]:
         if metadata is None:
             return None, {}
         metadata_json = json.dumps(metadata)
-        metadata_props: dict[str, Any] = {}
+        metadata_props: MutableMapping[str, Any] = {}
         for raw_key, raw_value in metadata.items():
             if raw_value is None:
                 continue
@@ -827,7 +871,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         *,
         load_citations: bool,
     ) -> SemanticFeature:
-        citations: list[EpisodeIdT] | None = None
+        citations: Sequence[EpisodeIdT] | None = None
         if load_citations:
             citations = list(entry.citations)
         return SemanticFeature(
@@ -850,7 +894,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         offset: int,
         vector_search_opts: SemanticStorage.VectorSearchOpts,
         filter_expr: FilterExpr | None,
-    ) -> list[_FeatureEntry]:
+    ) -> Sequence[_FeatureEntry]:
         embedding_array = np.array(vector_search_opts.query_embedding, dtype=float)
         embedding = [float(x) for x in embedding_array.tolist()]
         embedding_dims = len(embedding)
@@ -893,13 +937,13 @@ class Neo4jSemanticStorage(SemanticStorage):
     def _vector_query_params(
         self,
         *,
-        embedding: list[float],
-        filter_params: dict[str, Any],
+        embedding: Sequence[float],
+        filter_params: Mapping[str, Any],
         candidate_limit: int,
         min_distance: float | None,
-        conditions: list[str],
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
+        conditions: MutableSequence[str],
+    ) -> Mapping[str, Any]:
+        params: MutableMapping[str, Any] = {
             "candidate_limit": candidate_limit,
             "embedding": embedding,
             **filter_params,
@@ -910,7 +954,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         return params
 
     @staticmethod
-    def _vector_query_text(conditions: list[str]) -> str:
+    def _vector_query_text(conditions: Sequence[str]) -> str:
         query_parts = [
             "CALL db.index.vector.queryNodes($index_name, $candidate_limit, $embedding)",
             "YIELD node, score",
@@ -925,7 +969,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         filter_expr: FilterExpr | None,
         expected_dims: int,
-    ) -> list[str]:
+    ) -> Sequence[str]:
         requested_set_ids = self._extract_set_ids(filter_expr)
         candidate_ids = self._deduplicated_set_ids(requested_set_ids)
         return [
@@ -934,7 +978,9 @@ class Neo4jSemanticStorage(SemanticStorage):
             if self._set_embedding_dimensions.get(set_id) == expected_dims
         ]
 
-    def _deduplicated_set_ids(self, requested_set_ids: list[str] | None) -> list[str]:
+    def _deduplicated_set_ids(
+        self, requested_set_ids: Sequence[str] | None
+    ) -> Sequence[str]:
         if requested_set_ids is None:
             return list(self._set_embedding_dimensions.keys())
 
@@ -951,8 +997,8 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         query_text: str,
         index_name: str,
-        params_base: dict[str, Any],
-    ) -> list[tuple[float, _FeatureEntry]]:
+        params_base: Mapping[str, Any],
+    ) -> Sequence[tuple[float, _FeatureEntry]]:
         params = dict(params_base)
         params["index_name"] = index_name
         records, _, _ = await self._driver.execute_query(
@@ -969,9 +1015,9 @@ class Neo4jSemanticStorage(SemanticStorage):
         *,
         alias: str,
         filter_expr: FilterExpr | None = None,
-    ) -> tuple[list[str], dict[str, Any]]:
+    ) -> tuple[MutableSequence[str], MutableMapping[str, Any]]:
         conditions: list[str] = []
-        params: dict[str, Any] = {}
+        params: MutableMapping[str, Any] = {}
         if filter_expr is not None:
             expr_condition, expr_params = self._render_filter_expr(alias, filter_expr)
             if expr_condition:
@@ -979,7 +1025,7 @@ class Neo4jSemanticStorage(SemanticStorage):
                 params.update(expr_params)
         return conditions, params
 
-    def _extract_set_ids(self, expr: FilterExpr | None) -> list[str] | None:
+    def _extract_set_ids(self, expr: FilterExpr | None) -> Sequence[str] | None:
         if expr is None:
             return None
 
@@ -1031,7 +1077,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         alias: str,
         expr: FilterExpr,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, MutableMapping[str, Any]]:
         if isinstance(expr, FilterComparison):
             field_ref, value_adapter = self._resolve_field_reference(
                 alias,
@@ -1061,9 +1107,9 @@ class Neo4jSemanticStorage(SemanticStorage):
         field_ref: str,
         expr: FilterComparison,
         value_adapter: Callable[[FilterablePropertyValue], Any] | None,
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, MutableMapping[str, Any]]:
         op = expr.op
-        params: dict[str, Any] = {}
+        params: MutableMapping[str, Any] = {}
 
         if op == "in":
             if not isinstance(expr.value, list):
@@ -1360,7 +1406,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def _get_feature_dimensions(
         self,
         feature_id: FeatureIdT,
-    ) -> dict[str, Any] | None:
+    ) -> Mapping[str, Any] | None:
         records, _, _ = await self._driver.execute_query(
             _neo4j_query(
                 f"""
