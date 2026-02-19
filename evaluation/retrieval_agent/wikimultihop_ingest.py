@@ -62,13 +62,7 @@ def load_data(  # noqa: C901
             questions.append(obj["question"])
             answers.append(obj["answer"])
 
-            type_map = {
-                "compositional": 1,
-                "comparison": 2,
-                "inference": 3,
-                "bridge_comparison": 4,
-            }
-            types.append(type_map[obj["type"]])
+            types.append(obj["type"])
 
             cur_facts = json.loads(obj["supporting_facts"])
             fact_sents = []
