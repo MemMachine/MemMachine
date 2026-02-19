@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import random
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -65,52 +66,55 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
     added_content = 0
     total_questions = 0
     per_batch = 1000
-    index = -1
 
     vector_graph_store = agent_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
-    for data in dataset:
-        index += 1
-        # Notice that the index of items must align between ingestion and search
-        memory, _, _ = await agent_utils.init_memmachine_params(
-            vector_graph_store=vector_graph_store,
-            session_id=f"hotpotqa_group_{index}",
-        )
 
+    # Notice that the index of items must align between ingestion and search
+    memory, _, _ = await agent_utils.init_memmachine_params(
+        vector_graph_store=vector_graph_store,
+        session_id=f"hotpotqa_group",
+    )
+
+    all_content = []
+    for data in dataset:
         context = data["context"]
+        titles = context["title"]
         sentences = context["sentences"]
-        episodes = []
-        total_questions += 1
-        for sent_list in sentences:
+        for title, sent_list in zip(titles, sentences, strict=True):
             for sent in sent_list:
-                added_content += 1
-                ts = t1 + timedelta(minutes=added_content)
-                episodes.append(
-                    Episode(
-                        uid=str(uuid4()),
-                        timestamp=ts,
-                        source="user",
-                        content_type=ContentType.TEXT,
-                        content=sent,
-                    )
-                )
-                if added_content % per_batch == 0 or (
-                    (sent == sent_list[-1]) and (sent_list == sentences[-1])
-                ):
-                    print(f"Adding batch of {len(episodes)} episodes...")
-                    t = time.perf_counter()
-                    await memory.add_episodes(episodes=episodes)
-                    print(
-                        f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
-                    )
-                    print(f"Total added episodes: {added_content}")
-                    print(
-                        f"Total questions processed: {total_questions}/{len(dataset)}"
-                    )
-                    episodes = []
+                all_content.append(f"{title}: {sent}")
+
+    # Fully randomize contents
+    random.shuffle(all_content)
+    episodes = []
+    for sent in all_content:
+        added_content += 1
+        ts = t1 + timedelta(minutes=added_content)
+        episodes.append(
+            Episode(
+                uid=str(uuid4()),
+                timestamp=ts,
+                source="user",
+                content_type=ContentType.TEXT,
+                content=sent,
+            )
+        )
+        if added_content % per_batch == 0 or sent == all_content[-1]:
+            print(f"Adding batch of {len(episodes)} episodes...")
+            t = time.perf_counter()
+            await memory.add_episodes(episodes=episodes)
+            print(
+                f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
+            )
+            print(f"Total added episodes: {added_content}")
+            print(
+                f"Total episodes processed: {added_content}/{len(all_content)}"
+            )
+            episodes = []
     print(
-        f"Completed HotpotQA ingestion, added {total_questions} questions, {added_content} episodes."
+        f"Completed HotpotQA ingestion, added {len(dataset)} questions, {added_content} episodes."
     )
 
 
@@ -122,14 +126,19 @@ async def hotpotqa_search(
 ):
     tasks = []
     attribute_matrix = agent_utils.init_attribute_matrix()
-    index = -1
     responses: list[tuple[int, dict[str, any]]] = []
     num_searched = 0
     vector_graph_store = agent_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
+    memory, model, query_agent = await agent_utils.init_memmachine_params(
+        vector_graph_store=vector_graph_store,
+        model_name="gpt-5-mini",
+        session_id=f"hotpotqa_group",
+        agent_name=agent_name,
+    )
+
     for data in dataset:
-        index += 1
         context = data["context"]
         titles = context["title"]
         sentences = context["sentences"]  # List[List[str]]
@@ -142,13 +151,6 @@ async def hotpotqa_search(
         ):
             sent = sentences[titles.index(title)][sent_id]
             supporting_facts.append(sent)
-
-        memory, model, query_agent = await agent_utils.init_memmachine_params(
-            vector_graph_store=vector_graph_store,
-            model_name="gpt-5-mini",
-            session_id=f"hotpotqa_group_{index}",
-            agent_name=agent_name,
-        )
 
         full_content = [sent for sent_list in sentences for sent in sent_list]
         full_content_str = "\n".join(full_content)
@@ -170,7 +172,7 @@ async def hotpotqa_search(
             )
         )
 
-        if len(tasks) % 30 == 0 or (index == len(dataset) - 1):
+        if len(tasks) % 30 == 0 or data == dataset[-1]:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(

@@ -1,5 +1,5 @@
-import json
 import os
+import re
 import time
 from typing import Any, cast
 
@@ -126,6 +126,46 @@ async def process_question(
     return category, res
 
 
+def _normalize_for_match(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _match_tokens(text: str) -> set[str]:
+    return {tok for tok in re.findall(r"[a-z0-9]+", text.lower()) if len(tok) >= 3}
+
+
+def _fact_variants(fact: str) -> list[str]:
+    variants = [fact.strip()]
+    if ":" in fact:
+        sent_part = fact.split(":", 1)[1].strip()
+        if sent_part:
+            variants.append(sent_part)
+    return [v for v in variants if v]
+
+
+def _fact_in_mem(fact: str, mem: str, mem_lines_norm: list[str]) -> bool:
+    mem_norm = _normalize_for_match(mem)
+    for variant in _fact_variants(fact):
+        variant_norm = _normalize_for_match(variant)
+        if variant_norm and variant_norm in mem_norm:
+            return True
+
+        # OpenClaw search snippets may be shortened; allow conservative overlap.
+        variant_tokens = _match_tokens(variant_norm)
+        if len(variant_tokens) < 5:
+            continue
+        for line in mem_lines_norm:
+            line_tokens = _match_tokens(line)
+            if len(line_tokens) < 5:
+                continue
+            overlap = len(variant_tokens & line_tokens)
+            overlap_ratio = overlap / len(variant_tokens)
+            if overlap_ratio >= 0.6:
+                return True
+
+    return False
+
+
 def init_attribute_matrix() -> dict[str, Any]:
     return {
         "customize_attributes": {},  # dict[str, Any] for different dataset use
@@ -166,11 +206,19 @@ def update_results(
             attribute_matrix["tools_output_tokens"][tool] = 0
 
         mem = response["conversation_memories"]
+        mem_lines_norm = (
+            [_normalize_for_match(line) for line in mem.splitlines() if line]
+            if isinstance(mem, str)
+            else []
+        )
         fact_hits = []
         fact_miss = []
         for fact in response["supporting_facts"]:
-            # Remove leading and trailing quotes
-            if (json.dumps(fact)[1:-1]) in mem or fact[1:-1] in mem:
+            if (
+                isinstance(mem, str)
+                and isinstance(fact, str)
+                and _fact_in_mem(fact, mem, mem_lines_norm)
+            ):
                 attribute_matrix["tools_hits"][tool] += 1
                 fact_hits.append(f"[HIT] {fact}\n")
             else:

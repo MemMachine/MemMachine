@@ -21,44 +21,38 @@ from evaluation.retrieval_agent.llm_judge import evaluate_llm_judge  # noqa: E40
 load_dotenv()
 
 
-def process_item(item_data):
-    k, v = item_data
-    local_results = defaultdict(list)
+def process_sample(group_key: str, item: dict):
+    question = str(item["question"])
+    locomo_answer = str(item["golden_answer"])
+    response = str(item["model_answer"])
+    category = str(item["category"])
 
-    for item in tqdm(v, desc=f"Processing {k} sample"):
-        question = str(item["question"])
-        locomo_answer = str(item["golden_answer"])
-        response = str(item["model_answer"])
-        category = str(item["category"])
+    # Skip category 5
+    if category == "5":
+        return group_key, None
 
-        # Skip category 5
-        if category == "5":
-            continue
+    llm_score = evaluate_llm_judge(question, locomo_answer, response)
 
-        llm_score = evaluate_llm_judge(question, locomo_answer, response)
+    res = {
+        "question": question,
+        "answer": locomo_answer,
+        "response": response,
+        "category": category,
+        "llm_score": llm_score,
+    }
+    for key, val in item.items():
+        if key not in [
+            "question",
+            "golden_answer",
+            "model_answer",
+            "category",
+        ]:
+            if type(val) is float:
+                # Round to 3 decimal places
+                val = round(val, 3)
+            res[key] = val
 
-        res = {
-            "question": question,
-            "answer": locomo_answer,
-            "response": response,
-            "category": category,
-            "llm_score": llm_score,
-        }
-        for key, val in item.items():
-            if key not in [
-                "question",
-                "golden_answer",
-                "model_answer",
-                "category",
-            ]:
-                if type(val) is float:
-                    # Round to 3 decimal places
-                    val = round(val, 3)
-                res[key] = val
-
-        local_results[k].append(res)
-
-    return local_results
+    return group_key, res
 
 
 def main():
@@ -89,22 +83,29 @@ def main():
 
     results = defaultdict(list)
     results_lock = threading.Lock()
+    sample_tasks: list[tuple[str, dict]] = [
+        (group_key, item)
+        for group_key, items in data.items()
+        for item in items
+    ]
 
     # Use ThreadPoolExecutor with specified workers
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=args.max_workers
     ) as executor:
         futures = [
-            executor.submit(process_item, item_data) for item_data in data.items()
+            executor.submit(process_sample, group_key, item)
+            for group_key, item in sample_tasks
         ]
 
         for future in tqdm(
             concurrent.futures.as_completed(futures), total=len(futures)
         ):
-            local_results = future.result()
+            group_key, sample_result = future.result()
+            if sample_result is None:
+                continue
             with results_lock:
-                for k, items in local_results.items():
-                    results[k].extend(items)
+                results[group_key].append(sample_result)
 
             # Save results to JSON file
             with open(args.target_path, "w") as f:

@@ -119,7 +119,6 @@ async def run_wiki(
     for q, a, t, f_list in zip(
         questions, answers, types, supporting_facts, strict=True
     ):
-        t += 5  # Use locomo category 1-5, and wiki 6-9
         tasks.append(
             agent_utils.process_question(
                 ANSWER_PROMPT,
