@@ -1,0 +1,32 @@
+---
+title: "MemoryContext"
+description: "Granular identifiers for scoping memories to specific users, sessions, or agents."
+---
+
+## Overview
+
+`MemoryContext` provides an additional layer of segmentation within a project. While `ProjectContext` handles broad isolation, `MemoryContext` allows you to track and retrieve data for specific entities or conversation threads.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `user_id` | `string` | **Optional.** The ID of the end-user associated with the memory. |
+| `session_id` | `string` | **Optional.** A unique ID for a specific conversation session or thread. |
+| `agent_id` | `string` | **Optional.** The ID of the specific AI agent instance. |
+| `group_id` | `string` | **Optional.** An ID used to group related entities or users. |
+
+---
+
+## Usage Example
+
+```typescript
+import { MemoryContext } from '@memmachine/client';
+
+const userSession: MemoryContext = {
+  user_id: 'user_99',
+  session_id: 'chat_hash_abc123'
+};
+```

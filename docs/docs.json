@@ -111,9 +111,9 @@
               "group": "Classes",
               "pages": [
                 "api_reference/ts-rest/classes/MemMachineClient",
-                "api_reference/ts-rest/classes/MemMachineProject",
+                "api_reference/ts-rest/classes/MemMachineAPIError",
                 "api_reference/ts-rest/classes/MemMachineMemory",
-                "api_reference/ts-rest/classes/MemMachineAPIError"
+                "api_reference/ts-rest/classes/MemMachineProject"
               ]
             },
             {
@@ -121,11 +121,24 @@
               "pages": [
                 "api_reference/ts-rest/interfaces/ClientOptions",
                 "api_reference/ts-rest/interfaces/ProjectContext",
+                "api_reference/ts-rest/interfaces/MemoryContext",
+                "api_reference/ts-rest/interfaces/CreateProjectOptions",
                 "api_reference/ts-rest/interfaces/AddMemoryOptions",
-                "api_reference/ts-rest/interfaces/SearchMemoryResult",
-                "api_reference/ts-rest/interfaces/EpisodeMemory",
+                "api_reference/ts-rest/interfaces/SearchMemoriesOptions",
+                "api_reference/ts-rest/interfaces/ListMemoriesOptions",
                 "api_reference/ts-rest/interfaces/Project",
-                "api_reference/ts-rest/interfaces/Types"
+                "api_reference/ts-rest/interfaces/AddMemoryResult",
+                "api_reference/ts-rest/interfaces/SearchMemoriesResult",
+                "api_reference/ts-rest/interfaces/EpisodicMemory",
+                "api_reference/ts-rest/interfaces/SemanticMemory",
+                "api_reference/ts-rest/interfaces/HealthStatus"
+              ]
+            },
+            {
+              "group": "Types",
+              "pages": [
+                "api_reference/ts-rest/types/MemoryProducerRole",
+                "api_reference/ts-rest/types/MemoryType"
               ]
             }
           ]

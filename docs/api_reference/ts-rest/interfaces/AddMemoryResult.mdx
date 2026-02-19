@@ -1,0 +1,29 @@
+---
+title: "AddMemoryResult"
+description: "The confirmation payload returned after successfully adding memories."
+---
+
+## Overview
+
+When you ingest data into the memory engine, the server returns an `AddMemoryResult`. This contains the unique identifiers for the newly created memory entries, which can be used for later retrieval or specific updates.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `results` | `{ uid: string }[]` | An array of objects, each containing the unique `uid` of an added memory entry. |
+
+---
+
+## Usage Example
+
+```typescript
+const result = await client.addEpisodicMemory(memoryData);
+
+// Log the ID of the first added memory
+if (result.results.length > 0) {
+  console.log(`Memory saved with ID: ${result.results[0].uid}`);
+}
+```
