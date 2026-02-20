@@ -21,8 +21,6 @@ PropertyValue = (
     | None
 )
 
-OrderedPropertyValue = int | float | str | datetime
-
 
 class EntityType(Enum):
     """Supported graph entity types."""

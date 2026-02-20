@@ -43,18 +43,11 @@ from sqlalchemy.sql import Delete, Select, func
 from memmachine.common.episode_store.episode_model import EpisodeIdT
 from memmachine.common.errors import InvalidArgumentError, ResourceNotFoundError
 from memmachine.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine.common.filter.filter_parser import (
     FilterExpr,
+    demangle_user_metadata_key,
+    normalize_filter_field,
 )
-from memmachine.common.filter.filter_parser import (
-    Or as FilterOr,
-)
-from memmachine.common.filter.sql_filter_util import parse_sql_filter
+from memmachine.common.filter.sql_filter_util import compile_sql_filter
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -607,7 +600,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
                 vector_search_opts=vector_search_opts,
             )
             if filter_expr is not None:
-                clause = self._compile_feature_filter_expr(filter_expr, Feature)
+                clause = compile_sql_filter(
+                    filter_expr, self._resolve_feature_field_default
+                )
                 if clause is not None:
                     working_stmt = working_stmt.where(clause)
             return working_stmt
@@ -619,61 +614,36 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         delete_stmt = stmt
         if filter_expr is not None:
-            clause = self._compile_feature_filter_expr(filter_expr, Feature)
+            clause = compile_sql_filter(
+                filter_expr, self._resolve_feature_field_default
+            )
             if clause is not None:
                 delete_stmt = delete_stmt.where(clause)
 
         return delete_stmt
 
-    def _compile_feature_comparison_expr(
+    def _resolve_feature_field_default(
         self,
-        expr: FilterComparison,
-        table: type[Feature],
-    ) -> ColumnElement[bool] | None:
-        column, is_metadata = self._resolve_feature_field(table, expr.field)
-
-        return parse_sql_filter(
-            column=column,
-            is_metadata=is_metadata,
-            expr=expr,
-        )
-
-    def _compile_feature_filter_expr(
-        self,
-        expr: FilterExpr,
-        table: type[Feature],
-    ) -> ColumnElement[bool] | None:
-        if isinstance(expr, FilterComparison):
-            return self._compile_feature_comparison_expr(expr, table)
-
-        if isinstance(expr, FilterAnd):
-            left = self._compile_feature_filter_expr(expr.left, table)
-            right = self._compile_feature_filter_expr(expr.right, table)
-            if left is None:
-                return right
-            if right is None:
-                return left
-            return and_(left, right)
-
-        if isinstance(expr, FilterOr):
-            left = self._compile_feature_filter_expr(expr.left, table)
-            right = self._compile_feature_filter_expr(expr.right, table)
-            if left is None:
-                return right
-            if right is None:
-                return left
-            return or_(left, right)
-
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        field: str,
+    ) -> (
+        tuple[MappedColumn[Any] | InstrumentedAttribute[Any] | ColumnElement[Any], bool]
+        | tuple[None, bool]
+    ):
+        return self._resolve_feature_field(Feature, field)
 
     @staticmethod
     def _resolve_feature_field(
         table: type[Feature],
         field: str,
     ) -> (
-        tuple[MappedColumn[Any] | InstrumentedAttribute[Any], bool] | tuple[None, bool]
+        tuple[MappedColumn[Any] | InstrumentedAttribute[Any] | ColumnElement[Any], bool]
+        | tuple[None, bool]
     ):
-        normalized = field
+        internal_name, is_user_property = normalize_filter_field(field)
+        if is_user_property:
+            key = demangle_user_metadata_key(internal_name)
+            return table.json_metadata[key], True
+
         field_mapping = {
             "set_id": table.set_id,
             "set": table.set_id,
@@ -688,11 +658,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             "created_at": table.created_at,
             "updated_at": table.updated_at,
         }
-        if normalized in field_mapping:
-            return field_mapping[normalized], False
-        if normalized.startswith(("m.", "metadata.")):
-            key = normalized.split(".", 1)[1]
-            return table.json_metadata[key].as_string(), True
+        if internal_name in field_mapping:
+            return field_mapping[internal_name], False
         return None, False
 
     async def _load_feature_citations(
