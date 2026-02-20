@@ -370,7 +370,7 @@ class DeclarativeMemory:
             ),
             query_embedding=query_embedding,
             similarity_metric=self._embedder.similarity_metric,
-            limit=max(5 * max_num_episodes, 200),
+            limit=min(5 * max_num_episodes, 200),
             property_filter=mangled_property_filter,
         )
 
