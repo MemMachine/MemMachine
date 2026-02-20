@@ -34,6 +34,7 @@ from memmachine.server.api_v2.service import (
     _add_messages_to,
     _delete_memories,
     _search_target_memories,
+    _session_key_to_session_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -373,7 +374,7 @@ async def init_global_memory() -> None:
     global mem_machine
     mem_machine = await initialize_resource()
     if mem_machine is not None:
-        await mem_machine.start()
+        await mem_machine.start(_session_key_to_session_data)
 
 
 async def shutdown_global_memory() -> None:

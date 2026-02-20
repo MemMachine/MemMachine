@@ -1,6 +1,7 @@
 """Session data manager abstraction."""
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel
@@ -39,9 +40,32 @@ class SessionDataManager(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def update_session_status(
+        self,
+        session_key: str,
+        status: str,
+    ) -> None:
+        """Update the status of a session."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_sessions_by_status(
+        self,
+        status: str,
+    ) -> list[str]:
+        """Get a list of session keys by status."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def delete_session(self, session_key: str) -> None:
         """Delete a session entry from the database."""
         raise NotImplementedError
+
+    class SessionStatus(str, Enum):
+        """Enum for session status."""
+
+        Active = "active"
+        Deleted = "delete"
 
     class SessionInfo(BaseModel):
         """Metadata describing a stored session."""
@@ -50,11 +74,13 @@ class SessionDataManager(ABC):
         description: str
         user_metadata: dict[str, Any]
         episode_memory_conf: EpisodicMemoryConf
+        status: str
 
     @abstractmethod
     async def get_session_info(
         self,
         session_key: str,
+        status: SessionStatus | None = None,
     ) -> SessionInfo | None:
         """Get configuration, description, metadata, and params for a session."""
         raise NotImplementedError

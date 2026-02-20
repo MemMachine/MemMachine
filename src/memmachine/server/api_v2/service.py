@@ -42,6 +42,12 @@ class _SessionData:
         return f"{self.org_id}/{self.project_id}"
 
 
+def _session_key_to_session_data(session_key: str) -> _SessionData:
+    """Convert session key to session data."""
+    org_id, project_id = session_key.split("/", 1)
+    return _SessionData(org_id=org_id, project_id=project_id)
+
+
 async def _add_messages_to(
     target_memories: list[MemoryTypeE],
     spec: AddMemoriesSpec,
