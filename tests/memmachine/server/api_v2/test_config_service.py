@@ -134,7 +134,7 @@ async def test_add_language_model_persists_config(mock_resource_manager):
     )
 
     service = ConfigService(mock_resource_manager)
-    config = {"api_key": "test-key", "model": "gpt-4"}
+    config = {"api_key": "test-key", "model": "gpt-5.2"}
     status = await service.add_language_model("test-model", "openai-responses", config)
 
     assert status == ResourceStatus.READY

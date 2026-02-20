@@ -152,7 +152,7 @@ class MemMachine:
         assert stm is not None
 
         if stm.llm_model is None:
-            stm.llm_model = "gpt-4.1"
+            stm.llm_model = "gpt-5.2"
         if stm.summary_prompt_system is None:
             stm.summary_prompt_system = self._conf.prompt.episode_summary_system_prompt
         if stm.summary_prompt_user is None:

@@ -38,7 +38,7 @@ gpgcheck=1
 EOF"""
 
 
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 DEFAULT_BEDROCK_MODEL = "openai.gpt-oss-20b-1:0"
 DEFAULT_OLLAMA_MODEL = "llama3"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"

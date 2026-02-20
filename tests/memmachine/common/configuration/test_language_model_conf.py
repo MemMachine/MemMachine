@@ -17,7 +17,7 @@ def openai_model_conf() -> dict:
     return {
         "provider": "openai-responses",
         "config": {
-            "model": "gpt-4o-mini",
+            "model": "gpt-5-mini",
             "api_key": "open-ai-key",
         },
     }
@@ -61,7 +61,7 @@ def full_model_conf(openai_model_conf, aws_model_conf, ollama_model_conf) -> dic
 
 def test_valid_openai_model(openai_model_conf):
     conf = OpenAIResponsesLanguageModelConf(**openai_model_conf["config"])
-    assert conf.model == "gpt-4o-mini"
+    assert conf.model == "gpt-5-mini"
     assert conf.api_key == SecretStr("open-ai-key")
     assert conf.max_retry_interval_seconds == 120
 
@@ -88,7 +88,7 @@ def test_full_language_model_conf(full_model_conf):
 
     assert "openai_model" in conf.openai_responses_language_model_confs
     openai_conf = conf.openai_responses_language_model_confs["openai_model"]
-    assert openai_conf.model == "gpt-4o-mini"
+    assert openai_conf.model == "gpt-5-mini"
 
     assert "aws_model" in conf.amazon_bedrock_language_model_confs
     aws_conf = conf.amazon_bedrock_language_model_confs["aws_model"]
@@ -126,7 +126,7 @@ def test_serialize_deserialize_language_model_conf(full_model_conf):
 
 
 def test_missing_required_field_openai_model():
-    conf_dict: dict[str, Any] = {"model": "gpt-4o-mini"}
+    conf_dict: dict[str, Any] = {"model": "gpt-5-mini"}
     with pytest.raises(ValidationError) as exc_info:
         OpenAIResponsesLanguageModelConf(**conf_dict)
     assert "field required" in str(exc_info.value).lower()
@@ -158,7 +158,7 @@ def test_read_api_key_from_env(monkeypatch, openai_model_conf):
     monkeypatch.setenv("MY_API_KEY", "env-open-ai-key")
     openai_model_conf["config"]["api_key"] = "${MY_API_KEY}"
     conf = OpenAIResponsesLanguageModelConf(**openai_model_conf["config"])
-    assert conf.model == "gpt-4o-mini"
+    assert conf.model == "gpt-5-mini"
     assert conf.api_key == SecretStr("env-open-ai-key")
 
 
