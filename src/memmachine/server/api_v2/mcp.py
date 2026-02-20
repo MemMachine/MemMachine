@@ -226,6 +226,7 @@ class Params(BaseModel):
             expand_context=expand_context,
             score_threshold=score_threshold,
             filter="",
+            set_metadata=None,
             types=ALL_MEMORY_TYPES,
         )
 

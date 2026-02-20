@@ -703,6 +703,92 @@ class TestMemory:
         assert "metadata.session_id" not in filter_str
         assert "category='work'" not in filter_str
 
+    def test_search_with_set_metadata(self, mock_client):
+        """set_metadata is included in the JSON payload sent to /memories/search."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        memory.search("query", set_metadata={"user_id": "user123", "tenant": "acme"})
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["set_metadata"] == {"user_id": "user123", "tenant": "acme"}
+
+    def test_search_without_set_metadata_excludes_key(self, mock_client):
+        """When set_metadata is None, it is excluded from the request payload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        memory.search("query")
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert "set_metadata" not in json_data
+
+    def test_list_with_set_metadata(self, mock_client):
+        """set_metadata is included in the JSON payload sent to /memories/list."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "status": 0,
+            "content": {"episodic_memory": [], "semantic_memory": []},
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        memory.list(set_metadata={"user_id": "user456", "region": "us-east"})
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["set_metadata"] == {"user_id": "user456", "region": "us-east"}
+
+    def test_list_without_set_metadata_excludes_key(self, mock_client):
+        """When set_metadata is None, it is excluded from the list request payload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "status": 0,
+            "content": {"episodic_memory": [], "semantic_memory": []},
+        }
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        memory.list()
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert "set_metadata" not in json_data
+
     def test_search_client_closed(self, mock_client):
         """Test search raises RuntimeError when client is closed."""
         memory = Memory(
