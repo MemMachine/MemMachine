@@ -1,0 +1,104 @@
+---
+title: "Configuration API"
+description: "Reference for managing runtime resources and memory settings"
+icon: "gear"
+---
+
+The `client.config` namespace provides programmatic access to the system's underlying resources and memory behavior. Use this to manage model providers, vector stores, and the specific toggles for Episodic and Semantic subsystems.
+
+## System Configuration
+
+### `get_full_config`
+Retrieves the entire current configuration of the MemMachine server, including active resources and default settings.
+
+```python
+config = client.config.get_full_config()
+print(config["episodic_memory"]["enabled"])
+```
+------
+
+## Memory Subsystem Updates
+
+These methods allow you to modify how memory behaves without restarting the server. Only the fields you provide will be updated.
+
+### `update_episodic`
+
+Configures the behavior of the episodic memory stream.
+
+| **Parameter** | **Type** | **Description**                                              |
+| ------------- | -------- | ------------------------------------------------------------ |
+| `enabled`     | `bool`   | Master toggle for all episodic operations.                   |
+| `long_term`   | `bool`   | Enable/disable vector-based retrieval for older memories.    |
+| `short_term`  | `bool`   | Enable/disable the sliding-window buffer of recent interactions. |
+
+### `update_long_term`
+
+Updates the infrastructure used for long-term storage.
+
+```python
+client.config.update_long_term(
+    vector_store="chroma",
+    embedder="openai-small",
+    reranker="cohere-v3"
+)
+```
+
+| **Parameter**  | **Type** | **Description**                                              |
+| -------------- | -------- | ------------------------------------------------------------ |
+| `vector_store` | `str`    | The name of the configured vector store resource.            |
+| `embedder`     | `str`    | The name of the configured embedder resource.                |
+| `reranker`     | `str`    | (Optional) The name of a reranker for high-precision search. |
+
+------
+
+## Resource Management
+
+### `add_embedder`
+
+Registers a new embedding model provider.
+
+```python
+client.config.add_embedder(
+    name="openai-v3",
+    provider="openai",
+    config={"api_key": "sk-...", "model": "text-embedding-3-small"}
+)
+```
+
+### `add_language_model`
+
+Registers a new LLM provider for summarization and semantic extraction.
+
+| **Parameter** | **Type** | **Description**                                |
+| ------------- | -------- | ---------------------------------------------- |
+| `name`        | `str`    | Unique identifier for this resource.           |
+| `provider`    | `str`    | Provider type (e.g., `"openai"`, `"bedrock"`). |
+| `config`      | `dict`   | Provider-specific credentials and settings.    |
+
+------
+
+## Resource Health & Recovery
+
+### `retry_reranker`
+
+Attempts to re-initialize a reranker resource that has moved into a `FAILED` state.
+
+```python
+response = client.config.retry_reranker(name="cohere-v3")
+if response.success:
+    print("Reranker is now READY")
+```
+
+### `retry_language_model`
+
+Attempts to re-initialize a failed LLM provider.
+
+| **Parameter** | **Type** | **Description**                          |
+| ------------- | -------- | ---------------------------------------- |
+| `name`        | `str`    | The name of the language model to retry. |
+
+------
+
+<Tip>
+Before updating a memory subsystem to use a new resource (like a new Embedder), ensure the resource has been added via `add_embedder` and is in a `READY` state.
+</Tip>
