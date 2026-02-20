@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from memmachine.common.utils import (
@@ -5,6 +7,7 @@ from memmachine.common.utils import (
     chunk_text_balanced,
     cluster_texts,
     extract_sentences,
+    merge_async_iterators,
     unflatten_like,
 )
 
@@ -227,3 +230,88 @@ def test_extract_sentences():
     }
     for sentence in expected_sentences:
         assert any(sentence in s for s in sentences)
+
+
+async def _evented_iterator(values: list[str], events: list[asyncio.Event]):
+    for value, event in zip(values, events, strict=True):
+        await event.wait()
+        yield value
+
+
+async def _raising_iterator(event: asyncio.Event, error: Exception):
+    await event.wait()
+    raise error
+    if False:
+        yield None
+
+
+async def _blocking_iterator(cancel_event: asyncio.Event):
+    try:
+        await asyncio.Event().wait()
+        yield None
+    finally:
+        cancel_event.set()
+
+
+@pytest.mark.asyncio
+async def test_merge_async_iterators_empty():
+    results = [item async for item in merge_async_iterators([])]
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_merge_async_iterators_interleaves():
+    events_a = [asyncio.Event(), asyncio.Event()]
+    events_b = [asyncio.Event(), asyncio.Event()]
+    merged = merge_async_iterators(
+        [
+            _evented_iterator(["a1", "a2"], events_a),
+            _evented_iterator(["b1", "b2"], events_b),
+        ]
+    )
+
+    events_b[0].set()
+    assert await asyncio.wait_for(anext(merged), timeout=1) == "b1"
+    events_a[0].set()
+    assert await asyncio.wait_for(anext(merged), timeout=1) == "a1"
+    events_b[1].set()
+    assert await asyncio.wait_for(anext(merged), timeout=1) == "b2"
+    events_a[1].set()
+    assert await asyncio.wait_for(anext(merged), timeout=1) == "a2"
+
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(anext(merged), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_merge_async_iterators_propagates_error():
+    ok_events = [asyncio.Event()]
+    error_event = asyncio.Event()
+    merged = merge_async_iterators(
+        [
+            _evented_iterator(["ok"], ok_events),
+            _raising_iterator(error_event, ValueError("boom")),
+        ]
+    )
+
+    ok_events[0].set()
+    assert await asyncio.wait_for(anext(merged), timeout=1) == "ok"
+
+    error_event.set()
+    with pytest.raises(ValueError, match="boom"):
+        await asyncio.wait_for(anext(merged), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_merge_async_iterators_cancels_producers():
+    cancel_event = asyncio.Event()
+    start_event = asyncio.Event()
+    merged = merge_async_iterators(
+        [_evented_iterator(["first"], [start_event]), _blocking_iterator(cancel_event)]
+    )
+
+    start_event.set()
+    assert await asyncio.wait_for(anext(merged), timeout=1) == "first"
+    await merged.aclose()
+
+    await asyncio.wait_for(cancel_event.wait(), timeout=1)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -103,7 +103,7 @@ class InMemorySemanticStorage(SemanticStorage):
                 return None
             return self._feature_to_model(entry, load_citations=load_citations)
 
-    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+    async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         pass
 
     async def add_feature(
@@ -115,7 +115,7 @@ class InMemorySemanticStorage(SemanticStorage):
         value: str,
         tag: str,
         embedding: InstanceOf[np.ndarray],
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> FeatureIdT:
         metadata = dict(metadata or {}) or None
         async with self._lock:
@@ -146,7 +146,7 @@ class InMemorySemanticStorage(SemanticStorage):
         value: str | None = None,
         tag: str | None = None,
         embedding: InstanceOf[np.ndarray] | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         async with self._lock:
             feature_id = self._normalize_feature_id(feature_id)
@@ -167,7 +167,7 @@ class InMemorySemanticStorage(SemanticStorage):
 
             entry.updated_at = _utcnow()
 
-    async def delete_features(self, feature_ids: list[FeatureIdT]):
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]):
         if not feature_ids:
             return
 
@@ -188,7 +188,7 @@ class InMemorySemanticStorage(SemanticStorage):
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         if page_num is not None:
             if page_size is None:
                 raise InvalidArgumentError("Cannot specify offset without limit")
@@ -213,10 +213,12 @@ class InMemorySemanticStorage(SemanticStorage):
             if page_size is not None:
                 start_index = page_size * (page_num or 0)
                 entries = entries[start_index : start_index + page_size]
-            return [
+            features = [
                 self._feature_to_model(entry, load_citations=load_citations)
                 for entry in entries
             ]
+        for feature in features:
+            yield feature
 
     async def delete_feature_set(
         self,
@@ -241,7 +243,7 @@ class InMemorySemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         if not history_ids:
             return
@@ -263,10 +265,10 @@ class InMemorySemanticStorage(SemanticStorage):
     async def get_history_messages(
         self,
         *,
-        set_ids: list[SetIdT] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> AsyncIterator[EpisodeIdT]:
         async with self._lock:
             rows = self._history_rows_for_sets(set_ids)
             rows = self._filter_history_rows(rows, is_ingested)
@@ -275,12 +277,13 @@ class InMemorySemanticStorage(SemanticStorage):
             if limit is not None:
                 history_ids = history_ids[:limit]
 
-            return history_ids
+        for history_id in history_ids:
+            yield history_id
 
     async def get_history_messages_count(
         self,
         *,
-        set_ids: list[SetIdT] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         is_ingested: bool | None = None,
     ) -> int:
         async with self._lock:
@@ -288,54 +291,63 @@ class InMemorySemanticStorage(SemanticStorage):
             filtered_rows = self._filter_history_rows(rows, is_ingested)
             return len(filtered_rows)
 
-    async def get_history_set_ids(
+    def get_history_set_ids(
         self,
         *,
         min_uningested_messages: int | None = None,
         older_than: datetime | None = None,
-    ) -> list[SetIdT]:
-        async with self._lock:
-            if (
-                min_uningested_messages is None or min_uningested_messages <= 0
-            ) and older_than is None:
-                return list(self._set_history_map.keys())
+    ) -> AsyncIterator[SetIdT]:
+        async def _iter() -> AsyncIterator[SetIdT]:
+            async with self._lock:
+                if (
+                    min_uningested_messages is None or min_uningested_messages <= 0
+                ) and older_than is None:
+                    results = list(self._set_history_map.keys())
+                else:
+                    results: list[str] = []
+                    for set_id, history_map in self._set_history_map.items():
+                        meets_uningested_threshold = False
+                        if (
+                            min_uningested_messages is not None
+                            and min_uningested_messages > 0
+                        ):
+                            uningested_count = sum(
+                                1 for ingested in history_map.values() if not ingested
+                            )
+                            meets_uningested_threshold = (
+                                uningested_count >= min_uningested_messages
+                            )
 
-            set_ids: list[str] = []
-            for set_id, history_map in self._set_history_map.items():
-                meets_uningested_threshold = False
-                if min_uningested_messages is not None and min_uningested_messages > 0:
-                    uningested_count = sum(
-                        1 for ingested in history_map.values() if not ingested
-                    )
-                    meets_uningested_threshold = (
-                        uningested_count >= min_uningested_messages
-                    )
+                        has_older_history = False
+                        if older_than is not None:
+                            has_older_history = any(
+                                self._history_created_at.get(
+                                    (set_id, history_id),
+                                    _utcnow(),
+                                )
+                                <= older_than
+                                for history_id, ingested in history_map.items()
+                                if not ingested
+                            )
 
-                has_older_history = False
-                if older_than is not None:
-                    has_older_history = any(
-                        self._history_created_at.get(
-                            (set_id, history_id),
-                            _utcnow(),
-                        )
-                        <= older_than
-                        for history_id, ingested in history_map.items()
-                        if not ingested
-                    )
+                        if meets_uningested_threshold or has_older_history:
+                            results.append(set_id)
 
-                if meets_uningested_threshold or has_older_history:
-                    set_ids.append(set_id)
+            for set_id in results:
+                yield set_id
 
-            return set_ids
+        return _iter()
 
-    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+    async def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         async with self._lock:
             set_ids = {
                 set_id
                 for set_id in set(self._feature_ids_by_set) | set(self._set_history_map)
                 if set_id.startswith(prefix)
             }
-            return list(set_ids)
+            results = list(set_ids)
+        for set_id in results:
+            yield set_id
 
     def _handle_set_change(
         self,
@@ -356,7 +368,7 @@ class InMemorySemanticStorage(SemanticStorage):
         value: str | None,
         tag: str | None,
         embedding: InstanceOf[np.ndarray] | None,
-        metadata: dict[str, Any] | None,
+        metadata: Mapping[str, Any] | None,
     ) -> None:
         simple_updates = {
             "semantic_type_id": category_name,
@@ -403,7 +415,7 @@ class InMemorySemanticStorage(SemanticStorage):
 
     def _history_rows_for_sets(
         self,
-        set_ids: list[SetIdT] | None,
+        set_ids: Sequence[SetIdT] | None,
     ) -> list[tuple[EpisodeIdT, bool]]:
         rows = [
             (history_id, ingested)
@@ -439,7 +451,7 @@ class InMemorySemanticStorage(SemanticStorage):
                 history_id
             ]
 
-    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
         if not history_ids:
             return
 
@@ -460,7 +472,7 @@ class InMemorySemanticStorage(SemanticStorage):
                     if not history_map:
                         self._set_history_map.pop(set_id, None)
 
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+    async def delete_history_set(self, set_ids: Sequence[SetIdT]) -> None:
         if not set_ids:
             return
 
@@ -484,7 +496,7 @@ class InMemorySemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         if not history_ids:
             raise ValueError("No ids provided")

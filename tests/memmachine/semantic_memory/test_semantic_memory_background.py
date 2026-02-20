@@ -20,6 +20,11 @@ from tests.memmachine.semantic_memory.storage.in_memory_semantic_storage import 
     SemanticStorage,
 )
 
+
+async def _collect_feature_set(storage: SemanticStorage, **kwargs):
+    return [item async for item in storage.get_feature_set(**kwargs)]
+
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -76,6 +81,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     semantic_resource_manager,
     mock_llm_model,
     spy_embedder: SpyEmbedder,
+    in_memory_cluster_state_storage,
     monkeypatch,
 ):
     semantic_type = semantic_category_retriever("test")[0]
@@ -88,6 +94,7 @@ async def test_background_ingestion_processes_messages_on_message_limit(
         semantic_storage=semantic_storage,
         episode_storage=episode_storage,
         semantic_config_storage=semantic_config_storage,
+        cluster_state_storage=in_memory_cluster_state_storage,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
         default_embedder_name="default_embedder",
@@ -131,7 +138,8 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     )
 
     filter_str = f"set_id IN ('user-123') AND category_name IN ('{semantic_type.name}')"
-    features = await semantic_storage.get_feature_set(
+    features = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
     )
 
@@ -198,7 +206,8 @@ async def test_consolidation_threshold_not_reached(
     filter_str = (
         f"set_id IN ('user-consolidate') AND category_name IN ('{semantic_type.name}')"
     )
-    features_before = await semantic_storage.get_feature_set(
+    features_before = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
     )
     count_before = len(features_before)
@@ -211,7 +220,8 @@ async def test_consolidation_threshold_not_reached(
     await asyncio.sleep(0.2)
 
     # Features should not be consolidated
-    features_after = await semantic_storage.get_feature_set(
+    features_after = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_str),
     )
 
@@ -227,6 +237,7 @@ async def test_multiple_sets_processed_independently(
     semantic_resource_manager,
     mock_llm_model,
     spy_embedder: SpyEmbedder,
+    in_memory_cluster_state_storage,
     monkeypatch,
 ):
     semantic_type = semantic_category_retriever("test")[0]
@@ -239,6 +250,7 @@ async def test_multiple_sets_processed_independently(
         semantic_storage=semantic_storage,
         episode_storage=episode_storage,
         semantic_config_storage=semantic_config_storage,
+        cluster_state_storage=in_memory_cluster_state_storage,
         resource_manager=semantic_resource_manager,
         default_embedder=spy_embedder,
         default_embedder_name="default_embedder",
@@ -326,10 +338,12 @@ async def test_multiple_sets_processed_independently(
     # Verify both sets were processed independently
     filter_a = f"set_id IN ('user-a') AND category_name IN ('{semantic_type.name}')"
     filter_b = f"set_id IN ('user-b') AND category_name IN ('{semantic_type.name}')"
-    features_a = await semantic_storage.get_feature_set(
+    features_a = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_a),
     )
-    features_b = await semantic_storage.get_feature_set(
+    features_b = await _collect_feature_set(
+        semantic_storage,
         filter_expr=parse_filter(filter_b),
     )
 

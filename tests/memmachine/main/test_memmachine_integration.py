@@ -157,9 +157,9 @@ class TestMemMachineLongMemEval:
         long_mem_conversations,
     ) -> None:
         semantic_service = await memmachine._resources.get_semantic_service()
-        semantic_service._feature_update_message_limit = 0
+        semantic_service._cluster_ingestion_message_limit = 0
         semantic_service._background_ingestion_interval_sec = 0.05
-        semantic_service._feature_time_limit = timedelta(seconds=1)
+        semantic_service._cluster_ingestion_time_limit = timedelta(seconds=1)
 
         smoke_convo = list(long_mem_conversations[0])
         if len(smoke_convo) > 2:

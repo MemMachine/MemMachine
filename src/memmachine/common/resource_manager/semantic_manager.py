@@ -1,6 +1,7 @@
 """Manager for semantic memory resources and services."""
 
 import asyncio
+import logging
 from typing import cast
 
 from pydantic import InstanceOf
@@ -8,9 +9,18 @@ from pydantic import InstanceOf
 from memmachine.common.configuration import PromptConf, SemanticMemoryConf
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeStorage
-from memmachine.common.errors import ResourceNotReadyError
+from memmachine.common.errors import (
+    DefaultRerankerNotConfiguredError,
+    RerankerNotFoundError,
+    ResourceNotReadyError,
+)
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.resource_manager import CommonResourceManager
+from memmachine.semantic_memory.cluster_manager import ClusterParams, ClusterSplitParams
+from memmachine.semantic_memory.cluster_store.cluster_store import ClusterStateStorage
+from memmachine.semantic_memory.cluster_store.cluster_store_sqlalchemy import (
+    ClusterStateStorageSqlAlchemy,
+)
 from memmachine.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -32,6 +42,8 @@ from memmachine.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
 )
 from memmachine.semantic_memory.storage.storage_base import SemanticStorage
 
+logger = logging.getLogger(__name__)
+
 
 class SemanticResourceManager:
     """Build and cache components used by semantic memory."""
@@ -52,6 +64,7 @@ class SemanticResourceManager:
 
         self._semantic_service: SemanticService | None = None
         self._semantic_session_manager: SemanticSessionManager | None = None
+        self._cluster_state_storage: ClusterStateStorage | None = None
 
     async def close(self) -> None:
         """Stop semantic services if they were started."""
@@ -102,6 +115,17 @@ class SemanticResourceManager:
 
         return storage
 
+    async def get_cluster_state_storage(self) -> ClusterStateStorage:
+        if self._cluster_state_storage is not None:
+            return self._cluster_state_storage
+
+        database = self._conf.config_database
+        sql_engine = await self._resource_manager.get_sql_engine(database)
+        storage = ClusterStateStorageSqlAlchemy(sql_engine)
+        await storage.startup()
+        self._cluster_state_storage = storage
+        return storage
+
     def _get_default_embedder_name(self) -> str:
         embedder = self._conf.embedding_model
         if not embedder:
@@ -119,6 +143,23 @@ class SemanticResourceManager:
                 "semantic_memory",
             )
         return language_model
+
+    def _resolve_cluster_split_reranker_name(self) -> str | None:
+        reranker_name = self._conf.cluster_split_reranker
+        if reranker_name:
+            if not self._resource_manager.config.resources.rerankers.contains_reranker(
+                reranker_name
+            ):
+                raise RerankerNotFoundError(reranker_name)
+            return reranker_name
+
+        try:
+            return self._resource_manager.config.default_long_term_memory_reranker
+        except DefaultRerankerNotConfiguredError:
+            logger.warning(
+                "No reranker configured for cluster splitting; disabling split"
+            )
+            return None
 
     async def _get_default_embedder(self) -> Embedder:
         embedder_name = self._get_default_embedder_name()
@@ -150,6 +191,12 @@ class SemanticResourceManager:
 
         config_store = await self.get_semantic_config_storage()
 
+        cluster_split_reranker_name = (
+            self._resolve_cluster_split_reranker_name()
+            if self._conf.llm_split_enabled
+            else None
+        )
+
         self._semantic_service = SemanticService(
             SemanticService.Params(
                 semantic_storage=semantic_storage,
@@ -160,8 +207,23 @@ class SemanticResourceManager:
                 default_language_model=llm_model,
                 default_category_retriever=get_default_categories,
                 semantic_config_storage=config_store,
+                cluster_state_storage=await self.get_cluster_state_storage(),
+                cluster_params=ClusterParams(
+                    similarity_threshold=self._conf.cluster_similarity_threshold,
+                    max_time_gap=self._conf.cluster_max_time_gap,
+                ),
+                cluster_split_params=ClusterSplitParams(
+                    enabled=self._conf.llm_split_enabled,
+                    min_cluster_size=self._conf.llm_split_min_cluster_size,
+                    max_messages_in_prompt=self._conf.llm_split_max_messages,
+                    low_similarity_threshold=self._conf.llm_split_low_similarity_threshold,
+                    time_gap_seconds=self._conf.llm_split_time_gap_sec,
+                    cohesion_drop_zscore=self._conf.llm_split_cohesion_drop_zscore,
+                ),
+                cluster_split_reranker_name=cluster_split_reranker_name,
                 uningested_time_limit=self._conf.ingestion_trigger_age,
                 uningested_message_limit=self._conf.ingestion_trigger_messages,
+                cluster_idle_ttl=self._conf.cluster_idle_ttl,
             ),
         )
         return self._semantic_service

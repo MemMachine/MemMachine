@@ -1,6 +1,7 @@
 """Abstract interfaces for semantic storage implementations."""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -38,7 +39,7 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+    async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         """Reset the set ids for the provided feature sets."""
         raise NotImplementedError
 
@@ -61,7 +62,7 @@ class SemanticStorage(ABC):
         value: str,
         tag: str,
         embedding: InstanceOf[np.ndarray],
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> FeatureIdT:
         """Add a new feature to the user."""
         raise NotImplementedError
@@ -77,13 +78,13 @@ class SemanticStorage(ABC):
         value: str | None = None,
         tag: str | None = None,
         embedding: InstanceOf[np.ndarray] | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Update an existing feature with any provided fields."""
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
         """Delete the requested feature ids."""
         raise NotImplementedError
 
@@ -95,7 +96,7 @@ class SemanticStorage(ABC):
         min_distance: float | None = None
 
     @abstractmethod
-    async def get_feature_set(
+    def get_feature_set(
         self,
         *,
         filter_expr: FilterExpr | None = None,
@@ -104,12 +105,12 @@ class SemanticStorage(ABC):
         vector_search_opts: VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         """
         Retrieve features matching the provided filters.
 
         Returns:
-            A list of features with their metadata and timestamps.
+            An async iterator of features with their metadata and timestamps.
 
         """
         raise NotImplementedError
@@ -127,19 +128,19 @@ class SemanticStorage(ABC):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         """Associate history ids as citations for a feature."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_history_messages(
+    def get_history_messages(
         self,
         *,
-        set_ids: list[SetIdT] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> AsyncIterator[EpisodeIdT]:
         """Retrieve history messages with optional ingestion status."""
         raise NotImplementedError
 
@@ -147,7 +148,7 @@ class SemanticStorage(ABC):
     async def get_history_messages_count(
         self,
         *,
-        set_ids: list[SetIdT] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         is_ingested: bool | None = None,
     ) -> int:
         """Return the count of history messages."""
@@ -159,11 +160,11 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+    async def delete_history_set(self, set_ids: Sequence[SetIdT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -171,22 +172,22 @@ class SemanticStorage(ABC):
         self,
         *,
         set_id: SetIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         """Mark the provided history messages as ingested."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_history_set_ids(
+    def get_history_set_ids(
         self,
         *,
         min_uningested_messages: int | None = None,
         older_than: datetime | None = None,
-    ) -> list[SetIdT]:
+    ) -> AsyncIterator[SetIdT]:
         """Return all set id's that match the specified filters."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+    def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         """Return all set id's that start with the specified prefix."""
         raise NotImplementedError

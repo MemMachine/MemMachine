@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock
@@ -37,7 +38,7 @@ class MockSemanticStorage(SemanticStorage):
     async def delete_all(self):
         raise NotImplementedError
 
-    async def reset_set_ids(self, set_ids: list[SetIdT]) -> None:
+    async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         raise NotImplementedError
 
     async def get_feature(
@@ -56,7 +57,7 @@ class MockSemanticStorage(SemanticStorage):
         value: str,
         tag: str,
         embedding: InstanceOf[np.ndarray],
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> FeatureIdT:
         return await self.add_feature_mock(
             set_id=set_id,
@@ -78,11 +79,11 @@ class MockSemanticStorage(SemanticStorage):
         value: str | None = None,
         tag: str | None = None,
         embedding: InstanceOf[np.ndarray] | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> None:
         raise NotImplementedError
 
-    async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
         await self.delete_features_mock(feature_ids)
 
     async def get_feature_set(
@@ -94,8 +95,8 @@ class MockSemanticStorage(SemanticStorage):
         vector_search_opts: SemanticStorage.VectorSearchOpts | None = None,
         tag_threshold: int | None = None,
         load_citations: bool = False,
-    ) -> list[SemanticFeature]:
-        return await self.get_feature_set_mock(
+    ) -> AsyncIterator[SemanticFeature]:
+        features = await self.get_feature_set_mock(
             filter_expr=filter_expr,
             page_size=page_size,
             page_num=page_num,
@@ -103,6 +104,8 @@ class MockSemanticStorage(SemanticStorage):
             tag_threshold=tag_threshold,
             load_citations=load_citations,
         )
+        for feature in features:
+            yield feature
 
     async def delete_feature_set(
         self,
@@ -116,14 +119,14 @@ class MockSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         await self.add_citations_mock(feature_id, history_ids)
 
     async def add_history(
         self,
         content: str,
-        metadata: dict[str, str] | None = None,
+        metadata: Mapping[str, str] | None = None,
         created_at: datetime | None = None,
     ) -> EpisodeIdT:
         raise NotImplementedError
@@ -131,7 +134,7 @@ class MockSemanticStorage(SemanticStorage):
     async def get_history(self, history_id: EpisodeIdT):
         raise NotImplementedError
 
-    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
         raise NotImplementedError
 
     async def delete_history_messages(
@@ -145,20 +148,22 @@ class MockSemanticStorage(SemanticStorage):
     async def get_history_messages(
         self,
         *,
-        set_ids: list[SetIdT] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> list[EpisodeIdT]:
-        return await self.get_history_messages_mock(
+    ) -> AsyncIterator[EpisodeIdT]:
+        messages = await self.get_history_messages_mock(
             set_ids=set_ids,
             limit=limit,
             is_ingested=is_ingested,
         )
+        for message in messages:
+            yield message
 
     async def get_history_messages_count(
         self,
         *,
-        set_ids: list[SetIdT] | None = None,
+        set_ids: Sequence[SetIdT] | None = None,
         is_ingested: bool | None = None,
     ) -> int:
         raise NotImplementedError
@@ -170,22 +175,22 @@ class MockSemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: list[EpisodeIdT],
+        history_ids: Sequence[EpisodeIdT],
     ) -> None:
         await self.mark_messages_ingested_mock(set_id=set_id, ids=history_ids)
 
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+    async def delete_history_set(self, set_ids: Sequence[SetIdT]) -> None:
         raise NotImplementedError
 
-    async def get_history_set_ids(
+    def get_history_set_ids(
         self,
         *,
         min_uningested_messages: int | None = None,
         older_than: datetime | None = None,
-    ) -> list[SetIdT]:
+    ) -> AsyncIterator[SetIdT]:
         raise NotImplementedError
 
-    async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
+    def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         raise NotImplementedError
 
 

@@ -34,6 +34,7 @@ from memmachine.common.configuration.language_model_conf import (
     OpenAIResponsesLanguageModelConf,
 )
 from memmachine.common.configuration.reranker_conf import RerankersConf
+from memmachine.common.errors import DefaultRerankerNotConfiguredError
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,18 @@ def _apply_semantic_memory_updates(
     """Apply semantic memory updates and return list of change descriptions."""
     changes: list[str] = []
 
+    _apply_semantic_memory_base_updates(sm, spec, changes)
+    _apply_semantic_memory_ingestion_updates(sm, spec, changes)
+    _apply_semantic_memory_time_gap_updates(sm, spec, changes)
+
+    return changes
+
+
+def _apply_semantic_memory_base_updates(
+    sm: SemanticMemoryConf,
+    spec: UpdateSemanticMemorySpec,
+    changes: list[str],
+) -> None:
     if spec.enabled is not None:
         sm.enabled = spec.enabled
         changes.append(f"semantic_memory.enabled={spec.enabled}")
@@ -232,18 +245,73 @@ def _apply_semantic_memory_updates(
     if spec.embedding_model is not None:
         sm.embedding_model = spec.embedding_model
         changes.append(f"semantic_memory.embedding_model={spec.embedding_model}")
-    if spec.ingestion_trigger_messages is not None:
-        sm.ingestion_trigger_messages = spec.ingestion_trigger_messages
+    if "cluster_split_reranker" in spec.model_fields_set:
+        sm.cluster_split_reranker = spec.cluster_split_reranker
         changes.append(
-            f"semantic_memory.ingestion_trigger_messages={spec.ingestion_trigger_messages}"
+            f"semantic_memory.cluster_split_reranker={spec.cluster_split_reranker}"
         )
+    if spec.cluster_similarity_threshold is not None:
+        sm.cluster_similarity_threshold = spec.cluster_similarity_threshold
+        changes.append(
+            "semantic_memory.cluster_similarity_threshold="
+            f"{spec.cluster_similarity_threshold}"
+        )
+
+
+def _apply_semantic_memory_ingestion_updates(
+    sm: SemanticMemoryConf,
+    spec: UpdateSemanticMemorySpec,
+    changes: list[str],
+) -> None:
+    if spec.ingestion_trigger_messages is None:
+        return
+
+    sm.ingestion_trigger_messages = spec.ingestion_trigger_messages
+    changes.append(
+        f"semantic_memory.ingestion_trigger_messages={spec.ingestion_trigger_messages}"
+    )
     if spec.ingestion_trigger_age_seconds is not None:
         sm.ingestion_trigger_age = timedelta(seconds=spec.ingestion_trigger_age_seconds)
         changes.append(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
+    _apply_semantic_memory_idle_ttl_updates(sm, spec, changes)
 
-    return changes
+
+def _apply_semantic_memory_idle_ttl_updates(
+    sm: SemanticMemoryConf,
+    spec: UpdateSemanticMemorySpec,
+    changes: list[str],
+) -> None:
+    if "cluster_idle_ttl_seconds" not in spec.model_fields_set:
+        return
+
+    if spec.cluster_idle_ttl_seconds is None:
+        sm.cluster_idle_ttl = None
+        changes.append("semantic_memory.cluster_idle_ttl=None")
+    else:
+        sm.cluster_idle_ttl = timedelta(seconds=spec.cluster_idle_ttl_seconds)
+        changes.append(
+            f"semantic_memory.cluster_idle_ttl={spec.cluster_idle_ttl_seconds}s"
+        )
+
+
+def _apply_semantic_memory_time_gap_updates(
+    sm: SemanticMemoryConf,
+    spec: UpdateSemanticMemorySpec,
+    changes: list[str],
+) -> None:
+    if "cluster_max_time_gap_seconds" not in spec.model_fields_set:
+        return
+
+    if spec.cluster_max_time_gap_seconds is None:
+        sm.cluster_max_time_gap = None
+        changes.append("semantic_memory.cluster_max_time_gap=None")
+    else:
+        sm.cluster_max_time_gap = timedelta(seconds=spec.cluster_max_time_gap_seconds)
+        changes.append(
+            f"semantic_memory.cluster_max_time_gap={spec.cluster_max_time_gap_seconds}s"
+        )
 
 
 class ConfigService:
@@ -548,11 +616,37 @@ class ConfigService:
         config = self._resource_manager.config
         sm = config.semantic_memory
 
+        cluster_split_reranker = sm.cluster_split_reranker
+        if cluster_split_reranker is None:
+            try:
+                candidate = config.default_long_term_memory_reranker
+            except DefaultRerankerNotConfiguredError:
+                candidate = None
+            cluster_split_reranker = candidate if isinstance(candidate, str) else None
+
         return SemanticMemoryConfigResponse(
             enabled=sm.enabled if sm.enabled is not None else False,
             database=sm.database,
             llm_model=sm.llm_model,
             embedding_model=sm.embedding_model,
+            cluster_split_reranker=cluster_split_reranker,
+            cluster_similarity_threshold=sm.cluster_similarity_threshold,
+            cluster_max_time_gap_seconds=(
+                int(sm.cluster_max_time_gap.total_seconds())
+                if sm.cluster_max_time_gap is not None
+                else None
+            ),
+            ingestion_trigger_messages=sm.ingestion_trigger_messages,
+            ingestion_trigger_age_seconds=(
+                int(sm.ingestion_trigger_age.total_seconds())
+                if sm.ingestion_trigger_age is not None
+                else None
+            ),
+            cluster_idle_ttl_seconds=(
+                int(sm.cluster_idle_ttl.total_seconds())
+                if sm.cluster_idle_ttl is not None
+                else None
+            ),
         )
 
     def get_long_term_memory_config(self) -> LongTermMemoryConfigResponse:

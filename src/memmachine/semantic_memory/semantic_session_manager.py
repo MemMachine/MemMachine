@@ -3,7 +3,14 @@
 import asyncio
 import hashlib
 import logging
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -48,12 +55,12 @@ class SemanticConfigStorage(Protocol):
         *,
         org_id: str,
         org_level_set: bool = False,
-        metadata_tags: list[str],
+        metadata_tags: Sequence[str],
         name: str | None = None,
         description: str | None = None,
     ) -> str: ...
 
-    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]: ...
+    async def list_set_type_ids(self, *, org_id: str) -> Sequence[SetTypeEntry]: ...
 
     async def delete_set_type_id(self, *, set_type_id: str) -> None: ...
 
@@ -109,7 +116,7 @@ class SemanticSessionManager:
     async def _add_single_episode(
         self, episode: Episode, session_data: SessionData
     ) -> None:
-        episode_metadata: dict[str, JsonValue] = (
+        episode_metadata: MutableMapping[str, JsonValue] = (
             dict(episode.metadata) if episode.metadata is not None else {}
         )
 
@@ -180,7 +187,7 @@ class SemanticSessionManager:
         limit: int | None = None,
         load_citations: bool = False,
         search_filter: FilterExpr | None = None,
-    ) -> Iterable[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         set_ids = await self._get_set_ids_str_from_metadata(
@@ -188,14 +195,15 @@ class SemanticSessionManager:
             metadata=set_metadata,
         )
 
-        return await self._semantic_service.search(
+        async for feature in self._semantic_service.search(
             set_ids=list(set_ids),
             query=message,
             min_distance=min_distance,
             limit=limit,
             load_citations=load_citations,
             filter_expr=search_filter,
-        )
+        ):
+            yield feature
 
     async def number_of_uningested_messages(
         self,
@@ -218,12 +226,12 @@ class SemanticSessionManager:
         self,
         *,
         set_id: SetIdT,
-        feature_metadata: dict[str, JsonValue] | None = None,
+        feature_metadata: Mapping[str, JsonValue] | None = None,
         category_name: str,
         feature: str,
         value: str,
         tag: str,
-        citations: list[EpisodeIdT] | None = None,
+        citations: Sequence[EpisodeIdT] | None = None,
     ) -> FeatureIdT:
         metadata = (
             {k: str(v) for k, v in feature_metadata.items()}
@@ -259,7 +267,7 @@ class SemanticSessionManager:
         feature: str | None = None,
         value: str | None = None,
         tag: str | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> None:
         await self._semantic_service.update_feature(
             feature_id,
@@ -270,7 +278,7 @@ class SemanticSessionManager:
             metadata=metadata,
         )
 
-    async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
         await self._semantic_service.delete_features(feature_ids)
 
     async def get_set_features(
@@ -282,7 +290,7 @@ class SemanticSessionManager:
         page_size: int | None = None,
         page_num: int | None = None,
         load_citations: bool = False,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         set_ids = await self._get_set_ids_str_from_metadata(
@@ -290,13 +298,14 @@ class SemanticSessionManager:
             metadata=set_metadata,
         )
 
-        return await self._semantic_service.get_set_features(
+        async for feature in self._semantic_service.get_set_features(
             set_ids=list(set_ids),
             filter_expr=search_filter,
             page_size=page_size,
             page_num=page_num,
             with_citations=load_citations,
-        )
+        ):
+            yield feature
 
     async def delete_feature_set(
         self,
@@ -322,17 +331,18 @@ class SemanticSessionManager:
         *,
         org_id: str,
         project_id: str | None = None,
-    ) -> Iterable[SetIdT]:
+    ) -> Sequence[SetIdT]:
         base_set_id = self._org_set_id(
             org_id=org_id,
             project_id=project_id,
         )
 
-        set_ids = await self._semantic_service.list_set_id_starts_with(
-            prefix=base_set_id
-        )
-
-        return set_ids
+        return [
+            set_id
+            async for set_id in self._semantic_service.list_set_id_starts_with(
+                prefix=base_set_id
+            )
+        ]
 
     @dataclass(frozen=True, slots=True)
     class _SetIdEntry:
@@ -388,7 +398,7 @@ class SemanticSessionManager:
     ) -> Iterable[SetIdT]:
         normalized_metadata = self._normalize_metadata(metadata)
 
-        deduped: dict[SetIdT, None] = {}
+        deduped: MutableMapping[SetIdT, None] = {}
 
         async for entry in self._get_set_id_entries(
             session_data=session_data,
@@ -418,7 +428,7 @@ class SemanticSessionManager:
     @staticmethod
     def _normalize_metadata(
         metadata: Mapping[str, JsonValue] | None,
-    ) -> dict[str, str]:
+    ) -> Mapping[str, str]:
         if metadata is None:
             return {}
 
@@ -510,7 +520,7 @@ class SemanticSessionManager:
         *,
         session_data: SessionData,
         is_org_level: bool = False,
-        metadata_tags: list[str],
+        metadata_tags: Sequence[str],
         name: str | None = None,
         description: str | None = None,
     ) -> str:
@@ -622,7 +632,7 @@ class SemanticSessionManager:
         self,
         *,
         session_data: SessionData,
-        set_metadata_keys: list[str],
+        set_metadata_keys: Sequence[str],
         set_metadata: Mapping[str, JsonValue] | None = None,
         is_org_level: bool = False,
     ) -> SetIdT:
@@ -672,7 +682,7 @@ class SemanticSessionManager:
 
         id: SetIdT
         is_org_level: bool
-        tags: list[str]
+        tags: Sequence[str]
         name: str | None = None
         description: str | None = None
 
@@ -691,7 +701,7 @@ class SemanticSessionManager:
         )
         set_type_map = {sid.id: sid for sid in set_type_ids if sid.id is not None}
 
-        sets: dict[str, SemanticSessionManager.Set] = {}
+        sets: MutableMapping[str, SemanticSessionManager.Set] = {}
         async for sid in self._get_set_id_entries(
             session_data=session_data,
             metadata=set_metadata,

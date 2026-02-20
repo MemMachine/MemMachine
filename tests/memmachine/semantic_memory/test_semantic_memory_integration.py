@@ -29,6 +29,10 @@ from memmachine.server.prompt.coding_style_prompt import CodingStyleSemanticCate
 from memmachine.server.prompt.profile_prompt import UserProfileSemanticCategory
 
 
+async def _collect_async(iterator):
+    return [item async for item in iterator]
+
+
 @pytest.fixture
 def embedder(openai_embedder):
     return openai_embedder
@@ -91,6 +95,7 @@ async def semantic_service(
     episode_storage: EpisodeStorage,
     semantic_storage: SemanticStorage,
     semantic_config_storage: SemanticConfigStorage,
+    in_memory_cluster_state_storage,
     embedder: Embedder,
     llm_model: LanguageModel,
     default_session_categories,
@@ -107,6 +112,7 @@ async def semantic_service(
             semantic_storage=semantic_storage,
             semantic_config_storage=semantic_config_storage,
             episode_storage=episode_storage,
+            cluster_state_storage=in_memory_cluster_state_storage,
             feature_update_interval_sec=0.05,
             uningested_message_limit=0,
             debug_fail_loudly=True,
@@ -168,12 +174,13 @@ class TestLongMemEvalIngestion:
         question_str: str,
         llm_model: OpenAIResponsesLanguageModel,
     ):
-        semantic_search_resp = list(
-            await semantic_memory.search(
+        semantic_search_resp = [
+            result
+            async for result in semantic_memory.search(
                 message=question_str,
                 session_data=session_data,
             )
-        )
+        ]
         semantic_search_resp = semantic_search_resp[:4]
 
         system_prompt = (
@@ -241,8 +248,10 @@ class TestLongMemEvalIngestion:
         if count != 0:
             pytest.fail(f"Messages are not ingested, count={count}")
 
-        memories = await semantic_memory.get_set_features(
-            session_data=basic_session_data,
+        memories = await _collect_async(
+            semantic_memory.get_set_features(
+                session_data=basic_session_data,
+            )
         )
         assert len(memories) > 0
 
