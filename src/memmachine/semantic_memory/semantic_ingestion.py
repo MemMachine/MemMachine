@@ -114,6 +114,9 @@ class IngestionService:
             )
 
         raw_messages = [m for m in raw_messages if m is not None]
+        if not raw_messages:
+            logger.warning("No valid messages for set_id %s after filtering, skipping", set_id)
+            return
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
         logger.info("Processing %d messages for set %s", len(messages), set_id)
