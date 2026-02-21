@@ -107,12 +107,16 @@ class IngestionService:
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
         if len(none_h_ids) != 0:
-            raise ValueError(
-                "Failed to retrieve messages. Invalid episode_ids exist for set_id "
-                f"{set_id}: {none_h_ids}"
+            logger.warning(
+                "Skipping invalid episode_ids for set_id %s: %s",
+                set_id,
+                none_h_ids,
             )
 
         raw_messages = [m for m in raw_messages if m is not None]
+        if not raw_messages:
+            logger.warning("No valid messages for set_id %s after filtering, skipping", set_id)
+            return
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
         logger.info("Processing %d messages for set %s", len(messages), set_id)
