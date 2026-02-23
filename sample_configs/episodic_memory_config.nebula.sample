@@ -39,7 +39,7 @@ resources:
         pool_size: 5
         max_overflow: 10
 
-    # NebulaGraph Enterprise 5.0 Configuration
+    # NebulaGraph Enterprise 5.2.1 Configuration
     nebula_storage:
       provider: nebula_graph
       config:

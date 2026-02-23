@@ -41,7 +41,7 @@ def nebula_connection_info():
     - NEBULA_USER (default: root)
     - NEBULA_PASSWORD (default: nebula)
 
-    Note: Requires NebulaGraph Enterprise 5.0 for vector support.
+    Note: Requires NebulaGraph Enterprise >= 5.0 for vector support.
     """
     nebula_host = os.environ.get("NEBULA_HOST", "127.0.0.1:9669")
     nebula_user = os.environ.get("NEBULA_USER", "root")

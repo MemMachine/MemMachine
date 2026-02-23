@@ -1169,7 +1169,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         # Dropping the graph invalidates the session's working graph context.
         # Re-establish it so subsequent queries can find the graph.
-        await self._client.execute(f"SESSION SET GRAPH `{self._graph_name}`")
+        await self._client.execute(f"SESSION SET GRAPH {self._graph_name}")
 
         # Clear index and count caches (data is gone)
         # Keep _graph_type_schemas cache (schema is preserved)
