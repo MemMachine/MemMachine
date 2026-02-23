@@ -1,0 +1,424 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MemoryChat - MINIMAL Purple Theme
+   Neutral dark theme with subtle purple accents
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: dark;
+  
+  /* Minimal Purple Accents - MUCH LESS PURPLE */
+  --gradient-start: #8b5cf6;
+  --gradient-mid: #a78bfa;
+  --gradient-end: #c4b5fd;
+  
+  /* Neutral Dark Backgrounds - NO PURPLE TINT */
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #171717;
+  --bg-tertiary: #262626;
+  --bg-elevated: #404040;
+  
+  /* Neutral Surface Colors */
+  --surface-dark: rgba(38, 38, 38, 0.5);
+  --surface-light: rgba(64, 64, 64, 0.3);
+  --surface-hover: rgba(82, 82, 82, 0.4);
+  
+  /* Neutral Border Colors */
+  --border-subtle: rgba(115, 115, 115, 0.2);
+  --border-medium: rgba(163, 163, 163, 0.3);
+  --border-strong: rgba(212, 212, 212, 0.4);
+  
+  /* Neutral Text Colors */
+  --text-primary: #fafafa;
+  --text-secondary: #d4d4d4;
+  --text-muted: #a3a3a3;
+  
+  /* Accent Colors - Purple only for important actions */
+  --accent-purple: #a78bfa;
+  --accent-success: #34d399;
+  --accent-warning: #fbbf24;
+  --accent-danger: #f87171;
+  --accent-info: #60a5fa;
+}
+
+/* Base Styles */
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+/* Custom Scrollbar - Neutral */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #525252;
+}
+
+/* Glass Morphism - NEUTRAL */
+.glass {
+  background: rgba(23, 23, 23, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+}
+
+.glass-strong {
+  background: rgba(38, 38, 38, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-medium);
+}
+
+/* Gradient Text - ONLY for logo/brand */
+.gradient-text {
+  background: linear-gradient(135deg, var(--gradient-start), var(--gradient-mid));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Primary Button - Subtle Purple */
+.btn-primary {
+  background: var(--accent-purple);
+  color: white;
+  border: none;
+  transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+  background: var(--gradient-mid);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Secondary Button - Neutral */
+.btn-secondary {
+  background: var(--surface-light);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+
+/* Danger Button */
+.btn-danger {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--accent-danger);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  transition: all 0.2s ease;
+}
+
+.btn-danger:hover {
+  background: rgba(248, 113, 113, 0.25);
+  border-color: rgba(248, 113, 113, 0.5);
+}
+
+/* Input Fields - Neutral */
+.input-field {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.1);
+}
+
+.input-field::placeholder {
+  color: var(--text-muted);
+}
+
+/* Card Styles */
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  transition: all 0.3s ease;
+}
+
+.card:hover {
+  border-color: var(--border-medium);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* Sidebar - Neutral Dark */
+.sidebar {
+  background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.sidebar-item {
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.sidebar-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-item.active {
+  background: rgba(167, 139, 250, 0.15);
+  color: var(--text-primary);
+  border: 1px solid var(--border-medium);
+}
+
+/* Chat Bubbles */
+.message-user {
+  background: var(--accent-purple);
+  color: white;
+  border-radius: 20px 20px 4px 20px;
+}
+
+.message-assistant {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px 20px 20px 4px;
+}
+
+/* Dropdown Select - Neutral */
+.select-dropdown {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.select-dropdown:hover {
+  border-color: var(--border-medium);
+}
+
+.select-dropdown:focus {
+  outline: none;
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.1);
+}
+
+/* Model Badge */
+.model-badge {
+  background: var(--surface-light);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+/* Icon Button - Neutral */
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--surface-light);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-medium);
+  color: var(--text-primary);
+}
+
+.icon-btn.danger:hover {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--accent-danger);
+}
+
+/* Powered By Badge - Minimal purple accent */
+.powered-badge {
+  background: var(--surface-light);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+/* Glow Effect - REMOVED (too much purple) */
+.glow {
+  box-shadow: none;
+}
+
+.glow-subtle {
+  box-shadow: none;
+}
+
+/* Markdown Content */
+.markdown-content {
+  color: var(--text-primary);
+  line-height: 1.7;
+}
+
+.markdown-content pre {
+  background: var(--bg-primary) !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.markdown-content code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9em;
+}
+
+.markdown-content :not(pre) > code {
+  background: var(--surface-light);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent-purple);
+}
+
+.markdown-content a {
+  color: var(--accent-purple);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.markdown-content a:hover {
+  border-bottom-color: var(--accent-purple);
+}
+
+.markdown-content blockquote {
+  border-left: 3px solid var(--accent-purple);
+  padding-left: 16px;
+  margin: 16px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.markdown-content h1, 
+.markdown-content h2, 
+.markdown-content h3 {
+  color: var(--text-primary);
+  margin-top: 24px;
+  margin-bottom: 12px;
+}
+
+.markdown-content ul, 
+.markdown-content ol {
+  padding-left: 24px;
+  margin: 12px 0;
+}
+
+.markdown-content li {
+  margin: 6px 0;
+  color: var(--text-secondary);
+}
+
+/* Purple bullet points for lists */
+.markdown-content ul li::marker {
+  color: var(--accent-purple);
+  font-size: 1.2em;
+}
+
+.markdown-content ol li::marker {
+  color: var(--accent-purple);
+  font-weight: 600;
+}
+
+/* Purple bullets for regular lists (not just markdown) */
+ul li::marker {
+  color: var(--accent-purple);
+}
+
+ol li::marker {
+  color: var(--accent-purple);
+  font-weight: 600;
+}
+
+/* Highlight.js Theme Override */
+.hljs {
+  background: var(--bg-primary) !important;
+  color: var(--text-primary);
+}
+
+/* Loading Animation */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.loading-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent-purple);
+  animation: pulse-glow 1s ease-in-out infinite;
+  margin-left: 2px;
+}
+
+/* Modal Overlay - Neutral */
+.modal-overlay {
+  background: rgba(10, 10, 10, 0.8);
+  backdrop-filter: blur(8px);
+}
+
+/* Transition Utilities */
+.transition-smooth {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Focus Ring - Minimal purple */
+.focus-ring:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
