@@ -37,7 +37,7 @@ def create_test_episode(**kwargs):
         "producer_id": "user1",
         "producer_role": "user",
         "produced_for_id": None,
-        "metadata": None,
+        "properties": None,
     }
     defaults.update(kwargs)
     return Episode.model_validate(defaults)
@@ -94,7 +94,7 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         return SessionDataManager.SessionInfo(
             description="",
             configuration={},
-            user_metadata={},
+            metadata={},
             episode_memory_conf=EpisodicMemoryConf(
                 metrics_factory_id="prometheus", session_key=session_key
             ),
@@ -403,13 +403,13 @@ class TestSessionMemoryPublicAPI:
             content="a" * 6,
             producer_id="user1",
             producer_role="user",
-            metadata={"type": "message"},
+            properties={"type": "message"},
         )
         ep2 = create_test_episode(
             content="b" * 6,
             producer_id="user2",
             producer_role="assistant",
-            metadata={"type": "message", "category": "greeting"},
+            properties={"type": "message", "category": "greeting"},
         )
         await memory.add_episodes([ep1, ep2])
 
@@ -432,7 +432,7 @@ class TestSessionMemoryPublicAPI:
         assert episodes == []
 
         # Test with filter that matches both episodes
-        filter_str = "m.type = 'message'"
+        filter_str = "p.type = 'message'"
         filters = parse_filter(filter_str)
         episodes, _ = await memory.get_short_term_memory_context(
             "test", filters=filters
@@ -441,7 +441,7 @@ class TestSessionMemoryPublicAPI:
         assert episodes == [ep1, ep2]
 
         # Test with filter that matches one episode based on filterable metadata
-        filter_str = "m.category = 'greeting'"
+        filter_str = "p.category = 'greeting'"
         filters = parse_filter(filter_str)
         episodes, _ = await memory.get_short_term_memory_context(
             "test", filters=filters
@@ -449,8 +449,8 @@ class TestSessionMemoryPublicAPI:
         assert len(episodes) == 1
         assert episodes == [ep2]
 
-        # Test with filter that matches one episodes based on filterable metadata with "metadata." as prefix
-        filter_str = "metadata.category = 'greeting'"
+        # Test with filter that matches one episodes based on filterable metadata with "properties." as prefix
+        filter_str = "properties.category = 'greeting'"
         filters = parse_filter(filter_str)
         episodes, _ = await memory.get_short_term_memory_context(
             "test", filters=filters
@@ -459,7 +459,7 @@ class TestSessionMemoryPublicAPI:
         assert episodes == [ep2]
 
         # Test with complex filter
-        filter_str = "producer_role = 'assistant' AND m.type = 'message'"
+        filter_str = "producer_role = 'assistant' AND p.type = 'message'"
         filters = parse_filter(filter_str)
         episodes, _ = await memory.get_short_term_memory_context(
             "test", filters=filters
@@ -467,7 +467,7 @@ class TestSessionMemoryPublicAPI:
         assert len(episodes) == 1
         assert episodes == [ep2]
 
-        filter_str = "producer_id = 'user1' OR m.category = 'greeting'"
+        filter_str = "producer_id = 'user1' OR p.category = 'greeting'"
         filters = parse_filter(filter_str)
         episodes, _ = await memory.get_short_term_memory_context(
             "test", filters=filters

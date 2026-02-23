@@ -16,7 +16,7 @@ from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import FilterValue, PropertyValue
 from memmachine.common.episode_store import EpisodeIdT
 from memmachine.common.errors import InvalidArgumentError
 from memmachine.common.filter.filter_parser import (
@@ -27,6 +27,15 @@ from memmachine.common.filter.filter_parser import (
 )
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
+)
+from memmachine.common.filter.filter_parser import (
+    In as FilterIn,
+)
+from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine.common.filter.filter_parser import (
+    Not as FilterNot,
 )
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
@@ -800,14 +809,14 @@ class Neo4jSemanticStorage(SemanticStorage):
             if raw_value is None:
                 continue
             prop_name = self._metadata_property_name(raw_key)
-            metadata_props[prop_name] = self._normalize_metadata_property_value(
+            metadata_props[prop_name] = self._normalize_property_value(
                 raw_value,
             )
         return metadata_json, metadata_props
 
     @staticmethod
-    def _normalize_metadata_property_value(
-        value: FilterablePropertyValue,
+    def _normalize_property_value(
+        value: PropertyValue,
     ) -> bool | int | float | str:
         if isinstance(value, bool):
             return value
@@ -995,27 +1004,16 @@ class Neo4jSemanticStorage(SemanticStorage):
         target_field: str,
     ) -> set[str] | None:
         if isinstance(expr, FilterComparison):
-            return self._collect_comparison_values(expr, target_field)
+            if expr.field != target_field or expr.op != "=":
+                return None
+            return {str(expr.value)}
+        if isinstance(expr, FilterIn):
+            if expr.field != target_field:
+                return None
+            return {str(v) for v in expr.values}
         if isinstance(expr, FilterAnd):
             return self._merge_and_values(expr, target_field)
-        if isinstance(expr, FilterOr):
-            # Ambiguous which branch applies; fall back to no restriction
-            return None
-        return None
-
-    def _collect_comparison_values(
-        self, expr: FilterComparison, target_field: str
-    ) -> set[str] | None:
-        if expr.field != target_field:
-            return None
-        if expr.op == "=":
-            if isinstance(expr.value, list):
-                raise ValueError("'=' comparison cannot accept list values")
-            return {str(expr.value)}
-        if expr.op == "in":
-            if not isinstance(expr.value, list):
-                raise ValueError("IN comparison requires list values")
-            return {str(v) for v in expr.value}
+        # Or, IsNull, Not cannot provide definite values
         return None
 
     def _merge_and_values(self, expr: FilterAnd, target_field: str) -> set[str] | None:
@@ -1032,16 +1030,37 @@ class Neo4jSemanticStorage(SemanticStorage):
         alias: str,
         expr: FilterExpr,
     ) -> tuple[str, dict[str, Any]]:
+        if isinstance(expr, FilterIsNull):
+            field_ref, _ = self._resolve_field_reference(alias, expr.field)
+            return f"{field_ref} IS NULL", {}
+
+        if isinstance(expr, FilterIn):
+            field_ref, value_adapter = self._resolve_field_reference(
+                alias,
+                expr.field,
+            )
+            param = self._next_filter_param()
+            adapted_values = (
+                [self._adapt_filter_value(v, value_adapter) for v in expr.values]
+                if value_adapter is not None
+                else list(expr.values)
+            )
+            return f"{field_ref} IN ${param}", {param: adapted_values}
+
         if isinstance(expr, FilterComparison):
             field_ref, value_adapter = self._resolve_field_reference(
                 alias,
                 expr.field,
             )
-            return self._render_comparison_condition(
-                field_ref,
-                expr,
-                value_adapter,
+            param = self._next_filter_param()
+            adapted_value = (
+                self._adapt_filter_value(expr.value, value_adapter)
+                if value_adapter is not None
+                else expr.value
             )
+            cypher_op = "<>" if expr.op == "!=" else expr.op
+            return f"{field_ref} {cypher_op} ${param}", {param: adapted_value}
+
         if isinstance(expr, FilterAnd):
             left_cond, left_params = self._render_filter_expr(alias, expr.left)
             right_cond, right_params = self._render_filter_expr(alias, expr.right)
@@ -1054,57 +1073,22 @@ class Neo4jSemanticStorage(SemanticStorage):
             condition = f"({left_cond}) OR ({right_cond})"
             left_params.update(right_params)
             return condition, left_params
+        if isinstance(expr, FilterNot):
+            inner_cond, inner_params = self._render_filter_expr(alias, expr.expr)
+            condition = f"NOT ({inner_cond})"
+            return condition, inner_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
-    def _render_comparison_condition(
-        self,
-        field_ref: str,
-        expr: FilterComparison,
-        value_adapter: Callable[[FilterablePropertyValue], Any] | None,
-    ) -> tuple[str, dict[str, Any]]:
-        op = expr.op
-        params: dict[str, Any] = {}
-
-        if op == "in":
-            if not isinstance(expr.value, list):
-                raise ValueError("IN comparison requires a list of values")
-            param = self._next_filter_param()
-            adapted_values = (
-                [self._adapt_filter_value(v, value_adapter) for v in expr.value]
-                if value_adapter is not None
-                else expr.value
-            )
-            return f"{field_ref} IN ${param}", {param: adapted_values}
-
-        if op in (">", "<", ">=", "<=", "="):
-            if isinstance(expr.value, list):
-                raise ValueError(f"'{op}' comparison cannot accept list values")
-            param = self._next_filter_param()
-            adapted_value = (
-                self._adapt_filter_value(expr.value, value_adapter)
-                if value_adapter is not None
-                else expr.value
-            )
-            return f"{field_ref} {op} ${param}", {param: adapted_value}
-
-        if op == "is_null":
-            return f"{field_ref} IS NULL", params
-
-        if op == "is_not_null":
-            return f"{field_ref} IS NOT NULL", params
-
-        raise ValueError(f"Unsupported operator: {op}")
 
     def _resolve_field_reference(
         self,
         alias: str,
         field: str,
-    ) -> tuple[str, Callable[[FilterablePropertyValue], Any] | None]:
+    ) -> tuple[str, Callable[[FilterValue], Any] | None]:
         if field in {"created_at", "created_at_ts"}:
             return f"{alias}.created_at_ts", coerce_datetime_to_timestamp
         if field in {"updated_at", "updated_at_ts"}:
             return f"{alias}.updated_at_ts", coerce_datetime_to_timestamp
-        if field.startswith(("m.", "metadata.")):
+        if field.startswith(("p.", "properties.")):
             key = field.split(".", 1)[1]
             prop_name = self._metadata_property_name(key)
             return f"{alias}.{prop_name}", None
@@ -1116,13 +1100,13 @@ class Neo4jSemanticStorage(SemanticStorage):
 
     @staticmethod
     def _adapt_filter_value(
-        value: FilterablePropertyValue,
-        adapter: Callable[[FilterablePropertyValue], Any] | None,
-    ) -> FilterablePropertyValue:
-        if adapter is None or value is None:
+        value: FilterValue,
+        adapter: Callable[[FilterValue], Any] | None,
+    ) -> FilterValue:
+        if adapter is None:
             return value
         adapted = adapter(value)
-        return cast(FilterablePropertyValue, adapted)
+        return cast(FilterValue, adapted)
 
     async def _hydrate_vector_index_state(self) -> None:
         self._vector_index_by_set.clear()

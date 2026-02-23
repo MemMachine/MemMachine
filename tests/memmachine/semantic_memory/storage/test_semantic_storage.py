@@ -808,12 +808,12 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
     )
 
     null_results = await semantic_storage.get_feature_set(
-        filter_expr=_expr("metadata.details IS NULL"),
+        filter_expr=_expr("properties.details IS NULL"),
     )
     assert {feature.value for feature in null_results} == {"second", "third"}
 
     not_null_results = await semantic_storage.get_feature_set(
-        filter_expr=_expr("metadata.details IS NOT NULL"),
+        filter_expr=_expr("properties.details IS NOT NULL"),
     )
     assert [feature.value for feature in not_null_results] == ["first"]
 

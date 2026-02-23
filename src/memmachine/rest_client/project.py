@@ -19,6 +19,7 @@ from memmachine.common.api.spec import (
     ProjectConfig,
     ProjectResponse,
 )
+from memmachine.common.data_types import PropertyValue
 
 if TYPE_CHECKING:
     from .client import MemMachineClient
@@ -52,7 +53,7 @@ class Project:
 
         # Create memory instance from project
         memory = project.memory(
-            metadata={
+            properties={
                 "user_id": "user123",
                 "agent_id": "my_agent",
                 "group_id": "my_group",
@@ -96,16 +97,17 @@ class Project:
 
     def memory(
         self,
-        metadata: dict[str, str] | None = None,
+        properties: dict[str, PropertyValue] | None = None,
         **kwargs: dict[str, Any],
     ) -> Memory:
         """
         Create a Memory instance for this project.
 
         Args:
-            metadata: Metadata dictionary that will be merged with metadata
+            properties: Properties dictionary that will be merged with properties
                      in add() and search() operations. Common keys include:
                      user_id, agent_id, group_id, session_id, etc.
+                     Values must be bool, int, float, str, or datetime.
             **kwargs: Additional configuration options
 
         Returns:
@@ -118,7 +120,7 @@ class Project:
             client=self.client,
             org_id=self.org_id,
             project_id=self.project_id,
-            metadata=metadata,
+            properties=properties,
             **kwargs,
         )
         return memory

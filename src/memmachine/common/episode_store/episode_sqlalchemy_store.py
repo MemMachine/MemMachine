@@ -17,11 +17,9 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    and_,
     delete,
     func,
     insert,
-    or_,
     select,
 )
 from sqlalchemy import Enum as SAEnum
@@ -41,16 +39,11 @@ from memmachine.common.errors import (
     ResourceNotFoundError,
 )
 from memmachine.common.filter.filter_parser import (
-    And as FilterAnd,
+    FilterExpr,
+    demangle_user_property_key,
+    normalize_filter_field,
 )
-from memmachine.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine.common.filter.filter_parser import FilterExpr
-from memmachine.common.filter.filter_parser import (
-    Or as FilterOr,
-)
-from memmachine.common.filter.sql_filter_util import parse_sql_filter
+from memmachine.common.filter.sql_filter_util import compile_sql_filter
 
 
 class BaseEpisodeStore(DeclarativeBase):
@@ -121,7 +114,7 @@ class Episode(BaseEpisodeStore):
             produced_for_id=self.produced_for_id,
             episode_type=self.episode_type,
             created_at=created_at,
-            metadata=self.json_metadata or None,
+            properties=self.json_metadata or None,
         )
 
 
@@ -177,8 +170,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             if entry.episode_type is not None:
                 entry_values["episode_type"] = entry.episode_type
 
-            if entry.metadata is not None:
-                entry_values["json_metadata"] = entry.metadata
+            if entry.properties is not None:
+                entry_values["json_metadata"] = entry.properties
 
             if entry.created_at is not None:
                 entry_values["created_at"] = entry.created_at
@@ -247,7 +240,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         filters: list[ColumnElement[bool]] = []
 
         if filter_expr is not None:
-            parsed_filter = self._compile_episode_filter_expr(filter_expr)
+            parsed_filter = compile_sql_filter(filter_expr, self._resolve_episode_field)
             if parsed_filter is not None:
                 filters.append(parsed_filter)
 
@@ -266,49 +259,17 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             return stmt.where(*filters)
         raise TypeError(f"Unsupported statement type: {type(stmt)}")
 
-    def _compile_episode_comparison_expr(
-        self,
-        expr: FilterComparison,
-    ) -> ColumnElement[bool] | None:
-        column, is_metadata = self._resolve_episode_field(expr.field)
-
-        return parse_sql_filter(
-            column=column,
-            is_metadata=is_metadata,
-            expr=expr,
-        )
-
-    def _compile_episode_filter_expr(
-        self, expr: FilterExpr
-    ) -> ColumnElement[bool] | None:
-        if isinstance(expr, FilterComparison):
-            return self._compile_episode_comparison_expr(expr)
-
-        if isinstance(expr, FilterAnd):
-            left = self._compile_episode_filter_expr(expr.left)
-            right = self._compile_episode_filter_expr(expr.right)
-            if left is None:
-                return right
-            if right is None:
-                return left
-            return and_(left, right)
-
-        if isinstance(expr, FilterOr):
-            left = self._compile_episode_filter_expr(expr.left)
-            right = self._compile_episode_filter_expr(expr.right)
-            if left is None:
-                return right
-            if right is None:
-                return left
-            return or_(left, right)
-
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
     @staticmethod
     def _resolve_episode_field(
         field: str,
     ) -> tuple[Any, bool] | tuple[None, bool]:
-        normalized = field.lower()
+        internal_name, is_user_property = normalize_filter_field(field)
+        if is_user_property:
+            key = demangle_user_property_key(internal_name)
+            return Episode.json_metadata[key], True
+
+        # Check for system field mappings (case-insensitive)
+        normalized = internal_name.lower()
         field_mapping: dict[str, Any] = {
             "uid": Episode.id,
             "id": Episode.id,
@@ -325,9 +286,6 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         if normalized in field_mapping:
             return field_mapping[normalized], False
 
-        if normalized.startswith(("m.", "metadata.")):
-            key = normalized.split(".", 1)[1]
-            return Episode.json_metadata[key].as_string(), True
         return None, False
 
     async def get_episode_messages(

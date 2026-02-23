@@ -18,7 +18,7 @@ from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine.common.data_types import FilterablePropertyValue, SimilarityMetric
+from memmachine.common.data_types import FilterValue, OrderedValue, SimilarityMetric
 from memmachine.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -29,11 +29,20 @@ from memmachine.common.filter.filter_parser import (
     FilterExpr,
 )
 from memmachine.common.filter.filter_parser import (
+    In as FilterIn,
+)
+from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine.common.filter.filter_parser import (
+    Not as FilterNot,
+)
+from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.neo4j_utils import (
-    render_temporal_comparison,
+    render_comparison,
     sanitize_value_for_neo4j,
     value_from_neo4j,
 )
@@ -43,7 +52,6 @@ from .data_types import (
     Edge,
     EntityType,
     Node,
-    OrderedPropertyValue,
     PropertyValue,
     demangle_embedding_name,
     demangle_property_name,
@@ -859,7 +867,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         *,
         collection: str,
         by_properties: Iterable[str],
-        starting_at: Iterable[OrderedPropertyValue | None],
+        starting_at: Iterable[OrderedValue | None],
         order_ascending: Iterable[bool],
         include_equal_start: bool = False,
         limit: int | None = 1,
@@ -896,16 +904,20 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             + (
                 (
                     " OR ("
-                    + " AND ".join(
-                        render_temporal_comparison(
-                            f"n.{sanitized_by_property}",
-                            "=",
-                            f"$starting_at[{index}]",
-                            starting_at[index],
+                    + (
+                        " AND ".join(
+                            render_comparison(
+                                f"n.{sanitized_by_property}",
+                                "=",
+                                f"$starting_at[{index}]",
+                                starting_value,
+                            )
+                            for index, sanitized_by_property in enumerate(
+                                sanitized_by_properties,
+                            )
+                            if (starting_value := starting_at[index]) is not None
                         )
-                        for index, sanitized_by_property in enumerate(
-                            sanitized_by_properties,
-                        )
+                        or "TRUE"
                     )
                     + ")"
                 )
@@ -970,7 +982,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         entity_query_alias: str,
         starting_at_query_parameter: str,
         sanitized_by_properties: Iterable[str],
-        starting_at: Iterable[OrderedPropertyValue | None],
+        starting_at: Iterable[OrderedValue | None],
         order_ascending: Iterable[bool],
     ) -> str:
         sanitized_by_properties = list(sanitized_by_properties)
@@ -985,34 +997,36 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             # so we use epochSeconds and nanosecond for datetime comparisons.
             # https://neo4j.com/docs/cypher-manual/current/values-and-types/ordering-equality-comparison/#ordering-spatial-temporal
 
-            if starting_at[index] is None:
+            starting_value = starting_at[index]
+            if starting_value is None:
                 relational_requirements = [
                     f"{entity_query_alias}.{sanitized_by_property} IS NOT NULL",
                 ]
             else:
                 relational_requirements = [
-                    render_temporal_comparison(
+                    render_comparison(
                         f"{entity_query_alias}.{sanitized_by_property}",
                         ">" if order_ascending[index] else "<",
                         f"${starting_at_query_parameter}[{index}]",
-                        starting_at[index],
+                        starting_value,
                     )
                 ]
 
             for equal_index, sanitized_equal_property in enumerate(
                 sanitized_equal_properties,
             ):
-                if starting_at[equal_index] is None:
+                starting_value = starting_at[equal_index]
+                if starting_value is None:
                     relational_requirements += [
                         f"{entity_query_alias}.{sanitized_equal_property} IS NOT NULL"
                     ]
                 else:
                     relational_requirements += [
-                        render_temporal_comparison(
+                        render_comparison(
                             f"{entity_query_alias}.{sanitized_equal_property}",
                             "=",
                             f"${starting_at_query_parameter}[{equal_index}]",
-                            starting_at[equal_index],
+                            starting_value,
                         )
                     ]
 
@@ -1639,12 +1653,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         entity_query_alias: str,
         query_value_parameter: str,
         property_filter: FilterExpr | None,
-    ) -> tuple[str, dict[str, FilterablePropertyValue | list[FilterablePropertyValue]]]:
+    ) -> tuple[str, dict[str, FilterValue]]:
         if property_filter is None:
             query_filter_string = "TRUE"
-            query_filter_params: dict[
-                str, FilterablePropertyValue | list[FilterablePropertyValue]
-            ] = {}
+            query_filter_params: dict[str, FilterValue] = {}
         else:
             query_filter_string, query_filter_params = (
                 Neo4jVectorGraphStore._render_filter_expr(
@@ -1661,63 +1673,60 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         entity_query_alias: str,
         query_value_parameter: str,
         expr: FilterExpr,
-    ) -> tuple[str, dict[str, FilterablePropertyValue | list[FilterablePropertyValue]]]:
-        if isinstance(expr, FilterComparison):
-            field_ref = f"{entity_query_alias}.{
-                Neo4jVectorGraphStore._sanitize_name(mangle_property_name(expr.field))
-            }"
-            param_name = Neo4jVectorGraphStore._sanitize_name(
-                f"filter_expr_param_{uuid4()}"
-            )
+    ) -> tuple[str, dict[str, FilterValue]]:
+        _render = Neo4jVectorGraphStore._render_filter_expr
+        _sanitize = Neo4jVectorGraphStore._sanitize_name
 
-            params: dict[
-                str, FilterablePropertyValue | list[FilterablePropertyValue]
-            ] = {}
-            if expr.op in (">", "<", ">=", "<=", "=", "!=", "<>"):
-                condition = render_temporal_comparison(
-                    left=field_ref,
-                    op=expr.op,
-                    right=f"${query_value_parameter}.{param_name}",
-                    value=expr.value,
-                )
-                params[param_name] = cast(
-                    FilterablePropertyValue,
-                    sanitize_value_for_neo4j(expr.value),
-                )
-            elif expr.op == "in":
-                if not isinstance(expr.value, list):
-                    raise ValueError("IN comparison requires a list of values")
-                condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
-                params[param_name] = [
-                    cast(
-                        FilterablePropertyValue,
-                        sanitize_value_for_neo4j(item),
-                    )
-                    for item in expr.value
-                ]
-            elif expr.op == "is_null":
-                condition = f"{field_ref} IS NULL"
-            elif expr.op == "is_not_null":
-                condition = f"{field_ref} IS NOT NULL"
-            else:
-                raise ValueError(f"Unsupported operator: {expr.op}")
+        if isinstance(expr, FilterIsNull):
+            field_ref = (
+                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
+            )
+            return f"{field_ref} IS NULL", {}
+
+        if isinstance(expr, FilterIn):
+            field_ref = (
+                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
+            )
+            param_name = _sanitize(f"filter_expr_param_{uuid4()}")
+            condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
+            params = {param_name: expr.values}
             return condition, params
+
+        if isinstance(expr, FilterComparison):
+            field_ref = (
+                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
+            )
+            param_name = _sanitize(f"filter_expr_param_{uuid4()}")
+            condition = render_comparison(
+                left=field_ref,
+                op=expr.op,
+                right=f"${query_value_parameter}.{param_name}",
+                value=expr.value,
+            )
+            params = {
+                param_name: cast(FilterValue, sanitize_value_for_neo4j(expr.value))
+            }
+            return condition, params
+
         if isinstance(expr, FilterAnd):
-            left_cond, left_params = Neo4jVectorGraphStore._render_filter_expr(
+            left_cond, left_params = _render(
                 entity_query_alias, query_value_parameter, expr.left
             )
-            right_cond, right_params = Neo4jVectorGraphStore._render_filter_expr(
+            right_cond, right_params = _render(
                 entity_query_alias, query_value_parameter, expr.right
             )
-            condition = f"({left_cond}) AND ({right_cond})"
-            return condition, left_params | right_params
+            return f"({left_cond}) AND ({right_cond})", left_params | right_params
         if isinstance(expr, FilterOr):
-            left_cond, left_params = Neo4jVectorGraphStore._render_filter_expr(
+            left_cond, left_params = _render(
                 entity_query_alias, query_value_parameter, expr.left
             )
-            right_cond, right_params = Neo4jVectorGraphStore._render_filter_expr(
+            right_cond, right_params = _render(
                 entity_query_alias, query_value_parameter, expr.right
             )
-            condition = f"({left_cond}) OR ({right_cond})"
-            return condition, left_params | right_params
+            return f"({left_cond}) OR ({right_cond})", left_params | right_params
+        if isinstance(expr, FilterNot):
+            inner_cond, inner_params = _render(
+                entity_query_alias, query_value_parameter, expr.expr
+            )
+            return f"NOT ({inner_cond})", inner_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")

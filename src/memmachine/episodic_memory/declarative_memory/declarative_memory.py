@@ -10,18 +10,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, InstanceOf
 
+from memmachine.common.data_types import PropertyValue
 from memmachine.common.embedder.embedder import Embedder
 from memmachine.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine.common.filter.filter_parser import (
     FilterExpr,
-)
-from memmachine.common.filter.filter_parser import (
-    Or as FilterOr,
+    map_filter_fields,
 )
 from memmachine.common.reranker.reranker import Reranker
 from memmachine.common.utils import extract_sentences
@@ -31,10 +24,9 @@ from .data_types import (
     ContentType,
     Derivative,
     Episode,
-    FilterablePropertyValue,
-    demangle_filterable_property_key,
-    is_mangled_filterable_property_key,
-    mangle_filterable_property_key,
+    demangle_property_key,
+    is_mangled_property_key,
+    mangle_property_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,11 +123,10 @@ class DeclarativeMemory:
                     "source": episode.source,
                     "content_type": episode.content_type.value,
                     "content": episode.content,
-                    "user_metadata": json.dumps(episode.user_metadata),
                 }
                 | {
-                    mangle_filterable_property_key(key): value
-                    for key, value in episode.filterable_properties.items()
+                    mangle_property_key(key): value
+                    for key, value in episode.properties.items()
                 },
             )
             for episode in episodes
@@ -168,8 +159,8 @@ class DeclarativeMemory:
                     "content": derivative.content,
                 }
                 | {
-                    mangle_filterable_property_key(key): value
-                    for key, value in derivative.filterable_properties.items()
+                    mangle_property_key(key): value
+                    for key, value in derivative.properties.items()
                 },
                 embeddings={
                     DeclarativeMemory._embedding_name(
@@ -243,7 +234,7 @@ class DeclarativeMemory:
                             source=episode.source,
                             content_type=ContentType.MESSAGE,
                             content=f"{episode.source}: {episode.content}",
-                            filterable_properties=episode.filterable_properties,
+                            properties=episode.properties,
                         ),
                     ]
 
@@ -256,7 +247,7 @@ class DeclarativeMemory:
                         source=episode.source,
                         content_type=ContentType.MESSAGE,
                         content=f"{episode.source}: {sentence}",
-                        filterable_properties=episode.filterable_properties,
+                        properties=episode.properties,
                     )
                     for sentence in sentences
                 ]
@@ -269,7 +260,7 @@ class DeclarativeMemory:
                         source=episode.source,
                         content_type=ContentType.TEXT,
                         content=text_content,
-                        filterable_properties=episode.filterable_properties,
+                        properties=episode.properties,
                     ),
                 ]
             case _:
@@ -698,17 +689,14 @@ class DeclarativeMemory:
             source=cast("str", episode_node.properties["source"]),
             content_type=ContentType(episode_node.properties["content_type"]),
             content=episode_node.properties["content"],
-            filterable_properties={
-                demangle_filterable_property_key(key): cast(
-                    "FilterablePropertyValue",
+            properties={
+                demangle_property_key(key): cast(
+                    PropertyValue,
                     value,
                 )
                 for key, value in episode_node.properties.items()
-                if is_mangled_filterable_property_key(key)
+                if is_mangled_property_key(key)
             },
-            user_metadata=json.loads(
-                cast("str", episode_node.properties["user_metadata"]),
-            ),
         )
 
     @staticmethod
@@ -733,27 +721,4 @@ class DeclarativeMemory:
         if property_filter is None:
             return None
 
-        return DeclarativeMemory._mangle_filter_expr(property_filter)
-
-    @staticmethod
-    def _mangle_filter_expr(expr: FilterExpr | None) -> FilterExpr | None:
-        if expr is None:
-            return None
-
-        if isinstance(expr, FilterComparison):
-            return FilterComparison(
-                field=mangle_filterable_property_key(expr.field),
-                op=expr.op,
-                value=expr.value,
-            )
-        if isinstance(expr, FilterAnd):
-            return FilterAnd(
-                left=DeclarativeMemory._mangle_filter_expr(expr.left),
-                right=DeclarativeMemory._mangle_filter_expr(expr.right),
-            )
-        if isinstance(expr, FilterOr):
-            return FilterOr(
-                left=DeclarativeMemory._mangle_filter_expr(expr.left),
-                right=DeclarativeMemory._mangle_filter_expr(expr.right),
-            )
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        return map_filter_fields(property_filter, mangle_property_key)

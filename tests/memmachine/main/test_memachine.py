@@ -214,7 +214,7 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
                     session_key=new_session_key
                 ),
                 description=f"session-{topic}",
-                metadata={"topic": topic},
+                properties={"topic": topic},
             )
 
         all_sessions = await memmachine.search_sessions()
@@ -276,13 +276,13 @@ async def test_memmachine_list_search_filters_metadata(
                 content="hello there",
                 producer_id="user",
                 producer_role="assistant",
-                metadata={"topic": "greeting"},
+                properties={"topic": "greeting"},
             ),
             EpisodeEntry(
                 content="status update",
                 producer_id="user",
                 producer_role="assistant",
-                metadata={"topic": "status"},
+                properties={"topic": "status"},
             ),
         ],
         target_memories=[],
@@ -292,7 +292,7 @@ async def test_memmachine_list_search_filters_metadata(
         filtered = await memmachine.list_search(
             session_data=session_data,
             target_memories=[MemoryType.Episodic],
-            search_filter="metadata.topic = 'greeting'",
+            search_filter="properties.topic = 'greeting'",
         )
 
         assert filtered.episodic_memory is not None
@@ -313,19 +313,19 @@ async def test_memmachine_count_episodes_respects_filters(
             content="alpha-1",
             producer_id="user",
             producer_role="assistant",
-            metadata={"topic": "alpha"},
+            properties={"topic": "alpha"},
         ),
         EpisodeEntry(
             content="beta-1",
             producer_id="user",
             producer_role="assistant",
-            metadata={"topic": "beta"},
+            properties={"topic": "beta"},
         ),
         EpisodeEntry(
             content="alpha-2",
             producer_id="user",
             producer_role="assistant",
-            metadata={"topic": "alpha"},
+            properties={"topic": "alpha"},
         ),
     ]
     episode_ids = await memmachine.add_episodes(
@@ -335,7 +335,7 @@ async def test_memmachine_count_episodes_respects_filters(
     try:
         filtered = await memmachine.episodes_count(
             session_data=session_data,
-            search_filter="metadata.topic = 'alpha'",
+            search_filter="properties.topic = 'alpha'",
         )
         total = await memmachine.episodes_count(session_data=session_data)
 
@@ -599,7 +599,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
                 content="User alias is Tom",
                 producer_id="producer",
                 producer_role="user",
-                metadata={"user_id": "123"},
+                properties={"user_id": "123"},
             ),
         ],
     )

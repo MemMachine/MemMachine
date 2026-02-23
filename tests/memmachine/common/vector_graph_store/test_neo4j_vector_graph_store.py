@@ -16,6 +16,9 @@ from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
 from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine.common.metrics_factory.prometheus_metrics_factory import (
@@ -424,10 +427,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
                 op="=",
                 value="yes",
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="include?",
-                op="is_null",
-                value=None,
             ),
         ),
     )
@@ -644,10 +645,8 @@ async def test_search_related_nodes(vector_graph_store):
                 op="=",
                 value="A",
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="marker?",
-                op="is_null",
-                value=None,
             ),
         ),
     )
@@ -677,10 +676,8 @@ async def test_search_related_nodes(vector_graph_store):
                 op="=",
                 value=1,
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="extra",
-                op="is_null",
-                value=None,
             ),
         ),
     )
@@ -1146,10 +1143,8 @@ async def test_search_matching_nodes(vector_graph_store):
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Robot",
-        property_filter=FilterComparison(
+        property_filter=FilterIsNull(
             field="none_value",
-            op="is_null",
-            value=None,
         ),
     )
     assert len(results) == 1
@@ -1226,10 +1221,8 @@ async def test_search_matching_nodes(vector_graph_store):
                 op="=",
                 value=30,
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="age!with$pecialchars",
-                op="is_null",
-                value=None,
             ),
         ),
     )
@@ -1255,10 +1248,8 @@ async def test_search_matching_nodes(vector_graph_store):
                 op="=",
                 value="Engineer",
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="title",
-                op="is_null",
-                value=None,
             ),
         ),
     )

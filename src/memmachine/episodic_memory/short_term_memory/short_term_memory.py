@@ -14,19 +14,29 @@ import logging
 import string
 from collections import deque
 from datetime import datetime
-from typing import Self, cast, get_args
+from typing import Self
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
 
 from memmachine.common import rw_locks
 from memmachine.common.data_types import (
     ExternalServiceAPIError,
-    FilterablePropertyValue,
+    PropertyValue,
 )
 from memmachine.common.episode_store import Episode
 from memmachine.common.episode_store.episode_model import episodes_to_string
 from memmachine.common.errors import ShortTermMemoryClosedError
-from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr, Or
+from memmachine.common.filter.filter_parser import (
+    And,
+    Comparison,
+    FilterExpr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    demangle_user_property_key,
+    normalize_filter_field,
+)
 from memmachine.common.language_model import LanguageModel
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 
@@ -266,14 +276,11 @@ class ShortTermMemory:
 
     @staticmethod
     def _safe_compare(
-        a: FilterablePropertyValue,
-        b: FilterablePropertyValue | list[FilterablePropertyValue],
+        a: PropertyValue,
+        b: PropertyValue,
         op: str,
     ) -> bool:
-        """Safely compare two filterable property values."""
-        if a is None or b is None or isinstance(b, list):
-            return False
-
+        """Safely compare two filterable property values for ordering operators."""
         comparisons = (
             ((int, float), lambda x, y: (float(x), float(y))),
             (str, lambda x, y: (x, y)),
@@ -285,7 +292,7 @@ class ShortTermMemory:
                 break
         else:
             logger.warning(
-                "Unsupported operator: %s, %s, %s",
+                "Unsupported types for comparison: %s, %s, %s",
                 op,
                 type(a).__name__,
                 type(b).__name__,
@@ -305,78 +312,63 @@ class ShortTermMemory:
                 logger.warning("Unsupported operator: %s", op)
                 return False
 
-    def _do_comparison(
-        self, comp: Comparison, value: FilterablePropertyValue | None
-    ) -> bool:
-        """Do comparison for a single comparison expression."""
-        match comp.op:
-            case "==" | "=":
-                return value == comp.value
-            case "!=":
-                return value != comp.value
-            case "in":
-                if not isinstance(comp.value, list):
-                    raise TypeError("IN operator requires a list value")
-                return value in comp.value
-            case "not_in":
-                if not isinstance(comp.value, list):
-                    raise TypeError("NOT IN operator requires a list value")
-                return value not in comp.value
-            case "is_null":
-                return value is None
-        if value is None or comp.value is None:
-            return False
-        return self._safe_compare(value, comp.value, comp.op)
-
-    def _do_logical_check(self, episode: Episode, filters: FilterExpr) -> bool:
-        """Do logical check for AND/OR expressions."""
-        if isinstance(filters, And):
-            if not self._check_filter(episode, filters.left):
-                return False
-            return self._check_filter(episode, filters.right)
-
-        if isinstance(filters, Or):
-            or_filter = cast(Or, filters)
-            if self._check_filter(episode, or_filter.left):
-                return True
-            return self._check_filter(episode, or_filter.right)
-        logger.warning("Unsupported logical filter: %s", type(filters).__name__)
-        return False
-
-    def _check_filter(self, episode: Episode, filters: FilterExpr | None) -> bool:
-        """Check if an episode matches the given filters."""
-        if filters is None:
+    def _check_filter(self, episode: Episode, expr: FilterExpr | None) -> bool:
+        """Check if an episode matches the given filter expression."""
+        if expr is None:
             return True
+        if isinstance(expr, Comparison):
+            value = self._resolve_field(episode, expr.field)
+            return self._compare(value, expr.op, expr.value)
+        if isinstance(expr, In):
+            value = self._resolve_field(episode, expr.field)
+            return value in expr.values
+        if isinstance(expr, IsNull):
+            value = self._resolve_field(episode, expr.field)
+            return value is None
+        if isinstance(expr, And):
+            return self._check_filter(episode, expr.left) and self._check_filter(
+                episode, expr.right
+            )
+        if isinstance(expr, Or):
+            return self._check_filter(episode, expr.left) or self._check_filter(
+                episode, expr.right
+            )
+        if isinstance(expr, Not):
+            return not self._check_filter(episode, expr.expr)
+        raise TypeError(f"Unsupported filter type: {type(expr)!r}")
 
-        if isinstance(filters, Comparison):
-            match filters.field:
-                case "producer_id":
-                    return self._do_comparison(filters, episode.producer_id)
-                case "produced_for_id":
-                    return self._do_comparison(filters, episode.produced_for_id)
-                case "producer_role":
-                    return self._do_comparison(filters, episode.producer_role)
-            if filters.field.startswith(("m.", "metadata.")):
-                key = (
-                    filters.field[9:]
-                    if filters.field.startswith("metadata.")
-                    else filters.field[2:]
-                )
-                if episode.metadata is None or not isinstance(episode.metadata, dict):
-                    return False
-                if key not in episode.metadata:
-                    return False
-                if not isinstance(
-                    episode.metadata[key], get_args(FilterablePropertyValue)
-                ):
-                    return False
-                return self._do_comparison(
-                    filters, cast(FilterablePropertyValue, episode.metadata[key])
-                )
-            logger.warning("Unsupported filter field: %s", filters.field)
+    def _resolve_field(self, episode: Episode, field: str) -> PropertyValue | None:
+        """Resolve a field name to its value from an episode."""
+        internal_name, is_user_property = normalize_filter_field(field)
+        if is_user_property:
+            key = demangle_user_property_key(internal_name)
+            if episode.properties and isinstance(episode.properties, dict):
+                return episode.properties.get(key)
+            return None
+        match internal_name:
+            case "producer_id":
+                return episode.producer_id
+            case "produced_for_id":
+                return episode.produced_for_id
+            case "producer_role":
+                return episode.producer_role
+        logger.warning("Unsupported filter field: %s", field)
+        return None
+
+    def _compare(
+        self,
+        value: PropertyValue | None,
+        op: str,
+        expected: PropertyValue,
+    ) -> bool:
+        """Compare a resolved value against an expected value using the given operator."""
+        if op == "=":
+            return value == expected
+        if op == "!=":
+            return value != expected
+        if value is None:
             return False
-
-        return self._do_logical_check(episode, filters)
+        return self._safe_compare(value, expected, op)
 
     async def get_summary(self) -> str:
         """Get the current summary."""
@@ -445,12 +437,12 @@ class ShortTermMemory:
             result += len(episode.content)
         else:
             result += len(repr(episode.content))
-        if episode.metadata is None:
+        if episode.properties is None:
             return result
-        if isinstance(episode.metadata, str):
-            result += len(episode.metadata)
-        elif isinstance(episode.metadata, dict):
-            for v in episode.metadata.values():
+        if isinstance(episode.properties, str):
+            result += len(episode.properties)
+        elif isinstance(episode.properties, dict):
+            for v in episode.properties.values():
                 if isinstance(v, str):
                     result += len(v)
                 else:

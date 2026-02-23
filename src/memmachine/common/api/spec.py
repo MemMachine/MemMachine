@@ -30,6 +30,8 @@ from pydantic import (
     model_validator,
 )
 
+from memmachine.common.data_types import PropertyValue
+
 from . import EpisodeType, MemoryType
 from .doc import Examples, SpecDoc
 
@@ -78,9 +80,9 @@ class EpisodeEntry(BaseModel):
         EpisodeType | None,
         Field(default=None, description=SpecDoc.EPISODE_TYPE),
     ]
-    metadata: Annotated[
-        dict[str, JsonValue] | None,
-        Field(default=None, description=SpecDoc.EPISODE_METADATA),
+    properties: Annotated[
+        dict[str, PropertyValue] | None,
+        Field(default=None, description=SpecDoc.EPISODE_PROPERTIES),
     ]
     created_at: Annotated[
         AwareDatetime | None,
@@ -147,13 +149,9 @@ class Episode(BaseModel):
         ContentType,
         Field(default=ContentType.STRING, description=SpecDoc.EPISODE_CONTENT_TYPE),
     ]
-    filterable_metadata: Annotated[
-        dict[str, Any] | None,
-        Field(default=None, description=SpecDoc.EPISODE_FILTERABLE_METADATA),
-    ]
-    metadata: Annotated[
-        dict[str, JsonValue] | None,
-        Field(default=None, description=SpecDoc.EPISODE_METADATA),
+    properties: Annotated[
+        dict[str, PropertyValue] | None,
+        Field(default=None, description=SpecDoc.EPISODE_PROPERTIES),
     ]
 
     def __hash__(self) -> int:
@@ -472,11 +470,11 @@ class MemoryMessage(BaseModel):
             description=SpecDoc.MEMORY_ROLE,
         ),
     ]
-    metadata: Annotated[
-        dict[str, str],
+    properties: Annotated[
+        dict[str, PropertyValue],
         Field(
             default_factory=dict,
-            description=SpecDoc.MEMORY_METADATA,
+            description=SpecDoc.MEMORY_PROPERTIES,
         ),
     ]
     episode_type: Annotated[
