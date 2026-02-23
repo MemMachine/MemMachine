@@ -101,13 +101,57 @@ async def neo4j_driver(neo4j_connection_info):
 
 
 @pytest.fixture(scope="module")
-def vector_graph_store(neo4j_driver):
+def neo4j_vector_graph_store(neo4j_driver):
+    """Neo4j vector graph store for testing."""
     return Neo4jVectorGraphStore(
         Neo4jVectorGraphStoreParams(
             driver=neo4j_driver,
             force_exact_similarity_search=True,
         ),
     )
+
+
+# --- NebulaGraph Fixtures ---
+
+
+@pytest.fixture(scope="module")
+def nebula_connection_info(nebula_connection_info_factory):
+    """NebulaGraph connection info for declarative memory tests."""
+    return nebula_connection_info_factory(
+        schema_name="/test_declarative_schema",
+        graph_name="test_declarative_graph",
+    )
+
+
+@pytest_asyncio.fixture(scope="module")
+async def nebula_client(nebula_client_factory, nebula_connection_info):
+    """Create NebulaGraph client for declarative memory tests."""
+    return await nebula_client_factory(nebula_connection_info)
+
+
+@pytest.fixture(scope="module")
+def nebula_vector_graph_store(nebula_client, nebula_connection_info):
+    """NebulaGraph vector graph store for testing."""
+    from tests.memmachine.episodic_memory.conftest import (
+        create_nebula_vector_graph_store,
+    )
+
+    return create_nebula_vector_graph_store(nebula_client, nebula_connection_info)
+
+
+# --- Parameterized Fixture for Both Backends ---
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        pytest.param("neo4j_vector_graph_store", id="neo4j"),
+        pytest.param("nebula_vector_graph_store", id="nebula"),
+    ],
+)
+def vector_graph_store(request):
+    """Parameterized fixture that tests both Neo4j and NebulaGraph."""
+    return request.getfixturevalue(request.param)
 
 
 @pytest.fixture(scope="module")

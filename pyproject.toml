@@ -73,6 +73,9 @@ license-files = ["LICENSE"]
 gpu = [
     "sentence-transformers>=5.1.0",
 ]
+nebula = [
+    "nebula5-python>=5.2.1",
+]
 
 [project.scripts]
 memmachine-server = "memmachine.server.app:main"

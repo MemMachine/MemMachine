@@ -1,0 +1,199 @@
+# NebulaGraph Enterprise Integration Guide
+
+This guide explains how to use NebulaGraph Enterprise as the vector graph store backend for MemMachine's episodic memory.
+
+## Overview
+
+MemMachine now supports NebulaGraph Enterprise for episodic memory storage. NebulaGraph provides:
+
+- **High performance** dual read and write, with high QPS and low latency
+- **Separate compute and storage architecture** allows for large dataset and high QPS scenarios with independent scaling
+- **GQL (ISO/IEC 76120)** - standardized graph query language
+- **Horizontal scalability** for large-scale deployments
+- **Enterprise-grade features** including high availability, 0-downtime update & upgrade, LDAP, backup/restore, monitoring, etc.
+
+## Prerequisites
+
+### 1. NebulaGraph Enterprise
+
+You need NebulaGraph Enterprise 5.2.1 or later. NebulaGraph is designed to handle graphs with trillions of edges and vertices and delivers millisecond latency at high concurrency, enabling real-time insights where performance matters most. 
+
+
+### 2. Python Dependencies
+
+Install the NebulaGraph Python client:
+
+```bash
+pip install nebula5-python>=5.2.1
+```
+
+
+## Quick Start
+
+### Step 1: Configure MemMachine
+
+Use the sample configuration file:
+
+```bash
+cp sample_configs/episodic_memory_config.nebula.sample config.yaml
+```
+
+Update the configuration with your NebulaGraph connection details:
+
+```yaml
+resources:
+  databases:
+    nebula_storage:
+      provider: nebula_graph
+      config:
+        hosts:
+          - "127.0.0.1:9669"
+        username: root
+        password: your_password_here
+
+        # Schema and Graph (Enterprise - automatic creation)
+        schema_name: "/default_schema"
+        graph_type_name: "memmachine_type"
+        graph_name: "memmachine"
+```
+
+**Note**: MemMachine automatically creates the schema, graph type, and graph on startup - no manual database setup required!
+
+### Step 2: Update Episodic Memory Configuration
+
+Point episodic memory to use NebulaGraph:
+
+```yaml
+episodic_memory:
+  long_term_memory:
+    vector_graph_store: nebula_storage  # Use NebulaGraph
+```
+
+### Step 3: Run MemMachine
+
+```bash
+python -m memmachine.server --config config.yaml
+```
+
+That's it! MemMachine will now use NebulaGraph for episodic memory storage.
+
+## Configuration Reference
+
+### Basic Configuration
+
+```yaml
+resources:
+  databases:
+    nebula_storage:
+      provider: nebula_graph
+      config:
+        # Connection settings
+        hosts:
+          - "192.168.1.10:9669"
+          - "192.168.1.11:9669"  # Multiple hosts for HA
+        username: root
+        password: your_password
+
+        # Schema and Graph
+        schema_name: "/default_schema"
+        graph_type_name: "memmachine_type"
+        graph_name: "memmachine"
+```
+
+### Index Tuning
+
+Control when indexes are created:
+
+```yaml
+config:
+  # Create vector indexes after 10,000 nodes
+  vector_index_creation_threshold: 10000
+
+  # Create property range indexes after 10,000 nodes
+  range_index_creation_threshold: 10000
+```
+
+### Vector Index Configuration
+
+NebulaGraph supports two vector index algorithms:
+
+#### IVF (Inverted File Index) - Recommended for Most Use Cases
+
+Balanced performance with good accuracy:
+
+```yaml
+config:
+  ann_index_type: "IVF"
+  ivf_nlist: 256      # Number of clusters (higher = better accuracy, slower build)
+  ivf_nprobe: 8       # Clusters to search (higher = better accuracy, slower queries)
+```
+
+**When to use IVF:**
+- General-purpose applications
+- Large datasets (>100K vectors)
+- Need for fast indexing
+- Acceptable ~85-90% recall
+
+**Tuning guidelines:**
+- `ivf_nlist`: 256 (default), 512 (large datasets), 1024 (very large datasets)
+- `ivf_nprobe`: 8 (default), 16 (higher accuracy), 32 (maximum accuracy)
+
+#### HNSW (Hierarchical Navigable Small World) - For High Accuracy
+
+Higher recall with more memory usage:
+
+```yaml
+config:
+  ann_index_type: "HNSW"
+  hnsw_max_degree: 16           # Neighbors per node (higher = better recall, more memory)
+  hnsw_ef_construction: 200     # Build quality (higher = better index, slower build)
+  hnsw_ef_search: 40            # Search quality (higher = better recall, slower queries)
+```
+
+**When to use HNSW:**
+- Precision-critical applications
+- Smaller datasets (<1M vectors)
+- Sufficient memory available
+- Need ~95-98% recall
+
+**Tuning guidelines:**
+- `hnsw_max_degree`: 16 (default), 32 (high accuracy), 64 (maximum accuracy)
+- `hnsw_ef_construction`: 200 (default), 400 (better quality)
+- `hnsw_ef_search`: 40 (default), 100 (higher recall), 200 (maximum recall)
+
+### Similarity Metric Support
+
+NebulaGraph has native support for three of the four similarity metrics. The search mode
+(ANN or KNN) depends on both index availability and the metric's capabilities:
+
+| Metric | NebulaGraph Function | Index Metric | ANN Supported? |
+|--------|---------------------|--------------|----------------|
+| `EUCLIDEAN` | `euclidean()` ASC | L2 | Yes — vector index required |
+| `DOT` | `inner_product()` DESC | IP | Yes — vector index required |
+| `COSINE` | `cosine()` DESC | — | No — KNN only (NebulaGraph limitation) |
+| `MANHATTAN` | — | — | No — unsupported, raises error |
+
+**Key points:**
+- `COSINE` always uses exact KNN search regardless of whether an index exists. NebulaGraph's `cosine()` function does not support the `APPROXIMATE` keyword.
+- `DOT` (inner product) and `COSINE` are mathematically different: DOT is the raw dot product; COSINE normalizes by vector magnitudes.
+- `MANHATTAN` is not supported by NebulaGraph and will raise an error.
+
+### Force Exact Search
+
+Disable ANN and always use exact vector search:
+
+```yaml
+config:
+  force_exact_similarity_search: true
+```
+
+**When to use exact search:**
+- Small datasets (<10K vectors)
+- Require 100% recall
+- Debugging/testing
+
+
+## Getting Help
+
+- **MemMachine Issues**: https://github.com/memm-ai/memmachine/issues
+- **NebulaGraph Website**: https://www.nebula-graph.io/

@@ -69,6 +69,144 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
         return f"bolt://{self.host}:{self.port}"
 
 
+class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
+    """Configuration options for a NebulaGraph Enterprise instance."""
+
+    hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1:9669"],
+        description="List of NebulaGraph graphd service addresses (host:port format)",
+    )
+    username: str = Field(default="root", description="NebulaGraph username")
+    password: SecretStr = Field(
+        default=SecretStr("nebula"),
+        description=(
+            "Password for the NebulaGraph database user. "
+            "You may reference an environment variable using `$ENV` or `${ENV}` "
+            "syntax (for example, `$NEBULA_PASSWORD`)."
+        ),
+    )
+
+    # Schema and Graph (Enterprise model)
+    schema_name: str = Field(
+        default="/default_schema",
+        description=(
+            "NebulaGraph schema path. Default is '/default_schema'. "
+            "A schema is a logical container for graph types and graphs."
+        ),
+    )
+    graph_type_name: str = Field(
+        default="memmachine_type",
+        description=(
+            "Graph type name. This defines the schema (node types, edge types, "
+            "and their properties). Multiple graphs can share the same graph type. "
+            "Will be created if it doesn't exist."
+        ),
+    )
+    graph_name: str = Field(
+        default="memmachine",
+        description=(
+            "Graph name within the schema. This is the actual graph instance "
+            "that will be used for storing data. Will be created if it doesn't exist."
+        ),
+    )
+
+    # Session pooling configuration
+    session_pool_size: int = Field(
+        default=4,
+        description=(
+            "Number of sessions in the session pool. "
+            "More sessions allow higher concurrency but use more resources."
+        ),
+    )
+    session_pool_wait_timeout: float = Field(
+        default=60.0,
+        description=(
+            "Maximum time (in seconds) to wait for a session from the pool. "
+            "If None or 0, will wait indefinitely."
+        ),
+    )
+
+    # Search behavior
+    force_exact_similarity_search: bool = Field(
+        default=False,
+        description="Whether to force exact similarity search instead of ANN",
+    )
+
+    # Index creation thresholds
+    range_index_creation_threshold: int | None = Field(
+        default=None,
+        description=(
+            "Minimum number of entities in a collection or relationship "
+            "required before NebulaGraph automatically creates a normal index."
+        ),
+    )
+    vector_index_creation_threshold: int | None = Field(
+        default=None,
+        description=(
+            "Minimum number of entities in a collection or relationship "
+            "required before NebulaGraph automatically creates a vector index. "
+            "Vector indexes enable ANN (Approximate Nearest Neighbor) search for fast "
+            "similarity queries on large datasets. Below this threshold, KNN (K-Nearest "
+            "Neighbor) exact search is used, which does not require an index and is "
+            "suitable for small-sized graphs and low-dimensional vectors."
+        ),
+    )
+
+    # Vector index tuning parameters
+    ann_index_type: str = Field(
+        default="IVF",
+        description=(
+            "Vector index type: 'IVF' for balanced performance (default), "
+            "'HNSW' for higher recall. IVF is faster to build and more memory-efficient, "
+            "while HNSW provides better recall at the cost of slower indexing."
+        ),
+    )
+    ivf_nlist: int = Field(
+        default=256,
+        description=(
+            "IVF index parameter: Number of clusters (NLIST). "
+            "Higher values = more accurate search, slower index build. "
+            "Recommended: 256 for balanced, 1024 for large datasets."
+        ),
+    )
+    ivf_nprobe: int = Field(
+        default=8,
+        description=(
+            "IVF query parameter: Number of clusters to search (NPROBE). "
+            "Higher values = better recall, slower queries. "
+            "Recommended: 4 (fast, ~70% recall), 8 (balanced, ~85%), 16+ (slow, ~95%)."
+        ),
+    )
+    hnsw_max_degree: int = Field(
+        default=16,
+        description=(
+            "HNSW index parameter: Maximum neighbors per node (MAXDEGREE). "
+            "Higher values = better recall, more memory usage. "
+            "Recommended: 16 (default), 32 (high precision)."
+        ),
+    )
+    hnsw_ef_construction: int = Field(
+        default=200,
+        description=(
+            "HNSW index parameter: Construction quality (EFCONSTRUCTION). "
+            "Higher values = better index quality, slower build. "
+            "Recommended: 200 (default), 400+ (high quality)."
+        ),
+    )
+    hnsw_ef_search: int = Field(
+        default=40,
+        description=(
+            "HNSW query parameter: Search quality (EFSEARCH). "
+            "Higher values = better recall, slower queries. "
+            "Recommended: 20 (fast, ~80% recall), 40 (balanced, ~90%), 100+ (slow, ~98%)."
+        ),
+    )
+
+    def get_hosts(self) -> list[str]:
+        """Get the list of NebulaGraph host addresses."""
+        return self.hosts
+
+
 class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
     """Configuration for SQLAlchemy-backed relational databases."""
 
@@ -151,19 +289,20 @@ class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
 class SupportedDB(str, Enum):
     """Supported database providers."""
 
-    # <-- Add these annotations so type checker knows these attributes exist
-    conf_cls: type[Neo4jConf] | type[SqlAlchemyConf]
+    # <-- Add these annotations so mypy knows these attributes exist
+    conf_cls: type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf]
     dialect: str | None
     driver: str | None
 
     NEO4J = ("neo4j", Neo4jConf, None, None)
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
+    NEBULA_GRAPH = ("nebula_graph", NebulaGraphConf, None, None)
 
     def __new__(
         cls,
         value: str,
-        conf_cls: type[Neo4jConf] | type[SqlAlchemyConf],
+        conf_cls: type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf],
         dialect: str | None,
         driver: str | None,
     ) -> Self:
@@ -184,9 +323,12 @@ class SupportedDB(str, Enum):
             f"Unsupported provider '{provider}'. Supported providers are: {valid}"
         )
 
-    def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf:
+    def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf | NebulaGraphConf:
         if self is SupportedDB.NEO4J:
             return self.conf_cls(**conf)
+        if self is SupportedDB.NEBULA_GRAPH:
+            return self.conf_cls(**conf)
+        # Relational DBs (PostgreSQL, SQLite)
         conf_copy = {**conf, "dialect": self.dialect, "driver": self.driver}
         return self.conf_cls(**conf_copy)
 
@@ -194,12 +336,17 @@ class SupportedDB(str, Enum):
     def is_neo4j(self) -> bool:
         return self is SupportedDB.NEO4J
 
+    @property
+    def is_nebula_graph(self) -> bool:
+        return self is SupportedDB.NEBULA_GRAPH
+
 
 class DatabasesConf(BaseModel):
     """Top-level storage configuration mapping identifiers to backends."""
 
     neo4j_confs: dict[str, Neo4jConf] = {}
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
+    nebula_graph_confs: dict[str, NebulaGraphConf] = {}
 
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
@@ -208,6 +355,7 @@ class DatabasesConf(BaseModel):
     POSTGRES: ClassVar[str] = "postgres"
     POSTGRESQL: ClassVar[str] = "postgresql"
     SQLITE: ClassVar[str] = "sqlite"
+    NEBULA_GRAPH: ClassVar[str] = "nebula_graph"
     DIALECT: ClassVar[str] = "dialect"
 
     def to_yaml_dict(self) -> dict:
@@ -235,6 +383,12 @@ class DatabasesConf(BaseModel):
         for database_id, conf in self.relational_db_confs.items():
             add_database(database_id, self.RELATIONAL_DB, conf.to_yaml_dict())
 
+        for database_id, conf in self.nebula_graph_confs.items():
+            databases[database_id] = {
+                self.PROVIDER_KEY: self.NEBULA_GRAPH,
+                self.CONFIG_KEY: conf.to_yaml_dict(),
+            }
+
         return databases
 
     def to_yaml(self) -> str:
@@ -250,6 +404,7 @@ class DatabasesConf(BaseModel):
 
         neo4j_dict = {}
         relational_db_dict = {}
+        nebula_graph_dict = {}
 
         for database_id, resource_definition in databases.items():
             provider_str = resource_definition.get(cls.PROVIDER_KEY)
@@ -260,10 +415,13 @@ class DatabasesConf(BaseModel):
 
             if provider.is_neo4j:
                 neo4j_dict[database_id] = config_obj
+            elif provider.is_nebula_graph:
+                nebula_graph_dict[database_id] = config_obj
             else:
                 relational_db_dict[database_id] = config_obj
 
         return cls(
             neo4j_confs=neo4j_dict,
             relational_db_confs=relational_db_dict,
+            nebula_graph_confs=nebula_graph_dict,
         )
