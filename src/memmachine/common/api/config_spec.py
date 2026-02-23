@@ -137,6 +137,30 @@ class SemanticMemoryConfigResponse(BaseModel):
         str | None,
         Field(default=None, description=SpecDoc.SEMANTIC_EMBEDDING_MODEL),
     ]
+    cluster_split_reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_CLUSTER_SPLIT_RERANKER),
+    ]
+    cluster_similarity_threshold: Annotated[
+        float | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_CLUSTER_SIMILARITY_THRESHOLD),
+    ]
+    cluster_max_time_gap_seconds: Annotated[
+        int | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_CLUSTER_MAX_TIME_GAP),
+    ]
+    ingestion_trigger_messages: Annotated[
+        int | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_INGESTION_MESSAGES),
+    ]
+    ingestion_trigger_age_seconds: Annotated[
+        int | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_INGESTION_AGE),
+    ]
+    cluster_idle_ttl_seconds: Annotated[
+        int | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_CLUSTER_IDLE_TTL),
+    ]
 
 
 class GetConfigResponse(BaseModel):
@@ -439,6 +463,10 @@ class UpdateSemanticMemorySpec(BaseModel):
         str | None,
         Field(default=None, description=SpecDoc.SEMANTIC_EMBEDDING_MODEL),
     ]
+    cluster_split_reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_CLUSTER_SPLIT_RERANKER),
+    ]
     ingestion_trigger_messages: Annotated[
         int | None,
         Field(default=None, gt=0, description=SpecDoc.SEMANTIC_INGESTION_MESSAGES),
@@ -446,6 +474,23 @@ class UpdateSemanticMemorySpec(BaseModel):
     ingestion_trigger_age_seconds: Annotated[
         int | None,
         Field(default=None, gt=0, description=SpecDoc.SEMANTIC_INGESTION_AGE),
+    ]
+    cluster_idle_ttl_seconds: Annotated[
+        int | None,
+        Field(default=None, gt=0, description=SpecDoc.SEMANTIC_CLUSTER_IDLE_TTL),
+    ]
+    cluster_similarity_threshold: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            le=1.0,
+            description=SpecDoc.SEMANTIC_CLUSTER_SIMILARITY_THRESHOLD,
+        ),
+    ]
+    cluster_max_time_gap_seconds: Annotated[
+        int | None,
+        Field(default=None, gt=0, description=SpecDoc.SEMANTIC_CLUSTER_MAX_TIME_GAP),
     ]
 
 

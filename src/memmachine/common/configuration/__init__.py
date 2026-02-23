@@ -107,11 +107,70 @@ class SemanticMemoryConf(YamlSerializableMixin):
 
     ingestion_trigger_messages: int = Field(
         default=5,
-        description="The amount of uningested messages to trigger an ingestion.",
+        description=(
+            "The amount of pending messages in a semantic cluster needed to trigger "
+            "ingestion for that cluster."
+        ),
     )
     ingestion_trigger_age: timedelta = Field(
         default=timedelta(minutes=5),
-        description="The amount of time a message is uningested before triggering an ingestion.",
+        description=(
+            "The amount of time the oldest pending message in a semantic cluster "
+            "waits before triggering ingestion for that cluster."
+        ),
+    )
+    cluster_idle_ttl: timedelta | None = Field(
+        default=timedelta(days=1),
+        description=(
+            "How long an empty semantic cluster can remain idle before it is garbage "
+            "collected. Set to null to disable cluster GC."
+        ),
+    )
+    cluster_similarity_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity threshold for clustering semantic messages.",
+    )
+    cluster_max_time_gap: timedelta | None = Field(
+        default=None,
+        description="Maximum time gap between messages in a cluster."
+        " Set to null to disable time-based splitting.",
+    )
+    llm_split_enabled: bool = Field(
+        default=False,
+        description="Enable reranker-guided cluster splitting during ingestion.",
+    )
+    cluster_split_reranker: str | None = Field(
+        default=None,
+        description=(
+            "Reranker ID used to score cluster split boundaries. Defaults to the "
+            "long-term memory reranker when unset."
+        ),
+    )
+    llm_split_min_cluster_size: int = Field(
+        default=6,
+        ge=2,
+        description="Minimum cluster size before split is considered.",
+    )
+    llm_split_max_messages: int = Field(
+        default=20,
+        ge=2,
+        description="Maximum messages scored for a split decision.",
+    )
+    llm_split_time_gap_sec: float | None = Field(
+        default=None,
+        description="Internal time gap (seconds) above which a split is considered.",
+    )
+    llm_split_low_similarity_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Adjacent cosine similarity below this triggers split candidacy.",
+    )
+    llm_split_cohesion_drop_zscore: float = Field(
+        default=2.0,
+        description="Z-score threshold for detecting sharp similarity drops.",
     )
 
     @model_validator(mode="after")

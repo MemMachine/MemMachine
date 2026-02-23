@@ -32,6 +32,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _set_if_not_none(target: dict[str, Any], key: str, value: object) -> None:
+    if value is not None:
+        target[key] = value
+
+
 class Config:
     """
     Configuration interface for managing MemMachine server settings.
@@ -439,8 +444,12 @@ class Config:
         database: str | None = None,
         llm_model: str | None = None,
         embedding_model: str | None = None,
+        cluster_split_reranker: str | None = None,
         ingestion_trigger_messages: int | None = None,
         ingestion_trigger_age_seconds: int | None = None,
+        cluster_idle_ttl_seconds: int | None = None,
+        cluster_similarity_threshold: float | None = None,
+        cluster_max_time_gap_seconds: int | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
         """
@@ -451,8 +460,12 @@ class Config:
             database: Name of the database to use for semantic memory
             llm_model: Name of the language model to use for feature extraction
             embedding_model: Name of the embedder to use for semantic similarity
+            cluster_split_reranker: Reranker ID used for cluster split scoring
             ingestion_trigger_messages: Number of messages before triggering ingestion
             ingestion_trigger_age_seconds: Age threshold in seconds for triggering ingestion
+            cluster_idle_ttl_seconds: Idle TTL in seconds for empty cluster GC
+            cluster_similarity_threshold: Cosine similarity threshold for clustering
+            cluster_max_time_gap_seconds: Maximum time gap in seconds for clustering
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -464,14 +477,43 @@ class Config:
 
         """
         self._check_closed()
-        spec = UpdateSemanticMemorySpec(
-            enabled=enabled,
-            database=database,
-            llm_model=llm_model,
-            embedding_model=embedding_model,
-            ingestion_trigger_messages=ingestion_trigger_messages,
-            ingestion_trigger_age_seconds=ingestion_trigger_age_seconds,
+        spec_data: dict[str, Any] = {}
+        _set_if_not_none(spec_data, "enabled", enabled)
+        _set_if_not_none(spec_data, "database", database)
+        _set_if_not_none(spec_data, "llm_model", llm_model)
+        _set_if_not_none(spec_data, "embedding_model", embedding_model)
+        _set_if_not_none(
+            spec_data,
+            "cluster_split_reranker",
+            cluster_split_reranker,
         )
+        _set_if_not_none(
+            spec_data,
+            "ingestion_trigger_messages",
+            ingestion_trigger_messages,
+        )
+        _set_if_not_none(
+            spec_data,
+            "ingestion_trigger_age_seconds",
+            ingestion_trigger_age_seconds,
+        )
+        _set_if_not_none(
+            spec_data,
+            "cluster_idle_ttl_seconds",
+            cluster_idle_ttl_seconds,
+        )
+        _set_if_not_none(
+            spec_data,
+            "cluster_similarity_threshold",
+            cluster_similarity_threshold,
+        )
+        _set_if_not_none(
+            spec_data,
+            "cluster_max_time_gap_seconds",
+            cluster_max_time_gap_seconds,
+        )
+
+        spec = UpdateSemanticMemorySpec(**spec_data)
         payload = spec.model_dump(exclude_none=True)
         try:
             response = self.client.request(

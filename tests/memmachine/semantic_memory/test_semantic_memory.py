@@ -15,6 +15,10 @@ from tests.memmachine.semantic_memory.semantic_test_utils import (
 pytestmark = pytest.mark.asyncio
 
 
+async def _collect_async(iterator):
+    return [item async for item in iterator]
+
+
 async def test_store_custom_embedder(
     semantic_service: SemanticService,
 ):
@@ -53,9 +57,11 @@ async def test_use_length_embedder(
         tag="writing_style",
     )
 
-    response = await semantic_service.search(
-        set_ids=["user-length-1234"],
-        query="Why does alpha prefer quiet chats?",
+    response = await _collect_async(
+        semantic_service.search(
+            set_ids=["user-length-1234"],
+            query="Why does alpha prefer quiet chats?",
+        )
     )
 
     assert len(response) == 1
@@ -171,8 +177,10 @@ async def test_add_new_feature_stores_entry(
     )
 
     # When retrieving the stored features
-    features = await semantic_service.get_set_features(
-        set_ids=["user-123"],
+    features = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=["user-123"],
+        )
     )
 
     # Then the feature is persisted with embeddings recorded
@@ -206,9 +214,11 @@ async def test_get_set_features_filters_by_tag(
     )
 
     # When filtering on a specific tag
-    filtered = await semantic_service.get_set_features(
-        set_ids=["user-42"],
-        filter_expr=parse_filter("tag IN ('writing_style')"),
+    filtered = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=["user-42"],
+            filter_expr=parse_filter("tag IN ('writing_style')"),
+        )
     )
 
     # Then only matching features are returned
@@ -303,8 +313,10 @@ async def test_delete_feature_set_applies_filters(
     )
 
     # Then only the non-matching feature remains
-    remaining = await semantic_service.get_set_features(
-        set_ids=["user-88"],
+    remaining = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=["user-88"],
+        )
     )
     assert len(remaining) == 1
     assert remaining[0].feature_name == "favorite_color"
@@ -380,10 +392,12 @@ async def test_search_returns_matching_features(
     )
 
     # When searching with an alpha-focused query
-    results = await semantic_service.search(
-        set_ids=["user-search"],
-        query="Why does alpha prefer quiet chats?",
-        min_distance=0.5,
+    results = await _collect_async(
+        semantic_service.search(
+            set_ids=["user-search"],
+            query="Why does alpha prefer quiet chats?",
+            min_distance=0.5,
+        )
     )
 
     # Then only the matching feature is returned using the query embedding
@@ -438,8 +452,10 @@ async def test_delete_category_deletes_underlying_features(
     )
 
     # Verify features exist
-    features_before = await semantic_service.get_set_features(
-        set_ids=[set_id],
+    features_before = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=[set_id],
+        )
     )
     assert len(features_before) == 3
     test_category_features = [
@@ -459,8 +475,10 @@ async def test_delete_category_deletes_underlying_features(
     assert category is None
 
     # Verify only TestCategory features are deleted
-    features_after = await semantic_service.get_set_features(
-        set_ids=[set_id],
+    features_after = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=[set_id],
+        )
     )
     assert len(features_after) == 1
     assert features_after[0].category == "OtherCategory"
@@ -521,8 +539,10 @@ async def test_delete_set_type_category_deletes_inherited_features(
     )
 
     # Verify features exist in all sets
-    all_features = await semantic_service.get_set_features(
-        set_ids=[set_id_1, set_id_2, set_id_3],
+    all_features = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=[set_id_1, set_id_2, set_id_3],
+        )
     )
     assert len(all_features) == 3
     assert all(f.category == "SharedCategory" for f in all_features)
@@ -531,8 +551,10 @@ async def test_delete_set_type_category_deletes_inherited_features(
     await semantic_service.delete_category(category_id=category_id)
 
     # Verify all features are deleted from all set_ids
-    remaining_features = await semantic_service.get_set_features(
-        set_ids=[set_id_1, set_id_2, set_id_3],
+    remaining_features = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=[set_id_1, set_id_2, set_id_3],
+        )
     )
     assert len(remaining_features) == 0
 
@@ -591,8 +613,10 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
     )
 
     # Verify both features exist
-    all_features_before = await semantic_service.get_set_features(
-        set_ids=[set_id_inherit, set_id_override],
+    all_features_before = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=[set_id_inherit, set_id_override],
+        )
     )
     assert len(all_features_before) == 2
 
@@ -600,8 +624,10 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
     await semantic_service.delete_category(category_id=set_type_category_id)
 
     # Verify only the inherited feature is deleted
-    remaining_features = await semantic_service.get_set_features(
-        set_ids=[set_id_inherit, set_id_override],
+    remaining_features = await _collect_async(
+        semantic_service.get_set_features(
+            set_ids=[set_id_inherit, set_id_override],
+        )
     )
     assert len(remaining_features) == 1
     assert remaining_features[0].set_id == set_id_override
@@ -663,7 +689,7 @@ async def test_add_new_feature_succeeds_with_valid_category(
     assert feature_id is not None
 
     # Verify the feature was created
-    features = await semantic_service.get_set_features(set_ids=[set_id])
+    features = await _collect_async(semantic_service.get_set_features(set_ids=[set_id]))
     assert len(features) == 1
     assert features[0].category == "ValidCategory"
 

@@ -383,8 +383,16 @@ async def get_feature(
         value=feature.value,
         metadata=SemanticFeature.Metadata(
             id=feature.metadata.id if feature.metadata else None,
-            citations=feature.metadata.citations if feature.metadata else None,
-            other=feature.metadata.other if feature.metadata else None,
+            citations=(
+                list(feature.metadata.citations)
+                if feature.metadata and feature.metadata.citations is not None
+                else None
+            ),
+            other=(
+                dict(feature.metadata.other)
+                if feature.metadata and feature.metadata.other is not None
+                else None
+            ),
         ),
     )
 
@@ -464,7 +472,7 @@ async def list_semantic_set_types(
             SemanticSetTypeEntry(
                 id=st.id,
                 is_org_level=st.is_org_level,
-                tags=st.tags,
+                tags=list(st.tags),
                 name=st.name,
                 description=st.description,
             )
@@ -542,7 +550,7 @@ async def list_semantic_set_ids(
             SemanticSetEntry(
                 id=s.id,
                 is_org_level=s.is_org_level,
-                tags=s.tags,
+                tags=list(s.tags),
                 name=s.name,
                 description=s.description,
             )
