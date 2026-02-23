@@ -1,10 +1,21 @@
 """API v2 router for MemMachine project and memory management endpoints."""
 
+import json
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Request,
+    Response,
+    UploadFile,
+)
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import ValidationError
 
 from memmachine import MemMachine
 from memmachine.common.api.doc import RouterDoc
@@ -92,6 +103,42 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
+
+
+async def _parse_add_memories_request(
+    request: Request,
+    spec: Annotated[str | None, Form()] = None,
+    image: Annotated[UploadFile | None, File()] = None,
+) -> tuple[AddMemoriesSpec, UploadFile | None]:
+    """Parse AddMemories request from either JSON body or multipart form-data."""
+    content_type = request.headers.get("content-type", "")
+
+    if spec is not None:
+        try:
+            raw = json.loads(spec)
+        except json.JSONDecodeError as e:
+            raise RestError(code=422, message="Invalid request payload: spec is not valid JSON", ex=e) from e
+        try:
+            return AddMemoriesSpec(**raw), image
+        except ValidationError as e:
+            raise RestError(code=422, message="Invalid request payload", ex=e) from e
+
+    # Multipart requests must send spec explicitly
+    if "multipart/form-data" in content_type:
+        raise RestError(
+            code=422,
+            message="Invalid request payload: missing form field 'spec' for multipart request",
+        )
+
+    # Default: JSON body
+    try:
+        raw = await request.json()
+    except Exception as e:
+        raise RestError(code=422, message="Invalid request payload", ex=e) from e
+    try:
+        return AddMemoriesSpec(**raw), None
+    except ValidationError as e:
+        raise RestError(code=422, message="Invalid request payload", ex=e) from e
 
 
 @router.post("/projects", status_code=201, description=RouterDoc.CREATE_PROJECT)
@@ -222,10 +269,44 @@ async def delete_project(
 
 @router.post("/memories", description=RouterDoc.ADD_MEMORIES)
 async def add_memories(
-    spec: AddMemoriesSpec,
+    parsed: Annotated[
+        tuple[AddMemoriesSpec, UploadFile | None],
+        Depends(_parse_add_memories_request),
+    ],
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> AddMemoriesResponse:
     """Add memories to a project."""
+    spec, image = parsed
+
+    if image is not None:
+        # Ambiguity: how to attach one image to multiple messages.
+        # For now, require a single message.
+        if len(spec.messages) != 1:
+            raise RestError(
+                code=422,
+                message=(
+                    "Invalid request payload: image upload is only supported when messages has exactly 1 item"
+                ),
+            )
+
+        image_bytes = await image.read()
+        if not image_bytes:
+            raise RestError(code=422, message="Invalid request payload: image file is empty")
+
+        mime_type = image.content_type or "application/octet-stream"
+        try:
+            summary = await memmachine.image_summarizer.summarize_image(
+                image_bytes=image_bytes,
+                mime_type=mime_type,
+            )
+        except Exception as e:
+            raise RestError(code=500, message="Unable to summarize image", ex=e) from e
+
+        if summary:
+            spec.messages[0].content = (
+                f"{spec.messages[0].content}\n\n[Image Summary]\n{summary}"
+            )
+
     # Use types from spec if provided, otherwise use all memory types
     target_memories = spec.types or ALL_MEMORY_TYPES
     results = await _add_messages_to(

@@ -306,6 +306,14 @@ class Configuration(BaseModel):
     episode_store: EpisodeStoreConf
     server: ServerConf = ServerConf()
 
+    image_summarization_model: str | None = Field(
+        default=None,
+        description=(
+            "Optional language model ID (from resources.language_models) to use "
+            "for summarizing uploaded images when adding memories via multipart."
+        ),
+    )
+
     # Path to the configuration file (set when loaded from file)
     _config_file_path: str | None = None
 
@@ -458,6 +466,7 @@ class Configuration(BaseModel):
             "resources": self.resources.to_yaml_dict(),
             "episode_store": self.episode_store.to_yaml_dict(),
             "server": self.server.to_yaml_dict(),
+            "image_summarization_model": self.image_summarization_model,
         }
         return yaml.safe_dump(data, sort_keys=True)
 
