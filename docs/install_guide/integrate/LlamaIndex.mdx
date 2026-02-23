@@ -1,0 +1,89 @@
+---
+title: "LlamaIndex"
+description: "Enable persistent, long-term memory for your LlamaIndex chat agents"
+icon: "wand-magic-sparkles"
+---
+
+For the full source code and advanced implementation details, see the official **[LlamaIndex Integration](https://github.com/MemMachine/MemMachine/tree/main/integrations/llamaindex)** in our repository.
+
+## Overview
+
+Integrating MemMachine with [LlamaIndex](https://www.llamaindex.ai/) provides a persistent memory layer for chat engines. This allows agents to:
+
+* **Recall User Profiles**: Surface user preferences and facts directly into the prompt context.
+* **Maintain Context Across Sessions**: Stored episodic and semantic memories persist beyond a single execution.
+* **Intelligent Injection**: MemMachine automatically injects relevant context as a system message during inference.
+
+## Configuration
+
+You can configure the LlamaIndex memory component using environment variables or direct constructor parameters.
+
+| Parameter | Environment Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `base_url` | `MEMORY_BACKEND_URL` | `http://localhost:8080` | MemMachine server URL |
+| `org_id` | `LLAMAINDEX_ORG_ID` | `llamaindex_org` | Organization ID |
+| `project_id` | `LLAMAINDEX_PROJECT_ID` | `llamaindex_project` | Project ID |
+| `user_id` | `LLAMAINDEX_USER_ID` | `None` | User identifier |
+| `agent_id` | `LLAMAINDEX_AGENT_ID` | `None` | Agent identifier |
+| `session_id` | `LLAMAINDEX_SESSION_ID` | `None` | Session identifier |
+
+---
+
+<Steps>
+  <Step title="Install Dependencies">
+    Install the core LlamaIndex framework and the updated MemMachine client:
+
+    ```bash
+    pip install llama-index memmachine-client
+    ```
+  </Step>
+
+  <Step title="Initialize MemMachine Memory">
+    Import the `MemMachineMemory` class and configure it with your project identifiers.
+
+    ```python
+    from mem_machine_memory import MemMachineMemory
+
+    memory = MemMachineMemory(
+        base_url="http://localhost:8080",
+        org_id="my_org",
+        project_id="my_project",
+        user_id="user_123",
+        session_id="session_456"
+    )
+    ```
+  </Step>
+
+  <Step title="Build the Chat Engine">
+    Equip your LlamaIndex `SimpleChatEngine` with the persistent memory instance.
+
+    ```python
+    from llama_index.core.chat_engine import SimpleChatEngine
+    from llama_index.llms.openai import OpenAI
+
+    # Ensure your API key is configured
+    llm = OpenAI(api_key="your-openai-api-key")
+    
+    agent = SimpleChatEngine.from_defaults(
+        llm=llm, 
+        memory=memory
+    )
+
+    # First interaction stores facts
+    print(agent.chat("I am Alice, I like Python programming."))
+    
+    # Subsequent interactions recall them
+    print(agent.chat("What do you know about me?"))
+    ```
+  </Step>
+</Steps>
+
+<Note> 
+**Pro Tip:** Tune the `search_msg_limit` parameter to balance the depth of recall against context window usage and latency.
+</Note>
+
+## Requirements
+
+* **MemMachine Server**: Must be running (default: `http://localhost:8080`).
+* **Python**: 3.12 or higher.
+* **LLM**: An OpenAI-compatible LLM provider.
