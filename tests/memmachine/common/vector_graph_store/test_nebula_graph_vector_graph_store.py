@@ -1,9 +1,13 @@
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+
+# Skip all tests if nebulagraph_python is not installed
+pytest.importorskip("nebulagraph_python")
 
 from memmachine.common.data_types import SimilarityMetric
 from memmachine.common.filter.filter_parser import (
@@ -1085,6 +1089,46 @@ async def test_add_nodes_with_none_property(vector_graph_store):
 
 
 @pytest.mark.asyncio
+async def test_add_edges_with_none_property(vector_graph_store):
+    """Edges with None property values are stored without error."""
+    person_collection = "nullable_person"
+    company_collection = "nullable_company"
+    relation = "works_at_nullable"
+
+    alice = Node(uid=str(uuid4()), properties={"name": "Alice"}, embeddings={})
+    acme = Node(uid=str(uuid4()), properties={"name": "Acme"}, embeddings={})
+
+    await vector_graph_store.add_nodes(collection=person_collection, nodes=[alice])
+    await vector_graph_store.add_nodes(collection=company_collection, nodes=[acme])
+
+    edge = Edge(
+        uid=str(uuid4()),
+        source_uid=alice.uid,
+        target_uid=acme.uid,
+        properties={"role": "Engineer", "optional_field": None},
+        embeddings={},
+    )
+    await vector_graph_store.add_edges(
+        relation=relation,
+        source_collection=person_collection,
+        target_collection=company_collection,
+        edges=[edge],
+    )
+
+    # Verify edge was created by searching related nodes
+    results = await vector_graph_store.search_related_nodes(
+        relation=relation,
+        other_collection=company_collection,
+        this_collection=person_collection,
+        this_node_uid=alice.uid,
+        find_targets=True,
+        find_sources=False,
+    )
+    assert len(results) == 1
+    assert results[0].uid == acme.uid
+
+
+@pytest.mark.asyncio
 async def test_get_nodes_with_nonexistent_uids(vector_graph_store):
     """get_nodes ignores UIDs that do not exist — returns only found nodes."""
     collection = "partial_get"
@@ -1202,3 +1246,150 @@ def test_sanitize_name_extended():
     # All sanitized forms must be distinct (no collision between inputs)
     sanitized_names = [NebulaGraphVectorGraphStore._sanitize_name(n) for n in names]
     assert len(sanitized_names) == len(set(sanitized_names)), "Sanitized names are not unique"
+
+@pytest.mark.asyncio
+async def test_property_names_with_special_characters(vector_graph_store):
+    """Property names with special characters (-, ., space) work correctly."""
+    collection = "special_chars_test"
+
+    # Properties with hyphens, dots, spaces
+    node = Node(
+        uid=str(uuid4()),
+        properties={
+            "my-field": "hyphen",
+            "my.field": "dot",
+            "my field": "space",
+            "normal_field": "underscore",
+            "email@address": "at-sign",
+        },
+        embeddings={},
+    )
+
+    await vector_graph_store.add_nodes(collection=collection, nodes=[node])
+
+    # Retrieve and verify all properties round-trip correctly
+    results = await vector_graph_store.get_nodes(
+        collection=collection, node_uids=[node.uid]
+    )
+    assert len(results) == 1
+    props = results[0].properties
+    assert props["my-field"] == "hyphen"
+    assert props["my.field"] == "dot"
+    assert props["my field"] == "space"
+    assert props["normal_field"] == "underscore"
+    assert props["email@address"] == "at-sign"
+
+    # Filtering by special-char property names works
+    filtered = await vector_graph_store.search_matching_nodes(
+        collection=collection,
+        property_filter=FilterComparison(field="my-field", op="==", value="hyphen"),
+        limit=10,
+    )
+    assert len(filtered) == 1
+    assert filtered[0].uid == node.uid
+
+
+@pytest.mark.asyncio
+async def test_index_creation_with_special_character_names(nebula_client, nebula_connection_info):
+    """Vector and range indexes are created successfully with special character property/embedding names."""
+    # Create store with immediate index creation (threshold=0)
+    store = NebulaGraphVectorGraphStore(
+        NebulaGraphVectorGraphStoreParams(
+            client=nebula_client,
+            schema_name=nebula_connection_info["schema_name"],
+            graph_type_name=nebula_connection_info["graph_type_name"],
+            graph_name=nebula_connection_info["graph_name"],
+            force_exact_similarity_search=False,
+            range_index_creation_threshold=0,  # Create range index immediately
+            vector_index_creation_threshold=0,  # Create vector index immediately
+            range_index_hierarchies=[[["user-id", "time.stamp"]]],  # Special chars in property names
+        ),
+    )
+
+    collection = "index_special_chars"
+
+    # Node with special character property names and embedding names
+    node = Node(
+        uid=str(uuid4()),
+        properties={
+            "user-id": "user123",  # hyphen
+            "time.stamp": 1234567890,  # dot
+            "display name": "Test User",  # space
+        },
+        embeddings={
+            "content-vector": ([1.0, 0.0, 0.0], SimilarityMetric.EUCLIDEAN),  # hyphen in embedding name
+        },
+    )
+
+    # Add node - this should trigger both range and vector index creation
+    await store.add_nodes(collection=collection, nodes=[node])
+
+    # Wait a moment for background index creation tasks
+    await asyncio.sleep(2)
+
+    # Verify node was stored correctly
+    results = await store.get_nodes(collection=collection, node_uids=[node.uid])
+    assert len(results) == 1
+    assert results[0].properties["user-id"] == "user123"
+    assert results[0].properties["time.stamp"] == 1234567890
+    assert results[0].properties["display name"] == "Test User"
+
+    # Verify vector search works (would use the created index)
+    similar = await store.search_similar_nodes(
+        collection=collection,
+        embedding_name="content-vector",
+        query_embedding=[1.0, 0.0, 0.0],
+        similarity_metric=SimilarityMetric.EUCLIDEAN,
+        limit=10,
+    )
+    assert len(similar) == 1
+    assert similar[0].uid == node.uid
+
+    # Verify directional search works with special char properties (would use range index)
+    directional = await store.search_directional_nodes(
+        collection=collection,
+        by_properties=["user-id", "time.stamp"],
+        starting_at=["user000", 0],
+        order_ascending=[True, True],
+        include_equal_start=True,
+        limit=10,
+    )
+    assert len(directional) == 1
+    assert directional[0].uid == node.uid
+
+
+def test_sanitize_name_no_false_decode():
+    """Desanitize doesn't incorrectly decode _u..._ patterns from original input."""
+    # Name that coincidentally contains _u2d_ (which looks like encoded '-')
+    original = "my_u2d_field"
+
+    # Sanitize now encodes underscores to prevent ambiguity
+    sanitized = NebulaGraphVectorGraphStore._sanitize_name(original)
+    # Each underscore becomes _u5f_ (5f = hex for underscore)
+    assert sanitized == "SANITIZED_my_u5f_u2d_u5f_field"
+
+    # Desanitize should restore the original exactly
+    desanitized = NebulaGraphVectorGraphStore._desanitize_name(sanitized)
+    assert desanitized == original, f"Expected {original!r}, got {desanitized!r}"
+
+    # Test with actual hyphen alongside literal _u2d_
+    original_with_hyphen = "my_u2d_field-name"
+    sanitized = NebulaGraphVectorGraphStore._sanitize_name(original_with_hyphen)
+    # Underscores and hyphen all encoded
+    assert sanitized == "SANITIZED_my_u5f_u2d_u5f_field_u2d_name"
+    desanitized = NebulaGraphVectorGraphStore._desanitize_name(sanitized)
+    assert desanitized == original_with_hyphen
+
+    # Test round-trip for various edge cases
+    edge_cases = [
+        "field_u_test",       # Underscores with letter u
+        "field_uGG_test",     # Invalid hex pattern
+        "field_u2d",          # Looks like incomplete encoding
+        "_u2dfield",          # Starts with pattern
+        "normal_field",       # Simple underscore
+        "a_b_c_d",            # Multiple underscores
+    ]
+    for name in edge_cases:
+        sanitized = NebulaGraphVectorGraphStore._sanitize_name(name)
+        desanitized = NebulaGraphVectorGraphStore._desanitize_name(sanitized)
+        assert desanitized == name, f"Round-trip failed for {name!r}"

@@ -11,6 +11,7 @@ interface using NebulaGraph Enterprise as the backend. It supports:
 
 import asyncio
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -220,23 +221,27 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             prop_assignments.append(f"uid: {uid_formatted}")
 
             # Add properties (skip None — column not created in schema for None values)
+            # Sanitize mangled names for GQL identifier safety
             for prop_name, prop_value in node.properties.items():
                 if prop_value is None:
                     continue
                 mangled = mangle_property_name(prop_name)
+                sanitized = self._sanitize_name(mangled)
                 formatted_value = self._format_value(prop_value)
-                prop_assignments.append(f"{mangled}: {formatted_value}")
+                prop_assignments.append(f"{sanitized}: {formatted_value}")
 
             # Add embeddings with companion metric property
             for emb_name, (emb_vec, metric) in node.embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
+                sanitized = self._sanitize_name(mangled)
                 vec_literal = self._vector_to_gql_literal(emb_vec)
-                prop_assignments.append(f"{mangled}: {vec_literal}")
+                prop_assignments.append(f"{sanitized}: {vec_literal}")
                 # Store metric as companion STRING property (mirrors Neo4j pattern)
                 metric_prop = self._similarity_metric_property_name(emb_name)
                 mangled_metric = mangle_property_name(metric_prop)
+                sanitized_metric = self._sanitize_name(mangled_metric)
                 metric_value = self._format_value(metric.value)
-                prop_assignments.append(f"{mangled_metric}: {metric_value}")
+                prop_assignments.append(f"{sanitized_metric}: {metric_value}")
 
             insert_stmt = f"""
             INSERT (n@{sanitized_collection} {{
@@ -334,23 +339,29 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         # Insert edges
         for edge in edges_list:
-            # Build property assignments with embedded values
+            # Build property assignments with embedded values (skip None — column not created in schema for None values)
+            # Sanitize mangled names for GQL identifier safety
             prop_assignments = []
             for prop_name, prop_value in edge.properties.items():
+                if prop_value is None:
+                    continue
                 mangled = mangle_property_name(prop_name)
+                sanitized = self._sanitize_name(mangled)
                 formatted_value = self._format_value(prop_value)
-                prop_assignments.append(f"{mangled}: {formatted_value}")
+                prop_assignments.append(f"{sanitized}: {formatted_value}")
 
             # Build embedding assignments with companion metric property
             for emb_name, (emb_vec, metric) in edge.embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
+                sanitized = self._sanitize_name(mangled)
                 vec_literal = self._vector_to_gql_literal(emb_vec)
-                prop_assignments.append(f"{mangled}: {vec_literal}")
+                prop_assignments.append(f"{sanitized}: {vec_literal}")
                 # Store metric as companion STRING property (mirrors Neo4j pattern)
                 metric_prop = self._similarity_metric_property_name(emb_name)
                 mangled_metric = mangle_property_name(metric_prop)
+                sanitized_metric = self._sanitize_name(mangled_metric)
                 metric_value = self._format_value(metric.value)
-                prop_assignments.append(f"{mangled_metric}: {metric_value}")
+                prop_assignments.append(f"{sanitized_metric}: {metric_value}")
 
             # Build INSERT statement with embedded values
             if prop_assignments:
@@ -443,10 +454,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         sanitized_collection = self._sanitize_name(collection)
         mangled_embedding = mangle_embedding_name(embedding_name)
+        sanitized_embedding = self._sanitize_name(mangled_embedding)
 
         # Check if vector index exists
         # Use mangled and sanitized embedding name to ensure valid identifier
-        index_name = f"idx_{sanitized_collection}_{self._sanitize_name(mangled_embedding)}"
+        index_name = f"idx_{sanitized_collection}_{sanitized_embedding}"
         has_index = (
             index_name in self._index_state_cache
             and self._index_state_cache[index_name] == self.CacheIndexState.ONLINE
@@ -494,7 +506,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if where_clause:
                 query_parts.append(f"WHERE {where_clause}")
             query_parts.append(
-                f"ORDER BY {distance_func}(n.{mangled_embedding}, {vec_literal}) {order_dir}"
+                f"ORDER BY {distance_func}(n.{sanitized_embedding}, {vec_literal}) {order_dir}"
             )
             query_parts.append("APPROXIMATE")
             query_parts.append(f"LIMIT {search_limit}")
@@ -576,6 +588,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         """
         sanitized_collection = self._sanitize_name(collection)
         mangled_embedding = mangle_embedding_name(embedding_name)
+        sanitized_embedding = self._sanitize_name(mangled_embedding)
 
         # Build WHERE clause
         where_clause = ""
@@ -594,7 +607,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             query_parts.append(f"WHERE {where_clause}")
         query_parts.append("RETURN n")
         query_parts.append(
-            f"ORDER BY {distance_func}(n.{mangled_embedding}, {vec_literal}) {order_dir}"
+            f"ORDER BY {distance_func}(n.{sanitized_embedding}, {vec_literal}) {order_dir}"
         )
         if limit:
             query_parts.append(f"LIMIT {limit}")
@@ -822,6 +835,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             for k, (k_idx, k_prop, k_val, k_asc) in enumerate(active):
                 k_mangled = mangle_property_name(k_prop)
+                k_sanitized = self._sanitize_name(k_mangled)
                 k_expr = _cursor_expr(k_idx, k_val)
                 is_last = k == len(active) - 1
 
@@ -830,15 +844,16 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 # Equality prefix: all active properties before position k
                 for j_idx, j_prop, j_val, _ in active[:k]:
                     j_mangled = mangle_property_name(j_prop)
+                    j_sanitized = self._sanitize_name(j_mangled)
                     j_expr = _cursor_expr(j_idx, j_val)
-                    sub_conds.append(f"n.{j_mangled} = {j_expr}")
+                    sub_conds.append(f"n.{j_sanitized} = {j_expr}")
 
                 # Comparison at position k
                 if is_last:
                     op = (">=" if k_asc else "<=") if include_equal_start else (">" if k_asc else "<")
                 else:
                     op = ">" if k_asc else "<"
-                sub_conds.append(f"n.{k_mangled} {op} {k_expr}")
+                sub_conds.append(f"n.{k_sanitized} {op} {k_expr}")
 
                 or_clauses.append(
                     sub_conds[0] if len(sub_conds) == 1 else "(" + " AND ".join(sub_conds) + ")"
@@ -855,8 +870,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             by_properties_list, order_ascending_list, strict=False
         ):
             mangled_prop = mangle_property_name(prop_name)
+            sanitized_prop = self._sanitize_name(mangled_prop)
             direction = "ASC" if ascending else "DESC"
-            order_parts.append(f"n.{mangled_prop} {direction}")
+            order_parts.append(f"n.{sanitized_prop} {direction}")
 
         # Build full query
         query_parts = [f"MATCH (n:{sanitized_collection})"]
@@ -1028,8 +1044,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         properties = {}
         embeddings = {}
 
+        # Desanitize all keys first (database stores sanitized mangled names)
+        desanitized_data = {
+            (self._desanitize_name(k) if k != "uid" else k): v
+            for k, v in node_data.items()
+        }
+
         # Build set of metric companion mangled keys to exclude from regular properties
-        embedding_keys = {k for k in node_data if is_mangled_embedding_name(k)}
+        embedding_keys = {k for k in desanitized_data if is_mangled_embedding_name(k)}
         metric_companion_keys = {
             mangle_property_name(
                 self._similarity_metric_property_name(demangle_embedding_name(emb_key))
@@ -1037,7 +1059,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             for emb_key in embedding_keys
         }
 
-        for key, value in node_data.items():
+        for key, value in desanitized_data.items():
             if key == "uid":
                 continue
             if is_mangled_property_name(key):
@@ -1051,7 +1073,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 # Read metric from companion STRING property
                 metric_prop = self._similarity_metric_property_name(emb_name)
                 mangled_metric = mangle_property_name(metric_prop)
-                metric_str = node_data.get(mangled_metric)
+                metric_str = desanitized_data.get(mangled_metric)
                 if metric_str is not None:
                     try:
                         sim_metric = SimilarityMetric(metric_str)
@@ -1207,6 +1229,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         Sanitize identifier name for use in GQL queries.
 
         Converts unsafe characters to _uXX_ format where XX is hex code.
+        Underscores are also encoded to prevent ambiguity with the encoding delimiter,
+        ensuring lossless round-tripping (matches Neo4j's approach).
         Adds SANITIZED_ prefix to avoid conflicts.
 
         Args:
@@ -1218,9 +1242,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         """
         result = "SANITIZED_"
         for char in name:
-            if char.isalnum() or char == "_":
+            if char.isalnum():
                 result += char
             else:
+                # Encode all non-alphanumeric chars, including underscore
                 result += f"_u{ord(char):x}_"
         return result
 
@@ -1228,6 +1253,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
     def _desanitize_name(sanitized: str) -> str:
         """
         Restore original name from sanitized form.
+
+        Uses regex to only decode sequences matching the exact pattern produced by
+        _sanitize_name (_u[0-9a-f]+_), avoiding false positives from original names
+        that coincidentally contain _u..._  patterns.
 
         Args:
             sanitized: Sanitized identifier
@@ -1240,23 +1269,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             return sanitized
 
         name = sanitized[len("SANITIZED_") :]
-        result = ""
-        i = 0
-        while i < len(name):
-            if name[i : i + 2] == "_u" and "_" in name[i + 2 :]:
-                # Find the closing underscore
-                end_idx = name.index("_", i + 2)
-                hex_code = name[i + 2 : end_idx]
-                try:
-                    result += chr(int(hex_code, 16))
-                    i = end_idx + 1
-                except ValueError:
-                    result += name[i]
-                    i += 1
-            else:
-                result += name[i]
-                i += 1
-        return result
+        # Only decode valid hex sequences (lowercase hex from :x format)
+        return re.sub(
+            r"_u([0-9a-f]+)_",
+            lambda match: chr(int(match.group(1), 16)),
+            name,
+        )
 
     def _infer_gql_type(self, value: PropertyValue) -> str:
         """
@@ -1439,7 +1457,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         def render(expr: FilterExpr) -> str:
             if isinstance(expr, Comparison):
                 prop_name = mangle_property_name(expr.field)
-                prop_ref = f"{node_alias}.{prop_name}"
+                sanitized_prop = self._sanitize_name(prop_name)
+                prop_ref = f"{node_alias}.{sanitized_prop}"
 
                 if expr.op == "==":
                     value_str = self._format_value(expr.value)
@@ -1558,19 +1577,24 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             # Build schema from incoming data.
             # Properties with None values are skipped: we cannot infer a GQL type
             # from None, and NebulaGraph uses NULL as the default for absent columns.
+            # Mangled names must be sanitized before use in GQL (to handle special chars).
             incoming_schema: dict[str, str] = {"uid": "STRING"}
             for prop_name, prop_value in properties.items():
                 if prop_value is None:
                     continue
                 mangled = mangle_property_name(prop_name)
-                incoming_schema[mangled] = self._infer_gql_type(prop_value)
+                sanitized = self._sanitize_name(mangled)
+                incoming_schema[sanitized] = self._infer_gql_type(prop_value)
 
             for emb_name, (vec, _metric) in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
-                incoming_schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
+                sanitized = self._sanitize_name(mangled)
+                incoming_schema[sanitized] = f"VECTOR<{len(vec)}, FLOAT>"
                 # Add companion STRING property to persist the similarity metric
                 metric_prop = self._similarity_metric_property_name(emb_name)
-                incoming_schema[mangle_property_name(metric_prop)] = "STRING"
+                mangled_metric = mangle_property_name(metric_prop)
+                sanitized_metric = self._sanitize_name(mangled_metric)
+                incoming_schema[sanitized_metric] = "STRING"
 
             # Check if node type already exists in cache
             if collection in self._graph_type_schemas:
@@ -1666,18 +1690,27 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             sanitized_source = self._sanitize_name(source_collection)
             sanitized_target = self._sanitize_name(target_collection)
 
-            # Build schema from incoming data
+            # Build schema from incoming data.
+            # Properties with None values are skipped: we cannot infer a GQL type
+            # from None, and NebulaGraph uses NULL as the default for absent columns.
+            # Mangled names must be sanitized before use in GQL (to handle special chars).
             incoming_schema: dict[str, str] = {}
             for prop_name, prop_value in properties.items():
+                if prop_value is None:
+                    continue
                 mangled = mangle_property_name(prop_name)
-                incoming_schema[mangled] = self._infer_gql_type(prop_value)
+                sanitized = self._sanitize_name(mangled)
+                incoming_schema[sanitized] = self._infer_gql_type(prop_value)
 
             for emb_name, (vec, _metric) in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
-                incoming_schema[mangled] = f"VECTOR<{len(vec)}, FLOAT>"
+                sanitized = self._sanitize_name(mangled)
+                incoming_schema[sanitized] = f"VECTOR<{len(vec)}, FLOAT>"
                 # Add companion STRING property to persist the similarity metric
                 metric_prop = self._similarity_metric_property_name(emb_name)
-                incoming_schema[mangle_property_name(metric_prop)] = "STRING"
+                mangled_metric = mangle_property_name(metric_prop)
+                sanitized_metric = self._sanitize_name(mangled_metric)
+                incoming_schema[sanitized_metric] = "STRING"
 
             # Check if edge type already exists in cache
             if edge_key in self._graph_type_schemas:
@@ -1799,6 +1832,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
             try:
                 sanitized_type = self._sanitize_name(node_or_edge_type)
+                sanitized_embedding = self._sanitize_name(mangled_embedding)
                 metric = nebula_metric
 
                 # Build index options based on type
@@ -1820,17 +1854,17 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                         CAPACITY: 1000000
                     }}"""
 
-                # Create index
+                # Create index (use sanitized embedding name for valid GQL identifier)
                 if entity_type == EntityType.NODE:
                     create_stmt = f"""
                     CREATE VECTOR INDEX IF NOT EXISTS {index_name}
-                    ON NODE {sanitized_type}::{mangled_embedding}
+                    ON NODE {sanitized_type}::{sanitized_embedding}
                     OPTIONS {options}
                     """
                 else:  # EDGE
                     create_stmt = f"""
                     CREATE VECTOR INDEX IF NOT EXISTS {index_name}
-                    ON EDGE {sanitized_type}::{mangled_embedding}
+                    ON EDGE {sanitized_type}::{sanitized_embedding}
                     OPTIONS {options}
                     """
 
@@ -1864,9 +1898,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if not properties:
             return
 
-        index_name = (
-            f"idx_{self._sanitize_name(node_or_edge_type)}_{'_'.join(properties)}"
-        )
+        # Build index name with sanitized mangled property names (consistent with vector index naming)
+        sanitized_type = self._sanitize_name(node_or_edge_type)
+        sanitized_props = [
+            self._sanitize_name(mangle_property_name(p)) for p in properties
+        ]
+        index_name = f"idx_{sanitized_type}_{'_'.join(sanitized_props)}"
 
         # Check cache
         if index_name in self._index_state_cache:
@@ -1885,9 +1922,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             self._index_state_cache[index_name] = self.CacheIndexState.CREATING
 
             try:
-                sanitized_type = self._sanitize_name(node_or_edge_type)
-                mangled_props = [mangle_property_name(p) for p in properties]
-                prop_list = ", ".join(f"{p} ASC" for p in mangled_props)
+                # Use sanitized mangled property names in CREATE INDEX statement
+                prop_list = ", ".join(f"{p} ASC" for p in sanitized_props)
 
                 # Create index on NODE or EDGE
                 entity_keyword = "NODE" if entity_type == EntityType.NODE else "EDGE"
