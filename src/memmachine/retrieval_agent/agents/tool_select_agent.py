@@ -188,8 +188,8 @@ class ToolSelectAgent(AgentToolBase):
                 tool = self._default_tool
             else:
                 raise RuntimeError("No tool selected")
-        chunks, perf_matrics = await tool.do_query(policy, query)
-        perf_matrics["selected_tool"] = tool.agent_name
-        perf_matrics["tool_select_intput_token"] = input_token
-        perf_matrics["tool_select_output_token"] = output_token
-        return chunks, perf_matrics
+        chunks, perf_metrics = await tool.do_query(policy, query)
+        perf_metrics["selected_tool"] = tool.agent_name
+        perf_metrics["tool_select_input_token"] = input_token
+        perf_metrics["tool_select_output_token"] = output_token
+        return chunks, perf_metrics

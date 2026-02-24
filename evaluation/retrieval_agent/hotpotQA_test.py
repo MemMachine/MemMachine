@@ -64,7 +64,6 @@ Question: {question}
 async def hotpotqa_ingest(dataset: list[dict[str, any]]):
     t1 = datetime.now(UTC)
     added_content = 0
-    total_questions = 0
     per_batch = 1000
 
     vector_graph_store = agent_utils.init_vector_graph_store(
@@ -74,7 +73,7 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
     # Notice that the index of items must align between ingestion and search
     memory, _, _ = await agent_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
-        session_id=f"hotpotqa_group",
+        session_id="hotpotqa_group",
     )
 
     all_content = []
@@ -134,7 +133,7 @@ async def hotpotqa_search(
     memory, model, query_agent = await agent_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         model_name="gpt-5-mini",
-        session_id=f"hotpotqa_group",
+        session_id="hotpotqa_group",
         agent_name=agent_name,
     )
 
@@ -220,7 +219,7 @@ async def main():
     parser.add_argument(
         "--length",
         required=False,
-        help="Number of records to run on EACH n-needel dataset(total 3x length are testing)",
+        help="Number of records to run on EACH n-needle dataset(total 3x length are testing)",
         type=int,
         default=30,
     )

@@ -22,8 +22,8 @@ from memmachine.common.configuration.mixin_confs import (
     ApiKeyMixin,
     YamlSerializableMixin,
 )
-from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.common.configuration.reranker_conf import RerankersConf
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
     DefaultLLMModelNotConfiguredError,

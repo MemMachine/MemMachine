@@ -17,7 +17,12 @@ from memmachine.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
-from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
+from memmachine.common.episode_store import (
+    Episode,
+    EpisodeEntry,
+    EpisodeIdT,
+    EpisodeResponse,
+)
 from memmachine.common.errors import (
     ConfigurationError,
     ResourceNotReadyError,
@@ -365,7 +370,7 @@ class MemMachine:
                     self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
         except ValidationError as e:
             logger.exception(
-                "Faield to merge configuration: %s, %s",
+                "Failed to merge configuration: %s, %s",
                 str(user_conf),
                 str(self._conf.episodic_memory),
             )
@@ -742,9 +747,13 @@ class MemMachine:
                 memory=long_term_memory.declarative_memory,
             ),
         )
+        normalized_long_episodes: list[Episode] = [
+            long_term_memory.episode_from_declarative_memory_episode(episode)
+            for episode in long_episodes
+        ]
 
         scored_long_episodes = [
-            (1.0, episode) for episode in long_episodes if 1.0 >= score_threshold
+            (1.0, episode) for episode in normalized_long_episodes if score_threshold <= 1.0
         ]
         episode_uid_set = {episode.uid for episode in short_episodes}
         unique_scored_long_episodes: list[tuple[float, Episode]] = []
@@ -756,13 +765,13 @@ class MemMachine:
         return EpisodicMemory.QueryResponse(
             short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
                 episodes=[
-                    episode.model_dump(mode="python") for episode in short_episodes
+                    EpisodeResponse(**episode.model_dump()) for episode in short_episodes
                 ],
                 episode_summary=[short_summary],
             ),
             long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
                 episodes=[
-                    {"score": score, **episode.model_dump(mode="python")}
+                    EpisodeResponse(score=score, **episode.model_dump())
                     for score, episode in unique_scored_long_episodes
                 ],
             ),

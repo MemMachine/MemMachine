@@ -40,12 +40,12 @@ from memmachine.common.configuration.language_model_conf import (
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
 )
-from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.common.configuration.reranker_conf import (
     BM25RerankerConf,
     IdentityRerankerConf,
     RRFHybridRerankerConf,
 )
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.installation.utilities import (
     DEFAULT_BEDROCK_EMBEDDING_MODEL,
     DEFAULT_BEDROCK_MODEL,

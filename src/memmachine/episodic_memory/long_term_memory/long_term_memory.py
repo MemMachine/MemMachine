@@ -305,6 +305,15 @@ class LongTermMemory:
             ),
         )
 
+    @staticmethod
+    def episode_from_declarative_memory_episode(
+        declarative_memory_episode: DeclarativeMemoryEpisode,
+    ) -> Episode:
+        """Public wrapper that converts declarative-memory episodes."""
+        return LongTermMemory._episode_from_declarative_memory_episode(
+            declarative_memory_episode
+        )
+
     _MANGLE_FILTERABLE_METADATA_KEY_PREFIX = "metadata."
 
     @staticmethod

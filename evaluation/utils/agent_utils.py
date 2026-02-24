@@ -58,7 +58,7 @@ async def process_question(
     full_content: str | None = None,
     extra_attributes: dict[str, Any] | None = None,
 ):
-    perf_matrics: dict[str, Any] = {}
+    perf_metrics: dict[str, Any] = {}
     memory_start = 0
     memory_end = 0
     prompt = ""
@@ -67,7 +67,7 @@ async def process_question(
 
     if full_content is None:
         memory_start = time.time()
-        chunks, perf_matrics = await query_agent.do_query(
+        chunks, perf_metrics = await query_agent.do_query(
             QueryPolicy(
                 token_cost=10,
                 time_cost=10,
@@ -95,14 +95,14 @@ async def process_question(
     )
     rsp_end = time.time()
 
-    mem_retrieval_time = perf_matrics.get("memory_retrieval_time", 0)
+    mem_retrieval_time = perf_metrics.get("memory_retrieval_time", 0)
     if mem_retrieval_time == 0:
         mem_retrieval_time = memory_end - memory_start
-    llm_time = perf_matrics.get("llm_time", 0)
+    llm_time = perf_metrics.get("llm_time", 0)
     print(
         f"Question: {question}\n"
-        f"Agent used: {perf_matrics.get('agent', 'N/A')}\n"
-        f"Memory search called: {perf_matrics.get('memory_search_called', 0)} times\n"
+        f"Agent used: {perf_metrics.get('agent', 'N/A')}\n"
+        f"Memory search called: {perf_metrics.get('memory_search_called', 0)} times\n"
         f"Memory retrieval time: {mem_retrieval_time:.2f} seconds\n"
         f"LLM time for retrieval: {llm_time:.2f} seconds\n"
         f"LLM answering time: {rsp_end - rsp_start:.2f} seconds\n"
@@ -120,7 +120,7 @@ async def process_question(
         "num_episodes_retrieved": len(chunks),
     }
 
-    res.update(perf_matrics)
+    res.update(perf_metrics)
     res.update(extra_attributes or {})
 
     return category, res
@@ -236,7 +236,7 @@ def update_results(
         attribute_matrix["tools_input_tokens"][tool] += response.get("input_token", 0)
         attribute_matrix["tools_output_tokens"][tool] += response.get("output_token", 0)
         attribute_matrix["tools_input_tokens"]["ToolSelectAgent"] += response.get(
-            "tool_select_intput_token", 0
+            "tool_select_input_token", 0
         )
         attribute_matrix["tools_output_tokens"]["ToolSelectAgent"] += response.get(
             "tool_select_output_token", 0

@@ -131,7 +131,7 @@ class LanguageModel(ABC):
         Returns:
             tuple[str, Any, int, int]:
                 A tuple containing the generated response text, tool call outputs (if any),
-                LLM intput token, and LLM output token.
+                LLM input token, and LLM output token.
 
         Raises:
             ExternalServiceAPIError:

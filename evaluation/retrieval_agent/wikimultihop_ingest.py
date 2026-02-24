@@ -50,15 +50,15 @@ def load_data(  # noqa: C901
                 continue
             obj = json.loads(line)
             obj["context"] = json.loads(obj["context"])
-            cur_ketword_seg = []
+            cur_keyword_seg = []
             key_to_sentences = {}
             for key, sentences in obj["context"]:
                 key_to_sentences[key] = sentences
                 for s in sentences:
                     c = f"{key}: {s}"
                     contexts.append(c)
-                    cur_ketword_seg.append(c)
-            keyword_list.append(cur_ketword_seg)
+                    cur_keyword_seg.append(c)
+            keyword_list.append(cur_keyword_seg)
             questions.append(obj["question"])
             answers.append(obj["answer"])
 

@@ -346,7 +346,6 @@ async def test_rerank_logic(
         content_type=ContentType.TEXT,
         content="gamma",
     )
-    memory = FakeDeclarativeMemory({"rerank?": [episode_a, episode_b, episode_c]})
     memory_agent = MemMachineAgent(
         AgentToolBaseParam(
             model=None,
