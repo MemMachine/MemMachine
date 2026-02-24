@@ -36,16 +36,16 @@ The retrieval-agent benchmarks support three test targets:
 Run from `evaluation/retrieval_agent/`:
 
 ```sh
-bash run_test.sh <test> <test_specific_args> ...
+./run_test.sh <test> <test_specific_args> ...
 ```
 
 For full argument details, run:
 
 ```sh
-bash run_test.sh --help
-bash run_test.sh locomo --help
-bash run_test.sh wikimultihop --help
-bash run_test.sh hotpotqa --help
+./run_test.sh --help
+./run_test.sh locomo --help
+./run_test.sh wikimultihop --help
+./run_test.sh hotpotqa --help
 ```
 
 Examples:
@@ -53,25 +53,25 @@ Examples:
 - LoCoMo ingest:
 
 ```sh
-bash run_test.sh locomo exp1 ingest retrieval_agent
+./run_test.sh locomo exp1 ingest retrieval_agent
 ```
 
 - LoCoMo search + scoring:
 
 ```sh
-bash run_test.sh locomo exp1 search retrieval_agent
+./run_test.sh locomo exp1 search retrieval_agent
 ```
 
 - WikiMultiHop search (500 examples):
 
 ```sh
-bash run_test.sh wikimultihop exp1 search retrieval_agent 500
+./run_test.sh wikimultihop exp1 search retrieval_agent 500
 ```
 
 - HotpotQA validation set search (200 examples):
 
 ```sh
-bash run_test.sh hotpotqa exp1 search validation retrieval_agent 200
+./run_test.sh hotpotqa exp1 search validation retrieval_agent 200
 ```
 
 Sample output:

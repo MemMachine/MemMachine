@@ -1,3 +1,4 @@
+
 import json
 import inspect
 
@@ -5,7 +6,6 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from memmachine.server.api_v2.router import load_v2_api_router
 from memmachine.server.api_v2.mcp import mcp
-
 
 def generate_unified_openapi():
     app = FastAPI(title="MemMachine Server", version="0.2.0")
@@ -47,11 +47,13 @@ def generate_unified_openapi():
             operation = {
                 "tags": ["MCP"],
                 "summary": f"MCP Tool: {name}",
-                "description": tool.description
-                if hasattr(tool, "description")
-                else "MCP Tool",
+                "description": tool.description if hasattr(tool, "description") else "MCP Tool",
                 "operationId": f"mcp_tool_{name}",
-                "responses": {"200": {"description": "Tool execution result"}},
+                "responses": {
+                    "200": {
+                        "description": "Tool execution result"
+                    }
+                }
             }
 
             # Try to extract parameters
@@ -60,15 +62,15 @@ def generate_unified_openapi():
                 properties = {}
                 required = []
                 for param_name, param in sig.parameters.items():
-                    schema = {"type": "string"}
-                    if param.annotation != inspect.Parameter.empty:
+                     schema = {"type": "string"}
+                     if param.annotation != inspect.Parameter.empty:
                         if param.annotation == int:
                             schema = {"type": "integer"}
                         elif param.annotation == bool:
                             schema = {"type": "boolean"}
-                    properties[param_name] = schema
-                    if param.default == inspect.Parameter.empty:
-                        required.append(param_name)
+                     properties[param_name] = schema
+                     if param.default == inspect.Parameter.empty:
+                         required.append(param_name)
 
                 operation["requestBody"] = {
                     "content": {
@@ -76,7 +78,7 @@ def generate_unified_openapi():
                             "schema": {
                                 "type": "object",
                                 "properties": properties,
-                                "required": required,
+                                "required": required
                             }
                         }
                     }
@@ -86,7 +88,6 @@ def generate_unified_openapi():
             openapi_schema["paths"][f"/mcp/{name}"] = path_item
 
     print(json.dumps(openapi_schema, indent=2))
-
 
 if __name__ == "__main__":
     generate_unified_openapi()

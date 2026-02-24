@@ -5,6 +5,7 @@ import argparse
 import json
 from collections import defaultdict
 
+import json_repair
 import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -13,9 +14,9 @@ load_dotenv()
 client = OpenAI()
 
 ACCURACY_PROMPT = """
-Your task is to label an answer to a question as ’CORRECT’ or ’WRONG’. You will be given the following data:
+Your task is to label an answer to a question as 'CORRECT' or 'WRONG'. You will be given the following data:
     (1) a question (posed by one user to another user),
-    (2) a ’gold’ (ground truth) answer,
+    (2) a 'gold' (ground truth) answer,
     (3) a generated answer
 which you will score as CORRECT/WRONG.
 
@@ -27,7 +28,7 @@ The generated answer might be much longer, but you should be generous with your 
 
 For time related questions, the gold answer will be a specific date, month, year, etc. The generated answer might be much longer or use relative time references (like "last Tuesday" or "next month"), but you should be generous with your grading - as long as it refers to the same date or time period as the gold answer, it should be counted as CORRECT. Even if the format differs (e.g., "May 7th" vs "7 May"), consider it CORRECT if it's the same date.
 
-Now it’s time for the real question:
+Now it's time for the real question:
 Question: {question}
 Gold answer: {gold_answer}
 Generated answer: {generated_answer}
@@ -54,9 +55,8 @@ def evaluate_llm_judge(question, gold_answer, generated_answer):
             }
         ],
         response_format={"type": "json_object"},
-        # temperature=0.0,
     )
-    label = json.loads(response.choices[0].message.content)["label"]
+    label = json_repair.loads(response.choices[0].message.content)["label"]
     return 1 if label == "CORRECT" else 0
 
 

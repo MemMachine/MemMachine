@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 usage_locomo() {
     echo "Locomo Usage: $0 locomo RESULT_POSTFIX RUN_TYPE TEST_TARGET"

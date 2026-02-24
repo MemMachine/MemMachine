@@ -1,11 +1,13 @@
 ---
 title: "SearchMemoriesOptions"
-description: "Configuration options for filtering and limiting semantic search results."
+description: "Configuration options for filtering and limiting episodic and semantic search results."
 ---
 
 ## Overview
 
-The `SearchMemoriesOptions` interface allows you to refine how the memory engine retrieves and ranks results. It is used as the optional second argument in the `MemMachineMemory.search()` method.
+The `SearchMemoriesOptions` interface allows you to refine how the memory engine
+retrieves and ranks episodic and semantic results. It is used as the optional
+second argument in the `MemMachineMemory.search()` method.
 
 ---
 
@@ -20,6 +22,7 @@ All properties in this interface are optional.
 | `filter` | `string` | A metadata-based filter string to narrow the search scope. |
 | `expand_context` | `number` | The number of surrounding chronological episodes to retrieve for each hit. |
 | `types` | [`MemoryType[]`](../types/MemoryType) | Restricts the search to specific memory classifications (e.g., `semantic`). |
+| `agent_mode` | `boolean` | Enables top-level retrieval-agent orchestration for episodic retrieval. |
 
 ---
 
@@ -36,7 +39,8 @@ const searchConfig: SearchMemoriesOptions = {
   top_k: 5,
   score_threshold: 0.75,
   expand_context: 2, // Get 2 messages before and after each hit
-  types: ['episodic']
+  types: ['episodic', 'semantic'],
+  agent_mode: true
 };
 
 const results = await memory.search(
@@ -46,3 +50,4 @@ const results = await memory.search(
 ```
 
 <Tip> Use `expand_context` when you need the LLM to understand the conversation flow surrounding a specific memory hit, rather than just the hit itself. </Tip>
+<Tip> `agent_mode` defaults to `false`. When set to `true`, it changes episodic retrieval strategy (routing, splitting, and query rewriting) and does not change semantic retrieval behavior(yet). </Tip>
