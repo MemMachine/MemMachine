@@ -63,8 +63,7 @@ class MemMachineAgent(AgentToolBase):
             raise ValueError("QueryParam.memory must be provided for MemMachineAgent")
         if not isinstance(memory, DeclarativeMemory):
             raise TypeError(
-                "QueryParam.memory must be DeclarativeMemory: "
-                f"{type(memory).__name__}"
+                f"QueryParam.memory must be DeclarativeMemory: {type(memory).__name__}"
             )
         mem_retrieval_start = time.time()
         scored_episodes = await memory.search_scored(

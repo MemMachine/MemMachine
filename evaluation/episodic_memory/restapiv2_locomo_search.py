@@ -262,9 +262,7 @@ def main():
                         continue
                 except Exception:
                     continue
-                future = executor.submit(
-                    respond_question, qa, idx + 1, q_idx + 1
-                )
+                future = executor.submit(respond_question, qa, idx + 1, q_idx + 1)
                 futures.append(future)
             # wait for task completion
             for future in tqdm(

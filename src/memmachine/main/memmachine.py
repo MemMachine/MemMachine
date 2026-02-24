@@ -722,12 +722,13 @@ class MemMachine:
         short_episodes: list[Episode] = []
         short_summary = ""
         if episodic_session.short_term_memory is not None:
-            short_episodes, short_summary = (
-                await episodic_session.short_term_memory.get_short_term_memory_context(
-                    query,
-                    limit=search_limit,
-                    filters=search_filter,
-                )
+            (
+                short_episodes,
+                short_summary,
+            ) = await episodic_session.short_term_memory.get_short_term_memory_context(
+                query,
+                limit=search_limit,
+                filters=search_filter,
             )
 
         long_episodes, _ = await retrieval_agent.do_query(
@@ -743,7 +744,9 @@ class MemMachine:
                 query=query,
                 limit=search_limit,
                 expand_context=expand_context,
-                property_filter=long_term_memory.sanitize_property_filter(search_filter),
+                property_filter=long_term_memory.sanitize_property_filter(
+                    search_filter
+                ),
                 memory=long_term_memory.declarative_memory,
             ),
         )
@@ -753,7 +756,9 @@ class MemMachine:
         ]
 
         scored_long_episodes = [
-            (1.0, episode) for episode in normalized_long_episodes if score_threshold <= 1.0
+            (1.0, episode)
+            for episode in normalized_long_episodes
+            if score_threshold <= 1.0
         ]
         episode_uid_set = {episode.uid for episode in short_episodes}
         unique_scored_long_episodes: list[tuple[float, Episode]] = []
@@ -765,7 +770,8 @@ class MemMachine:
         return EpisodicMemory.QueryResponse(
             short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
                 episodes=[
-                    EpisodeResponse(**episode.model_dump()) for episode in short_episodes
+                    EpisodeResponse(**episode.model_dump())
+                    for episode in short_episodes
                 ],
                 episode_summary=[short_summary],
             ),

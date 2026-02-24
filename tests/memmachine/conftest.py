@@ -1,8 +1,11 @@
+# ruff: noqa: E402
 # conftest.py
 import os
 import shutil
 import subprocess
+import sys
 from importlib.util import find_spec
+from pathlib import Path
 from unittest.mock import create_autospec
 
 import pytest
@@ -15,6 +18,18 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.core.waiting_utils import wait_container_is_ready
 from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
+
+# Ensure tests import local src/ package before any installed memmachine wheel.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) in sys.path:
+    sys.path.remove(str(SRC_ROOT))
+sys.path.insert(0, str(SRC_ROOT))
+
+# If an installed wheel was imported before this file, clear it so local src wins.
+for module_name in list(sys.modules):
+    if module_name == "memmachine" or module_name.startswith("memmachine."):
+        del sys.modules[module_name]
 
 from memmachine.common.embedder.openai_embedder import (
     OpenAIEmbedder,

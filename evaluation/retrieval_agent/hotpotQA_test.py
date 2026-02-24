@@ -108,9 +108,7 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
                 f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
             )
             print(f"Total added episodes: {added_content}")
-            print(
-                f"Total episodes processed: {added_content}/{len(all_content)}"
-            )
+            print(f"Total episodes processed: {added_content}/{len(all_content)}")
             episodes = []
     print(
         f"Completed HotpotQA ingestion, added {len(dataset)} questions, {added_content} episodes."

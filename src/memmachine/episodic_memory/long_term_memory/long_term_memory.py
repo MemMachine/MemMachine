@@ -159,11 +159,15 @@ class LongTermMemory:
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
     ) -> list[tuple[float, Episode]]:
-        scored_declarative_memory_episodes = await self._declarative_memory.search_scored(
-            query,
-            max_num_episodes=num_episodes_limit,
-            expand_context=expand_context,
-            property_filter=LongTermMemory._sanitize_property_filter(property_filter),
+        scored_declarative_memory_episodes = (
+            await self._declarative_memory.search_scored(
+                query,
+                max_num_episodes=num_episodes_limit,
+                expand_context=expand_context,
+                property_filter=LongTermMemory._sanitize_property_filter(
+                    property_filter
+                ),
+            )
         )
         return [
             (

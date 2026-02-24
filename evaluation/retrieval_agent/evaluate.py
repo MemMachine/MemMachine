@@ -84,9 +84,7 @@ def main():
     results = defaultdict(list)
     results_lock = threading.Lock()
     sample_tasks: list[tuple[str, dict]] = [
-        (group_key, item)
-        for group_key, items in data.items()
-        for item in items
+        (group_key, item) for group_key, items in data.items() for item in items
     ]
 
     # Use ThreadPoolExecutor with specified workers
