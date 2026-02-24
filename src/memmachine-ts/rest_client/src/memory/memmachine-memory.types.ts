@@ -120,7 +120,7 @@ export interface AddMemoryResult {
  * @property expand_context - Number of extra episodes to include for context (optional).
  * @property score_threshold - Minimum score threshold for search results (optional).
  * @property types - Types of memory to search (optional).
- * @property agent_mode - Whether to use retrieval-agent search mode (optional).
+ * @property agent_mode - Whether to enable top-level retrieval-agent orchestration (optional).
  */
 export interface SearchMemoriesOptions {
   top_k?: number

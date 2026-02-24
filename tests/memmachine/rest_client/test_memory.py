@@ -396,8 +396,29 @@ class TestMemory:
         json_data = call_args[1]["json"]
         assert json_data["top_k"] == 20
 
+    def test_search_with_score_threshold(self, mock_client):
+        """Test search with score threshold enabled."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.search("query", score_threshold=0.5)
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["score_threshold"] == 0.5
+
     def test_search_with_agent_mode(self, mock_client):
-        """Test search with agent_mode enabled."""
+        """Test search forwards the top-level agent mode flag."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"status": 0, "content": {}}

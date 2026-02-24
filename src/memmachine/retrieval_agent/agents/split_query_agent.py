@@ -1,7 +1,6 @@
 """Query-splitting agent for independent single-hop sub-queries."""
 
 import asyncio
-import copy
 import logging
 import time
 from typing import Any, cast
@@ -186,7 +185,7 @@ class SplitQueryAgent(AgentToolBase):
         tasks = []
         for sub_query in sub_queries:
             perf_matrics["queries"].append(sub_query)
-            param = copy.deepcopy(query)
+            param = query.model_copy()
             param.query = sub_query
             # TODO: make this self-adaptive
             # param.limit /= 2
@@ -207,7 +206,7 @@ class SplitQueryAgent(AgentToolBase):
         )
 
         # Rerank base on all queries concatenated
-        param = copy.deepcopy(query)
+        param = query.model_copy()
         if len(sub_queries) > 1:
             param.query += "\n".join(sub_queries)
         final_episodes = await self._do_rerank(param, result)

@@ -22,18 +22,8 @@ class MemMachineAgent(AgentToolBase):
     """Agent that uses declarative memory search without query rewriting."""
 
     def __init__(self, param: AgentToolBaseParam) -> None:
-        """Initialize with a declarative-memory instance from extra params."""
+        """Initialize retrieval behavior and shared dependencies."""
         super().__init__(param)
-        if param.extra_params is None:
-            raise ValueError("Did not find extra params")
-        self._memory: DeclarativeMemory = param.extra_params.get("memory")
-        if not self._memory:
-            raise ValueError("Did not find memory instance")
-        if not isinstance(self._memory, DeclarativeMemory):
-            raise TypeError(
-                "The memory type is not DeclarativeMemory: "
-                f"{type(self._memory).__name__}"
-            )
 
     @property
     def agent_name(self) -> str:
@@ -68,8 +58,16 @@ class MemMachineAgent(AgentToolBase):
             "memory_retrieval_time": 0.0,
             "agent": self.agent_name,
         }
+        memory = query.memory
+        if memory is None:
+            raise ValueError("QueryParam.memory must be provided for MemMachineAgent")
+        if not isinstance(memory, DeclarativeMemory):
+            raise TypeError(
+                "QueryParam.memory must be DeclarativeMemory: "
+                f"{type(memory).__name__}"
+            )
         mem_retrieval_start = time.time()
-        scored_episodes = await self._memory.search_scored(
+        scored_episodes = await memory.search_scored(
             query=query.query,
             max_num_episodes=query.limit,
             expand_context=query.expand_context,

@@ -16,6 +16,7 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeIdT
 from memmachine.common.errors import (
     ConfigurationError,
@@ -36,6 +37,12 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine.common.session_manager.session_data_manager import SessionDataManager
 from memmachine.episodic_memory import EpisodicMemory
+from memmachine.retrieval_agent import create_retrieval_agent
+from memmachine.retrieval_agent.common.agent_api import (
+    AgentToolBase,
+    QueryParam,
+    QueryPolicy,
+)
 from memmachine.semantic_memory.config_store.config_store import SemanticConfigStorage
 from memmachine.semantic_memory.semantic_model import (
     CategoryIdT,
@@ -89,6 +96,9 @@ class MemMachine:
         else:
             self._resources = ResourceManagerImpl(conf)
         self._initialize_default_episodic_configuration()
+        self._initialize_default_retrieval_agent_configuration()
+        self._retrieval_agent: AgentToolBase | None = None
+        self._retrieval_agent_lock = asyncio.Lock()
         self._started = False
 
     def _initialize_default_episodic_configuration(self) -> None:
@@ -146,14 +156,6 @@ class MemMachine:
         if ltm.vector_graph_store is None:
             ltm.vector_graph_store = "default_store"
 
-        if ltm.llm_model is None:
-            ltm.llm_model = self._resolve_ltm_llm_model_fallback()
-            if ltm.llm_model is None:
-                self._disable_long_term_memory(
-                    "No default language model configured; disabling long-term episodic memory."
-                )
-                return
-
     def _disable_long_term_memory(self, warning_message: str) -> None:
         """Disable long-term memory and emit a warning message."""
         logger.warning(warning_message)
@@ -175,8 +177,56 @@ class MemMachine:
             self._disable_long_term_memory(missing_warning)
             return None
 
-    def _resolve_ltm_llm_model_fallback(self) -> str | None:
-        """Resolve an LLM for long-term memory from available configured candidates."""
+    def _resolve_stm_defaults(self) -> None:
+        """Resolve short-term memory defaults."""
+        stm = self._conf.episodic_memory.short_term_memory
+        assert stm is not None
+
+        if stm.llm_model is None:
+            stm.llm_model = "gpt-4.1"
+        if stm.summary_prompt_system is None:
+            stm.summary_prompt_system = self._conf.prompt.episode_summary_system_prompt
+        if stm.summary_prompt_user is None:
+            stm.summary_prompt_user = self._conf.prompt.episode_summary_user_prompt
+
+    def _initialize_default_retrieval_agent_configuration(self) -> None:
+        """Initialize retrieval-agent defaults independent of episodic config."""
+        retrieval_conf = getattr(self._conf, "retrieval_agent", None)
+        if retrieval_conf is None:
+            self._conf.retrieval_agent = RetrievalAgentConf()
+            retrieval_conf = self._conf.retrieval_agent
+
+        if retrieval_conf.llm_model is None:
+            retrieval_conf.llm_model = self._resolve_retrieval_llm_model_fallback()
+        if retrieval_conf.reranker is None:
+            retrieval_conf.reranker = self._resolve_retrieval_reranker_fallback()
+
+        if (
+            retrieval_conf.llm_model is not None
+            and not self._conf.resources.language_models.contains_language_model(
+                retrieval_conf.llm_model
+            )
+        ):
+            logger.warning(
+                "Retrieval agent disabled: language model '%s' is not configured.",
+                retrieval_conf.llm_model,
+            )
+            retrieval_conf.llm_model = None
+
+        if (
+            retrieval_conf.reranker is not None
+            and not self._conf.resources.rerankers.contains_reranker(
+                retrieval_conf.reranker
+            )
+        ):
+            logger.warning(
+                "Retrieval agent disabled: reranker '%s' is not configured.",
+                retrieval_conf.reranker,
+            )
+            retrieval_conf.reranker = None
+
+    def _resolve_retrieval_llm_model_fallback(self) -> str | None:
+        """Resolve retrieval-agent LLM from existing memory configuration."""
         candidates: list[str] = []
         stm = self._conf.episodic_memory.short_term_memory
         if stm is not None and stm.llm_model is not None:
@@ -189,20 +239,53 @@ class MemMachine:
         for llm_name in candidates:
             if self._conf.resources.language_models.contains_language_model(llm_name):
                 return llm_name
-
         return None
 
-    def _resolve_stm_defaults(self) -> None:
-        """Resolve short-term memory defaults."""
-        stm = self._conf.episodic_memory.short_term_memory
-        assert stm is not None
+    def _resolve_retrieval_reranker_fallback(self) -> str | None:
+        """Resolve retrieval-agent reranker from long-term memory defaults."""
+        ltm = self._conf.episodic_memory.long_term_memory
+        if (
+            ltm is not None
+            and ltm.reranker is not None
+            and self._conf.resources.rerankers.contains_reranker(ltm.reranker)
+        ):
+            return ltm.reranker
+        return None
 
-        if stm.llm_model is None:
-            stm.llm_model = "gpt-4.1"
-        if stm.summary_prompt_system is None:
-            stm.summary_prompt_system = self._conf.prompt.episode_summary_system_prompt
-        if stm.summary_prompt_user is None:
-            stm.summary_prompt_user = self._conf.prompt.episode_summary_user_prompt
+    async def _get_retrieval_agent(self) -> AgentToolBase | None:
+        """Lazily initialize the retrieval-agent instance from top-level config."""
+        conf = self._conf.retrieval_agent
+        if conf.llm_model is None or conf.reranker is None:
+            return None
+        if self._retrieval_agent is not None:
+            return self._retrieval_agent
+
+        async with self._retrieval_agent_lock:
+            if self._retrieval_agent is not None:
+                return self._retrieval_agent
+            try:
+                llm_model = await self._resources.get_language_model(
+                    conf.llm_model,
+                    validate=True,
+                )
+                reranker = await self._resources.get_reranker(
+                    conf.reranker,
+                    validate=True,
+                )
+            except Exception:
+                logger.exception("Failed to initialize retrieval agent resources.")
+                return None
+
+            try:
+                self._retrieval_agent = create_retrieval_agent(
+                    model=llm_model,
+                    reranker=reranker,
+                )
+            except Exception:
+                logger.exception("Failed to initialize retrieval agent.")
+                return None
+
+        return self._retrieval_agent
 
     async def start(self) -> None:
         """
@@ -280,8 +363,6 @@ class MemMachine:
                     self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
                 if episodic_conf.long_term_memory.reranker is not None:
                     self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
-                if episodic_conf.long_term_memory.llm_model is not None:
-                    self._conf.check_llm_model(episodic_conf.long_term_memory.llm_model)
         except ValidationError as e:
             logger.exception(
                 "Faield to merge configuration: %s, %s",
@@ -561,7 +642,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
-        agent_mode: bool = False,
+        retrieval_agent: AgentToolBase | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -573,7 +654,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
-            agent_mode: Whether to use retrieval-agent mode for episodic search.
+            retrieval_agent: Optional top-level retrieval agent for long-term search.
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -589,16 +670,103 @@ class MemMachine:
             ),
             metadata={},
         ) as episodic_session:
-            response = await episodic_session.query_memory(
+            if retrieval_agent is None or episodic_session.long_term_memory is None:
+                response = await episodic_session.query_memory(
+                    query=query,
+                    limit=limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    property_filter=search_filter,
+                )
+            else:
+                response = await self._query_episodic_with_retrieval_agent(
+                    episodic_session=episodic_session,
+                    retrieval_agent=retrieval_agent,
+                    query=query,
+                    limit=limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    search_filter=search_filter,
+                )
+
+        return response
+
+    async def _query_episodic_with_retrieval_agent(
+        self,
+        *,
+        episodic_session: EpisodicMemory,
+        retrieval_agent: AgentToolBase,
+        query: str,
+        limit: int | None,
+        expand_context: int,
+        score_threshold: float,
+        search_filter: FilterExpr | None,
+    ) -> EpisodicMemory.QueryResponse | None:
+        """Build episodic query response using retrieval-agent long-term search."""
+        long_term_memory = episodic_session.long_term_memory
+        if long_term_memory is None:
+            return await episodic_session.query_memory(
                 query=query,
                 limit=limit,
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=search_filter,
-                agent_mode=agent_mode,
             )
 
-        return response
+        search_limit = limit if limit is not None else 20
+        short_episodes: list[Episode] = []
+        short_summary = ""
+        if episodic_session.short_term_memory is not None:
+            short_episodes, short_summary = (
+                await episodic_session.short_term_memory.get_short_term_memory_context(
+                    query,
+                    limit=search_limit,
+                    filters=search_filter,
+                )
+            )
+
+        long_episodes, _ = await retrieval_agent.do_query(
+            QueryPolicy(
+                token_cost=10,
+                time_cost=10,
+                accuracy_score=10,
+                confidence_score=10,
+                max_attempts=3,
+                max_return_len=10000,
+            ),
+            QueryParam(
+                query=query,
+                limit=search_limit,
+                expand_context=expand_context,
+                property_filter=long_term_memory.sanitize_property_filter(search_filter),
+                memory=long_term_memory.declarative_memory,
+            ),
+        )
+
+        scored_long_episodes = [
+            (1.0, episode) for episode in long_episodes if 1.0 >= score_threshold
+        ]
+        episode_uid_set = {episode.uid for episode in short_episodes}
+        unique_scored_long_episodes: list[tuple[float, Episode]] = []
+        for score, episode in scored_long_episodes:
+            if episode.uid not in episode_uid_set:
+                episode_uid_set.add(episode.uid)
+                unique_scored_long_episodes.append((score, episode))
+
+        return EpisodicMemory.QueryResponse(
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[
+                    episode.model_dump(mode="python") for episode in short_episodes
+                ],
+                episode_summary=[short_summary],
+            ),
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[
+                    {"score": score, **episode.model_dump(mode="python")}
+                    for score, episode in unique_scored_long_episodes
+                ],
+            ),
+        )
 
     async def query_search(
         self,
@@ -626,7 +794,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
-            agent_mode: Whether to use retrieval-agent mode for episodic search.
+            agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
         Returns:
             Aggregated search results across memory types.
@@ -635,9 +803,6 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.info(
             "MemMachine querying search: query=%s agent_mode=%s",
             query,
@@ -645,6 +810,7 @@ class MemMachine:
         )
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
+            retrieval_agent = await self._get_retrieval_agent() if agent_mode else None
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(
                     session_data=session_data,
@@ -653,7 +819,7 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     search_filter=property_filter,
-                    agent_mode=agent_mode,
+                    retrieval_agent=retrieval_agent,
                 )
             )
 

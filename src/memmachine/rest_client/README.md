@@ -113,7 +113,7 @@ print(f"Profile memory: {results.get('profile_memory', [])}")
 work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
 print(f"Work results: {work_results}")
 
-# Search with retrieval-agent mode
+# Search with options
 agent_results = memory.search("Summarize my preferences", agent_mode=True)
 print(f"Agent search results: {agent_results}")
 ```

@@ -327,6 +327,7 @@ def test_search_memories(client, mock_memmachine):
         await_args = mock_search.await_args
         assert await_args is not None
         search_call = cast(dict[str, Any], await_args.kwargs)
+        assert search_call["spec"].query == "hello"
         assert search_call["spec"].agent_mode is True
 
         # Invalid argument

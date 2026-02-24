@@ -237,6 +237,11 @@ class SpecDoc:
     If empty, all available types are searched.
     """
 
+    AGENT_MODE = """
+    Whether to enable top-level retrieval-agent orchestration for episodic search.
+    When false, episodic search uses direct memory retrieval.
+    """
+
     PAGE_SIZE = """
     The maximum number of memories to return per page. Use this for pagination.
     """
@@ -319,10 +324,6 @@ class SpecDoc:
 
     DATABASES_STATUS = """
     The status of all configured databases."""
-
-    AGENT_MODE = """
-    Whether to use retrieval agent for memory search or not. Agent Mode does not
-    support score threshold filtering."""
 
     # --- Configuration API Fields ---
 
@@ -610,6 +611,7 @@ class Examples:
         "metadata.user_id=123 AND metadata.session_id=abc",
     ]
     MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
+    AGENT_MODE: ClassVar[list[bool]] = [False, True]
     MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
     PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]
@@ -620,7 +622,6 @@ class Examples:
     SEARCH_RESULT_STATUS: ClassVar[list[int]] = [0]
     SERVER_VERSION: ClassVar[list[str]] = ["0.1.2", "0.2.0"]
     CLIENT_VERSION: ClassVar[list[str]] = ["0.1.2", "0.2.0"]
-    AGENT_MODE: ClassVar[list[bool]] = [True, False]
 
 
 class RouterDoc:

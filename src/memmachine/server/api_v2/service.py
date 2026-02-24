@@ -96,11 +96,7 @@ async def _search_target_memories(
     spec: SearchMemoriesSpec,
     memmachine: MemMachine,
 ) -> SearchResult:
-    logger.info(
-        "Service received search: query=%s agent_mode=%s",
-        spec.query,
-        spec.agent_mode,
-    )
+    logger.info("Service received search: query=%s", spec.query)
     results = await memmachine.query_search(
         session_data=_SessionData(
             org_id=spec.org_id,

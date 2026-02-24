@@ -201,8 +201,7 @@ export class MemMachineMemory {
       filter = '',
       expand_context = 0,
       score_threshold,
-      types = ['episodic', 'semantic'],
-      agent_mode = false
+      types = ['episodic', 'semantic']
     } = options ?? {}
 
     const payload = {
@@ -212,8 +211,7 @@ export class MemMachineMemory {
       filter,
       expand_context,
       ...(score_threshold != null ? { score_threshold } : {}),
-      types,
-      agent_mode
+      types
     }
 
     try {

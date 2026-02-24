@@ -60,7 +60,6 @@ def episodic_memory_conf():
             vector_graph_store="test_store",
             embedder="test_embedder",
             reranker="test_reranker",
-            llm_model="test_model",
         ),
         short_term_memory=ShortTermMemoryConf(
             session_key="test_session",

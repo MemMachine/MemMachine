@@ -39,6 +39,7 @@ class QueryParam(BaseModel):
     limit: int = 0
     expand_context: int = 0
     property_filter: FilterExpr | None = None
+    memory: InstanceOf[DeclarativeMemory] | None = None
 
 
 class AgentToolBaseParam(BaseModel):

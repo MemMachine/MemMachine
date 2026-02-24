@@ -1,7 +1,6 @@
 """Chain-of-query agent for iterative retrieval sufficiency checking."""
 
 import asyncio
-import copy
 import json
 import logging
 import time
@@ -270,7 +269,7 @@ class ChainOfQueryAgent(AgentToolBase):
         policy: QueryPolicy,
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
-        q = copy.deepcopy(query)
+        q = query.model_copy()
         # TODO: make this self-adaptive
         # if q.limit >= 15:
         #     q.limit /= 3
@@ -305,7 +304,7 @@ class ChainOfQueryAgent(AgentToolBase):
         sufficiency_response: dict[str, Any] = {}
         used_query: list[str] = []
 
-        curr_query = copy.deepcopy(query)
+        curr_query = query.model_copy()
         for _ in range(self._max_attempts):
             curr_query.query = sufficiency_response.get("new_query", query.query)
             if curr_query.query in used_query or curr_query.query == "":
@@ -351,7 +350,7 @@ class ChainOfQueryAgent(AgentToolBase):
                 break
 
         # Rerank base on all queries used
-        q = copy.deepcopy(query)
+        q = query.model_copy()
         q.query = query.query + "\n".join(used_query)
         final_episodes = await self._do_rerank(q, sufficiency_response["episodes"])
         return final_episodes, perf_matrics

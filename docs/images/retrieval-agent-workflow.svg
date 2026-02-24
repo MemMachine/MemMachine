@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="980" viewBox="0 0 1700 980">
+  <defs>
+    <marker
+      id="arrow"
+      markerWidth="10"
+      markerHeight="10"
+      refX="9"
+      refY="3"
+      orient="auto"
+      markerUnits="strokeWidth"
+    >
+      <path d="M0,0 L0,6 L9,3 z" fill="#455A64" />
+    </marker>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #0d1b2a; }
+      .subtitle { font: 400 16px Arial, sans-serif; fill: #334e68; }
+      .label { font: 600 16px Arial, sans-serif; fill: #102a43; text-anchor: middle; }
+      .small { font: 500 14px Arial, sans-serif; fill: #334e68; text-anchor: middle; }
+      .edge { stroke: #455A64; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .edge-soft { stroke: #78909C; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .route { font: 600 13px Arial, sans-serif; fill: #37474F; }
+      .box-main { fill: #E8F0FE; stroke: #1A73E8; stroke-width: 2; rx: 12; }
+      .box-router { fill: #FFF4E5; stroke: #FB8C00; stroke-width: 2; rx: 12; }
+      .box-agent { fill: #E8F5E9; stroke: #2E7D32; stroke-width: 2; rx: 12; }
+      .box-metric { fill: #ECEFF1; stroke: #546E7A; stroke-width: 2; rx: 12; }
+      .diamond { fill: #F3E5F5; stroke: #8E24AA; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1700" height="980" fill="#FAFCFF" />
+
+  <text x="850" y="48" class="title" text-anchor="middle">
+    MemMachine Retrieval Agent Workflow
+  </text>
+  <text x="850" y="76" class="subtitle" text-anchor="middle">
+    agent_mode=true path with strategy routing, split-query, and chain-of-query loop
+  </text>
+
+  <!-- Top pipeline -->
+  <rect x="40" y="110" width="280" height="78" class="box-main" />
+  <text x="180" y="145" class="label">Client Search</text>
+  <text x="180" y="168" class="small">memory.search(..., agent_mode=true)</text>
+
+  <rect x="360" y="110" width="360" height="78" class="box-main" />
+  <text x="540" y="145" class="label">MemMachine Search Stack</text>
+  <text x="540" y="168" class="small">query_search -> EpisodicMemory -> LongTermMemory</text>
+
+  <rect x="770" y="110" width="220" height="78" class="box-router" />
+  <text x="880" y="146" class="label">ToolSelectAgent</text>
+  <text x="880" y="168" class="small">LLM router</text>
+
+  <path d="M320,149 L360,149" class="edge" />
+  <path d="M720,149 L770,149" class="edge" />
+
+  <!-- Strategy decision -->
+  <polygon points="1100,82 1225,149 1100,216 975,149" class="diamond" />
+  <text x="1100" y="144" class="label">Select</text>
+  <text x="1100" y="165" class="small">strategy</text>
+
+  <path d="M990,149 L975,149" class="edge" />
+
+  <!-- Direct branch -->
+  <rect x="1360" y="40" width="300" height="82" class="box-agent" />
+  <text x="1510" y="74" class="label">MemMachineAgent</text>
+  <text x="1510" y="97" class="small">one direct declarative search</text>
+  <path d="M1225,122 L1360,81" class="edge" />
+  <text x="1308" y="94" class="route">single-hop direct</text>
+
+  <!-- Split branch -->
+  <rect x="1120" y="210" width="320" height="82" class="box-agent" />
+  <text x="1280" y="243" class="label">SplitQueryAgent</text>
+  <text x="1280" y="266" class="small">generate independent sub-queries</text>
+  <path d="M1225,149 L1280,210" class="edge" />
+  <text x="1232" y="201" class="route">independent parts</text>
+
+  <rect x="1120" y="330" width="320" height="82" class="box-agent" />
+  <text x="1280" y="363" class="label">Child Retrieval</text>
+  <text x="1280" y="386" class="small">run per sub-query via MemMachineAgent</text>
+  <path d="M1280,292 L1280,330" class="edge" />
+
+  <rect x="1120" y="450" width="320" height="82" class="box-agent" />
+  <text x="1280" y="483" class="label">Aggregate + Rerank</text>
+  <text x="1280" y="506" class="small">merge sub-query evidence</text>
+  <path d="M1280,412 L1280,450" class="edge" />
+
+  <!-- CoQ branch -->
+  <rect x="760" y="250" width="300" height="82" class="box-agent" />
+  <text x="910" y="283" class="label">ChainOfQueryAgent</text>
+  <text x="910" y="306" class="small">iterative multi-hop reasoning</text>
+  <path d="M1100,216 L910,250" class="edge" />
+  <text x="968" y="233" class="route">multi-hop chain</text>
+
+  <rect x="740" y="360" width="320" height="82" class="box-agent" />
+  <text x="900" y="393" class="label">Retrieve with Current Query</text>
+  <text x="900" y="416" class="small">child do_query -> memory search</text>
+  <path d="M910,332 L900,360" class="edge" />
+
+  <rect x="740" y="480" width="320" height="92" class="box-agent" />
+  <text x="900" y="514" class="label">LLM Sufficiency + Rewrite</text>
+  <text x="900" y="537" class="small">is_sufficient, evidence_indices, new_query</text>
+  <path d="M900,442 L900,480" class="edge" />
+
+  <polygon points="900,620 1025,690 900,760 775,690" class="diamond" />
+  <text x="900" y="684" class="label">Enough evidence?</text>
+  <text x="900" y="706" class="small">confidence >= threshold</text>
+  <path d="M900,572 L900,620" class="edge" />
+
+  <rect x="500" y="650" width="230" height="82" class="box-agent" />
+  <text x="615" y="683" class="label">Use Rewritten Query</text>
+  <text x="615" y="706" class="small">next retrieval hop</text>
+  <path d="M775,690 L730,691" class="edge-soft" />
+  <text x="742" y="676" class="route">No</text>
+  <path d="M615,650 L615,590 L740,590 L740,401" class="edge-soft" />
+
+  <rect x="1040" y="770" width="390" height="82" class="box-agent" />
+  <text x="1235" y="803" class="label">Aggregate Cross-Hop Evidence + Final Rerank</text>
+  <text x="1235" y="826" class="small">dedupe, rank, and prepare final episodes</text>
+  <path d="M1025,690 L1040,811" class="edge" />
+  <text x="1038" y="676" class="route">Yes</text>
+
+  <!-- Shared output -->
+  <rect x="660" y="870" width="420" height="82" class="box-metric" />
+  <text x="870" y="903" class="label">Return Episodic Results + Metrics</text>
+  <text x="870" y="926" class="small">episodes, selected_tool, queries, token/time counters</text>
+
+  <path d="M1510,122 L1510,830 L1080,910" class="edge" />
+  <path d="M1280,532 L1280,860 L1080,910" class="edge" />
+  <path d="M1235,852 L1080,902" class="edge" />
+
+  <!-- Legend -->
+  <rect x="40" y="870" width="590" height="82" fill="#FFFFFF" stroke="#CFD8DC" stroke-width="1.5" rx="10" />
+  <rect x="58" y="890" width="18" height="18" class="box-main" />
+  <text x="86" y="904" class="small" text-anchor="start">Core request path</text>
+  <rect x="240" y="890" width="18" height="18" class="box-router" />
+  <text x="268" y="904" class="small" text-anchor="start">Routing logic</text>
+  <rect x="375" y="890" width="18" height="18" class="box-agent" />
+  <text x="403" y="904" class="small" text-anchor="start">Agent execution</text>
+  <polygon points="520,908 540,918 520,928 500,918" class="diamond" />
+  <text x="548" y="922" class="small" text-anchor="start">Decision point</text>
+</svg>

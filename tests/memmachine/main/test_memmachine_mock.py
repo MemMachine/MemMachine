@@ -16,6 +16,7 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.common.episode_store import Episode, EpisodeEntry
 from memmachine.common.errors import SessionNotFoundError
 from memmachine.common.filter.filter_parser import And as FilterAnd
@@ -100,14 +101,13 @@ def _minimal_conf(
             vector_graph_store=None,
             embedder="default-embedder",
             reranker="default-reranker",
-            llm_model="default-llm-model",
         ),
         short_term_memory_enabled=short_memory_enabled,
         long_term_memory_enabled=long_term_memory_enabled,
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
-    ret.default_long_term_memory_llm_model = "default-llm-model"
+    ret.retrieval_agent = RetrievalAgentConf()
     semantic_conf = MagicMock()
     semantic_conf.llm_model = None
     ret.semantic_memory = semantic_conf
@@ -184,25 +184,22 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     )
 
 
-def test_with_default_ltm_llm_falls_back_to_stm_model(
+def test_with_default_retrieval_agent_llm_falls_back_to_stm_model(
     minimal_conf_factory, patched_resource_manager
 ):
     min_conf = minimal_conf_factory()
-    assert min_conf.episodic_memory.long_term_memory is not None
     assert min_conf.episodic_memory.short_term_memory is not None
 
-    min_conf.episodic_memory.long_term_memory.llm_model = None
     min_conf.episodic_memory.short_term_memory.llm_model = "fallback-llm"
     min_conf.semantic_memory.llm_model = None
+    min_conf.retrieval_agent.llm_model = None
     min_conf.resources.language_models.contains_language_model.side_effect = (
         lambda model_name: model_name == "fallback-llm"
     )
 
     memmachine = MemMachine(min_conf, patched_resource_manager)
 
-    conf = memmachine._with_default_episodic_memory_conf(session_key="session-llm")
-    assert conf.long_term_memory is not None
-    assert conf.long_term_memory.llm_model == "fallback-llm"
+    assert memmachine._conf.retrieval_agent.llm_model == "fallback-llm"
 
 
 def test_with_default_short_conf_enable_status(
@@ -266,7 +263,6 @@ async def test_create_session_passes_generated_config(
         long_term_memory=LongTermMemoryConfPartial(
             embedder="custom-embed",
             reranker="custom-reranker",
-            llm_model="default-llm-model",
         )
     )
     await memmachine.create_session(
@@ -329,9 +325,48 @@ async def test_query_search_runs_targeted_memory_tasks(
 
     async_episodic.assert_awaited_once()
     semantic_manager.search.assert_awaited_once()
+    await_args = async_episodic.await_args
+    assert await_args is not None
+    assert await_args.kwargs["retrieval_agent"] is None
 
     assert result.episodic_memory is async_episodic.return_value
     assert result.semantic_memory == semantic_manager.search.return_value
+
+
+@pytest.mark.asyncio
+async def test_query_search_uses_retrieval_agent_when_agent_mode_enabled(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    dummy_session = DummySessionData("s1")
+    expected_retrieval_agent = object()
+    get_retrieval_agent = AsyncMock(return_value=expected_retrieval_agent)
+    monkeypatch.setattr(MemMachine, "_get_retrieval_agent", get_retrieval_agent)
+
+    async_episodic = AsyncMock(
+        return_value=EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
+        )
+    )
+    monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    await memmachine.query_search(
+        dummy_session,
+        target_memories=[MemoryType.Episodic],
+        query="hello world",
+        agent_mode=True,
+    )
+
+    get_retrieval_agent.assert_awaited_once()
+    await_args = async_episodic.await_args
+    assert await_args is not None
+    assert await_args.kwargs["retrieval_agent"] is expected_retrieval_agent
 
 
 @pytest.mark.asyncio

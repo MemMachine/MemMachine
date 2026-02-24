@@ -116,10 +116,6 @@ class LongTermMemoryConf(BaseModel):
         ...,
         description="ID of the Reranker instance for reranking search results",
     )
-    llm_model: str = Field(
-        ...,
-        description="ID of the LanguageModel for retrieval agent",
-    )
     message_sentence_chunking: bool = Field(
         False,
         description="Whether to chunk message episodes into sentences for embedding",
@@ -144,11 +140,6 @@ class LongTermMemoryConfPartial(BaseModel):
     reranker: str | None = Field(
         default=None,
         description="ID of the Reranker instance for reranking search results",
-    )
-
-    llm_model: str | None = Field(
-        default=None,
-        description="ID of the LanguageModel for retrieval agent",
     )
 
     def merge(self, other: Self) -> LongTermMemoryConf:

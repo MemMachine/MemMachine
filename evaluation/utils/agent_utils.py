@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from typing import Any, cast
+from typing import Any
 
 import boto3
 import neo4j
@@ -76,7 +76,7 @@ async def process_question(
                 max_attempts=3,
                 max_return_len=10000,
             ),
-            QueryParam(query=question, limit=search_limit),
+            QueryParam(query=question, limit=search_limit, memory=memory),
         )
         memory_end = time.time()
 
@@ -340,12 +340,14 @@ ToolSelectAgent Avg Output Tokens per Question: {tools_output_tokens["ToolSelect
 
 
 async def init_agent(
-    model: LanguageModel, memory: DeclarativeMemory, reranker: Reranker, agent_name: str
+    model: LanguageModel,
+    reranker: Reranker,
+    agent_name: str,
 ) -> AgentToolBase:
     param: AgentToolBaseParam = AgentToolBaseParam(
         model=None,
         children_tools=[],
-        extra_params={"memory": cast(AgentToolBase, memory)},
+        extra_params={},
         reranker=reranker,
     )
     memory_agent: MemMachineAgent = MemMachineAgent(param)
@@ -461,7 +463,7 @@ async def init_memmachine_params(
             # reasoning_effort="minimal",
         ),
     )
-    query_agent = await init_agent(agent_model, memory, reranker, agent_name)
+    query_agent = await init_agent(agent_model, reranker, agent_name)
 
     answer_model = openai.AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),

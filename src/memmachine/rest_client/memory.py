@@ -384,7 +384,7 @@ class Memory:
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
-            agent_mode: Whether to use retrieval-agent search orchestration.
+            agent_mode: Whether to enable top-level retrieval-agent orchestration.
             filter_dict: Additional filters for the search (key-value pairs as strings).
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters

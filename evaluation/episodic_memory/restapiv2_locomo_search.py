@@ -60,7 +60,6 @@ def process_question(
     adversarial_answer,
     conv_num,
     q_num,
-    agent_mode,
 ):
     result = {
         "question": "",
@@ -81,7 +80,10 @@ def process_question(
         memory_start = time.time()
         mmai.log.debug(f"search memory conv={conv_num} q={q_num}")
         data = mmai.search_memory(
-            question, top_k=top_k, types=types, timeout=timeout, agent_mode=agent_mode
+            question,
+            top_k=top_k,
+            types=types,
+            timeout=timeout,
         )
         num_types, le_len, se_len, ss_len, sm_len = mmai.split_data_count(data)
         ctx_usage = f"le={le_len} se={se_len} ss={ss_len} sm={sm_len}"
@@ -184,9 +186,6 @@ def main():
     parser.add_argument(
         "--max-workers", type=int, default=10, help="number of simultaneous queries"
     )
-    parser.add_argument(
-        "--agent-mode", action="store_true", help="enable agent mode for memory search"
-    )
     args = parser.parse_args()
 
     data_path = args.data_path
@@ -201,7 +200,6 @@ def main():
     )
     mmai = MemmachineHelper.factory("restapiv2")
     health = mmai.get_health()
-    print(f"agent mode: {args.agent_mode}")
     print("mmai health:")
     for k, v in health.items():
         print(f"k={k} v={v}")
@@ -224,7 +222,7 @@ def main():
         print(f"Processing questions for group {idx}...")
         qa_list = item["qa"]
 
-        def respond_question(qa, conv_num, q_num, agent_mode):
+        def respond_question(qa, conv_num, q_num):
             question = qa["question"]
             answer = qa.get("answer", "")
             category = qa["category"]
@@ -244,7 +242,6 @@ def main():
                 adversarial_answer,
                 conv_num,
                 q_num,
-                agent_mode,
             )
             question_response["conv_num"] = conv_num
             question_response["question_num"] = q_num
@@ -266,7 +263,7 @@ def main():
                 except Exception:
                     continue
                 future = executor.submit(
-                    respond_question, qa, idx + 1, q_idx + 1, args.agent_mode
+                    respond_question, qa, idx + 1, q_idx + 1
                 )
                 futures.append(future)
             # wait for task completion

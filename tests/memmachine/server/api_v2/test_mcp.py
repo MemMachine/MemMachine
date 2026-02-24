@@ -129,6 +129,7 @@ def test_search_memory_param_get_search_query(params):
     assert spec.query == "hello"
     assert spec.filter == ""
     assert spec.types == ALL_MEMORY_TYPES
+    assert spec.agent_mode is False
 
 
 @pytest_asyncio.fixture

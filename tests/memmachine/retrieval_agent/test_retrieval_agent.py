@@ -124,14 +124,14 @@ async def test_memmachine_agent_returns_episodes(query_policy: QueryPolicy) -> N
         AgentToolBaseParam(
             model=None,
             children_tools=[],
-            extra_params={"memory": memory},
+            extra_params={},
             reranker=reranker,
         ),
     )
 
     result, metrics = await agent.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5),
+        QueryParam(query="hello", limit=5, memory=memory),
     )
 
     assert result == [episode]
@@ -163,7 +163,7 @@ async def test_split_query_agent_aggregates_sub_queries(
         AgentToolBaseParam(
             model=None,
             children_tools=[],
-            extra_params={"memory": memory},
+            extra_params={},
             reranker=reranker,
         ),
     )
@@ -179,7 +179,7 @@ async def test_split_query_agent_aggregates_sub_queries(
 
     results, metrics = await split_agent.do_query(
         query_policy,
-        QueryParam(query="original?", limit=10),
+        QueryParam(query="original?", limit=10, memory=memory),
     )
 
     assert results == [episode_a, episode_b]
@@ -205,7 +205,7 @@ async def test_tool_select_agent_uses_selected_tool(
         AgentToolBaseParam(
             model=None,
             children_tools=[],
-            extra_params={"memory": memory},
+            extra_params={},
             reranker=reranker,
         ),
     )
@@ -241,7 +241,7 @@ async def test_tool_select_agent_uses_selected_tool(
 
     results, metrics = await tool_select_agent.do_query(
         query_policy,
-        QueryParam(query="tool query", limit=5),
+        QueryParam(query="tool query", limit=5, memory=memory),
     )
 
     assert results == [episode]
@@ -288,7 +288,7 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
         AgentToolBaseParam(
             model=None,
             children_tools=[],
-            extra_params={"memory": memory},
+            extra_params={},
             reranker=reranker,
         ),
     )
@@ -310,7 +310,7 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
 
     results, metrics = await coq_agent.do_query(
         query_policy,
-        QueryParam(query="original_query?", limit=10),
+        QueryParam(query="original_query?", limit=10, memory=memory),
     )
 
     assert {episode.uid for episode in results} == {"fact1", "fact2", "fact3"}
@@ -351,7 +351,7 @@ async def test_rerank_logic(
         AgentToolBaseParam(
             model=None,
             children_tools=[],
-            extra_params={"memory": memory},
+            extra_params={},
         ),
     )
 

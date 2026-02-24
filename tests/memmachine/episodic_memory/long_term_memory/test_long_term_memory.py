@@ -122,34 +122,13 @@ def vector_graph_store(neo4j_driver):
 
 
 @pytest.fixture(scope="module")
-def llm_model():
-    import openai
-
-    from memmachine.common.language_model.openai_responses_language_model import (
-        OpenAIResponsesLanguageModel,
-        OpenAIResponsesLanguageModelParams,
-    )
-
-    return OpenAIResponsesLanguageModel(
-        OpenAIResponsesLanguageModelParams(
-            client=openai.AsyncOpenAI(
-                api_key="dummy",
-                base_url="https://api.openai.com/v1",
-            ),
-            model="gpt-5-mini",
-        ),
-    )
-
-
-@pytest.fixture(scope="module")
-def long_term_memory(embedder, reranker, vector_graph_store, llm_model):
+def long_term_memory(embedder, reranker, vector_graph_store):
     return LongTermMemory(
         LongTermMemoryParams(
             session_id="test_session",
             embedder=embedder,
             reranker=reranker,
             vector_graph_store=vector_graph_store,
-            llm_model=llm_model,
         ),
     )
 
@@ -347,7 +326,6 @@ async def test_search(long_term_memory):
     results = await long_term_memory.search(
         query="Who wrote the test?",
         num_episodes_limit=1,
-        agent_mode=False,
     )
 
     assert len(results) == 1
