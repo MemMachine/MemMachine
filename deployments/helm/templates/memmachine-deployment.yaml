@@ -1,0 +1,82 @@
+# memmachine-deployment.yaml
+# Deploys the MemMachine application server (1 replica).
+# Uses two init containers to block startup until both PostgreSQL (5432)
+# and Neo4j (7687) are accepting connections. The main container mounts:
+#   - memmachine-config ConfigMap → /app/configuration.yml  (app config)
+#   - memmachine-env-config ConfigMap → /app/.env           (env vars)
+#   - memmachine-pvc PVC → /app/data                        (persistent logs/data)
+# OPENAI_API_KEY is injected from the memmachine-secrets Secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memmachine
+  namespace: {{ .Release.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memmachine
+  template:
+    metadata:
+      labels:
+        app: memmachine
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox
+          command: ['sh', '-c', 'until nc -zv {{ .Values.postgres.host }} {{ .Values.postgres.port }}; do echo waiting for postgres; sleep 2; done']
+
+        - name: wait-for-neo4j
+          image: busybox
+          command: ['sh', '-c', 'until nc -zv {{ .Values.neo4j.host }} {{ .Values.neo4j.port }}; do echo waiting for neo4j; sleep 2; done']
+
+      containers:
+        - name: memmachine
+          image: {{ .Values.memmachine.image }}:{{ .Values.memmachine.tag }}
+          imagePullPolicy: {{ .Values.memmachine.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: memmachine-secrets
+                  key: OPENAI_API_KEY
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: NEO4J_USER
+              valueFrom:
+                secretKeyRef:
+                  name: neo4j-secret
+                  key: NEO4J_USER
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: neo4j-secret
+                  key: NEO4J_PASSWORD
+            - name: LOG_FILE
+              value: "/app/data/memmachine.log"
+            - name: MEMORY_CONFIG
+              value: {{ .Values.memmachine.config.memoryConfigPath }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /app/configuration.yml
+              subPath: configuration.yml
+            - name: env-volume
+              mountPath: /app/.env
+              subPath: .env
+            - name: data-volume
+              mountPath: /app/data
+      volumes:
+        - name: config-volume
+          configMap:
+            name: memmachine-config
+        - name: env-volume
+          configMap:
+            name: memmachine-env-config
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: memmachine-pvc

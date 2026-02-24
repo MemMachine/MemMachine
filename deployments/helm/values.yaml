@@ -1,0 +1,70 @@
+# Default configuration values for the MemMachine Helm chart.
+# Override any value with --set <key>=<value> or -f <override-file>.
+#
+# SECURITY: Default passwords below (neo4j.password, postgres.password) are for
+# development/demo only. For production, override them via --set/-f or provide
+# secrets out-of-band (e.g., Vault, sealed-secrets); see README.
+#
+# Sections:
+#   storageClass / pvcSize     - shared PVC settings for all three volumes
+#   neo4j.*                    - Neo4j image, auth, JVM heap, and connection pool
+#   postgres.*                 - PostgreSQL image, credentials, and pool settings
+#   memmachine.*               - App image, LLM/embedder backend, and app config
+#   nodePorts.*                - NodePort assignments for external access
+
+namespace: memmachine
+
+storageClass: nfs-client
+pvcSize: 5Gi
+
+neo4j:
+  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
+  host: memmachine-neo4j     # internal service name (default); override when enabled: false
+  port: 7687                 # default Bolt port; override if external uses different port
+  image: neo4j:5.23-community
+  auth: neo4j/memverge
+  user: neo4j
+  password: memverge   # dev default; override in production
+  plugins: ["apoc", "graph-data-science"]
+  heap:
+    initial: 512m
+    max: 1G
+  pool:
+    max_connection_pool_size: 100
+    connection_acquisition_timeout: 60.0
+    range_index_creation_threshold: 10000
+    vector_index_creation_threshold: 10000
+
+postgres:
+  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
+  host: memmachine-postgres  # internal service name (default); override when enabled: false
+  port: 5432                 # default Postgres port; override if external uses different port
+  image: pgvector/pgvector:pg16
+  user: memmachine
+  password: memverge   # dev default; override in production
+  database: memmachine
+  pool_size: 5
+  max_overflow: 10
+
+memmachine:
+  image: docker.io/memmachine/memmachine
+  tag: v0.2.6-cpu
+  pullPolicy: IfNotPresent
+  openaiApiKey: <OPENAI_API_KEY>
+  config:
+    loggingLevel: INFO
+    memoryConfigPath: /app/configuration.yml
+    baseUrl: http://127.0.0.1:8080
+    gatewayUrl: http://localhost:8080
+  model:
+    provider: openai-responses
+    base_url: https://api.openai.com/v1
+    model_path: gpt-5-mini
+  embedder:
+    provider: openai
+    base_url: https://api.openai.com/v1
+    model_path: text-embedding-3-small
+    dimensions: 1536
+
+nodePorts:
+  http8080: 31001

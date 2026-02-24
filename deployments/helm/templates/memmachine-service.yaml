@@ -1,0 +1,20 @@
+# memmachine-service.yaml
+# NodePort Service that exposes the MemMachine application externally.
+# External (NodePort) → port 80 (cluster-internal) → pod port 8080.
+# Default NodePort: 31001 (configurable via nodePorts.http8080).
+# Access from inside the cluster: http://memmachine-service.<namespace>.svc.cluster.local
+# Access from outside the cluster: http://<node-ip>:<nodePorts.http8080>
+apiVersion: v1
+kind: Service
+metadata:
+  name: memmachine-service
+  namespace: {{ .Release.namespace }}
+spec:
+  selector:
+    app: memmachine
+  ports:
+    - name: http8080
+      port: 80
+      targetPort: 8080
+      nodePort: {{ .Values.nodePorts.http8080 }}
+  type: NodePort
