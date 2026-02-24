@@ -230,9 +230,8 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 
 ---
 
-## Known Issues / Notes
+## Notes
 
-- **`{{ .Release.namespace }}` casing**: Several templates use `{{ .Release.namespace }}` (lowercase `n`) instead of the correct `{{ .Release.Namespace }}` (uppercase). In Helm, `.Release.Namespace` is the canonical field; the lowercase form resolves to an empty string. `pvc.yaml` correctly uses the uppercase form. If you encounter resources deployed to the wrong namespace, this is the cause. See the individual template files for details.
 
 ---
 

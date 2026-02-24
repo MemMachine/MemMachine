@@ -17,7 +17,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: memmachine-config
-  namespace: {{ .Release.namespace }}
+  namespace: {{ .Release.Namespace }}
 data:
   configuration.yml: |
     logging:
@@ -102,7 +102,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: memmachine-env-config
-  namespace: {{ .Release.namespace }}
+  namespace: {{ .Release.Namespace }}
 data:
   .env: |
     POSTGRES_HOST={{ .Values.postgres.host }}
