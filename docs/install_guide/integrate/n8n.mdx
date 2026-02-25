@@ -4,13 +4,13 @@ description: "Equip your n8n workflows with persistent, AI-native memory nodes"
 icon: "diagram-project"
 ---
 
-The MemMachine integration for **n8n** allows you to build sophisticated AI agents that remember users across sessions. By using the MemMachine community nodes, you can store interactions, retrieve deep context, and trace memory operations directly within your automation canvas.
+The MemMachine integration for **n8n** allows you to build sophisticated AI agents that remember users across sessions[cite: 1]. By using the MemMachine community nodes, you can store interactions, retrieve deep context, and trace memory operations directly within your automation canvas[cite: 2].
 
 ## Overview
 
 This integration provides two specialized nodes:
-* **MemMachine Manager:** Store messages and "Enrich" your agent prompts with semantic context.
-* **MemMachine AI Memory:** A native memory node that plugs directly into n8n's **AI Agent** node.
+* **MemMachine Manager:** Store messages and "Enrich" your agent prompts with semantic context[cite: 3].
+* **MemMachine AI Memory:** A native memory node that plugs directly into n8n's **AI Agent** node[cite: 4].
 
 ## Start n8n
 
@@ -28,53 +28,36 @@ docker run -it --rm \
   docker.n8n.io/n8nio/n8n
 ```
 
-### With Tracing 
+### With Tracing
 
 If you want to visualize the memory interactions you might want to use the `docker-compose` file in the github repository.
 
 ```bash
-wget -q https://raw.githubusercontent.com/MemMachine/n8n-nodes-memmachine/refs/heads/main/docker-compose.yml
+wget -q [https://raw.githubusercontent.com/MemMachine/n8n-nodes-memmachine/refs/heads/main/docker-compose.yml](https://raw.githubusercontent.com/MemMachine/n8n-nodes-memmachine/refs/heads/main/docker-compose.yml)
 docker-compose up -d
 ```
 
 Either way, after one of the commands finished, you are able to open your n8n instance.
 
-
 <Steps>
-  <Step title="First Login">
-    Open [localhost:5678/](http://localhost:5678/):
-    1. Fill out a sign-up form.
-    ![SignUp form](./assets/first_1.png)
-    2. Skip the customization and click `Get Started`.
-
-    ![customize form](./assets/first_2.png)
-
-    3. Skip the offer page with `Skip`.
-
-    ![upsell form](./assets/first_3.png)
-  </Step>
-  <Step title="Install the Community Node">
-    If you are using a self-hosted n8n instance:
-    1. Navigate to **Settings > Community Nodes**.
-    2. Click **Install a community node**.
-
-    ![Community Nodes Page](./assets/community_nodes_page.png)
-
-    3. Enter the package name: 
-    ```
-    @memmachine/n8n-nodes-memmachine
-    ```
-    4. Acknowledge the risk and click **Install**.
-
-    ![Install Community Nodes](./assets/install_community_nodes.png)
-  </Step>
-
-  <Step title="Configure Your Credentials">
-    When you add a MemMachine node, you will be prompted to create credentials. You will need your **API Key** from the MemMachine Dashboard.
-  </Step>
+<Step title="First Login">
+ Open [localhost:5678/](http://localhost:5678/): 
+   1. Fill out a sign-up form. 
+   2. Skip the customization and click `Get Started`. 
+   3. Skip the offer page with `Skip`. 
+ </Step>
+ <Step title="Install the Community Node"> 
+ If you are using a self-hosted n8n instance: 
+   1. Navigate to **Settings > Community Nodes**. 
+   2. Click **Install a community node**. 
+   3. Enter the package name: `@memmachine/n8n-nodes-memmachine` 
+   4. Acknowledge the risk and click **Install**. 
+ </Step>
+<Step title="Configure Your Credentials"> 
+When you add a MemMachine node, you will be prompted to create credentials. You will need your **API Key** from the MemMachine Dashboard. 
+</Step> 
 </Steps>
 
----
 
 ## MemMachine Manager Node
 
@@ -82,81 +65,79 @@ The Manager node is used for manual memory operations at any point in your workf
 
 ### Connect MemMachine
 
-To use the node you'll need to configure a connection. In case you are running MemMachine on the same machine as a docker container use  this endpoint:
-```
-http://host.docker.internal:8080/v2/api
-```
+To use the node you'll need to configure a connection. In case you are running MemMachine on the same machine as a docker container use this endpoint:
 
-![MemMachine connection](./assets/connect_memmachine.png)
+[http://host.docker.internal:8080/v2/api](http://host.docker.internal:8080/v2/api)
 
 ### Action: Store a message
+
 Saves a specific content string to long-term memory.
 
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| **orgId / projectId** | String | **Required.** Your unique organization and project identifiers. |
-| **types** | multiOptions | **Required.** Memory types to use (episodic, semantic). |
-| **producer** | String | **Required.** Who created this message (e.g., "Agent" or "User"). |
-| **producedFor** | String | **Required.** Intended recipient of the message. |
-| **episodeContent**| String | **Required.** The actual message text to store. |
-| **episodeType** | Options | `none` (default) or `message`. |
-| **metadata** | JSON | Additional metadata to associate with the message. |
-| **sessionId** | String | **Required.** Unique session identifier. |
-| **groupId** | String | Unique group identifier (defaults to `default`). |
-| **agentId / userId** | String | **Required.** Identifiers for the specific AI agent and user. |
+| **Parameter**         | **Type**     | **Description**                      |
+| --------------------- | ------------ | ------------------------------------ |
+| **orgId / projectId** | String       | **Required.** Your unique organization and project identifiers. |
+| **types**             | multiOptions | **Required.** Memory types to use (episodic, semantic).      |
+| **producer**          | String       | **Required.** Who created this message (e.g., "Agent" or "User"). |
+| **producedFor**       | String       | **Required.** Intended recipient of the message.             |
+| **episodeContent**    | String       | **Required.** The actual message text to store.              |
+| **episodeType**       | Options      | `none` (default) or `message`.                               |
+| **metadata**          | JSON         | Additional metadata to associate with the message.           |
+| **sessionId**         | String       | **Required.** Unique session identifier.                     |
+| **groupId**           | String       | Unique group identifier (defaults to `default`).             |
+| **agentId / userId**  | String       | **Required.** Identifiers for the specific AI agent and user. |
 
 ### Action: Enrich with context
+
 Retrieves historical context to inject into an LLM prompt.
 
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| **orgId / projectId** | String | - | **Required.** Unique organization and project identifiers. |
-| **types** | multiOptions | - | **Required.** Memory types to use (episodic, semantic). |
-| **query** | String | - | **Required.** Natural language query for semantic search. |
-| **limit** | Number | 50 | Maximum number of memory results to return. |
-| **scoreThreshold** | Number | - | Minimum relevance score required to include a memory. |
-| **filter** | String | - | Filter expression to refine memory search results. |
-| **expandContext** | Number | 0 | Number of extra episodes to include for context. |
-| **sessionId** | String | - | **Required.** Unique session identifier. |
-| **groupId** | String | `default` | Unique group identifier. |
-| **agentId / userId** | String | - | **Required.** Identifiers for the specific AI agent and user. |
-| **enableTemplate** | Boolean | `true` | Renders a formatted context string using a template. |
-| **contextTemplate**| String | `default template` | Markdown template for formatting. |
+| **Parameter**         | **Type**     | **Default**   | **Description**       |
+| --------------------- | ------------ | ------------- | --------------------- |
+| **orgId / projectId** | String       | -                  | **Required.** Unique organization and project identifiers.   |
+| **types**             | multiOptions | -                  | **Required.** Memory types to use (episodic, semantic).      |
+| **query**             | String       | -                  | **Required.** Natural language query for semantic search.    |
+| **limit**             | Number       | 50                 | Maximum number of memory results to return.                  |
+| **scoreThreshold**    | Number       | -                  | Minimum relevance score required to include a memory.        |
+| **filter**            | String       | -                  | Filter expression to refine memory search results.           |
+| **expandContext**     | Number       | 0                  | Number of extra episodes to include for context.             |
+| **sessionId**         | String       | -                  | **Required.** Unique session identifier.                     |
+| **groupId**           | String       | `default`          | Unique group identifier.                                     |
+| **agentId / userId**  | String       | -                  | **Required.** Identifiers for the specific AI agent and user. |
+| **enableTemplate**    | Boolean      | `true`             | Renders a formatted context string using a template.         |
+| **contextTemplate**   | String       | `default template` | Markdown template for formatting.                            |
 
----
 
 ## MemMachine AI Memory Node
 
 Connect this node directly to the **Memory** input of a native n8n **AI Agent** node.
 
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| **orgId / projectId** | String | - | **Required.** Your unique organization and project identifiers. |
-| **contextWindowLength** | Number | 10 | Max recent messages to include in chat history. |
-| **enableMemoryTemplate**| Boolean | `false` | Whether to wrap history in a formatted template. |
-| **historyCount** | Number | 5 | Number of episodic memories to include in the template. |
-| **shortTermCount** | Number | 10 | Number of short-term memories to include. |
-| **memoryContextTemplate**| String | `default template` | Markdown template for formatting. |
+| **Parameter**             | **Type** | **Default**   | **Description**                                              |
+| ------------------------- | -------- | ------------- | --------------------- |
+| **orgId / projectId**     | String   | -                  | **Required.** Your unique organization and project identifiers. |
+| **contextWindowLength**   | Number   | 10                 | Max recent messages to include in chat history.              |
+| **enableMemoryTemplate**  | Boolean  | `false`            | Whether to wrap history in a formatted template.             |
+| **historyCount**          | Number   | 5                  | Number of episodic memories to include in the template.      |
+| **shortTermCount**        | Number   | 10                 | Number of short-term memories to include.                    |
+| **memoryContextTemplate** | String   | `default template` | Markdown template for formatting.                            |
 
-<Note>
-  `default template` refers to the system's built-in memory context template. Users may override it with a custom template.
-</Note>
+<Note> `default template` refers to the system's built-in memory context template. Users may override it with a custom template. </Note>
 
----
+
+## Video Walkthrough
+
+Seeing is believing. Check out this practical demonstration of setting up MemMachine nodes within n8n to create persistent AI agents.
+
+<iframe width="100%" height="415" src="https://www.youtube.com/embed/_fyB0d25wf4" title="n8n Integration Walkthrough" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen ></iframe>
+
 
 ## Observability & Tracing
 
 MemMachine nodes support native **OTLP Tracing** for debugging complex agent logic.
 
-![Jaeger UI Trace Example](./assets/jaeger_ui.png)
+| **Parameter**          | **Type** | **Description**                          |
+| ---------------------- | -------- | ---------------------------------------- |
+| **tracingEnabled**     | Boolean  | Set to `true` to enable operation tracing.               |
+| **traceVerbosity**     | Options  | `minimal`, `normal`, or `verbose`.                       |
+| **exportToJaeger**     | Boolean  | If `true`, sends traces to your Jaeger instance.         |
+| **jaegerOtlpEndpoint** | String   | The endpoint URL (e.g., `http://jaeger:4318/v1/traces`). |
 
-| Parameter | Type | Description |
-| :--- | :--- | :--- |
-| **tracingEnabled** | Boolean | Set to `true` to enable operation tracing. |
-| **traceVerbosity** | Options | `minimal`, `normal`, or `verbose`. |
-| **exportToJaeger** | Boolean | If `true`, sends traces to your Jaeger instance. |
-| **jaegerOtlpEndpoint**| String | The endpoint URL (e.g., `http://jaeger:4318/v1/traces`). |
-
-<Tip>
-  When using the **AI Memory Node**, ensure your `agentId` and `userId` are passed consistently across the workflow to ensure the agent's "recognition" of the user remains persistent.
-</Tip>
+<Tip> When using the **AI Memory Node**, ensure your `agentId` and `userId` are passed consistently across the workflow to ensure the agent's "recognition" of the user remains persistent. </Tip>
