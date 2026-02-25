@@ -12,8 +12,6 @@
 #   memmachine.*               - App image, LLM/embedder backend, and app config
 #   nodePorts.*                - NodePort assignments for external access
 
-namespace: memmachine
-
 storageClass: nfs-client
 pvcSize: 5Gi
 
@@ -22,13 +20,18 @@ neo4j:
   host: memmachine-neo4j     # internal service name (default); override when enabled: false
   port: 7687                 # default Bolt port; override if external uses different port
   image: neo4j:5.23-community
-  auth: neo4j/memverge
   user: neo4j
   password: memverge   # dev default; override in production
   plugins: ["apoc", "graph-data-science"]
   heap:
     initial: 512m
     max: 1G
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
   pool:
     max_connection_pool_size: 100
     connection_acquisition_timeout: 60.0
@@ -45,11 +48,23 @@ postgres:
   database: memmachine
   pool_size: 5
   max_overflow: 10
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
 
 memmachine:
   image: docker.io/memmachine/memmachine
   tag: v0.2.6-cpu
   pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
   openaiApiKey: <OPENAI_API_KEY>
   config:
     loggingLevel: INFO

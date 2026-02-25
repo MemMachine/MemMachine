@@ -40,6 +40,22 @@ spec:
               value: {{ .Values.neo4j.heap.max }}
             - name: NEO4J_PLUGINS
               value: '{{ .Values.neo4j.plugins | toJson }}'
+          resources:
+            {{- toYaml .Values.neo4j.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.neo4j.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.neo4j.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           volumeMounts:
             - name: neo4j-data
               mountPath: /data

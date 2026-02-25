@@ -7,7 +7,7 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Bot
 | Field         | Value              |
 |---------------|--------------------|
 | Chart version | 0.1.0              |
-| App version   | v0.1.1             |
+| App version   | v0.2.6             |
 | API version   | v2 (Helm 3)        |
 
 ---
@@ -187,6 +187,9 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `neo4j.pool.connection_acquisition_timeout` | `60.0`          | Connection acquisition timeout (seconds) |
 | `neo4j.pool.range_index_creation_threshold`  | `10000`        | Range index creation threshold           |
 | `neo4j.pool.vector_index_creation_threshold` | `10000`        | Vector index creation threshold          |
+| `neo4j.resources.requests.cpu`        | `500m`                | CPU request (JVM startup is CPU-intensive) |
+| `neo4j.resources.requests.memory`     | `1Gi`                 | Memory request (covers JVM heap initial 512m + overhead) |
+| `neo4j.resources.limits.memory`       | `2Gi`                 | Memory limit (covers heap.max 1G + page cache + OS overhead) |
 
 ### PostgreSQL (`postgres.*`)
 
@@ -201,6 +204,9 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `postgres.database`      | `memmachine`             | Database name                      |
 | `postgres.pool_size`     | `5`                      | SQLAlchemy pool size               |
 | `postgres.max_overflow`  | `10`                     | SQLAlchemy max overflow            |
+| `postgres.resources.requests.cpu`    | `250m`       | CPU request                        |
+| `postgres.resources.requests.memory` | `512Mi`      | Memory request                     |
+| `postgres.resources.limits.memory`   | `2Gi`        | Memory limit (headroom for pgvector index builds) |
 
 ### MemMachine (`memmachine.*`)
 
@@ -221,6 +227,9 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `memmachine.embedder.base_url`     | `https://api.openai.com/v1`                      | Embedder API base URL                         |
 | `memmachine.embedder.model_path`   | `text-embedding-3-small`                         | Embedding model name                          |
 | `memmachine.embedder.dimensions`   | `1536`                                           | Embedding vector dimensions                   |
+| `memmachine.resources.requests.cpu`    | `200m`                                       | CPU request (no CPU limit by default to avoid throttling during inference) |
+| `memmachine.resources.requests.memory` | `512Mi`                                      | Memory request                                |
+| `memmachine.resources.limits.memory`   | `2Gi`                                        | Memory limit (headroom for in-memory embedding batches) |
 
 ### NodePorts (`nodePorts.*`)
 
@@ -232,6 +241,50 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 
 ## Notes
 
+### Resource Limits
+
+All three components ship with default resource requests and limits sized for dev/small workloads. For production or high-load environments, override them via `--set` or a values override file.
+
+| Component   | Default requests         | Default limits   | Notes |
+|-------------|--------------------------|------------------|-------|
+| memmachine  | cpu: 200m, mem: 512Mi    | mem: 2Gi         | No CPU limit — avoids throttling during LLM/embedding calls |
+| postgres    | cpu: 250m, mem: 512Mi    | mem: 2Gi         | Higher limit needed for pgvector index builds |
+| neo4j       | cpu: 500m, mem: 1Gi      | mem: 2Gi         | Memory request covers JVM heap.initial (512m) + overhead; limit covers heap.max (1G) + page cache |
+
+Example override for a larger Neo4j heap in production:
+
+```bash
+helm upgrade --install memmachine . \
+  --namespace memmachine --create-namespace \
+  --set neo4j.heap.max=4G \
+  --set neo4j.resources.requests.memory=5Gi \
+  --set neo4j.resources.limits.memory=8Gi
+```
+
+Or in a values override file:
+
+```yaml
+neo4j:
+  heap:
+    max: 4G
+  resources:
+    requests:
+      memory: 5Gi
+    limits:
+      memory: 8Gi
+
+postgres:
+  resources:
+    limits:
+      memory: 4Gi
+
+memmachine:
+  resources:
+    requests:
+      memory: 1Gi
+    limits:
+      memory: 4Gi
+```
 
 ---
 

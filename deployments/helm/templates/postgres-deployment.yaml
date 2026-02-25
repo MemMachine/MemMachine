@@ -38,6 +38,27 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: POSTGRES_INITDB_ARGS
               value: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.user }}
+                - -d
+                - {{ .Values.postgres.database }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           volumeMounts:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data

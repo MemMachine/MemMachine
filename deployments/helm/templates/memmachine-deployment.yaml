@@ -23,11 +23,11 @@ spec:
     spec:
       initContainers:
         - name: wait-for-postgres
-          image: busybox
+          image: busybox:1.36
           command: ['sh', '-c', 'until nc -zv {{ .Values.postgres.host }} {{ .Values.postgres.port }}; do echo waiting for postgres; sleep 2; done']
 
         - name: wait-for-neo4j
-          image: busybox
+          image: busybox:1.36
           command: ['sh', '-c', 'until nc -zv {{ .Values.neo4j.host }} {{ .Values.neo4j.port }}; do echo waiting for neo4j; sleep 2; done']
 
       containers:
@@ -36,6 +36,24 @@ spec:
           imagePullPolicy: {{ .Values.memmachine.pullPolicy }}
           ports:
             - containerPort: 8080
+          resources:
+            {{- toYaml .Values.memmachine.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/v2/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v2/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
           env:
             - name: OPENAI_API_KEY
               valueFrom:
