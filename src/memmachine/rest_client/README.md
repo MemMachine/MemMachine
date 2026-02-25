@@ -80,7 +80,7 @@ Interface for managing episodic and profile memory.
 #### Methods
 
 - `add(content, producer, produced_for, episode_type, metadata)` - Add a memory
-- `search(query, limit, expand_context, score_threshold, agent_mode, filter_dict)` - Search memories
+- `search(query, limit, expand_context, score_threshold, filter_dict, timeout, *, agent_mode=False)` - Search memories
 - `get_context()` - Get current context
 
 ## Examples

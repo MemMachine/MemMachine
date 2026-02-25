@@ -365,10 +365,11 @@ class Memory:
         limit: int | None = None,
         expand_context: int = 0,
         score_threshold: float | None = None,
-        agent_mode: bool = False,
         filter_dict: dict[str, str] | None = None,
         set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
+        *,
+        agent_mode: bool = False,
     ) -> SearchResult:
         """
         Search for memories.
@@ -384,13 +385,13 @@ class Memory:
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
-            agent_mode: Whether to enable top-level retrieval-agent orchestration.
             filter_dict: Additional filters for the search (key-value pairs as strings).
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
                         if there are key conflicts.
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
             timeout: Request timeout in seconds (uses client default if not provided)
+            agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
         Returns:
             SearchResult object containing search results from both episodic and semantic memory

@@ -321,6 +321,44 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
 
 
 @pytest.mark.asyncio
+async def test_chain_of_query_agent_handles_empty_query_without_retrieval(
+    query_policy: QueryPolicy,
+) -> None:
+    memory = FakeDeclarativeMemory({})
+    reranker = DummyReranker()
+    memory_agent = MemMachineAgent(
+        AgentToolBaseParam(
+            model=None,
+            children_tools=[],
+            extra_params={},
+            reranker=reranker,
+        ),
+    )
+    coq_model = DummyLanguageModel(
+        '{"is_sufficient": true, "evidence_indices": [], "new_query": "", "confidence_score": 1.0}'
+    )
+    coq_agent = ChainOfQueryAgent(
+        AgentToolBaseParam(
+            model=coq_model,
+            children_tools=[memory_agent],
+            extra_params={"max_attempts": 3},
+            reranker=reranker,
+        ),
+    )
+
+    results, metrics = await coq_agent.do_query(
+        query_policy,
+        QueryParam(query="", limit=10, memory=memory),
+    )
+
+    assert results == []
+    assert metrics["queries"] == []
+    assert metrics["memory_search_called"] == 0
+    assert coq_model.call_count == 0
+    assert memory.queries == []
+
+
+@pytest.mark.asyncio
 async def test_rerank_logic(
     query_policy: QueryPolicy,
 ) -> None:

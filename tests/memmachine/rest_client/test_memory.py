@@ -438,6 +438,32 @@ class TestMemory:
         json_data = call_args[1]["json"]
         assert json_data["agent_mode"] is True
 
+    def test_search_positional_args_backward_compatible(self, mock_client):
+        """Test legacy positional argument order remains compatible."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.search("query", 20, 1, 0.4, {"category": "work"}, 15)
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        assert json_data["top_k"] == 20
+        assert json_data["expand_context"] == 1
+        assert json_data["score_threshold"] == 0.4
+        assert json_data["agent_mode"] is False
+        assert "category='work'" in json_data["filter"]
+        assert call_args[1]["timeout"] == 15
+
     def test_search_with_filters(self, mock_client):
         """Test search with filter dictionary."""
         mock_response = Mock()

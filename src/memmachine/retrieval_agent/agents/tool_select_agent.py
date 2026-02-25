@@ -148,7 +148,7 @@ class ToolSelectAgent(AgentToolBase):
         assert self._split_agent is not None
         assert self._memory_agent is not None
         prompt = self._tool_select_prompt.format(
-            query=query,
+            query=query.query,
             coq=self._coq_agent.agent_name,
             split_query=self._split_agent.agent_name,
             memory_retrieval=self._memory_agent.agent_name,

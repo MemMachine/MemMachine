@@ -301,7 +301,15 @@ class ChainOfQueryAgent(AgentToolBase):
         logger.info("CALLING %s with query: %s", self.agent_name, query.query)
         perf_matrics = self._init_perf_matrics()
         retrieved_evidence: set[Episode] = set()
-        sufficiency_response: dict[str, Any] = {}
+        sufficiency_response: dict[str, Any] = {
+            "is_sufficient": False,
+            "evidence": set(),
+            "new_query": query.query,
+            "confidence_score": 0.0,
+            "episodes": [],
+            "input_token": 0,
+            "output_token": 0,
+        }
         used_query: list[str] = []
 
         curr_query = query.model_copy()
