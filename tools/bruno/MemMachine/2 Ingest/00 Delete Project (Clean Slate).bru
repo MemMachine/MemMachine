@@ -1,0 +1,36 @@
+meta {
+  name: Delete Project (Clean Slate)
+  type: http
+  seq: 0
+}
+
+post {
+  url: {{baseUrl}}/api/v2/projects/delete
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "org_id": "universal",
+    "project_id": "universal"
+  }
+}
+
+docs {
+  Delete the default universal/universal project to get a clean slate.
+
+  This removes all episode hashes from the episodestore table in
+  Postgres, clears episodic memory (Neo4j graph nodes), and wipes
+  semantic memory for this project.
+
+  Run this BEFORE re-ingesting the Alice/Bob/Atlas example messages.
+  Without it, duplicate detection (SHA-256 of session_key + producer
+  + content) silently skips messages that were already ingested.
+
+  Returns 204 No Content on success, 404 if the project doesn't exist.
+}

@@ -88,6 +88,22 @@
               "open_source/databases",
               "open_source/community"
             ]
+          },
+          {
+            "group": "Knowledge Graph",
+            "icon": "diagram-project",
+            "pages": [
+              "open_source/graph",
+              {
+                "group": "Retrieval Experiment",
+                "pages": [
+                  "open_source/graph_experiment",
+                  "open_source/graph_experiment_baseline",
+                  "open_source/graph_experiment_enhanced",
+                  "open_source/graph_experiment_comparison"
+                ]
+              }
+            ]
           }
         ]
       },

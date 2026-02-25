@@ -34,7 +34,8 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "command": "add",
                 "tag": "Preferred Content Format",
                 "feature": "unicode_for_math",
-                "value": true
+                "value": true,
+                "entity_type": "Preference"
             }
         ]
         The following will delete all values associated with the feature:
@@ -57,9 +58,23 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "command": "add",
                 "tag" : "Platform Behavior",
                 "feature": "prefers_detailed_response",
-                "value": false
+                "value": false,
+                "entity_type": "Preference"
             }
         ]
+
+        Entity Type Classification:
+        For each ADD command, you SHOULD include an "entity_type" field to classify the kind of entity the feature describes.
+        Use one of the following types: Person, Location, Event, Concept, Organization, Temporal, Preference, Other.
+        - Person: features about people (names, roles, relationships)
+        - Location: features about places (cities, countries, addresses)
+        - Event: features about events or occurrences (meetings, trips, incidents)
+        - Concept: features about abstract ideas, topics, or domains (programming languages, theories)
+        - Organization: features about companies, institutions, or groups
+        - Temporal: features about time-related information (schedules, deadlines, dates)
+        - Preference: features about user preferences, likes, dislikes, or choices
+        - Other: features that do not fit any of the above categories
+        If you are unsure about the entity type, you may omit the field. DELETE commands do not need an entity_type.
 
         Example Scenarios:
         Query: "Hi! My name is Katara"
@@ -68,7 +83,8 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "name",
-                "value": "Katara"
+                "value": "Katara",
+                "entity_type": "Person"
             }
         ]
         Query: "I'm planning a dinner party for 8 people next weekend and want to impress my guests with something special. Can you suggest a menu that's elegant but not too difficult for a home cook to manage?"
@@ -77,13 +93,15 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "command": "add",
                 "tag": "Hobbies & Interests",
                 "feature": "home_cook",
-                "value": "User cooks fancy food"
+                "value": "User cooks fancy food",
+                "entity_type": "Preference"
             },
             {
                 "command": "add",
                 "tag": "Financial Profile",
                 "feature": "upper_class",
-                "value": "User entertains guests at dinner parties, suggesting affluence."
+                "value": "User entertains guests at dinner parties, suggesting affluence.",
+                "entity_type": "Concept"
             }
         ]
         Query: my boss (for the summer) is totally washed. he forgot how to all the basics but still thinks he does
@@ -92,25 +110,29 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "command": "add",
                 "tag": "Psychological Profile",
                 "feature": "work_superior_frustration",
-                "value": "User is frustrated with their boss for perceived incompetence"
+                "value": "User is frustrated with their boss for perceived incompetence",
+                "entity_type": "Concept"
             },
             {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "summer_job",
-                "value": "User is working a temporary job for the summer"
+                "value": "User is working a temporary job for the summer",
+                "entity_type": "Temporal"
             },
             {
                 "command": "add",
                 "tag": "Communication Style",
                 "feature": "informal_speech",
-                "value": "User speaks with all lower case letters and contemporary slang terms."
+                "value": "User speaks with all lower case letters and contemporary slang terms.",
+                "entity_type": "Preference"
             },
             {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "young_adult",
-                "value": "User is young, possibly still in college"
+                "value": "User is young, possibly still in college",
+                "entity_type": "Person"
             }
         ]
         Query: Can you go through my inbox and flag any urgent emails from clients, then update the project status spreadsheet with the latest deliverable dates from those emails? Also send a quick message to my manager letting her know I'll have the budget report ready by end of day tomorrow.
@@ -119,19 +141,22 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "traditional_office_job",
-                "value": "User does clerical work, reporting to a manager"
+                "value": "User does clerical work, reporting to a manager",
+                "entity_type": "Person"
             },
             {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "client_facing_role",
-                "value": "User handles communication of deadlines to and from clients"
+                "value": "User handles communication of deadlines to and from clients",
+                "entity_type": "Person"
             },
             {
                 "command": "add",
                 "tag": "Demographic Information",
                 "feature": "autonomy_at_work",
-                "value": "User sets their own deadlines and subtasks."
+                "value": "User sets their own deadlines and subtasks.",
+                "entity_type": "Concept"
             }
         }
         Further Guidelines:
@@ -148,6 +173,45 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
         - First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON.
         - REMEMBER: Always use the command format with "command", "tag", "feature", and "value" keys. Never use nested objects or any other format.
     """
+    )
+
+
+def build_relationship_detection_prompt(*, deleted_value: str, added_value: str) -> str:
+    """Create a prompt for classifying the relationship between a deleted and added feature.
+
+    When a feature is deleted and then re-added (potentially with a different
+    value) in the same ingestion batch, this prompt asks the LLM to classify
+    whether the new value CONTRADICTS, SUPERSEDES, or is UNRELATED to the old.
+
+    Args:
+        deleted_value: The value of the deleted feature.
+        added_value: The value of the newly added feature.
+
+    Returns:
+        A system prompt string for the LLM.
+
+    """
+    return (
+        "You are a relationship classifier for a memory system.\n"
+        "Given an old feature value that was deleted and a new feature value that replaced it,\n"
+        "classify the relationship between them.\n"
+        "\n"
+        "Respond with a JSON object containing exactly two fields:\n"
+        '- "classification": one of "CONTRADICTS", "SUPERSEDES", or "UNRELATED"\n'
+        '- "confidence": a float between 0.0 and 1.0\n'
+        "\n"
+        "Definitions:\n"
+        "- CONTRADICTS: The new value directly conflicts with the old value. "
+        "They cannot both be true at the same time.\n"
+        "- SUPERSEDES: The new value is an updated or more current version of the old value. "
+        "The old value is outdated but not necessarily wrong.\n"
+        "- UNRELATED: The two values are about different aspects and do not conflict or update each other.\n"
+        "\n"
+        "Old (deleted) value:\n"
+        f"{deleted_value}\n"
+        "\n"
+        "New (added) value:\n"
+        f"{added_value}\n"
     )
 
 

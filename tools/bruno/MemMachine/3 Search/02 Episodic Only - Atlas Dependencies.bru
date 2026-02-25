@@ -1,0 +1,49 @@
+meta {
+  name: Episodic Only - Atlas Dependencies
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "Who should I talk to about Project Atlas dependencies?",
+    "top_k": 6,
+    "types": ["episodic"]
+  }
+}
+
+docs {
+  Episodic memory ONLY — shows the limitation of raw episode
+  retrieval.
+  
+  WHAT TO LOOK FOR:
+  
+  long_term_memory (vector similarity search):
+    The 5 most similar episodes by embedding distance.  All 5
+    are Atlas-specific messages (Alice, TensorFlow, Redis, Carol,
+    payment service).  Bob does NOT appear — his messages about
+    "TensorFlow optimization" and "TensorFlow performance tuning"
+    are semantically distant from "Project Atlas dependencies".
+  
+  short_term_memory (chronological window):
+    The 5 most recent messages by timestamp.  These are the last
+    messages ingested (company noise: hackathon, Ivan, GitHub
+    Actions, etc.) — completely irrelevant to the query.
+  
+  TAKEAWAY:
+    Episodic memory alone is a blunt instrument.  It finds text
+    that LOOKS similar but misses people who are relevant through
+    indirect connections.  Bob is the company's TensorFlow expert
+    but doesn't show up when you ask about Atlas's TensorFlow
+    dependency.
+}

@@ -468,9 +468,12 @@ class MemMachine:
         )
         episode_ids = [e.uid for e in episodes]
 
+        # Only dispatch genuinely new episodes to downstream pipelines.
+        new_episodes = [e for e in episodes if e.is_new]
+
         tasks = []
 
-        if MemoryType.Episodic in target_memories:
+        if new_episodes and MemoryType.Episodic in target_memories:
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
@@ -482,15 +485,15 @@ class MemMachine:
                 ),
                 metadata={},
             ) as episodic_session:
-                tasks.append(episodic_session.add_memory_episodes(episodes))
+                tasks.append(episodic_session.add_memory_episodes(new_episodes))
 
-        if MemoryType.Semantic in target_memories:
+        if new_episodes and MemoryType.Semantic in target_memories:
             semantic_session_manager = (
                 await self._resources.get_semantic_session_manager()
             )
             tasks.append(
                 semantic_session_manager.add_message(
-                    episodes=episodes,
+                    episodes=new_episodes,
                     session_data=session_data,
                 )
             )
@@ -513,6 +516,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
+        entity_types: list[str] | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -524,6 +528,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
+            entity_types: Optional entity type filter for graph-aware filtering.
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -545,6 +550,7 @@ class MemMachine:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=search_filter,
+                entity_types=entity_types,
             )
 
         return response
@@ -561,6 +567,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
+        entity_types: list[str] | None = None,
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -574,6 +581,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
+            entity_types: Optional entity type filter for graph-aware filtering.
 
         Returns:
             Aggregated search results across memory types.
@@ -592,6 +600,7 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     search_filter=property_filter,
+                    entity_types=entity_types,
                 )
             )
 

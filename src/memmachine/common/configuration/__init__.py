@@ -113,6 +113,15 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+    related_to_threshold: float = Field(
+        default=0.70,
+        description=(
+            "Cosine similarity threshold for creating RELATED_TO edges "
+            "between semantic features.  Lower values connect more features "
+            "across contexts (e.g. Bob's 'TensorFlow expert' to Atlas's "
+            "'TensorFlow 2.12 dependency'); higher values are stricter."
+        ),
+    )
 
     @model_validator(mode="after")
     def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:

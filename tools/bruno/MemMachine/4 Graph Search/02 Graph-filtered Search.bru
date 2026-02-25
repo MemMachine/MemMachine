@@ -1,0 +1,38 @@
+meta {
+  name: Graph-filtered Search
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/search/filtered
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "query": "What is Alice's favorite restaurant?",
+    "anchor_node_uid": "{{aliceNodeUid}}",
+    "max_hops": 2,
+    "direction": "outgoing"
+  }
+}
+
+docs {
+  Combines graph traversal with vector similarity search.
+
+  First, candidate nodes are narrowed via graph traversal from
+  the anchor node (max 2 hops, outgoing direction). Then,
+  similarity scoring is applied only to those candidates.
+
+  This focuses results on the Alice subgraph rather than
+  returning globally similar but unrelated memories.
+
+  Replace {{aliceNodeUid}} with the actual UID of an Alice node.
+}

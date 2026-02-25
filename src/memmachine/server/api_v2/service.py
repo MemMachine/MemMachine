@@ -106,6 +106,7 @@ async def _search_target_memories(
         score_threshold=spec.score_threshold
         if spec.score_threshold is not None
         else -float("inf"),
+        entity_types=spec.entity_types,
     )
     content = SearchResultContent(
         episodic_memory=None,

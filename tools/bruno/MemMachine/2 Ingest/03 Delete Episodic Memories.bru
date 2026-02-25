@@ -1,0 +1,34 @@
+meta {
+  name: Delete Episodic Memories
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/episodic/delete
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "episodic_ids": ["{{episodeId1}}", "{{episodeId2}}"]
+  }
+}
+
+docs {
+  Delete specific episodic memories by their IDs.
+
+  This removes episodes from the Postgres episodestore table
+  (clearing their content hashes) and from the Neo4j graph.
+  After deletion, the same messages can be re-ingested.
+
+  Replace the episodic_ids with actual UIDs returned from the
+  ingestion response or a list/search call.
+
+  Returns 204 No Content on success.
+}

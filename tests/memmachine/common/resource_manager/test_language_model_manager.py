@@ -58,6 +58,7 @@ async def test_build_open_ai_model(mock_conf):
     assert model is not None
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_build_aws_bedrock_model(mock_conf):
     builder = LanguageModelManager(mock_conf)

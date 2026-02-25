@@ -12,6 +12,10 @@ from memmachine.common.configuration.database_conf import (
 )
 from memmachine.common.resource_manager.database_manager import DatabaseManager
 from memmachine.common.vector_graph_store import VectorGraphStore
+from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
+    Neo4jVectorGraphStore,
+    Neo4jVectorGraphStoreParams,
+)
 
 
 @pytest.fixture
@@ -117,3 +121,181 @@ async def test_build_all_without_validation(mock_conf):
     assert "sqlite1" in builder.sql_engines
     assert "pg1" in builder.sql_engines
     assert "neo1" in builder.graph_stores
+
+
+# ---------------------------------------------------------------------------
+# Config forwarding tests (dedup + GDS)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dedup_config_forwarded_to_store_params():
+    """Verify dedup fields from Neo4jConf flow to Neo4jVectorGraphStoreParams."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {
+        "neo_dedup": Neo4jConf(
+            host="localhost",
+            port=7687,
+            user="neo4j",
+            password=SecretStr("pw"),
+            dedup_trigger_threshold=500,
+            dedup_embedding_threshold=0.90,
+            dedup_property_threshold=0.7,
+            dedup_auto_merge=True,
+        ),
+    }
+    conf.relational_db_confs = {}
+
+    builder = DatabaseManager(conf)
+    await builder._build_neo4j()
+
+    store = cast(Neo4jVectorGraphStore, builder.graph_stores["neo_dedup"])
+    assert store._dedup_trigger_threshold == 500
+    assert store._dedup_embedding_threshold == 0.90
+    assert store._dedup_property_threshold == 0.7
+    assert store._dedup_auto_merge is True
+
+
+@pytest.mark.asyncio
+async def test_gds_config_forwarded_to_store_params():
+    """Verify GDS fields from Neo4jConf flow to Neo4jVectorGraphStoreParams."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {
+        "neo_gds": Neo4jConf(
+            host="localhost",
+            port=7687,
+            user="neo4j",
+            password=SecretStr("pw"),
+            gds_enabled=True,
+            gds_default_damping_factor=0.9,
+            gds_default_max_iterations=30,
+        ),
+    }
+    conf.relational_db_confs = {}
+
+    builder = DatabaseManager(conf)
+    await builder._build_neo4j()
+
+    store = cast(Neo4jVectorGraphStore, builder.graph_stores["neo_gds"])
+    assert store._gds_enabled is True
+    assert store._gds_default_damping_factor == 0.9
+    assert store._gds_default_max_iterations == 30
+
+
+@pytest.mark.asyncio
+async def test_default_config_values_forwarded():
+    """Verify defaults from Neo4jConf flow through when not explicitly set."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {
+        "neo_defaults": Neo4jConf(
+            host="localhost",
+            port=7687,
+            user="neo4j",
+            password=SecretStr("pw"),
+        ),
+    }
+    conf.relational_db_confs = {}
+
+    builder = DatabaseManager(conf)
+    await builder._build_neo4j()
+
+    store = cast(Neo4jVectorGraphStore, builder.graph_stores["neo_defaults"])
+    # Dedup defaults
+    assert store._dedup_trigger_threshold == 1000
+    assert store._dedup_embedding_threshold == 0.95
+    assert store._dedup_property_threshold == 0.8
+    assert store._dedup_auto_merge is False
+    # PageRank auto defaults
+    assert store._pagerank_auto_enabled is True
+    assert store._pagerank_trigger_threshold == 50
+    # GDS defaults
+    assert store._gds_enabled is False
+    assert store._gds_default_damping_factor == 0.85
+    assert store._gds_default_max_iterations == 20
+
+
+# ---------------------------------------------------------------------------
+# GDS availability respects gds_enabled config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pagerank_auto_config_forwarded_to_store_params():
+    """Verify PageRank auto fields from Neo4jConf flow to the store."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {
+        "neo_pr": Neo4jConf(
+            host="localhost",
+            port=7687,
+            user="neo4j",
+            password=SecretStr("pw"),
+            pagerank_auto_enabled=False,
+            pagerank_trigger_threshold=200,
+        ),
+    }
+    conf.relational_db_confs = {}
+
+    builder = DatabaseManager(conf)
+    await builder._build_neo4j()
+
+    store = cast(Neo4jVectorGraphStore, builder.graph_stores["neo_pr"])
+    assert store._pagerank_auto_enabled is False
+    assert store._pagerank_trigger_threshold == 200
+
+
+@pytest.mark.asyncio
+async def test_is_gds_available_returns_false_when_disabled():
+    """is_gds_available() returns False immediately when gds_enabled=False."""
+    from neo4j import AsyncDriver
+
+    driver = AsyncMock(spec=AsyncDriver)
+    driver.execute_query = AsyncMock()
+
+    store = Neo4jVectorGraphStore(
+        Neo4jVectorGraphStoreParams(
+            driver=driver,
+            gds_enabled=False,
+        )
+    )
+    result = await store.is_gds_available()
+    assert result is False
+    # Should NOT have queried Neo4j
+    driver.execute_query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_is_gds_available_queries_when_enabled():
+    """is_gds_available() queries Neo4j when gds_enabled=True."""
+    from neo4j import AsyncDriver
+
+    driver = AsyncMock(spec=AsyncDriver)
+    # Simulate GDS not being installed
+    driver.execute_query = AsyncMock(side_effect=Exception("Unknown function"))
+
+    store = Neo4jVectorGraphStore(
+        Neo4jVectorGraphStoreParams(
+            driver=driver,
+            gds_enabled=True,
+        )
+    )
+    result = await store.is_gds_available()
+    assert result is False
+    driver.execute_query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_is_gds_available_returns_true_when_gds_installed():
+    """is_gds_available() returns True when GDS plugin responds."""
+    from neo4j import AsyncDriver
+
+    driver = AsyncMock(spec=AsyncDriver)
+    driver.execute_query = AsyncMock(return_value=([], MagicMock(), MagicMock()))
+
+    store = Neo4jVectorGraphStore(
+        Neo4jVectorGraphStoreParams(
+            driver=driver,
+            gds_enabled=True,
+        )
+    )
+    result = await store.is_gds_available()
+    assert result is True

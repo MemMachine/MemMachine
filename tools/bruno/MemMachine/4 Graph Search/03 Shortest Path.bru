@@ -1,0 +1,33 @@
+meta {
+  name: Shortest Path
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/search/shortest-path
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "source_uid": "{{aliceNodeUid}}",
+    "target_uid": "{{bobNodeUid}}",
+    "max_depth": 10
+  }
+}
+
+docs {
+  Find the shortest path between two nodes in the graph.
+
+  For the Alice/Bob example, this reveals the 2-hop connection:
+  Alice -> TensorFlow -> Bob (via WORKS_ON and USES edges).
+
+  Replace {{aliceNodeUid}} and {{bobNodeUid}} with actual node UIDs.
+}

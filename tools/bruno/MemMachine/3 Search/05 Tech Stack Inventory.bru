@@ -1,0 +1,42 @@
+meta {
+  name: Tech Stack Inventory
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "What technologies and frameworks does the company use?",
+    "top_k": 20,
+    "types": ["semantic"]
+  }
+}
+
+docs {
+  Demonstrates automatic tech inventory from unstructured
+  conversation.
+
+  WHAT TO LOOK FOR:
+  - Features with entity_type "Concept" are technologies:
+    TensorFlow, Redis, PostgreSQL, S3, Kubernetes, React,
+    GitHub Actions, PyTorch, etc.
+  - Features organized by category and tag (e.g. "Tech
+    Proficiency", "Notable Past Conversation Topics")
+  - This is a structured technology inventory extracted
+    AUTOMATICALLY from 22 casual conversation messages.
+
+  With pure vector search, you'd get back the raw messages
+  sorted by similarity — not a categorized tech inventory.
+  Feature extraction provides STRUCTURE that enables
+  downstream tooling (dashboards, audits, dependency tracking).
+}

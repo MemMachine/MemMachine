@@ -9,7 +9,7 @@ from asyncio import Lock
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, LiteralString, cast
+from typing import Any, ClassVar, LiteralString, cast
 
 import numpy as np
 from neo4j import AsyncDriver, Query
@@ -40,8 +40,20 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine.common.neo4j_utils import coerce_datetime_to_timestamp
+from memmachine.common.neo4j_utils import (
+    ENTITY_TYPE_PREFIX,
+    coerce_datetime_to_timestamp,
+    desanitize_entity_type,
+    sanitize_entity_type,
+)
 from memmachine.semantic_memory.semantic_model import SemanticFeature, SetIdT
+from memmachine.semantic_memory.storage.feature_relationship_types import (
+    ContradictionPair,
+    FeatureRelationship,
+    FeatureRelationshipType,
+    RelationshipDirection,
+    SupersessionChain,
+)
 from memmachine.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
@@ -65,6 +77,7 @@ class _FeatureEntry:
     citations: list[EpisodeIdT]
     created_at_ts: float
     updated_at_ts: float
+    entity_type: str | None = None
 
 
 def _required_str_prop(props: Mapping[str, Any], key: str) -> str:
@@ -232,6 +245,13 @@ class Neo4jSemanticStorage(SemanticStorage):
         set_label = self._set_label_for_set(set_id)
         metadata_json, metadata_props = self._prepare_metadata_storage(metadata)
 
+        # Determine entity type label from metadata if present
+        entity_type_label_clause = ""
+        entity_type_raw = (metadata or {}).get("entity_type")
+        if entity_type_raw and isinstance(entity_type_raw, str):
+            label = sanitize_entity_type(entity_type_raw)
+            entity_type_label_clause = f"\nSET f:{label}"
+
         records, _, _ = await self._driver.execute_query(
             _neo4j_query(
                 f"""
@@ -248,7 +268,10 @@ class Neo4jSemanticStorage(SemanticStorage):
                     created_at_ts: $ts,
                     updated_at_ts: $ts
                 }})
-                SET f += $metadata_props
+                SET f += $metadata_props{entity_type_label_clause}
+                WITH f
+                MATCH (s:SetEmbedding {{set_id: $set_id}})
+                MERGE (f)-[:BELONGS_TO]->(s)
                 RETURN elementId(f) AS feature_id
                 """
             ),
@@ -548,6 +571,23 @@ class Neo4jSemanticStorage(SemanticStorage):
             ts=_utc_timestamp(),
         )
 
+        # Create EXTRACTED_FROM relationships to Episode nodes
+        citation_strs = [str(h) for h in history_ids]
+        await self._driver.execute_query(
+            _neo4j_query(
+                f"""
+                MATCH (f:Feature)
+                WHERE {self._feature_id_condition()}
+                UNWIND $citation_ids AS cid
+                MATCH (e {{uid: cid}})
+                WHERE any(label IN labels(e) WHERE label STARTS WITH 'SANITIZED_Episode')
+                MERGE (f)-[:EXTRACTED_FROM]->(e)
+                """
+            ),
+            feature_id=str(feature_id),
+            citation_ids=citation_strs,
+        )
+
     async def get_history_messages(
         self,
         *,
@@ -683,13 +723,29 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def add_history_to_set(self, set_id: str, history_id: EpisodeIdT) -> None:
         await self._driver.execute_query(
             """
+            MERGE (s:SetEmbedding {set_id: $set_id})
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
             ON CREATE SET h.is_ingested = false,
                           h.created_at = $created_at
+            MERGE (h)-[:HAS_HISTORY]->(s)
             """,
             set_id=set_id,
             history_id=str(history_id),
             created_at=datetime.now(UTC),
+        )
+
+        # Create REFERENCES_EPISODE relationship to the source Episode node
+        await self._driver.execute_query(
+            _neo4j_query(
+                """
+                MATCH (h:SetHistory {set_id: $set_id, history_id: $history_id})
+                MATCH (e {uid: $history_id})
+                WHERE any(label IN labels(e) WHERE label STARTS WITH 'SANITIZED_Episode')
+                MERGE (h)-[:REFERENCES_EPISODE]->(e)
+                """
+            ),
+            set_id=set_id,
+            history_id=str(history_id),
         )
 
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
@@ -766,6 +822,15 @@ class Neo4jSemanticStorage(SemanticStorage):
         embedding = np.array(props.get("embedding", []), dtype=float)
         citations = [EpisodeIdT(cid) for cid in props.get("citations", [])]
         metadata = self._parse_metadata(props)
+
+        # Extract entity type from Neo4j labels
+        entity_type: str | None = None
+        labels = getattr(node, "labels", None) or frozenset()
+        for label in labels:
+            if label.startswith(ENTITY_TYPE_PREFIX):
+                entity_type = desanitize_entity_type(label)
+                break
+
         return _FeatureEntry(
             feature_id=feature_id,
             set_id=_required_str_prop(props, "set_id"),
@@ -778,6 +843,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             citations=citations,
             created_at_ts=float(props.get("created_at_ts", 0.0)),
             updated_at_ts=float(props.get("updated_at_ts", 0.0)),
+            entity_type=entity_type,
         )
 
     @staticmethod
@@ -845,6 +911,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             tag=entry.tag,
             feature_name=entry.feature_name,
             value=entry.value,
+            entity_type=entry.entity_type,
             metadata=SemanticFeature.Metadata(
                 id=entry.feature_id,
                 citations=citations,
@@ -1079,6 +1146,60 @@ class Neo4jSemanticStorage(SemanticStorage):
             return condition, inner_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
+    def _render_comparison_condition(
+        self,
+        field_ref: str,
+        expr: FilterComparison,
+        value_adapter: Callable[[FilterablePropertyValue], Any] | None,
+    ) -> tuple[str, dict[str, Any]]:
+        op = expr.op
+        params: dict[str, Any] = {}
+
+        if op == "in":
+            if not isinstance(expr.value, list):
+                raise ValueError("IN comparison requires a list of values")
+            param = self._next_filter_param()
+            adapted_values = (
+                [self._adapt_filter_value(v, value_adapter) for v in expr.value]
+                if value_adapter is not None
+                else expr.value
+            )
+            return f"{field_ref} IN ${param}", {param: adapted_values}
+
+        if op in (">", "<", ">=", "<=", "="):
+            if isinstance(expr.value, list):
+                raise ValueError(f"'{op}' comparison cannot accept list values")
+            param = self._next_filter_param()
+            adapted_value = (
+                self._adapt_filter_value(expr.value, value_adapter)
+                if value_adapter is not None
+                else expr.value
+            )
+            return f"{field_ref} {op} ${param}", {param: adapted_value}
+
+        if op == "is_null":
+            return f"{field_ref} IS NULL", params
+
+        if op == "is_not_null":
+            return f"{field_ref} IS NOT NULL", params
+
+        raise ValueError(f"Unsupported operator: {op}")
+
+    # Map filter field names (used by callers like semantic_ingestion) to the
+    # actual Neo4j property names stored on Feature nodes.  Mirrors the alias
+    # table in the SQLAlchemy backend so that the same FilterExpr works against
+    # both storage implementations.
+    _FIELD_ALIASES: ClassVar[dict[str, str]] = {
+        "category": "category_name",
+        "category_name": "category_name",
+        "feature_name": "feature",
+        "feature": "feature",
+        "set": "set_id",
+        "set_id": "set_id",
+        "tag": "tag",
+        "value": "value",
+    }
+
     def _resolve_field_reference(
         self,
         alias: str,
@@ -1092,7 +1213,8 @@ class Neo4jSemanticStorage(SemanticStorage):
             key = field.split(".", 1)[1]
             prop_name = self._metadata_property_name(key)
             return f"{alias}.{prop_name}", None
-        return f"{alias}.{field}", None
+        prop = self._FIELD_ALIASES.get(field, field)
+        return f"{alias}.{prop}", None
 
     def _next_filter_param(self) -> str:
         self._filter_param_counter += 1
@@ -1367,3 +1489,274 @@ class Neo4jSemanticStorage(SemanticStorage):
         ):
             record["embedding_dimensions"] = record["resolved_dimensions"]
         return record
+
+    # ------------------------------------------------------------------
+    # Feature Relationship CRUD (SemanticRelationshipStorage protocol)
+    # ------------------------------------------------------------------
+
+    _VALID_RELATIONSHIP_SOURCES = frozenset({"llm", "rule", "manual"})
+
+    async def add_feature_relationship(
+        self,
+        *,
+        source_id: FeatureIdT,
+        target_id: FeatureIdT,
+        relationship_type: FeatureRelationshipType,
+        confidence: float,
+        source: str,
+        similarity: float | None = None,
+    ) -> None:
+        """Create a typed relationship between two feature nodes."""
+        if not isinstance(relationship_type, FeatureRelationshipType):
+            raise TypeError(
+                f"relationship_type must be a FeatureRelationshipType, "
+                f"got {type(relationship_type).__name__}"
+            )
+        # Clamp to [0, 1] — cosine similarity can produce values like
+        # 1.0000000000000002 due to floating-point arithmetic.
+        confidence = max(0.0, min(1.0, confidence))
+        if similarity is not None:
+            similarity = max(0.0, min(1.0, similarity))
+        if source not in self._VALID_RELATIONSHIP_SOURCES:
+            raise ValueError(
+                f"source must be one of {self._VALID_RELATIONSHIP_SOURCES}, "
+                f"got {source!r}"
+            )
+
+        rel_type = relationship_type.value
+        src_cond = self._feature_id_condition(alias="src", param="src_id")
+        tgt_cond = self._feature_id_condition(alias="tgt", param="tgt_id")
+
+        # Write ``similarity`` only for semantically meaningful
+        # cross-feature-name edges.  Same-name edges get
+        # ``similarity = NULL`` which the path-quality Cypher in
+        # ``neo4j_vector_graph_store`` treats as quality 0.0,
+        # effectively filtering trivial connections from traversal
+        # scoring.
+        similarity_clause = (
+            "    r.similarity = $similarity,\n" if similarity is not None else ""
+        )
+
+        await self._driver.execute_query(
+            _neo4j_query(
+                f"MATCH (src:Feature) WHERE {src_cond}\n"
+                f"MATCH (tgt:Feature) WHERE {tgt_cond}\n"
+                f"MERGE (src)-[r:{rel_type}]->(tgt)\n"
+                "SET r.confidence = $confidence,\n"
+                f"{similarity_clause}"
+                "    r.detected_at = datetime(),\n"
+                "    r.source = $source"
+            ),
+            src_id=str(source_id),
+            tgt_id=str(target_id),
+            confidence=confidence,
+            source=source,
+            **({"similarity": similarity} if similarity is not None else {}),
+        )
+
+    async def get_feature_relationships(
+        self,
+        feature_id: FeatureIdT,
+        *,
+        relationship_type: FeatureRelationshipType | None = None,
+        direction: RelationshipDirection = RelationshipDirection.BOTH,
+        min_confidence: float | None = None,
+    ) -> list[FeatureRelationship]:
+        """Retrieve relationships for a given feature."""
+        feat_cond = self._feature_id_condition(alias="f", param="fid")
+
+        # Build relationship type filter.
+        rel_types = (
+            [relationship_type.value]
+            if relationship_type is not None
+            else [rt.value for rt in FeatureRelationshipType]
+        )
+        rel_type_pattern = "|".join(rel_types)
+
+        # Build direction-aware queries.
+        queries: list[tuple[str, str, str]] = []  # (query, source_alias, target_alias)
+        if direction in (RelationshipDirection.OUTGOING, RelationshipDirection.BOTH):
+            queries.append(
+                (
+                    f"MATCH (f:Feature)-[r:{rel_type_pattern}]->(other:Feature)\n"
+                    f"WHERE {feat_cond}",
+                    "f",
+                    "other",
+                )
+            )
+        if direction in (RelationshipDirection.INCOMING, RelationshipDirection.BOTH):
+            queries.append(
+                (
+                    f"MATCH (other:Feature)-[r:{rel_type_pattern}]->(f:Feature)\n"
+                    f"WHERE {feat_cond}",
+                    "other",
+                    "f",
+                )
+            )
+
+        confidence_filter = ""
+        if min_confidence is not None:
+            confidence_filter = "AND r.confidence >= $min_confidence\n"
+
+        results: list[FeatureRelationship] = []
+        seen: set[tuple[str, str, str]] = set()  # dedup (src_id, tgt_id, type)
+
+        for match_clause, src_alias, tgt_alias in queries:
+            query = (
+                f"{match_clause}\n"
+                f"{confidence_filter}"
+                f"RETURN elementId({src_alias}) AS src_id, "
+                f"elementId({tgt_alias}) AS tgt_id, "
+                "type(r) AS rel_type, r.confidence AS confidence, "
+                "r.detected_at AS detected_at, r.source AS source"
+            )
+
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(query),
+                fid=str(feature_id),
+                min_confidence=min_confidence,
+            )
+
+            for rec in records:
+                key = (rec["src_id"], rec["tgt_id"], rec["rel_type"])
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                detected_at_raw = rec["detected_at"]
+                if hasattr(detected_at_raw, "to_native"):
+                    detected_at = detected_at_raw.to_native()
+                else:
+                    detected_at = detected_at_raw
+
+                results.append(
+                    FeatureRelationship(
+                        source_id=FeatureIdT(str(rec["src_id"])),
+                        target_id=FeatureIdT(str(rec["tgt_id"])),
+                        relationship_type=FeatureRelationshipType(rec["rel_type"]),
+                        confidence=float(rec["confidence"]),
+                        detected_at=detected_at,
+                        source=str(rec["source"]),
+                    )
+                )
+
+        return results
+
+    async def delete_feature_relationships(
+        self,
+        *,
+        source_id: FeatureIdT,
+        target_id: FeatureIdT,
+        relationship_type: FeatureRelationshipType,
+    ) -> None:
+        """Delete a specific relationship between two features (idempotent)."""
+        rel_type = relationship_type.value
+        src_cond = self._feature_id_condition(alias="src", param="src_id")
+        tgt_cond = self._feature_id_condition(alias="tgt", param="tgt_id")
+
+        await self._driver.execute_query(
+            _neo4j_query(
+                f"MATCH (src:Feature)-[r:{rel_type}]->(tgt:Feature)\n"
+                f"WHERE {src_cond} AND {tgt_cond}\n"
+                "DELETE r"
+            ),
+            src_id=str(source_id),
+            tgt_id=str(target_id),
+        )
+
+    async def find_contradictions(
+        self,
+        *,
+        set_id: SetIdT,
+    ) -> list[ContradictionPair]:
+        """Find all CONTRADICTS relationships within a feature set."""
+        records, _, _ = await self._driver.execute_query(
+            _neo4j_query(
+                "MATCH (a:Feature)-[r:CONTRADICTS]->(b:Feature)\n"
+                "WHERE a.set_id = $set_id AND b.set_id = $set_id\n"
+                "RETURN elementId(a) AS id_a, elementId(b) AS id_b, "
+                "r.confidence AS confidence, r.detected_at AS detected_at, "
+                "r.source AS source"
+            ),
+            set_id=str(set_id),
+        )
+
+        results: list[ContradictionPair] = []
+        for rec in records:
+            detected_at_raw = rec["detected_at"]
+            if hasattr(detected_at_raw, "to_native"):
+                detected_at = detected_at_raw.to_native()
+            else:
+                detected_at = detected_at_raw
+
+            results.append(
+                ContradictionPair(
+                    feature_id_a=FeatureIdT(str(rec["id_a"])),
+                    feature_id_b=FeatureIdT(str(rec["id_b"])),
+                    confidence=float(rec["confidence"]),
+                    detected_at=detected_at,
+                    source=str(rec["source"]),
+                )
+            )
+
+        return results
+
+    async def find_supersession_chain(
+        self,
+        feature_id: FeatureIdT,
+    ) -> SupersessionChain:
+        """Traverse the SUPERSEDES chain from a feature.
+
+        Returns the most current (newest) version and the full chain
+        from newest to oldest.
+        """
+        feat_cond = self._feature_id_condition(alias="start", param="fid")
+
+        # Follow SUPERSEDES chain forward (start supersedes ... supersedes end)
+        # to find the full chain. The start is the newest.
+        records, _, _ = await self._driver.execute_query(
+            _neo4j_query(
+                f"MATCH (start:Feature) WHERE {feat_cond}\n"
+                "OPTIONAL MATCH path = (start)-[:SUPERSEDES*]->(older:Feature)\n"
+                "WITH start, path, older\n"
+                "ORDER BY CASE WHEN path IS NULL THEN 0 "
+                "ELSE length(path) END ASC\n"
+                "RETURN elementId(start) AS start_id, "
+                "collect(DISTINCT elementId(older)) AS older_ids"
+            ),
+            fid=str(feature_id),
+        )
+
+        if not records:
+            # Feature not found; return a single-element chain.
+            return SupersessionChain(
+                current=feature_id,
+                chain=[feature_id],
+            )
+
+        start_id = FeatureIdT(str(records[0]["start_id"]))
+        older_ids_raw = records[0]["older_ids"]
+        older_ids = [FeatureIdT(str(oid)) for oid in older_ids_raw if oid is not None]
+
+        # Also check if something supersedes *this* feature (i.e., this
+        # feature is an older version).  Walk backwards.
+        records2, _, _ = await self._driver.execute_query(
+            _neo4j_query(
+                f"MATCH (start:Feature) WHERE {feat_cond}\n"
+                "OPTIONAL MATCH path = (newer:Feature)-[:SUPERSEDES*]->(start)\n"
+                "WITH start, newer, path\n"
+                "ORDER BY CASE WHEN path IS NULL THEN 0 "
+                "ELSE length(path) END DESC\n"
+                "RETURN collect(DISTINCT elementId(newer)) AS newer_ids"
+            ),
+            fid=str(feature_id),
+        )
+
+        newer_ids_raw = records2[0]["newer_ids"] if records2 else []
+        newer_ids = [FeatureIdT(str(nid)) for nid in newer_ids_raw if nid is not None]
+
+        # Full chain: newest ... this feature ... oldest
+        chain = [*newer_ids, start_id, *older_ids]
+        current = chain[0] if chain else feature_id
+
+        return SupersessionChain(current=current, chain=chain)

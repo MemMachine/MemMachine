@@ -14,7 +14,7 @@ RUN apt-get update && \
 RUN python -m pip install --upgrade pip
 
 # Copy uv binary from the source image INTO the builder stage
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+COPY --from=docker.io/astral/uv:latest /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 

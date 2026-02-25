@@ -1,0 +1,353 @@
+---
+title: "A: Baseline -- Vector Store"
+description: "Configure Neo4j as a flat vector store without knowledge graph features"
+icon: "magnifying-glass"
+---
+
+## Goal
+
+This approach uses Neo4j the way it was used **before** the knowledge
+graph enhancements: as a flat vector store. Nodes have embeddings, and
+retrieval is pure cosine similarity. No entity type filtering, no
+multi-hop traversal, no relationship enrichment, no PageRank re-ranking.
+
+This gives us a clean baseline to measure against the
+[graph-enhanced approach](/open_source/graph_experiment_enhanced).
+
+<Warning>
+  Complete the [shared setup](/open_source/graph_experiment) before
+  following this page. You need Docker Compose running and the LoCoMo
+  data ingested.
+</Warning>
+
+---
+
+## Configuration
+
+The key to the baseline approach is a `configuration.yml` that
+explicitly **disables** all knowledge graph features. Even though the
+Neo4j container has GDS installed, MemMachine will not use it.
+
+### Full baseline `configuration.yml`
+
+Create (or replace) the `configuration.yml` in the repo root:
+
+```yaml
+# configuration.yml -- Baseline: Neo4j as vector store only
+#
+# This configuration disables all knowledge graph enhancements.
+# Neo4j is used purely for vector similarity search.
+
+logging:
+  path: memmachine.log
+  level: info
+
+episode_store:
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    vector_graph_store: neo4j_store
+    embedder: openai_embedder
+    reranker: rrf_reranker
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 64000
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: neo4j_store
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: ${POSTGRES_HOST:-postgres}
+        port: 5432
+        user: ${POSTGRES_USER:-memmachine}
+        db_name: ${POSTGRES_DB:-memmachine}
+        password: $POSTGRES_PASSWORD
+
+    neo4j_store:
+      provider: neo4j
+      config:
+        host: ${NEO4J_HOST:-neo4j}
+        port: 7687
+        user: ${NEO4J_USER:-neo4j}
+        password: $NEO4J_PASSWORD
+
+        # =============================================
+        # BASELINE: all graph features disabled
+        # =============================================
+
+        # GDS plugin features (PageRank, Louvain) OFF
+        gds_enabled: false
+
+        # Automatic PageRank after ingestion OFF
+        pagerank_auto_enabled: false
+
+        # Deduplication effectively disabled
+        # (threshold so high it never triggers)
+        dedup_trigger_threshold: 999999
+
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: $OPENAI_API_KEY
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: $OPENAI_API_KEY
+        base_url: "https://api.openai.com/v1"
+
+  rerankers:
+    rrf_reranker:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker
+          - bm_ranker
+    id_ranker:
+      provider: "identity"
+    bm_ranker:
+      provider: "bm25"
+```
+
+### What each setting does
+
+<AccordionGroup>
+  <Accordion title="gds_enabled: false">
+    This is the primary toggle. When `false`, MemMachine will **not**
+    call any Graph Data Science procedures, even if the GDS plugin is
+    installed in Neo4j.
+
+    Disabled capabilities:
+    - PageRank computation
+    - Louvain community detection
+    - Betweenness centrality
+
+    The `/api/v2/memories/graph/analytics/*` endpoints will return
+    `501 Not Implemented`.
+  </Accordion>
+  <Accordion title="pagerank_auto_enabled: false">
+    Even with `gds_enabled: false`, this flag is worth setting
+    explicitly. When `true` (the default), the system would **attempt**
+    to compute PageRank after every `add_nodes()` batch -- and fail
+    because GDS is disabled. Setting it to `false` avoids the attempt
+    entirely.
+  </Accordion>
+  <Accordion title="dedup_trigger_threshold: 999999">
+    The default threshold is `1000` nodes. In a baseline experiment you
+    want **no** background deduplication logic running. Setting this to
+    a very high value ensures the dedup task never triggers.
+
+    Alternatively, you could leave it at the default -- dedup detection
+    still runs but only creates `SAME_AS` proposals (since
+    `dedup_auto_merge` defaults to `false`). However, disabling it
+    entirely removes a variable from the experiment.
+  </Accordion>
+</AccordionGroup>
+
+### Restart with the new config
+
+After saving `configuration.yml`, restart the MemMachine container so
+it picks up the changes:
+
+```sh
+docker compose restart memmachine
+```
+
+Verify the config took effect:
+
+```sh
+curl -s http://localhost:8080/api/v2/health | python -m json.tool
+```
+
+---
+
+## How Baseline Retrieval Works
+
+With this configuration, the retrieval pipeline is straightforward:
+
+```text
+Query text
+    |
+    v
+Embed query (text-embedding-3-small)
+    |
+    v
+Neo4j ANN vector index (cosine similarity)
+    |
+    v
+Top-k results ranked by similarity score
+```
+
+1. The query text is embedded using the configured embedding model.
+2. Neo4j's vector index returns the top-k nearest neighbors by cosine
+   similarity.
+3. Results pass through the reranker (RRF hybrid of identity + BM25).
+4. Final results are returned ranked by blended score.
+
+There is **no** graph traversal, **no** entity type filtering, and
+**no** relationship enrichment in this pipeline.
+
+---
+
+## Run Baseline Searches
+
+### Via REST API
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is Alice'\''s favorite restaurant?",
+    "top_k": 10
+  }' | python -m json.tool
+```
+
+### Via Python SDK
+
+```python
+from memmachine import MemMachineClient
+
+client = MemMachineClient(base_url="http://localhost:8080")
+
+results = client.search_memories(
+    query="What is Alice's favorite restaurant?",
+    top_k=10,
+)
+
+for r in results:
+    print(f"[{r.score:.3f}] {r.memory}")
+```
+
+### What to observe
+
+- Results are ranked **purely by embedding cosine similarity**.
+- No awareness of entity types (Person, Location, etc.).
+- No traversal of relationships between memories.
+- A query about "Alice's favorite restaurant" may return unrelated
+  memories that happen to share similar vocabulary.
+- Multi-hop connections (e.g., Alice -> Project Atlas -> TensorFlow
+  -> Bob) are invisible.
+
+---
+
+## Run the Evaluation
+
+Use the LoCoMo evaluation harness to capture baseline scores:
+
+```sh
+cd evaluation/locomo/episodic_memory
+
+# 1. Search all questions (writes results to file)
+python search.py \
+  --data ../locomo10.json \
+  --config ../locomo_config.yaml \
+  --output baseline_results.json
+
+# 2. Evaluate against ground truth
+python evaluate.py \
+  --data ../locomo10.json \
+  --config ../locomo_config.yaml \
+  --results baseline_results.json
+
+# 3. Generate scores
+python score.py \
+  --config ../locomo_config.yaml \
+  --results baseline_results.json
+```
+
+<Tip>
+  Save the output scores -- you will need them for the
+  [comparison page](/open_source/graph_experiment_comparison).
+</Tip>
+
+### Expected baseline behavior
+
+| Question type | Expected behavior |
+|---------------|-------------------|
+| **Single-hop** | Good -- direct similarity matches well ("What is Alice's job?" finds the memory about Alice's role) |
+| **Multi-hop** | Weak -- no path traversal, so indirect connections are missed ("Who should I ask about Project Atlas dependencies?" misses Bob) |
+| **Temporal** | Moderate -- embeddings capture some temporal language, but no supersession chain resolution |
+| **Contradiction** | None -- conflicting facts are returned with equal confidence, no annotation |
+| **Open-domain** | Moderate -- relies entirely on embedding quality |
+
+---
+
+## Understanding the Limitations
+
+### The Bob Problem
+
+The test dataset contains 22 memories about a team and their projects.
+Key memories include:
+
+- _"Alice is the tech lead on Project Atlas"_
+- _"Project Atlas uses TensorFlow as the foundation of its machine learning pipeline"_
+- _"Project Atlas depends on Redis for caching and session management"_
+- _"Bob specializes in TensorFlow optimization and has contributed to its open-source repository"_
+- _"Bob presented a talk on TensorFlow performance tuning at the last engineering all-hands"_
+
+A baseline query **"Who should I talk to about Project Atlas
+dependencies?"** returns:
+
+```text
+Results (vector similarity + reranker):
+  1. "Alice is the tech lead on Project Atlas"                    score: 0.0320
+  2. "Project Atlas depends on Redis for caching..."              score: 0.0318
+  3. "Project Atlas integrates with the payment processing..."    score: 0.0315
+  4. "Project Atlas uses TensorFlow as the foundation..."         score: 0.0313
+  5. "Carol wrote all the technical documentation..."             score: 0.0310
+```
+
+**Bob is missing.** His memories never mention "Project Atlas" or
+"dependencies" -- the embeddings are too distant from the query. Every
+result directly contains the words "Project Atlas." The semantic
+connection through TensorFlow is invisible to vector search:
+
+```text
+Bob --[specializes in]--> TensorFlow <--[uses as ML pipeline]-- Project Atlas
+```
+
+### No structural importance
+
+All memories are treated equally. The scores are tightly clustered
+(0.031 -- 0.032) because they all share similar vocabulary with the
+query. Alice -- who is the most connected person in the graph -- gets
+no meaningful advantage. Bob -- the TensorFlow expert who could
+actually help with Atlas's ML pipeline dependencies -- is entirely
+absent.
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="B: Graph-Enhanced"
+    icon="diagram-project"
+    href="/open_source/graph_experiment_enhanced"
+  >
+    Run the same experiment with knowledge graph features enabled
+  </Card>
+  <Card
+    title="Compare Results"
+    icon="scale-balanced"
+    href="/open_source/graph_experiment_comparison"
+  >
+    Evaluate both approaches side by side
+  </Card>
+</CardGroup>

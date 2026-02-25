@@ -1,0 +1,54 @@
+meta {
+  name: The Bob Problem (Graph vs Vector)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "Who should I talk to about Project Atlas dependencies?",
+    "top_k": 8
+  }
+}
+
+docs {
+  THE KILLER DEMO — "The Bob Problem"
+  
+  Bob is a TensorFlow expert but NONE of his messages mention
+  "Project Atlas" or "dependencies".  His only connection to
+  Atlas is through TensorFlow — which Atlas uses as an ML
+  pipeline dependency.
+  
+  WHAT TO LOOK FOR in the response:
+  
+  episodic_memory.long_term_memory (vector search):
+    Returns the 5 most similar episodes.  With 22+ messages in
+    the corpus, all 5 slots fill with messages that DIRECTLY
+    mention "Project Atlas": Alice (tech lead), TensorFlow
+    pipeline, Redis, Carol (docs), payment microservice.
+    → Bob is NOT here.
+  
+  semantic_memory (feature extraction):
+    Returns structured features extracted from ALL messages.
+    Bob's TensorFlow expertise surfaces as extracted features
+    (lead_engineer, specialization, presentation_on_tensorflow).
+    → Bob IS here, via structured knowledge.
+  
+  This demonstrates the core advantage: raw vector search on
+  episodic text misses indirect connections.  Feature extraction
+  into the knowledge graph captures structured relationships
+  that bridge the gap.
+  
+  Compare with "02 Episodic Only" and "03 Semantic Only" to
+  see each memory type's contribution separately.
+}

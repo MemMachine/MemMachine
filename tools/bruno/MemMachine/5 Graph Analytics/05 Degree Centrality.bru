@@ -1,0 +1,34 @@
+meta {
+  name: Degree Centrality
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/analytics/degree-centrality
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "limit": 20
+  }
+}
+
+docs {
+  Compute degree centrality (in-degree, out-degree, total)
+  for nodes in the collection, sorted by total degree.
+
+  Nodes with high degree are well-connected hubs. For the
+  Alice/Bob/Atlas example, Alice and Project Atlas should
+  have the highest degree since they participate in the
+  most relationships.
+
+  Does not require GDS — uses plain Cypher aggregation.
+}

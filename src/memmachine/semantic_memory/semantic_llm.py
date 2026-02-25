@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Literal
 
 from pydantic import (
     BaseModel,
@@ -82,6 +83,7 @@ class LLMReducedFeature(BaseModel):
     tag: str
     feature: str
     value: str
+    entity_type: str | None = None
 
 
 class SemanticConsolidateMemoryRes(BaseModel):
@@ -112,3 +114,42 @@ async def llm_consolidate_features(
         parsed_output,
     )
     return validated_output
+
+
+class RelationshipClassification(BaseModel):
+    """Structured LLM classification of the relationship between two features."""
+
+    classification: Literal["CONTRADICTS", "SUPERSEDES", "UNRELATED"]
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+@validate_call
+async def llm_classify_relationship(
+    *,
+    deleted_value: str,
+    added_value: str,
+    model: InstanceOf[LanguageModel],
+) -> RelationshipClassification | None:
+    """Ask the LLM to classify the relationship between a deleted and added feature.
+
+    Returns ``None`` when the model returns an unparseable response.
+    """
+    from memmachine.semantic_memory.util.semantic_prompt_template import (
+        build_relationship_detection_prompt,
+    )
+
+    system_prompt = build_relationship_detection_prompt(
+        deleted_value=deleted_value,
+        added_value=added_value,
+    )
+
+    parsed_output = await model.generate_parsed_response(
+        system_prompt=system_prompt,
+        user_prompt="Classify the relationship between the old and new values.",
+        output_format=RelationshipClassification,
+    )
+
+    if parsed_output is None:
+        return None
+
+    return TypeAdapter(RelationshipClassification).validate_python(parsed_output)

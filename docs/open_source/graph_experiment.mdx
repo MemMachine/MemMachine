@@ -1,0 +1,244 @@
+---
+title: "Retrieval Experiment"
+description: "Compare baseline vector search against graph-enhanced retrieval"
+icon: "flask"
+---
+
+## Overview
+
+This experiment compares two retrieval approaches on the same dataset to
+measure the impact of knowledge graph features on retrieval quality:
+
+<CardGroup cols={2}>
+  <Card
+    title="Baseline: Vector Store"
+    icon="magnifying-glass"
+    href="/open_source/graph_experiment_baseline"
+  >
+    Neo4j used as a flat vector store. Retrieval is pure cosine
+    similarity -- embed the query, find nearest neighbors. No graph
+    traversal, no entity types, no relationship enrichment.
+  </Card>
+  <Card
+    title="Graph-Enhanced"
+    icon="diagram-project"
+    href="/open_source/graph_experiment_enhanced"
+  >
+    The same Neo4j instance with knowledge graph features enabled:
+    entity type labels, multi-hop traversal, graph-filtered search,
+    semantic relationships, and PageRank re-ranking.
+  </Card>
+</CardGroup>
+
+Both approaches use the same embeddings, the same data, and the same
+MemMachine server. The only difference is the `configuration.yml` and
+which retrieval endpoints are called.
+
+After running both approaches, the
+[comparison page](/open_source/graph_experiment_comparison) evaluates
+them against ground truth using the LoCoMo benchmark.
+
+---
+
+## Shared Prerequisites
+
+Everything below applies to **both** experiment approaches. Complete this
+setup once, then follow the approach-specific pages.
+
+<Steps>
+<Step title="Clone the repository">
+
+```sh
+git clone https://github.com/MemMachine/MemMachine.git
+cd MemMachine
+```
+
+</Step>
+<Step title="Set environment variables">
+
+Copy the sample environment file and fill in your API key:
+
+```sh
+cp sample_configs/env.dockercompose .env
+```
+
+Edit `.env` and set at minimum:
+
+```sh
+OPENAI_API_KEY=sk-...          # required for embeddings and LLM
+POSTGRES_PASSWORD=memmachine_password
+NEO4J_PASSWORD=neo4j_password
+```
+
+</Step>
+<Step title="Start the infrastructure">
+
+```sh
+docker compose up -d
+```
+
+This starts four services:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| `postgres` | 5432 | Episode store, session manager, profile storage |
+| `neo4j` | 7687 (Bolt), 7474 (HTTP) | Vector graph store, semantic storage |
+| `memmachine` | 8080 | REST API server |
+| `docs` | 3000 | Documentation (optional) |
+
+<Note>
+  The default `docker-compose.yml` installs Neo4j **with** the APOC and
+  Graph Data Science plugins. Both experiment approaches use the same
+  Neo4j container -- the difference is entirely in the MemMachine
+  configuration and which API endpoints you call.
+</Note>
+
+Wait for all health checks to pass:
+
+```sh
+docker compose ps   # all services should show "healthy"
+```
+
+</Step>
+<Step title="Verify the server is running">
+
+```sh
+curl http://localhost:8080/api/v2/health
+```
+
+You should see a JSON response with `"status": "ok"`.
+
+</Step>
+<Step title="Verify Neo4j is reachable">
+
+Open the Neo4j browser at [http://localhost:7474](http://localhost:7474)
+and log in with `neo4j` / `neo4j_password` (or whatever you set in
+`.env`). Run a quick check:
+
+```cypher
+RETURN 1 AS ok
+```
+
+</Step>
+</Steps>
+
+---
+
+## Experiment Dataset
+
+Both approaches use the same conversation data. The **LoCoMo** benchmark
+dataset works well because it contains multi-hop, temporal, and
+single-hop questions with ground-truth answers -- exactly the scenarios
+where graph structure should make a difference.
+
+### Ingest the data
+
+```sh
+# From the repo root
+cd evaluation/locomo/episodic_memory
+
+python ingest.py \
+  --data ../locomo10.json \
+  --config ../locomo_config.yaml
+```
+
+This creates memories in the `universal/universal` collection. Each
+conversation turn becomes an episodic memory node in Neo4j with an
+embedding vector, and semantic features are extracted into the semantic
+layer.
+
+<Tip>
+  You can inspect the ingested data in the Neo4j browser:
+
+  ```cypher
+  MATCH (n) RETURN labels(n), count(n) ORDER BY count(n) DESC
+  ```
+</Tip>
+
+---
+
+## Infrastructure Reference
+
+### Docker Compose services
+
+The `docker-compose.yml` in the repository root defines all services.
+The key Neo4j settings are:
+
+```yaml
+# docker-compose.yml (excerpt)
+neo4j:
+  image: neo4j:5.23-community
+  environment:
+    NEO4J_AUTH: neo4j/neo4j_password
+    NEO4J_PLUGINS: '["apoc", "graph-data-science"]'
+    NEO4J_server_memory_heap_initial__size: 512m
+    NEO4J_server_memory_heap_max__size: 1G
+```
+
+The GDS plugin is always **installed** in the container. Whether
+MemMachine actually **uses** GDS features depends on the
+`gds_enabled` flag in `configuration.yml` -- which is what the two
+experiment approaches toggle.
+
+### MemMachine configuration file
+
+The MemMachine container mounts `./configuration.yml` from the repo
+root. Each experiment approach provides a specific configuration file
+that controls how Neo4j is used.
+
+### Environment variable reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | -- | Required for embeddings and LLM |
+| `NEO4J_HOST` | `neo4j` | Neo4j hostname (Docker service name) |
+| `NEO4J_PORT` | `7687` | Neo4j Bolt port |
+| `NEO4J_USER` | `neo4j` | Neo4j username |
+| `NEO4J_PASSWORD` | `neo4j_password` | Neo4j password |
+| `POSTGRES_HOST` | `postgres` | PostgreSQL hostname |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_USER` | `memmachine` | PostgreSQL username |
+| `POSTGRES_PASSWORD` | `memmachine_password` | PostgreSQL password |
+| `MEMORY_CONFIG` | `/app/configuration.yml` | Path to the config file inside the container |
+
+---
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card
+    title="A: Baseline"
+    icon="magnifying-glass"
+    href="/open_source/graph_experiment_baseline"
+  >
+    Run the vector-only retrieval experiment
+  </Card>
+  <Card
+    title="B: Graph-Enhanced"
+    icon="diagram-project"
+    href="/open_source/graph_experiment_enhanced"
+  >
+    Run the knowledge-graph retrieval experiment
+  </Card>
+  <Card
+    title="Compare Results"
+    icon="scale-balanced"
+    href="/open_source/graph_experiment_comparison"
+  >
+    Evaluate both approaches side by side
+  </Card>
+</CardGroup>
+
+---
+
+## Cleanup
+
+Remove the experiment data when finished:
+
+```sh
+# Stop all services
+docker compose down
+
+# Remove volumes (deletes all data)
+docker compose down -v
+```

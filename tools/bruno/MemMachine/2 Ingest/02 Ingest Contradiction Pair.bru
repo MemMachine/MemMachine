@@ -1,0 +1,50 @@
+meta {
+  name: Ingest Contradiction Pair
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "messages": [
+      {
+        "content": "The Atlas team is planning to migrate from TensorFlow to PyTorch next quarter",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "After running performance benchmarks, the team decided to continue using TensorFlow for Atlas",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      }
+    ]
+  }
+}
+
+docs {
+  Ingest two contradictory statements about the TensorFlow → PyTorch
+  migration.  These are ingested AFTER the core dataset so that:
+
+  1. Semantic feature extraction detects the CONTRADICTS relationship
+     between the two features (one says "migrate to PyTorch", the
+     other says "continue with TensorFlow").
+
+  2. The SUPERSEDES chain resolves to the most recent statement,
+     so search results automatically prefer the latest decision.
+
+  After ingestion, wait ~10 seconds for feature extraction, then use:
+  - "6 Graph Relationships / 04 Find Contradictions" to see the pair
+  - "3 Search / 01" to see how search handles the conflict
+}

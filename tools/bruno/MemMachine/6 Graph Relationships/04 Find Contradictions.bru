@@ -1,0 +1,32 @@
+meta {
+  name: Find Contradictions
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/contradictions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "set_id": "universal/universal"
+  }
+}
+
+docs {
+  Detect contradictions within a semantic feature set.
+
+  Returns pairs of features that have CONTRADICTS relationships.
+  For the Alice/Bob/Atlas example, this should surface the
+  conflict between:
+    - "We are switching from TensorFlow to PyTorch next quarter"
+    - "The team will continue using TensorFlow"
+  (if both were ingested with semantic memory enabled).
+}

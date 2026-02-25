@@ -1,0 +1,44 @@
+meta {
+  name: Contradiction Query
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "Is the team switching from TensorFlow to PyTorch?",
+    "top_k": 10,
+    "types": ["semantic"]
+  }
+}
+
+docs {
+  Tests knowledge evolution handling.
+
+  After ingesting the contradiction pair (step 02), the system
+  ingested two conflicting statements:
+  - "Planning to migrate from TensorFlow to PyTorch next quarter"
+  - "Decided to continue using TensorFlow after benchmarks"
+
+  WHAT TO LOOK FOR:
+  - How the feature extraction handled the conflict:
+    a) CONTRADICTS relationship between the two features
+    b) SUPERSEDES chain resolving to the latest decision
+    c) Consolidated feature merging both statements
+  - The "contradicted_by" field on returned features
+
+  With pure vector search, BOTH statements would be returned
+  with similar scores and no indication of which is current.
+  Feature extraction provides temporal awareness and conflict
+  resolution.
+}

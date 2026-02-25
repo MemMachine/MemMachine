@@ -1,0 +1,30 @@
+meta {
+  name: Delete Relationship
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/relationships/delete
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_id": "{{sourceFeatureId}}",
+    "target_id": "{{targetFeatureId}}",
+    "relationship_type": "RELATED_TO"
+  }
+}
+
+docs {
+  Delete a typed semantic relationship between two features.
+
+  Replace {{sourceFeatureId}} and {{targetFeatureId}} with actual
+  feature IDs.
+}

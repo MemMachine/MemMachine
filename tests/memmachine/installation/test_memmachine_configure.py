@@ -21,8 +21,8 @@ from memmachine.installation.memmachine_configure import (
     WindowsInstaller,
 )
 
-MOCK_INSTALL_DIR = "C:\\Users\\TestUser\\MemMachine"
-MOCK_LOCALDATA_DIR = "C:\\Users\\TestUser\\AppData\\Local"
+MOCK_INSTALL_DIR = "temp"
+MOCK_LOCALDATA_DIR = "temp"
 MOCK_GPG_KEY_CONTENT = "mocked-gpg-key-content"
 
 logging.basicConfig(

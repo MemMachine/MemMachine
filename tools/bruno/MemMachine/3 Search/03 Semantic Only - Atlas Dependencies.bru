@@ -1,0 +1,59 @@
+meta {
+  name: Semantic Only - Atlas Dependencies
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "Who should I talk to about Project Atlas dependencies?",
+    "top_k": 20,
+    "types": ["semantic"]
+  }
+}
+
+docs {
+  Semantic memory ONLY — shows the power of feature extraction.
+
+  From 22 raw messages, the system extracted 80+ structured
+  features organized by category, tag, and entity type.
+
+  WHAT TO LOOK FOR:
+
+  1. STRUCTURED KNOWLEDGE — Not raw text but extracted facts:
+     - tech_lead: "Alice is the tech lead on Project Atlas" (Person)
+     - metadata_storage: "Project Atlas stores metadata in PostgreSQL" (Concept)
+     - specialization: "Bob specializes in TensorFlow optimization" (Person)
+
+  2. BOB SURFACES — His TensorFlow features appear in the results
+     because the extracted feature "specializes in TensorFlow
+     optimization" has enough semantic overlap with the query.
+     Raw episode retrieval missed him; structured features find him.
+
+  3. ENTITY TYPES — Each feature is classified:
+     - Person: Alice, Bob, Carol, Dave, Eve
+     - Concept: TensorFlow, Redis, PostgreSQL, S3, Kubernetes
+     - Event: deployment, milestone review, presentations
+     - Preference: technology choices
+
+  4. MULTI-SCOPE — Features appear from multiple sets:
+     - Org-level: company-wide knowledge
+     - User-level: per-producer knowledge
+     - Project-level: per-project knowledge
+
+  TAKEAWAY:
+    Feature extraction transforms raw conversation into a
+    structured knowledge base.  A consumer of this API gets
+    categorized facts with entity types, not just similar text
+    snippets.
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Communities
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/analytics/communities
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "write_back": false
+  }
+}
+
+docs {
+  Detect communities (clusters) of densely connected nodes
+  using the Louvain algorithm.
+
+  With write_back=false, community IDs are returned but not
+  persisted. Set write_back=true to store community_id on
+  each node for later filtering.
+
+  Requires GDS plugin (gds_enabled: true in Neo4j config).
+}

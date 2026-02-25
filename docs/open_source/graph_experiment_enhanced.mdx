@@ -1,0 +1,580 @@
+---
+title: "B: Graph-Enhanced -- Knowledge Graph"
+description: "Configure Neo4j as a full knowledge graph with entity types, traversal, and analytics"
+icon: "diagram-project"
+---
+
+## Goal
+
+This approach uses Neo4j as a **full knowledge graph**. On top of the
+same vector embeddings used by the
+[baseline](/open_source/graph_experiment_baseline), we enable:
+
+- **Entity type labels** -- nodes carry types (Person, Project, Tool,
+  ...) for type-aware filtering.
+- **Multi-hop traversal** -- discover nodes reachable through chains
+  of relationships.
+- **Graph-filtered search** -- narrow vector candidates using graph
+  structure before computing similarity.
+- **Semantic relationships** -- typed edges (CONTRADICTS, SUPERSEDES,
+  RELATED_TO, IMPLIES) enriching retrieval.
+- **PageRank re-ranking** -- structurally important nodes get a score
+  boost.
+- **Community detection** -- densely connected memory clusters.
+- **Entity deduplication** -- automatic duplicate detection and
+  resolution.
+
+<Warning>
+  Complete the [shared setup](/open_source/graph_experiment) before
+  following this page. You need Docker Compose running and the LoCoMo
+  data ingested.
+</Warning>
+
+---
+
+## Configuration
+
+The key difference from the baseline is a `configuration.yml` that
+**enables** all knowledge graph features.
+
+### Full graph-enhanced `configuration.yml`
+
+Create (or replace) the `configuration.yml` in the repo root:
+
+```yaml
+# configuration.yml -- Graph-Enhanced: full knowledge graph features
+#
+# This configuration enables all knowledge graph enhancements.
+# Neo4j is used as a rich knowledge graph with entity types,
+# multi-hop traversal, relationship enrichment, and GDS analytics.
+
+logging:
+  path: memmachine.log
+  level: info
+
+episode_store:
+  database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    vector_graph_store: neo4j_store
+    embedder: openai_embedder
+    reranker: rrf_reranker
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 64000
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: neo4j_store
+
+resources:
+  databases:
+    profile_storage:
+      provider: postgres
+      config:
+        host: ${POSTGRES_HOST:-postgres}
+        port: 5432
+        user: ${POSTGRES_USER:-memmachine}
+        db_name: ${POSTGRES_DB:-memmachine}
+        password: $POSTGRES_PASSWORD
+
+    neo4j_store:
+      provider: neo4j
+      config:
+        host: ${NEO4J_HOST:-neo4j}
+        port: 7687
+        user: ${NEO4J_USER:-neo4j}
+        password: $NEO4J_PASSWORD
+
+        # =============================================
+        # GRAPH-ENHANCED: all features enabled
+        # =============================================
+
+        # Enable Graph Data Science plugin features
+        gds_enabled: true
+        gds_default_damping_factor: 0.85
+        gds_default_max_iterations: 20
+
+        # Automatic PageRank after ingestion
+        pagerank_auto_enabled: true
+        pagerank_trigger_threshold: 10
+
+        # Deduplication enabled with conservative settings
+        dedup_trigger_threshold: 1000
+        dedup_embedding_threshold: 0.95
+        dedup_property_threshold: 0.80
+        dedup_auto_merge: false
+
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: "text-embedding-3-small"
+        api_key: $OPENAI_API_KEY
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: $OPENAI_API_KEY
+        base_url: "https://api.openai.com/v1"
+
+  rerankers:
+    rrf_reranker:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker
+          - bm_ranker
+    id_ranker:
+      provider: "identity"
+    bm_ranker:
+      provider: "bm25"
+```
+
+### What each setting does
+
+<AccordionGroup>
+  <Accordion title="gds_enabled: true">
+    The primary toggle for Graph Data Science features. When `true`,
+    MemMachine uses the Neo4j GDS plugin for:
+
+    - **PageRank** -- compute node importance scores, optionally
+      written back to node properties for use in retrieval blending.
+    - **Louvain community detection** -- group densely connected nodes
+      into clusters.
+    - **Betweenness centrality** -- identify bridge nodes between
+      communities.
+
+    The `/api/v2/memories/graph/analytics/*` endpoints become fully
+    functional.
+  </Accordion>
+  <Accordion title="pagerank_auto_enabled: true">
+    After each `add_nodes()` call (i.e., after every memory ingestion
+    batch), MemMachine automatically recomputes PageRank on the
+    affected collection -- but only once the node count exceeds
+    `pagerank_trigger_threshold` (default: 50).
+
+    The computed scores are written back to node properties and used
+    during episodic retrieval for blended scoring:
+
+    ```text
+    final_score = 0.8 * similarity + 0.2 * normalized_pagerank
+    ```
+
+    This promotes structurally important memories (those with many
+    relationships) even if their raw vector similarity is slightly
+    lower.
+  </Accordion>
+  <Accordion title="Deduplication settings">
+    With `dedup_trigger_threshold: 1000`, after each `add_nodes()` call
+    the system checks whether the collection has more than 1000 nodes.
+    If so, it runs a background dedup scan:
+
+    - **Embedding threshold (0.95)** -- two nodes must have cosine
+      similarity >= 0.95 in their embeddings.
+    - **Property threshold (0.80)** -- their property key sets must
+      have Jaccard similarity >= 0.80.
+
+    Both must be exceeded for a pair to be flagged.
+
+    With `dedup_auto_merge: false` (propose-only mode), detected
+    duplicates are recorded as `SAME_AS` relationships. You can review
+    them via the dedup API and resolve manually. Set `dedup_auto_merge:
+    true` to merge automatically (newest properties win).
+  </Accordion>
+  <Accordion title="GDS tuning parameters">
+    - **`gds_default_damping_factor: 0.85`** -- the probability that a
+      random walker follows a link vs. jumping to a random node.
+      Standard PageRank value.
+    - **`gds_default_max_iterations: 20`** -- iteration cap for GDS
+      algorithms. Higher values converge more precisely but cost more
+      compute time.
+  </Accordion>
+</AccordionGroup>
+
+### Restart with the new config
+
+After saving `configuration.yml`, restart the MemMachine container:
+
+```sh
+docker compose restart memmachine
+```
+
+Verify the config took effect and GDS is available:
+
+```sh
+# Health check
+curl -s http://localhost:8080/api/v2/health | python -m json.tool
+
+# Verify GDS -- should return stats, not 501
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/analytics/stats \
+  -H "Content-Type: application/json" \
+  -d '{"collection": "universal/universal"}' | python -m json.tool
+```
+
+---
+
+## How Graph-Enhanced Retrieval Works
+
+With this configuration, the retrieval pipeline gains multiple new
+phases that discover indirect connections through the semantic Feature
+layer:
+
+```text
+Query text
+    |
+    v
+Embed query (text-embedding-3-small)
+    |
+    v
+Neo4j ANN vector index (cosine similarity)
+    |
+    v
+Top-10 results become ANCHOR NODES
+    |
+    v
+5-hop traversal through Feature nodes (decay 0.85)
+  Derivative → Episode ← Feature →(RELATED_TO)→ Feature → Episode ← Derivative
+  -> discovers nodes invisible to vector search
+    |
+    v
+Path quality scoring:
+  - minimum RELATED_TO similarity along each path
+  - null similarity = quality 0.0 (trivial connection, no boost)
+  - explicit similarity = quality proportional to match strength
+    |
+    v
+Merge discovered nodes + original results (dedup by UID)
+    |
+    v
+Reranker (RRF: identity + BM25)
+    |
+    v
+Graph boost:
+  boosted = max(score, inclusion_score * (1.0 + graph_score))
+  -> lifts graph discoveries above the inclusion threshold
+    |
+    v
+Final results sorted by score
+```
+
+This happens **automatically** when `DeclarativeMemory` is backed by
+a `GraphTraversalStore` (which it is with Neo4j). You get the
+enhanced pipeline by using the same `/api/v2/memories/search` endpoint.
+
+<Tip>
+  The 5-hop path works because MemMachine's semantic ingestion
+  extracts **Features** from each Episode and creates `RELATED_TO`
+  edges between Features with similar embeddings. This creates a
+  bridge between episodes that share semantic concepts (like
+  TensorFlow) even if their text never mentions the same entities.
+</Tip>
+
+---
+
+## Run Graph-Enhanced Searches
+
+### Step 1: Standard search (auto-enhanced)
+
+The standard search endpoint now **automatically** uses graph
+expansion with path quality scoring:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Who should I talk to about Project Atlas dependencies?",
+    "top_k": 5
+  }' | python -m json.tool
+```
+
+With graph enhancement, the same query that missed Bob in the baseline
+now finds him at **#1 and #2** through 5-hop Feature traversal:
+
+```text
+Final results (graph-enhanced):
+  1. "Bob presented a talk on TensorFlow performance tuning..."   score: 0.0448
+     discovered via: 5-hop traversal, path quality: 1.0
+  2. "Bob specializes in TensorFlow optimization..."              score: 0.0393
+     discovered via: 5-hop traversal, path quality: 0.6
+  3. "Alice is the tech lead on Project Atlas"                    score: 0.0320
+  4. "Project Atlas depends on Redis for caching..."              score: 0.0318
+  5. "Project Atlas integrates with the payment processing..."    score: 0.0315
+```
+
+Bob's two memories are boosted above the vector-only results because
+the graph traversal found high-quality paths connecting his TensorFlow
+Features to Atlas's TensorFlow Features. The path through
+`presentation_topic` has quality 1.0 (exact semantic match), while the
+path through `uses_tensorflow → contributed_to_tensorflow` has quality
+0.6 (strong but imperfect match).
+
+<Note>
+  Other team members connected through trivial graph paths (e.g.,
+  shared `name` features with no similarity score) receive **no
+  boost** -- path quality 0.0 means the connection is not meaningful
+  enough to elevate the result.
+</Note>
+
+### Step 2: Search with entity type filtering
+
+Restrict results to specific entity types to reduce noise:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What is Alice'\''s favorite restaurant?",
+    "top_k": 10,
+    "entity_types": ["Person", "Preference"]
+  }' | python -m json.tool
+```
+
+Only memories tagged with **Person** or **Preference** entity types
+are returned. The LLM classifies entity types during ingestion
+(Person, Location, Event, Concept, Organization, Temporal, Preference,
+or Other).
+
+### Step 3: Multi-hop traversal
+
+Starting from a known anchor node, discover related memories through
+relationship chains:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/search/multi-hop \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "universal/universal",
+    "node_uid": "alice-001",
+    "max_hops": 3,
+    "score_decay": 0.7
+  }' | python -m json.tool
+```
+
+Results are scored with exponential decay:
+
+| Hop distance | Score | Example |
+|--------------|-------|---------|
+| 1 hop | `0.70` | Direct neighbors of Alice |
+| 2 hops | `0.49` | Neighbors of Alice's neighbors |
+| 3 hops | `0.34` | Three degrees of separation |
+
+### Step 4: Graph-filtered similarity search
+
+Narrow the vector search candidate set using graph structure
+**before** computing similarity:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/search/filtered \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "universal/universal",
+    "query": "What is Alice'\''s favorite restaurant?",
+    "anchor_node_uid": "alice-001",
+    "max_hops": 2,
+    "direction": "outgoing"
+  }' | python -m json.tool
+```
+
+**Phase 1** traverses the graph from the anchor to collect candidate
+node IDs. **Phase 2** computes vector similarity only on those
+candidates. This avoids the over-fetch-and-filter problem of standard
+ANN search.
+
+### Step 5: Query semantic relationships
+
+Check for contradictions and supersession chains in the semantic layer:
+
+```sh
+# Find contradicting features
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/contradictions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "set_id": "user-profile-abc"
+  }' | python -m json.tool
+
+# Query relationships for a specific feature
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/relationships/get \
+  -H "Content-Type: application/json" \
+  -d '{
+    "feature_id": "feat-1",
+    "relationship_type": "RELATED_TO",
+    "direction": "outgoing",
+    "min_confidence": 0.8
+  }' | python -m json.tool
+```
+
+When semantic memory returns results, the pipeline automatically:
+
+- Appends **RELATED_TO** features to expand context.
+- Annotates **CONTRADICTS** pairs so the caller knows which facts
+  conflict.
+- Resolves **SUPERSEDES** chains to return the most current version
+  of a fact.
+
+### Step 6: Run PageRank analytics
+
+Compute and inspect node importance scores:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/analytics/pagerank \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "universal/universal",
+    "damping_factor": 0.85,
+    "max_iterations": 20,
+    "write_back": true
+  }' | python -m json.tool
+```
+
+With `write_back: true`, PageRank scores are persisted on the nodes
+and automatically used during subsequent searches:
+
+```text
+final_score = 0.8 * similarity + 0.2 * normalized_pagerank
+```
+
+### Step 7: Detect communities
+
+Group related memories into clusters:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/analytics/communities \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "universal/universal",
+    "write_back": false
+  }' | python -m json.tool
+```
+
+The Louvain algorithm identifies densely connected subgroups, which can
+reveal topic clusters within the memory graph.
+
+### Step 8: Inspect deduplication proposals
+
+If the collection has enough nodes, check for detected duplicates:
+
+```sh
+curl -s -X POST http://localhost:8080/api/v2/memories/graph/dedup/proposals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection": "universal/universal",
+    "min_embedding_similarity": 0.96,
+    "include_auto_merged": false
+  }' | python -m json.tool
+```
+
+---
+
+## Using the Python SDK
+
+The same capabilities are available through the Python SDK:
+
+```python
+from memmachine import MemMachineClient
+
+client = MemMachineClient(base_url="http://localhost:8080")
+
+# Standard search (auto-enhanced with graph expansion + PageRank)
+results = client.search_memories(
+    query="Who should I talk to about Project Atlas dependencies?",
+    top_k=10,
+)
+for r in results:
+    print(f"[{r.score:.3f}] {r.memory}")
+
+# Search with entity type filtering
+results = client.search_memories(
+    query="What is Alice's favorite restaurant?",
+    top_k=10,
+    entity_types=["Person", "Preference"],
+)
+```
+
+---
+
+## Run the Evaluation
+
+Use the LoCoMo evaluation harness to capture graph-enhanced scores:
+
+```sh
+cd evaluation/locomo/episodic_memory
+
+# 1. Search all questions (writes results to file)
+python search.py \
+  --data ../locomo10.json \
+  --config ../locomo_config.yaml \
+  --output enhanced_results.json
+
+# 2. Evaluate against ground truth
+python evaluate.py \
+  --data ../locomo10.json \
+  --config ../locomo_config.yaml \
+  --results enhanced_results.json
+
+# 3. Generate scores
+python score.py \
+  --config ../locomo_config.yaml \
+  --results enhanced_results.json
+```
+
+<Tip>
+  Save the output scores -- you will need them for the
+  [comparison page](/open_source/graph_experiment_comparison).
+</Tip>
+
+---
+
+## Configuration Reference
+
+All graph-related settings in `configuration.yml` under
+`resources.databases.neo4j_store.config`:
+
+| Setting | Default | Baseline | Enhanced | Description |
+|---------|---------|----------|----------|-------------|
+| `gds_enabled` | `false` | `false` | **`true`** | Enable GDS plugin features |
+| `pagerank_auto_enabled` | `true` | `false` | **`true`** | Auto-compute PageRank after ingestion |
+| `pagerank_trigger_threshold` | `50` | -- | `10` | Min nodes before auto-PageRank |
+| `gds_default_damping_factor` | `0.85` | -- | `0.85` | PageRank damping factor |
+| `gds_default_max_iterations` | `20` | -- | `20` | Max iterations for GDS algorithms |
+| `dedup_trigger_threshold` | `1000` | `999999` | **`1000`** | Node count to trigger dedup |
+| `dedup_embedding_threshold` | `0.95` | -- | `0.95` | Cosine similarity for dedup |
+| `dedup_property_threshold` | `0.80` | -- | `0.80` | Jaccard similarity for dedup |
+| `dedup_auto_merge` | `false` | -- | `false` | Auto-merge vs propose-only |
+
+Additional pipeline settings (configured outside the database block):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `related_to_threshold` | `0.70` | Cosine similarity for auto-creating RELATED_TO edges during ingestion (cross-set comparison) |
+| `max_relationship_llm_calls` | `10` | Max LLM calls per batch for CONTRADICTS/SUPERSEDES detection |
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card
+    title="A: Baseline"
+    icon="magnifying-glass"
+    href="/open_source/graph_experiment_baseline"
+  >
+    Run the vector-only experiment for comparison
+  </Card>
+  <Card
+    title="Compare Results"
+    icon="scale-balanced"
+    href="/open_source/graph_experiment_comparison"
+  >
+    Evaluate both approaches side by side
+  </Card>
+</CardGroup>

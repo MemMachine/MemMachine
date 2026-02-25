@@ -162,6 +162,7 @@ class SemanticResourceManager:
                 semantic_config_storage=config_store,
                 uningested_time_limit=self._conf.ingestion_trigger_age,
                 uningested_message_limit=self._conf.ingestion_trigger_messages,
+                related_to_threshold=self._conf.related_to_threshold,
             ),
         )
         return self._semantic_service

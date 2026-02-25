@@ -1,0 +1,176 @@
+meta {
+  name: Ingest Extended Team
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "messages": [
+      {
+        "content": "Alice is the tech lead on Project Atlas",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Project Atlas uses TensorFlow as the foundation of its machine learning pipeline",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Project Atlas depends on Redis for caching and session management",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Carol wrote all the technical documentation for Project Atlas",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Dave built the React-based monitoring dashboard for Project Atlas",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Project Atlas integrates with the payment processing microservice",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "The Atlas team deployed a new autoscaling configuration on Kubernetes last week",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Project Atlas stores ML model artifacts in S3 and metadata in PostgreSQL",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Alice scheduled the Project Atlas v2 milestone review for end of Q3",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "The Atlas API processes over 10,000 inference requests per second in production",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Bob is the lead engineer on Project Beacon",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Bob specializes in TensorFlow optimization and has contributed to its open-source repository",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Bob presented a talk on TensorFlow performance tuning at the last engineering all-hands",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Project Beacon focuses on building a mobile recommendation engine",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Eve runs the QA process for Project Beacon and maintains the test automation suite",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Frank manages the DevOps team and built the company-wide CI/CD platform",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Grace conducts quarterly security audits for all production services",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "The company is evaluating a migration from AWS to Google Cloud Platform",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Helen joined the data science team last month with a background in NLP research",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "The annual company hackathon is scheduled for the third week of September",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "Ivan manages the product roadmap and coordinates feature prioritization across teams",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      },
+      {
+        "content": "The engineering team adopted GitHub Actions for all continuous integration workflows",
+        "producer": "system",
+        "role": "system",
+        "metadata": {"source_speaker": "narrator"}
+      }
+    ]
+  }
+}
+
+docs {
+  Ingest the extended team dataset (22 messages) for the graph demo.
+
+  The dataset is designed to demonstrate graph-enhanced retrieval:
+
+  - 10 messages about Project Atlas (people, technologies, dependencies)
+  - 3 messages about Bob (TensorFlow expert, NO mention of Atlas)
+  - 9 noise messages (other projects, company, people)
+
+  KEY INSIGHT: Bob never mentions "Project Atlas" or "dependencies"
+  in any of his messages.  His only connection to Atlas is through
+  TensorFlow — which Atlas uses as an ML dependency.  With a pure
+  vector search (top_k=5), Bob's messages rank low because they
+  don't share vocabulary with Atlas queries.  With graph-enhanced
+  retrieval, the system discovers Bob through the shared TensorFlow
+  connection in the knowledge graph.
+
+  Run "00 Delete Project" first for a clean slate.  After ingestion,
+  wait ~10 seconds for semantic feature extraction to complete before
+  running searches.
+}

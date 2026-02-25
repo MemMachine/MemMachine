@@ -1,0 +1,33 @@
+meta {
+  name: Get Relationships
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/relationships/get
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "feature_id": "{{featureId}}",
+    "relationship_type": "RELATED_TO",
+    "direction": "outgoing",
+    "min_confidence": 0.8
+  }
+}
+
+docs {
+  Query semantic relationships for a specific feature.
+
+  Filter by relationship type, direction (outgoing, incoming, both),
+  and minimum confidence threshold.
+
+  Replace {{featureId}} with an actual feature ID.
+}

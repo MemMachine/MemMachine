@@ -182,6 +182,15 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             end_time,
         )
 
+        if response.output_parsed is None:
+            error_message = (
+                f"[call uuid: {generate_response_call_uuid}] "
+                "OpenAI Responses API returned empty output "
+                f"(model={self._model})"
+            )
+            logger.error(error_message)
+            raise ExternalServiceAPIError(error_message)
+
         return response.output_parsed
 
     async def generate_response(  # noqa: C901

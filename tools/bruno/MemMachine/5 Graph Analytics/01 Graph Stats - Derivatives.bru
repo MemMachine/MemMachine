@@ -1,0 +1,32 @@
+meta {
+  name: Graph Stats - Derivatives
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/analytics/stats
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal"
+  }
+}
+
+docs {
+  Return graph statistics for the Derivative node collection.
+
+  Derivative nodes carry the vector embeddings and represent
+  the searchable content of each memory.
+
+  Note: the collection must include the "Derivative_" or
+  "Episode_" prefix — querying just "universal/universal"
+  will return zero results.
+}

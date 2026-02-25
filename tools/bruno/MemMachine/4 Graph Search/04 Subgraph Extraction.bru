@@ -1,0 +1,34 @@
+meta {
+  name: Subgraph Extraction
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/search/subgraph
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "anchor_uid": "{{aliceNodeUid}}",
+    "max_depth": 2,
+    "node_limit": 50
+  }
+}
+
+docs {
+  Extract an ego-graph (subgraph) centered on a specific node.
+
+  Returns all nodes and edges reachable within max_depth hops
+  from the anchor node. Useful for visualizing the local
+  neighborhood of a memory in the knowledge graph.
+
+  Replace {{aliceNodeUid}} with the actual UID of an Alice node.
+}
