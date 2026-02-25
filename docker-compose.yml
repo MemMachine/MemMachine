@@ -18,9 +18,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - memmachine-network
-
+    
   # Neo4j database for graph storage
   neo4j:
     image: neo4j:5.23-community
@@ -51,8 +49,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    networks:
-      - memmachine-network
 
   # MemMachine application
   memmachine:
@@ -99,8 +95,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    networks:
-      - memmachine-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -127,7 +121,3 @@ volumes:
   memmachine_logs:
     driver: local
 
-networks:
-  memmachine-network:
-    driver: bridge
-    name: memmachine-network
