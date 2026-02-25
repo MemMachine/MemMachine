@@ -24,7 +24,7 @@ session_manager:
   database: profile_storage
 
 prompt:
-  default_user_categories:
+  default_project_categories:
   - profile_prompt
 
 resources:
