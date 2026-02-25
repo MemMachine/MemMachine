@@ -419,7 +419,13 @@ class DatabaseManager:
         try:
             logger.info("Validating NebulaGraph client '%s'", name)
             result = await client.execute("RETURN 1 AS ok")
-            row = result.one()
+
+            # Extract first row using iteration (consistent with vector_graph_store usage)
+            rows = list(result)
+            if not rows:
+                raise ValueError("Query returned no results")
+
+            row = rows[0]
             ok = row["ok"]
             # Normalize wrapped values: some versions return ValueWrapper, others return primitives
             ok_value = ok.cast_primitive() if hasattr(ok, "cast_primitive") else ok
