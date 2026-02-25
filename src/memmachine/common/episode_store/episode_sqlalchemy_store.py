@@ -21,10 +21,8 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
-    and_,
     delete,
     func,
-    or_,
     select,
     text,
 )

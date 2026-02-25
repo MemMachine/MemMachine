@@ -7,9 +7,11 @@ from .data_types import (
     GraphFilter,
     MultiHopResult,
     Node,
-    OrderedPropertyValue,
     PropertyValue,
     TraversalDirection,
+)
+from .data_types import (
+    OrderedPropertyValue as OrderedPropertyValue,
 )
 from .graph_traversal_store import GraphTraversalStore
 from .vector_graph_store import VectorGraphStore
@@ -22,6 +24,7 @@ __all__ = [
     "GraphTraversalStore",
     "MultiHopResult",
     "Node",
+    "OrderedPropertyValue",
     "PropertyValue",
     "TraversalDirection",
     "VectorGraphStore",

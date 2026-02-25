@@ -1150,7 +1150,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         field_ref: str,
         expr: FilterComparison,
-        value_adapter: Callable[[FilterablePropertyValue], Any] | None,
+        value_adapter: Callable[[FilterValue], Any] | None,
     ) -> tuple[str, dict[str, Any]]:
         op = expr.op
         params: dict[str, Any] = {}

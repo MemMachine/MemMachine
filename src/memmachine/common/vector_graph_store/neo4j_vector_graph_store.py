@@ -44,7 +44,11 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.metrics_factory import MetricsFactory
 from memmachine.common.neo4j_utils import (
     ENTITY_TYPE_PREFIX as _ENTITY_TYPE_PREFIX,
+)
+from memmachine.common.neo4j_utils import (
     desanitize_entity_type as _desanitize_entity_type,
+)
+from memmachine.common.neo4j_utils import (
     render_comparison,
     sanitize_value_for_neo4j,
     value_from_neo4j,
