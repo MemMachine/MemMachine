@@ -366,9 +366,9 @@ class Memory:
         expand_context: int = 0,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
-        set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
         *,
+        set_metadata: dict[str, JsonValue] | None = None,
         agent_mode: bool = False,
     ) -> SearchResult:
         """
@@ -389,8 +389,8 @@ class Memory:
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
                         if there are key conflicts.
-            set_metadata: Optional metadata key-value pairs used to select semantic sets.
             timeout: Request timeout in seconds (uses client default if not provided)
+            set_metadata: Optional metadata key-value pairs used to select semantic sets.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
         Returns:

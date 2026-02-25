@@ -98,7 +98,7 @@ dev = [
 ]
 
 [tool.ruff]
-exclude = ["tools"]
+exclude = ["tools", "build"]
 
 [tool.ruff.lint]
 select = [
