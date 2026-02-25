@@ -1797,13 +1797,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         """
         # NebulaGraph only supports L2 and IP index metrics.
-        # MANHATTAN has no equivalent; skip index creation so search falls back to KNN.
+        # COSINE (KNN-only) and MANHATTAN have no ANN-capable index; skip creation so search falls back to KNN.
         nebula_metric = self._similarity_metric_to_nebula(similarity_metric)
         if nebula_metric is None:
             logger.warning(
                 "Skipping vector index creation for '%s' on '%s': "
-                "metric '%s' is not supported by NebulaGraph vector indexes "
-                "(supported: COSINE, DOT, EUCLIDEAN). ANN search will be unavailable.",
+                "metric '%s' is not supported by NebulaGraph ANN indexes "
+                "(ANN-supported metrics: EUCLIDEAN/L2, DOT/IP). "
+                "Search will use exact KNN instead.",
                 embedding_name,
                 node_or_edge_type,
                 similarity_metric.value,

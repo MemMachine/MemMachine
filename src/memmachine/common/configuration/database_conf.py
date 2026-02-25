@@ -122,7 +122,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         default=60.0,
         description=(
             "Maximum time (in seconds) to wait for a session from the pool. "
-            "If None or 0, will wait indefinitely."
+            "If 0 or negative, will wait indefinitely."
         ),
     )
 
