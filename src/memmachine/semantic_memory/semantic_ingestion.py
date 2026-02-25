@@ -79,7 +79,7 @@ class IngestionService:
 
         history_ids = await self._semantic_storage.get_history_messages(
             set_ids=[set_id],
-            limit=50,
+            limit=5,
             is_ingested=False,
         )
 

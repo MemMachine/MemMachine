@@ -23,7 +23,7 @@ know that you are taking ownership of it.
 Follow these steps to set up your local development environment:
 
 1. **Fork and Clone the Repository:**
-   
+
     First, fork the project on GitHub to your own account. Then, clone your forked repository:
 
     ```bash
@@ -67,14 +67,14 @@ Follow these steps to set up your local development environment:
 ## 3. Code Style and Quality
 
 The project enforces a strict code style using [Ruff](https://docs.astral.sh/ruff/) for formatting and linting.
-The project also uses [Mypy](https://mypy-lang.org/) for type checking.
+The project also uses [ty](https://docs.astral.sh/ty/) for type checking.
 
 These tools are installed automatically as part of the `dev` group if using uv.
 
 Alternatively, they may be installed by:
 ```
 pip install ruff
-pip install mypy
+pip install ty
 # OR, if pip is new enough:
 pip install --group dev
 ```
@@ -95,11 +95,11 @@ uv run ruff format
 ruff format
 ```
 
-To run the Mypy type checker:
+To run the ty type checker:
 ```
-uv run mypy src
+uv run ty check src
 # OR
-mypy src
+ty check src
 ```
 
 ## 4. Testing

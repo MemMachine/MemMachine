@@ -151,7 +151,7 @@ class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
 class SupportedDB(str, Enum):
     """Supported database providers."""
 
-    # <-- Add these annotations so mypy knows these attributes exist
+    # <-- Add these annotations so type checker knows these attributes exist
     conf_cls: type[Neo4jConf] | type[SqlAlchemyConf]
     dialect: str | None
     driver: str | None
@@ -169,7 +169,7 @@ class SupportedDB(str, Enum):
     ) -> Self:
         obj = str.__new__(cls, value)
         obj._value_ = value
-        obj.conf_cls = conf_cls  # mypy now knows these attributes exist
+        obj.conf_cls = conf_cls  # type checker now knows these attributes exist
         obj.dialect = dialect
         obj.driver = driver
         return obj

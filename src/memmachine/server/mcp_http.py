@@ -23,7 +23,9 @@ async def run_mcp_http(host: str, port: int) -> None:
         )
         async with global_memory_lifespan():
             await uvicorn.Server(
-                uvicorn.Config(mcp.get_app(), host=host, port=int(port)),
+                uvicorn.Config(
+                    mcp.get_app(), host=host, port=int(port), ws="websockets-sansio"
+                ),
             ).serve()
     except Exception:
         logger.exception("MemMachine MCP HTTP server crashed")
