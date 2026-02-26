@@ -58,3 +58,85 @@ jobs:
           else
             uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m "integration and not slow" --cov=memmachine
           fi
+
+  rest-api-notebook:
+    name: REST API notebook (set_metadata)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 0
+
+      - name: Install the latest version of uv and set the python version
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Start pgvector database
+        run: |
+          docker rm -f memmachine-pgvector || true
+          docker run -d --name memmachine-pgvector \
+            -e POSTGRES_PASSWORD=memmachine \
+            -e POSTGRES_USER=memmachine \
+            -e POSTGRES_DB=memmachine \
+            -p 55432:5432 \
+            pgvector/pgvector:pg16
+
+      - name: Wait for database
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec memmachine-pgvector pg_isready -U memmachine -d memmachine >/dev/null 2>&1; then
+              echo "Postgres is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Postgres did not become ready in time" >&2
+          exit 1
+
+      - name: Start MemMachine server
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MEMORY_CONFIG: .github/ci/memmachine-openai-pgvector.yml
+          MEMMACHINE_WORKERS: "1"
+        run: |
+          uv run memmachine-server > memmachine-server.log 2>&1 &
+          echo $! > memmachine-server.pid
+
+      - name: Wait for server health
+        env:
+          MEMORY_BACKEND_URL: http://127.0.0.1:8080
+        run: |
+          uv run python - <<'PY'
+          import os
+          import time
+          import requests
+
+          url = os.environ["MEMORY_BACKEND_URL"] + "/api/v2/health"
+          for _ in range(60):
+              try:
+                  r = requests.get(url, timeout=2)
+                  if r.status_code == 200:
+                      print("Server ready")
+                      raise SystemExit(0)
+              except Exception:
+                  pass
+              time.sleep(2)
+          raise SystemExit("Server did not become ready in time")
+          PY
+
+      - name: Execute notebook
+        env:
+          MEMORY_BACKEND_URL: http://127.0.0.1:8080
+        run: |
+          uv run --group dev jupyter nbconvert --execute --to notebook --ExecutePreprocessor.timeout=600 \
+            examples/rest_api_set_metadata.ipynb
+
+      - name: Stop MemMachine server and database
+        if: always()
+        run: |
+          kill $(cat memmachine-server.pid) || true
+          docker rm -f memmachine-pgvector || true
