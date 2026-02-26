@@ -818,11 +818,6 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
-        logger.info(
-            "MemMachine querying search: query=%s agent_mode=%s",
-            query,
-            agent_mode,
-        )
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
             retrieval_agent = await self._get_retrieval_agent() if agent_mode else None

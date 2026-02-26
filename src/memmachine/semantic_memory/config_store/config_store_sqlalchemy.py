@@ -596,6 +596,9 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         else:
             resources_upsert = sqlite_insert(SetIdResources)
 
+        # Avoid foreign-key failure on first-time disable by ensuring the
+        # parent set-id resource row exists before inserting disabled
+        # categories.
         resources_stmt = resources_upsert.values(
             set_id=set_id,
         ).on_conflict_do_nothing(

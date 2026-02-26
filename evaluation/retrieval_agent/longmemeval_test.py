@@ -335,9 +335,7 @@ async def main():
         print(f"Test target: {args.test_target}")
 
         agent_name = (
-            "MemMachineAgent"
-            if args.test_target == "memmachine"
-            else "ToolSelectAgent"
+            "MemMachineAgent" if args.test_target == "memmachine" else "ToolSelectAgent"
         )
         await longmemeval_search(
             dataset,

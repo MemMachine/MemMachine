@@ -338,10 +338,6 @@ class EpisodicMemory:
         start_time = time.monotonic_ns()
         search_limit = limit if limit is not None else 20
 
-        logger.info(
-            "EpisodicMemory querying memory: query=%s",
-            query,
-        )
         if self._short_term_memory is None:
             short_episode: list[Episode] = []
             short_summary = ""
