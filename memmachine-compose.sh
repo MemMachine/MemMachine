@@ -102,10 +102,14 @@ find_docker_compose() {
         exit 1
     fi
     if [[ -z "$COMPOSE_PROJECT" ]]; then
-        COMPOSE_PROJECT="$(basename "$(pwd)")"
+        COMPOSE_PROJECT="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
+    fi
+    if [[ $(docker ps --format 'table {{.Names}}\t{{.Label "com.docker.compose.project"}}' |grep -q "$COMPOSE_PROJECT" && echo "yes" || echo "no") != "no" ]] && [[ "$1" -ne "clean" ]]; then
+        print_error "Existing Docker Compose project detected with name: $COMPOSE_PROJECT - please set a different project name (COMPOSE_PROJECT) or remove existing containers to avoid conflicts."
+        exit 1
     fi
     COMPOSE_CMD="$COMPOSE_CMD -p $COMPOSE_PROJECT"
-    print_success "Docker and Docker Compose are available"
+    print_success "Docker and Docker Compose are available (compose project: $COMPOSE_PROJECT)"
 }
 
 # Check if .env file exists
