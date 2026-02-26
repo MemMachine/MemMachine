@@ -36,6 +36,7 @@ from memmachine.server.api_v2.mcp import (
     mcp_http_lifespan,
 )
 from memmachine.server.api_v2.router import RestError, load_v2_api_router
+from memmachine.server.diagnostics import dump_traceback, install_sigusr1_handler
 from memmachine.server.middleware import AccessLogMiddleware, RequestMetricsMiddleware
 
 logger = logging.getLogger(__name__)
@@ -185,8 +186,12 @@ def main() -> None:
             # MCP stdio mode
             async def run_mcp_server() -> None:
                 """Initialize resources and run MCP server in the same event loop."""
-                await initialize_resource()
-                await mcp.run_stdio_async()
+                install_sigusr1_handler()
+                try:
+                    await initialize_resource()
+                    await mcp.run_stdio_async()
+                finally:
+                    dump_traceback()
 
             asyncio.run(run_mcp_server())
         else:

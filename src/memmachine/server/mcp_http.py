@@ -9,12 +9,14 @@ import uvicorn
 
 from memmachine.server.api_v2.mcp import global_memory_lifespan
 from memmachine.server.app import mcp
+from memmachine.server.diagnostics import dump_traceback, install_sigusr1_handler
 
 logger = logging.getLogger(__name__)
 
 
 async def run_mcp_http(host: str, port: int) -> None:
     """Run MCP server in HTTP mode."""
+    install_sigusr1_handler()
     try:
         logger.info(
             "Starting MemMachine MCP HTTP server at http://%s:%s",
@@ -30,6 +32,7 @@ async def run_mcp_http(host: str, port: int) -> None:
     except Exception:
         logger.exception("MemMachine MCP HTTP server crashed")
     finally:
+        dump_traceback()
         logger.info("MemMachine MCP HTTP server stopped")
 
 
