@@ -1,0 +1,53 @@
+logging:
+  path: memmachine-notebook.log
+  level: info
+
+episode_store:
+  database: pg_db
+
+episodic_memory:
+  enabled: false
+  long_term_memory_enabled: false
+  short_term_memory_enabled: false
+
+semantic_memory:
+  enabled: true
+  database: pg_db
+  config_database: pg_db
+  llm_model: openai_responses_model
+  embedding_model: openai_embedder
+
+session_manager:
+  database: pg_db
+
+resources:
+  databases:
+    pg_db:
+      provider: postgres
+      config:
+        host: localhost
+        port: 55432
+        user: memmachine
+        password: memmachine
+        db_name: memmachine
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: text-embedding-3-small
+        api_key: $OPENAI_API_KEY
+        dimensions: 1536
+  language_models:
+    openai_responses_model:
+      provider: openai-responses
+      config:
+        model: gpt-4o-mini
+        api_key: $OPENAI_API_KEY
+  rerankers:
+    identity_reranker:
+      provider: identity
+      config: {}
+
+server:
+  host: 127.0.0.1
+  port: 8080
