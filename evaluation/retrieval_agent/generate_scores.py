@@ -65,6 +65,7 @@ print(overall_means)
 wiki_matrix = None
 locomo_matrix = None
 hotpotqa_matrix = None
+longmemeval_matrix = None
 general_matrix = None
 tools_called: dict[str, int] = {}
 tools_correct: dict[str, int] = {}
@@ -75,6 +76,8 @@ for item in all_items:
         locomo_matrix = item.get("locomo_final_matrix", None)
     if hotpotqa_matrix is None:
         hotpotqa_matrix = item.get("hotpotqa_final_matrix", None)
+    if longmemeval_matrix is None:
+        longmemeval_matrix = item.get("longmemeval_final_matrix", None)
     if general_matrix is None:
         general_matrix = item.get("general_final_matrix", None)
 
@@ -99,5 +102,7 @@ if locomo_matrix:
     print(f"\nLocomo Info Matrix:\n{locomo_matrix}")
 if hotpotqa_matrix:
     print(f"\nHotpotQA Info Matrix:\n{hotpotqa_matrix}")
+if longmemeval_matrix:
+    print(f"\nLongMemEval Info Matrix:\n{longmemeval_matrix}")
 if general_matrix:
     print(f"\nGeneral Info Matrix:\n{general_matrix}")

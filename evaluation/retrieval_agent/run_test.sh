@@ -35,6 +35,18 @@ usage_hotpotqa() {
     exit 1
 }
 
+usage_longmemeval() {
+    echo "LongMemEval Usage: $0 longmemeval RESULT_POSTFIX RUN_TYPE SPLIT_NAME TEST_TARGET LENGTH"
+    echo
+    echo "Arguments:"
+    echo "  RESULT_POSTFIX    Custom postfix for output files"
+    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
+    echo "  SPLIT_NAME        Dataset split name, e.g. longmemeval_s_cleaned"
+    echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
+    echo "  LENGTH            Number of examples to run [1 - split size]"
+    exit 1
+}
+
 show_help() {
     case "$1" in
         locomo)
@@ -46,6 +58,9 @@ show_help() {
         hotpotqa)
             usage_hotpotqa
             ;;
+        longmemeval)
+            usage_longmemeval
+            ;;
         ""|all)
             echo "Usage: $0 TEST [args...]"
             echo
@@ -53,6 +68,7 @@ show_help() {
             echo "  locomo"
             echo "  wikimultihop"
             echo "  hotpotqa"
+            echo "  longmemeval"
             echo
             echo "Use:"
             echo "  $0 TEST --help"
@@ -83,6 +99,11 @@ validate_args() {
                 show_help hotpotqa
             fi
             ;;
+        longmemeval)
+            if [ "$#" -ne 6 ]; then
+                show_help longmemeval
+            fi
+            ;;
         *)
             echo "Unknown test: $TEST"
             show_help all
@@ -111,6 +132,13 @@ run_test() {
             TEST_TARGET=$5
             LENGTH=$6
             ;;
+        longmemeval)
+            RESULT_POSTFIX=$2
+            INGEST=$3
+            SPLIT_NAME=$4
+            TEST_TARGET=$5
+            LENGTH=$6
+            ;;
         *)
             echo "Unknown test: $TEST"
             show_help all
@@ -122,6 +150,7 @@ run_test() {
     RESULT_FILE="${SCRIPT_DIR}/result/${TEST}_${TEST_TARGET}_output_${RESULT_POSTFIX}.json"
     EVAL_FILE="${SCRIPT_DIR}/result/${TEST}_${TEST_TARGET}_evaluation_metrics_${RESULT_POSTFIX}.json"
     FINAL_SCORE_FILE="${SCRIPT_DIR}/result/final_score/${TEST}_${TEST_TARGET}_${RESULT_POSTFIX}.result"
+    SESSION_ID="${TEST}_${RESULT_POSTFIX}"
 
     rm -f "$RESULT_FILE" "$EVAL_FILE" "$FINAL_SCORE_FILE" 
 
@@ -137,6 +166,10 @@ run_test() {
         hotpotqa)
             INGEST_CMD=(python -u hotpotQA_test.py --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
             SEARCH_CMD=(python -u hotpotQA_test.py --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
+            ;;
+        longmemeval)
+            INGEST_CMD=(uv run python -u longmemeval_test.py --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
+            SEARCH_CMD=(uv run python -u longmemeval_test.py --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
             ;;
     esac
 
