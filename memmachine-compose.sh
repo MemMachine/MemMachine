@@ -101,7 +101,10 @@ find_docker_compose() {
         print_error "Docker Compose is not installed. Please install Docker Compose first."
         exit 1
     fi
-    
+    if [[ -z "$COMPOSE_PROJECT" ]]; then
+        COMPOSE_PROJECT="$(basename "$(pwd)")"
+    fi
+    COMPOSE_CMD="$COMPOSE_CMD -p $COMPOSE_PROJECT"
     print_success "Docker and Docker Compose are available"
 }
 
