@@ -12,19 +12,18 @@ import logging
 from asyncio import Task
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from pydantic import BaseModel, InstanceOf
 
-from memmachine.common.data_types import FilterablePropertyValue
 from memmachine.common.embedder import Embedder
 from memmachine.common.episode_store import EpisodeIdT, EpisodeStorage
 from memmachine.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
 )
-from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr
+from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr, In
 from memmachine.common.language_model import LanguageModel
 
 from .config_store.config_store import SemanticConfigStorage
@@ -68,10 +67,9 @@ def _with_has_set_ids(
     if len(set_ids) == 0:
         return filter_expr
 
-    set_expr = Comparison(
+    set_expr = In(
         field="set_id",
-        op="in",
-        value=cast(list[FilterablePropertyValue], list(set_ids)),
+        values=set_ids,
     )
 
     if filter_expr is None:

@@ -1,0 +1,29 @@
+---
+title: "SearchMemoriesResult"
+description: "The structured response object containing semantic search matches."
+---
+
+## Overview
+
+The `SearchMemoriesResult` interface encapsulates the outcome of a semantic search operation. It provides both the matched memory content and the operation status.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `content` | [`EpisodicMemory[]`](./EpisodicMemory) | An array of memory entries that matched the search criteria, ranked by relevance. |
+| `status` | `number` | The numeric status code of the search operation (e.g., `200` for success). |
+
+---
+
+## Usage Example
+
+```typescript
+cconst searchResponse = await memory.search('What is the user's favorite color?');
+
+if (searchResponse.status === 0) {
+console.dir(searchResponse.content, { depth: null })
+}
+```

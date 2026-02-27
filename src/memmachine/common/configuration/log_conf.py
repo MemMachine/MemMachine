@@ -125,6 +125,11 @@ class LogConf(YamlSerializableMixin):
             force=True,
         )
 
+        # Suppress verbose Neo4j notifications about existing constraints/indexes
+        neo4j_logger = logging.getLogger("neo4j.notifications")
+        if neo4j_logger.getEffectiveLevel() < logging.WARNING:
+            neo4j_logger.setLevel(logging.WARNING)
+
 
 class RerankerType(Enum):
     """Enumeration of supported reranker implementations."""

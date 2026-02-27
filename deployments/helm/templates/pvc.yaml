@@ -1,0 +1,51 @@
+# pvc.yaml
+# Defines three PersistentVolumeClaims (all ReadWriteMany), one per stateful component:
+#   - neo4j-pvc      → mounted at /data in the Neo4j pod
+#   - postgres-pvc   → mounted at /var/lib/postgresql/data in the PostgreSQL pod
+#   - memmachine-pvc → mounted at /app/data in the MemMachine pod (logs/data)
+# All PVCs use the same storageClass and pvcSize from values.yaml.
+# ReadWriteMany (RWX) requires an NFS-backed or similarly capable StorageClass.
+{{- $namespace := .Release.Namespace }}
+{{- if .Values.neo4j.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: neo4j-pvc
+  namespace: {{ $namespace }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.pvcSize }}
+  storageClassName: {{ .Values.storageClass }}
+{{- end }}
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: {{ $namespace }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.pvcSize }}
+  storageClassName: {{ .Values.storageClass }}
+{{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: memmachine-pvc
+  namespace: {{ $namespace }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.pvcSize }}
+  storageClassName: {{ .Values.storageClass }}

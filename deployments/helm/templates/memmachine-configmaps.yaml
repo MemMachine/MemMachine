@@ -1,0 +1,115 @@
+# memmachine-configmaps.yaml
+# Defines two ConfigMaps for the MemMachine application:
+#
+#   1. memmachine-config
+#      Generates /app/configuration.yml inside the container. Contains the full
+#      application configuration: database connections, LLM/embedder resource
+#      definitions, reranker pipeline, episodic/semantic memory settings, and
+#      session manager. Values are templated from values.yaml.
+#
+#   2. memmachine-env-config
+#      Generates /app/.env with non-secret env vars (POSTGRES_HOST, POSTGRES_PORT,
+#      MCP_BASE_URL, etc.). POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB are
+#      injected from postgres-secret in the MemMachine deployment, not from this file.
+#      NOTE: enableConfigApi is not set in default values.yaml — add it
+#            explicitly if the Config API endpoint should be enabled.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memmachine-config
+  namespace: {{ .Release.Namespace }}
+data:
+  configuration.yml: |
+    logging:
+      path: /app/data/memmachine.log
+      level: info
+
+    episode_store:
+      database: db_postgres
+
+    episodic_memory:
+      long_term_memory:
+        embedder: default_embedder
+        reranker: my_reranker_id
+        vector_graph_store: db_neo4j
+      short_term_memory:
+        llm_model: default_model
+        message_capacity: 500
+
+    semantic_memory:
+      llm_model: default_model
+      embedding_model: default_embedder
+      database: db_postgres
+      config_database: db_postgres
+
+    session_manager:
+      database: db_postgres
+
+    prompt:
+      default_project_categories:
+      - profile_prompt
+
+    resources:
+      databases:
+        db_postgres:
+          provider: postgres
+          config:
+            host: {{ .Values.postgres.host }}
+            port: {{ .Values.postgres.port }}
+            user: {{ .Values.postgres.user }}
+            password: $POSTGRES_PASSWORD
+            db_name: {{ .Values.postgres.database }}
+            pool_size: {{ .Values.postgres.pool_size }}
+            max_overflow: {{ .Values.postgres.max_overflow }}
+        db_neo4j:
+          provider: neo4j
+          config:
+            uri: 'bolt://{{ .Values.neo4j.host }}:{{ .Values.neo4j.port }}'
+            username: $NEO4J_USER
+            password: $NEO4J_PASSWORD
+            max_connection_pool_size: {{ .Values.neo4j.pool.max_connection_pool_size }}
+            connection_acquisition_timeout: {{ .Values.neo4j.pool.connection_acquisition_timeout }}
+            range_index_creation_threshold: {{ .Values.neo4j.pool.range_index_creation_threshold }}
+            vector_index_creation_threshold: {{ .Values.neo4j.pool.vector_index_creation_threshold }}
+      embedders:
+        default_embedder:
+          provider: "{{ .Values.memmachine.embedder.provider }}"
+          config:
+            model: "{{ .Values.memmachine.embedder.model_path }}"
+            api_key: $OPENAI_API_KEY
+            base_url: "{{ .Values.memmachine.embedder.base_url }}"
+            dimensions: {{ .Values.memmachine.embedder.dimensions }}
+      language_models:
+        default_model:
+          provider: "{{ .Values.memmachine.model.provider }}"
+          config:
+            model: "{{ .Values.memmachine.model.model_path }}"
+            api_key: $OPENAI_API_KEY
+            base_url: "{{ .Values.memmachine.model.base_url }}"
+      rerankers:
+        my_reranker_id:
+          provider: "rrf-hybrid"
+          config:
+            reranker_ids:
+              - id_ranker_id
+              - bm_ranker_id
+        id_ranker_id:
+          provider: "identity"
+        bm_ranker_id:
+          provider: "bm25"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: memmachine-env-config
+  namespace: {{ .Release.Namespace }}
+data:
+  .env: |
+    POSTGRES_HOST={{ .Values.postgres.host }}
+    POSTGRES_PORT={{ .Values.postgres.port }}
+    POSTGRES_USER={{ .Values.postgres.user }}
+    POSTGRES_DB={{ .Values.postgres.database }}
+    MCP_BASE_URL={{ .Values.memmachine.config.baseUrl }}
+    GATEWAY_URL={{ .Values.memmachine.config.gatewayUrl }}
+    FAST_MCP_LOG_LEVEL={{ .Values.memmachine.config.loggingLevel }}
+    MEMORY_CONFIG={{ .Values.memmachine.config.memoryConfigPath }}

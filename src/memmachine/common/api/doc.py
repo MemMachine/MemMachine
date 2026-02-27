@@ -723,6 +723,7 @@ class RouterDoc:
     The result is sorted by timestamp to help with context.
 
     The filter field allows for filtering based on metadata key-value pairs.
+    The set_metadata field scopes semantic memories to matching semantic sets.
     The types field allows specifying which memory types to include in the search.
     """
 
@@ -733,6 +734,7 @@ class RouterDoc:
     The page_size and page_num fields control pagination.
 
     The filter field allows for filtering based on metadata key-value pairs.
+    The set_metadata field scopes semantic memories to matching semantic sets.
     The type field allows specifying which memory type to list.
     """
 

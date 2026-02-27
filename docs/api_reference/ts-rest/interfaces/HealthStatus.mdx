@@ -1,0 +1,31 @@
+---
+title: "HealthStatus"
+description: "The data model for server connectivity and component status."
+---
+
+## Overview
+
+The `HealthStatus` interface is returned by the `client.health()` method, allowing you to monitor the availability of the MemMachine server and its sub-services.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `status` | `string` | The overall health indicator (e.g., `"healthy"`). |
+| `service` | `string` | The name of the MemMachine service instance. |
+| `version` | `string` | The current version of the server software. |
+| `memory_managers` | `boolean` | Indicates if the internal memory subsystems are operational. |
+
+---
+
+## Usage Example
+
+```typescript
+const health = await client.health();
+
+if (health.status === 'healthy') {
+  console.log(`Connected to MemMachine v${health.version}`);
+}
+```

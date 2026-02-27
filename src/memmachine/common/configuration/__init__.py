@@ -145,15 +145,15 @@ class PromptConf(YamlSerializableMixin):
     """Prompt configuration for semantic memory contexts."""
 
     default_org_categories: list[str] = Field(
-        default=["profile_prompt"],
+        default=[],
         description="The default prompts to use for semantic organization memory",
     )
     default_project_categories: list[str] = Field(
-        default=["profile_prompt", "writing_assistant_prompt", "coding_prompt"],
+        default=["profile_prompt"],
         description="The default prompts to use for semantic project memory",
     )
     default_user_categories: list[str] = Field(
-        default=["profile_prompt"],
+        default=[],
         description="The default prompts to use for semantic user memory",
     )
     episode_summary_system_prompt_path: str = Field(

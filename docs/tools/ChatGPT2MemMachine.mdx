@@ -1,0 +1,117 @@
+---
+title: "ChatGPT2MemMachine"
+sidebarTitle: "ChatGPT2MemMachine"
+icon: "bolt"
+description: "Import chat history from external sources like OpenAI and Locomo into MemMachine."
+---
+
+The `chatgpt2memmachine` utility is a Python-based migration tool that transforms exported chat histories into episodic or semantic memories within your MemMachine organization.
+
+<Note>
+  Before starting, ensure you have your `orgId` and `projectId` available from your MemMachine dashboard.
+</Note>
+
+## Quick Start
+
+<Steps>
+  <Step title="Prepare your Data">
+    Export your chat history from **OpenAI** (Settings > Data Controls > Export Data) or locate your **Locomo** history JSON file.
+  </Step>
+
+  <Step title="Install Dependencies">
+    Clone the tool from the [official repository](https://github.com/MemMachine/MemMachine) and install required Python packages.
+  </Step>
+
+  <Step title="Run the Migration">
+    Execute the script using the `--source` flag matching your data.
+
+    ```bash
+    python migration.py -i conversations.json --org-id my-org --project-id my-project --source openai
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Configuration
+
+The migration script supports several arguments to fine-tune how data is ingested.
+
+### Core Arguments
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `-i, --input` | `FILE` | **Required.** Input chat history file. |
+| `-s, --source` | `string` | Source format: `openai` (default) or `locomo`. |
+| `--org-id` | `ID` | Organization ID in MemMachine. |
+| `--project-id` | `ID` | Project ID in MemMachine. |
+| `--memory-types` | `string` | `episodic` (default), `semantic`, or comma-separated values. |
+
+### Filtering & Logic
+
+| Parameter | Description |
+| :--- | :--- |
+| `--since` | Only process messages after this time (Unix, ISO, or YYYY-MM-DD). |
+| `-l, --limit` | Max messages to process per conversation (0 = no limit). |
+| `--index` | Process only the conversation at specific index N (1-based). |
+| `--chat-title` | **[OpenAI only]** Process only chats matching this title (case-insensitive). |
+| `--user-only` | Only add user messages to MemMachine (Enabled by default). |
+| `--dry-run` | Preview migration without adding memories. |
+
+---
+
+## Advanced Operations
+
+### Resuming Failed Jobs
+If a migration is interrupted, use the `run-id` generated in the `output/` directory to retry or resume.
+
+```bash
+# Resume migration, skipping already successful messages
+python migration.py -i chat.json --org-id my-org --project-id my-project \
+  --run-id 20260202T235246858124 --resume
+```
+
+### Performance Tuning
+
+For large datasets, use parallel processing to speed up the ingestion:
+
+<Tip>Start with `--workers 4` to balance speed without hitting rate limits on your local MemMachine instance.</Tip>
+
+```bash
+python migration.py -i chat.json --org-id my-org --project-id my-project --workers 4
+```
+
+------
+
+## Output & Logs
+
+Each migration run generates a unique `run_id` and stores data in the following directories:
+
+  - **`extracted/`**: Contains extracted conversations saved for caching.
+  - **`output/success_{run_id}.txt`**: List of successfully migrated message IDs.
+  - **`output/errors_{run_id}.txt`**: List of failed messages with error details.
+  - **`output/migration_stats_{run_id}.json`**: Summary of counts and duration.
+
+## Verifying Your Migration
+
+Once the script completes, you can verify that your memories were correctly ingested by checking the following:
+
+<Steps>
+<Step title="Check the Output Files">
+The script generates a `migration_stats_{run_id}.json` file in the `output/` directory. Open it to confirm:
+* `total_messages_processed` matches your expectations.
+* `success_count` represents the majority of your data.
+</Step>
+<Step title="Spot-Check the API">
+You can query your MemMachine instance directly to see if the new memories appear in your project.
+
+```bash
+# Example: List the last 5 episodic memories added
+curl -X GET "http://localhost:8080/v1/orgs/{orgId}/projects/{projectId}/memories?limit=5&type=episodic"
+```
+</Step>
+<Step title="Review the Trace (Optional)">
+
+If things look off, check `trace_{run_id}.txt`. This file contains the raw API responses for every message, which is the "Source of Truth" if a specific conversation didn't migrate.
+</Step>
+</Steps>

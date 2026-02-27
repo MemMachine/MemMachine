@@ -28,7 +28,7 @@ dependencies = [
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
     "nltk>=3.9.1",
-    "openai>=1.104.2",
+    "openai>=2.21.0",
     "pgvector>=0.4.1",
     "prometheus-client>=0.22.1",
     "pydantic>=2.11.7",
@@ -88,7 +88,6 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 [dependency-groups]
 dev = [
     "complexipy>=4.2.0",
-    "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
     "ruff~=0.14.0",
@@ -97,12 +96,6 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
-
-[tool.mypy]
-follow_untyped_imports = true
-enable_error_code = ["deprecated"]
-exclude = ["venv/", ".venv/"]
-plugins = ['pydantic.mypy']
 
 [tool.ruff]
 exclude = ["tools"]

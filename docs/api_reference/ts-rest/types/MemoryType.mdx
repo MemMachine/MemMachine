@@ -1,0 +1,31 @@
+---
+title: "MemoryType"
+description: "Classification of memory storage and retrieval patterns."
+---
+
+## Overview
+
+The `MemoryType` type defines the fundamental storage classifications used by the MemMachine engine. Choosing the correct type ensures your data is indexed and retrieved using the most effective algorithms.
+
+---
+
+## Type Definition
+
+```typescript
+type MemoryType = "episodic" | "semantic";
+```
+
+| Value        | Description                                                  |
+| ------------ | ------------------------------------------------------------ |
+| `"episodic"` | **Sequential Memory.** Stored in chronological order, ideal for conversation history and logs. |
+| `"semantic"` | **Knowledge Memory.** Stored by meaning, ideal for facts, user profiles, and long-term knowledge. |
+
+------
+
+## Usage Example
+
+```typescript
+import { MemoryType } from '@memmachine/client';
+
+const typesToSearch: MemoryType[] = ['episodic'];
+```

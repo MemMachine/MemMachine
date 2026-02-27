@@ -79,7 +79,7 @@ class IngestionService:
 
         history_ids = await self._semantic_storage.get_history_messages(
             set_ids=[set_id],
-            limit=50,
+            limit=5,
             is_ingested=False,
         )
 
@@ -344,7 +344,7 @@ class IngestionService:
             ],
         )
         citation_ids = TypeAdapter(list[EpisodeIdT]).validate_python(
-            list(merged_citations),
+            list(set(merged_citations)),
         )
 
         async def _add_feature(f: LLMReducedFeature) -> None:

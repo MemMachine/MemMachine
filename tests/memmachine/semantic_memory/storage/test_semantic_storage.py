@@ -1307,3 +1307,119 @@ async def test_filter_features_by_created_at_range(
     )
     assert len(results) == 1
     assert results[0].value == "note2"
+
+
+@pytest.mark.asyncio
+async def test_filter_equality(semantic_storage: SemanticStorage):
+    feature_ids: list[FeatureIdT] = [
+        await semantic_storage.add_feature(
+            set_id="eq-user",
+            category_name="default",
+            feature="rank",
+            value=str(idx),
+            tag="numeric",
+            embedding=np.array([float(idx)], dtype=float),
+        )
+        for idx in range(1, 4)
+    ]
+
+    try:
+        results = await semantic_storage.get_feature_set(
+            filter_expr=_expr("value = '1'"),
+        )
+        assert len(results) == 1
+        assert results[0].value == "1"
+    finally:
+        await semantic_storage.delete_features(feature_ids)
+
+
+@pytest.mark.asyncio
+async def test_filter_not_equal(semantic_storage: SemanticStorage):
+    feature_ids: list[FeatureIdT] = [
+        await semantic_storage.add_feature(
+            set_id="ne-user",
+            category_name="default",
+            feature="rank",
+            value=str(idx),
+            tag="numeric",
+            embedding=np.array([float(idx)], dtype=float),
+        )
+        for idx in range(1, 4)
+    ]
+
+    try:
+        results = await semantic_storage.get_feature_set(
+            filter_expr=_expr("value != '1'"),
+        )
+        assert {f.value for f in results} == {"2", "3"}
+    finally:
+        await semantic_storage.delete_features(feature_ids)
+
+
+@pytest.mark.asyncio
+async def test_filter_greater_equal(semantic_storage: SemanticStorage):
+    feature_ids: list[FeatureIdT] = [
+        await semantic_storage.add_feature(
+            set_id="ge-user",
+            category_name="default",
+            feature="rank",
+            value=str(idx),
+            tag="numeric",
+            embedding=np.array([float(idx)], dtype=float),
+        )
+        for idx in range(1, 4)
+    ]
+
+    try:
+        results = await semantic_storage.get_feature_set(
+            filter_expr=_expr("value >= '2'"),
+        )
+        assert {f.value for f in results} == {"2", "3"}
+    finally:
+        await semantic_storage.delete_features(feature_ids)
+
+
+@pytest.mark.asyncio
+async def test_filter_or(semantic_storage: SemanticStorage):
+    feature_ids: list[FeatureIdT] = []
+    for set_id in ("or-u1", "or-u2", "or-u3"):
+        fid = await semantic_storage.add_feature(
+            set_id=set_id,
+            category_name="default",
+            feature="note",
+            value=f"val-{set_id}",
+            tag="misc",
+            embedding=np.array([1.0], dtype=float),
+        )
+        feature_ids.append(fid)
+
+    try:
+        results = await semantic_storage.get_feature_set(
+            filter_expr=_expr("set_id = 'or-u1' OR set_id = 'or-u2'"),
+        )
+        assert {f.value for f in results} == {"val-or-u1", "val-or-u2"}
+    finally:
+        await semantic_storage.delete_features(feature_ids)
+
+
+@pytest.mark.asyncio
+async def test_filter_not(semantic_storage: SemanticStorage):
+    feature_ids: list[FeatureIdT] = [
+        await semantic_storage.add_feature(
+            set_id="not-user",
+            category_name="default",
+            feature="rank",
+            value=str(idx),
+            tag="numeric",
+            embedding=np.array([float(idx)], dtype=float),
+        )
+        for idx in range(1, 4)
+    ]
+
+    try:
+        results = await semantic_storage.get_feature_set(
+            filter_expr=_expr("NOT value = '1'"),
+        )
+        assert {f.value for f in results} == {"2", "3"}
+    finally:
+        await semantic_storage.delete_features(feature_ids)

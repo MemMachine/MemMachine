@@ -204,7 +204,29 @@ def test_search_memories_spec():
     assert spec.top_k == 10
     assert spec.query == "Find this"
     assert spec.filter == ""
+    assert spec.set_metadata is None
     assert spec.types == []
+
+
+def test_search_memories_spec_with_set_metadata():
+    spec = SearchMemoriesSpec.model_validate(
+        {
+            "query": "Find this",
+            "set_metadata": {"user_id": "user123", "tenant": "acme"},
+        }
+    )
+    assert spec.set_metadata == {"user_id": "user123", "tenant": "acme"}
+
+
+def test_search_memories_spec_set_metadata_mixed_value_types():
+    """set_metadata accepts any JSON value (int, bool, null) per JsonValue."""
+    spec = SearchMemoriesSpec.model_validate(
+        {
+            "query": "Find this",
+            "set_metadata": {"score": 42, "active": True, "label": None},
+        }
+    )
+    assert spec.set_metadata == {"score": 42, "active": True, "label": None}
 
 
 def test_list_memories_spec():
@@ -214,7 +236,27 @@ def test_list_memories_spec():
     assert spec.page_size == 100
     assert spec.page_num == 0
     assert spec.filter == ""
+    assert spec.set_metadata is None
     assert spec.type is None
+
+
+def test_list_memories_spec_with_set_metadata():
+    spec = ListMemoriesSpec.model_validate(
+        {
+            "set_metadata": {"user_id": "user456", "region": "us-east"},
+        }
+    )
+    assert spec.set_metadata == {"user_id": "user456", "region": "us-east"}
+
+
+def test_list_memories_spec_set_metadata_mixed_value_types():
+    """set_metadata accepts any JSON value (int, bool, null) per JsonValue."""
+    spec = ListMemoriesSpec.model_validate(
+        {
+            "set_metadata": {"priority": 1, "verified": False, "tag": None},
+        }
+    )
+    assert spec.set_metadata == {"priority": 1, "verified": False, "tag": None}
 
 
 def test_delete_episodic_memory_spec():

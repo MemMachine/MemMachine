@@ -1,0 +1,35 @@
+---
+title: "ListMemoriesOptions"
+description: "Pagination and filtering options for retrieving sets of memories."
+---
+
+## Overview
+
+The `ListMemoriesOptions` interface provides control over the retrieval of multiple memory records, enabling pagination and broad filtering across the memory store.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `type` | [`MemoryType`](../types/MemoryType) | **Optional.** Restricts the list to specific memory classifications (e.g., `episodic`). |
+| `filter` | `string` | **Optional.** Criteria to narrow down the retrieved list based on metadata. |
+| `page_num` | `number` | **Optional.** The specific page index to retrieve (defaults to 1). |
+| `page_size` | `number` | **Optional.** The number of records to return per page. |
+
+---
+
+## Usage Example
+
+```typescript
+import { ListMemoriesOptions } from '@memmachine/client';
+
+const options: ListMemoriesOptions = {
+  type: 'episodic',
+  page_num: 2,
+  page_size: 20
+};
+
+const history = await memory.list(options);
+```

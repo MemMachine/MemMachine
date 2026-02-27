@@ -8,7 +8,7 @@ from enum import Enum
 from pydantic import AwareDatetime, BaseModel, JsonValue
 
 from memmachine.common.api import EpisodeType
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import PropertyValue
 
 EpisodeIdT = str
 
@@ -57,7 +57,7 @@ class Episode(BaseModel):
 
     episode_type: EpisodeType = EpisodeType.MESSAGE
     content_type: ContentType = ContentType.STRING
-    filterable_metadata: dict[str, FilterablePropertyValue] | None = None
+    filterable_metadata: dict[str, PropertyValue] | None = None
     metadata: dict[str, JsonValue] | None = None
 
     def __hash__(self) -> int:
