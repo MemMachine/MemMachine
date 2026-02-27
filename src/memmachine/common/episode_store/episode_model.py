@@ -60,6 +60,8 @@ class Episode(BaseModel):
     filterable_metadata: dict[str, PropertyValue] | None = None
     metadata: dict[str, JsonValue] | None = None
 
+    is_new: bool = True
+
     def __hash__(self) -> int:
         """Hash an episode by its UID."""
         return hash(self.uid)

@@ -32,6 +32,7 @@ class SemanticCommand(BaseModel):
     feature: str
     tag: str
     value: str
+    entity_type: str | None = None
 
 
 @dataclass
@@ -75,6 +76,8 @@ class SemanticFeature(BaseModel):
     tag: str
     feature_name: str
     value: str
+    entity_type: str | None = None
+    contradicted_by: list[FeatureIdT] | None = None
     metadata: Metadata = Metadata()
 
     @staticmethod

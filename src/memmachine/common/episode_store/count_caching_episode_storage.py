@@ -63,12 +63,14 @@ class CountCachingEpisodeStorage(EpisodeStorage):
     ) -> list[Episode]:
         stored = await self._wrapped.add_episodes(session_key, episodes)
 
-        async with self._lock:
-            entry = self._count_cache.get(session_key)
-            if entry is not None:
-                self._count_cache[session_key] = _CacheEntry(
-                    count=entry.count + len(episodes),
-                )
+        new_count = sum(1 for ep in stored if ep.is_new)
+        if new_count > 0:
+            async with self._lock:
+                entry = self._count_cache.get(session_key)
+                if entry is not None:
+                    self._count_cache[session_key] = _CacheEntry(
+                        count=entry.count + new_count,
+                    )
 
         return stored
 

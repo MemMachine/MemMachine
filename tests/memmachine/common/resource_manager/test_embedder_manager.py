@@ -38,6 +38,7 @@ def mock_conf():
     return conf
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_build_amazon_bedrock_embedders(mock_conf):
     builder = EmbedderManager(mock_conf)
@@ -69,6 +70,7 @@ async def test_build_sentence_transformer_embedders(mock_conf):
     assert isinstance(embedder, Embedder)
 
 
+@pytest.mark.integration
 @requires_sentence_transformers
 @pytest.mark.asyncio
 async def test_build_all(mock_conf):

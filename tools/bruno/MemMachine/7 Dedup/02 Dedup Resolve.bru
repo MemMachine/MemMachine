@@ -1,0 +1,39 @@
+meta {
+  name: Dedup Resolve
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/dedup/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "pairs": [
+      {
+        "node_uid_a": "{{duplicateUidA}}",
+        "node_uid_b": "{{duplicateUidB}}",
+        "strategy": "merge"
+      }
+    ]
+  }
+}
+
+docs {
+  Resolve duplicate proposals by merging or dismissing them.
+
+  Strategies:
+    - "merge"   — combine the two nodes (newest properties win)
+    - "dismiss" — mark the pair as not-duplicates
+
+  Replace {{duplicateUidA}} and {{duplicateUidB}} with actual
+  node UIDs from the dedup proposals response.
+}

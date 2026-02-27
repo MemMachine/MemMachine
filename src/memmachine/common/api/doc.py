@@ -236,6 +236,13 @@ class SpecDoc:
     If empty, all available types are searched.
     """
 
+    ENTITY_TYPES = """
+    An optional list of entity type labels to filter results by (e.g.,
+    Person, Location, Event). Only memories whose nodes carry at least one
+    of the specified entity types are returned. If None, no entity type
+    filtering is applied.
+    """
+
     PAGE_SIZE = """
     The maximum number of memories to return per page. Use this for pagination.
     """
@@ -605,6 +612,10 @@ class Examples:
         "metadata.user_id=123 AND metadata.session_id=abc",
     ]
     MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
+    ENTITY_TYPES: ClassVar[list[list[str] | None]] = [
+        ["Person", "Location"],
+        None,
+    ]
     MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
     PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]

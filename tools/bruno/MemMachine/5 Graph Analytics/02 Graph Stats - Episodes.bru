@@ -1,0 +1,29 @@
+meta {
+  name: Graph Stats - Episodes
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/analytics/stats
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Episode_universal/universal"
+  }
+}
+
+docs {
+  Return graph statistics for the Episode node collection.
+
+  Episode nodes represent the raw ingested messages. Each
+  Episode has a corresponding Derivative node linked by a
+  DERIVED_FROM relationship.
+}

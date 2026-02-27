@@ -37,6 +37,10 @@ from .semantic_model import (
     SetIdT,
     TagIdT,
 )
+from .storage.feature_relationship_types import (
+    FeatureRelationshipType,
+)
+from .storage.semantic_relationship_storage import SemanticRelationshipStorage
 from .storage.storage_base import SemanticStorage
 
 logger = logging.getLogger(__name__)
@@ -102,6 +106,8 @@ class SemanticService:
 
         debug_fail_loudly: bool = False
 
+        related_to_threshold: float = 0.70
+
     def __init__(
         self,
         params: Params,
@@ -133,6 +139,7 @@ class SemanticService:
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
         self._debug_fail_loudly = params.debug_fail_loudly
+        self._related_to_threshold = params.related_to_threshold
 
     async def start(self) -> None:
         logger.info("Starting semantic memory services")
@@ -218,7 +225,202 @@ class SemanticService:
         for t_list in t_res:
             res = res + t_list
 
+        # Enrich with graph relationships when available.
+        res = await self._enrich_with_relationships(res)
+
         return res
+
+    async def _enrich_with_relationships(
+        self,
+        features: list[SemanticFeature],
+    ) -> list[SemanticFeature]:
+        """Enrich search results with graph relationship data.
+
+        When the storage implements :class:`SemanticRelationshipStorage`:
+        1. Fetches RELATED_TO relationships and includes related features
+        2. Annotates features involved in CONTRADICTS relationships
+        3. Replaces superseded features with their current version
+
+        Falls back to returning features unchanged when unsupported.
+        """
+        if not isinstance(self._semantic_storage, SemanticRelationshipStorage):
+            return features
+
+        if not features:
+            return features
+
+        storage: SemanticRelationshipStorage = self._semantic_storage
+
+        features = await self._enrich_related_to(features, storage)
+        await self._annotate_contradictions(features, storage)
+        features = await self._resolve_supersessions(features, storage)
+
+        return features
+
+    async def _enrich_related_to(
+        self,
+        features: list[SemanticFeature],
+        storage: SemanticRelationshipStorage,
+    ) -> list[SemanticFeature]:
+        """Add RELATED_TO features to the result set (depth 1, deduplicated)."""
+        feature_ids = [f.metadata.id for f in features if f.metadata.id is not None]
+        if not feature_ids:
+            return features
+
+        existing_ids = set(feature_ids)
+
+        # Fetch RELATED_TO relationships for all result features in parallel.
+        rel_tasks = [
+            storage.get_feature_relationships(
+                fid,
+                relationship_type=FeatureRelationshipType.RELATED_TO,
+            )
+            for fid in feature_ids
+        ]
+        all_rels = await asyncio.gather(*rel_tasks)
+
+        related_ids = self._collect_related_ids(all_rels, existing_ids)
+        if not related_ids:
+            return features
+
+        # Load the related features and append them.
+        load_tasks = [
+            self._semantic_storage.get_feature(rid, load_citations=False)
+            for rid in related_ids
+        ]
+        loaded = await asyncio.gather(*load_tasks)
+
+        for feat in loaded:
+            if feat is not None and feat.metadata.id not in existing_ids:
+                features.append(feat)
+                existing_ids.add(feat.metadata.id)
+
+        return features
+
+    @staticmethod
+    def _collect_related_ids(
+        all_rels: list[list],
+        existing_ids: set[FeatureIdT],
+    ) -> set[FeatureIdT]:
+        """Extract unique related feature IDs not already in the result set."""
+        related: set[FeatureIdT] = set()
+        for rels in all_rels:
+            for rel in rels:
+                for rid in (rel.source_id, rel.target_id):
+                    if rid not in existing_ids:
+                        related.add(rid)
+        return related
+
+    async def _annotate_contradictions(
+        self,
+        features: list[SemanticFeature],
+        storage: SemanticRelationshipStorage,
+    ) -> None:
+        """Annotate features that have CONTRADICTS relationships with each other.
+
+        Mutates the *features* list in place by setting ``contradicted_by``
+        on affected items.
+        """
+        feature_ids = [f.metadata.id for f in features if f.metadata.id is not None]
+        if not feature_ids:
+            return
+
+        id_set = set(feature_ids)
+
+        rel_tasks = [
+            storage.get_feature_relationships(
+                fid,
+                relationship_type=FeatureRelationshipType.CONTRADICTS,
+            )
+            for fid in feature_ids
+        ]
+        all_rels = await asyncio.gather(*rel_tasks)
+
+        # Build a mapping: feature_id → list of contradicting feature_ids
+        # (only those present in the result set).
+        contradictions: dict[FeatureIdT, list[FeatureIdT]] = {}
+        for fid, rels in zip(feature_ids, all_rels, strict=True):
+            for rel in rels:
+                other = rel.target_id if rel.source_id == fid else rel.source_id
+                if other in id_set:
+                    contradictions.setdefault(fid, []).append(other)
+
+        # Apply annotations.
+        for feat in features:
+            fid = feat.metadata.id
+            if fid is not None and fid in contradictions:
+                feat.contradicted_by = contradictions[fid]
+
+    async def _resolve_supersessions(
+        self,
+        features: list[SemanticFeature],
+        storage: SemanticRelationshipStorage,
+    ) -> list[SemanticFeature]:
+        """Replace superseded features with their current (newest) version."""
+        feature_ids = [f.metadata.id for f in features if f.metadata.id is not None]
+        if not feature_ids:
+            return features
+
+        chain_tasks = [storage.find_supersession_chain(fid) for fid in feature_ids]
+        chains = await asyncio.gather(*chain_tasks)
+
+        replacements = self._build_replacement_map(feature_ids, chains)
+        if not replacements:
+            return features
+
+        loaded_map = await self._load_replacement_features(replacements)
+        return self._apply_replacements(features, replacements, loaded_map)
+
+    @staticmethod
+    def _build_replacement_map(
+        feature_ids: list[FeatureIdT],
+        chains: list,
+    ) -> dict[FeatureIdT, FeatureIdT]:
+        """Build old_id → current_id map for superseded features."""
+        replacements: dict[FeatureIdT, FeatureIdT] = {}
+        for fid, chain in zip(feature_ids, chains, strict=True):
+            if chain.current != fid:
+                replacements[fid] = chain.current
+        return replacements
+
+    async def _load_replacement_features(
+        self,
+        replacements: dict[FeatureIdT, FeatureIdT],
+    ) -> dict[FeatureIdT, SemanticFeature]:
+        """Load the current versions of superseded features."""
+        replacement_ids = set(replacements.values())
+        load_tasks = [
+            self._semantic_storage.get_feature(rid, load_citations=False)
+            for rid in replacement_ids
+        ]
+        loaded = await asyncio.gather(*load_tasks)
+        return {
+            f.metadata.id: f
+            for f in loaded
+            if f is not None and f.metadata.id is not None
+        }
+
+    @staticmethod
+    def _apply_replacements(
+        features: list[SemanticFeature],
+        replacements: dict[FeatureIdT, FeatureIdT],
+        loaded_map: dict[FeatureIdT, SemanticFeature],
+    ) -> list[SemanticFeature]:
+        """Swap superseded features for their current versions, deduplicated."""
+        result: list[SemanticFeature] = []
+        seen_ids: set[FeatureIdT] = set()
+        for feat in features:
+            fid = feat.metadata.id
+            if fid is not None and fid in replacements:
+                current_id = replacements[fid]
+                if current_id in loaded_map and current_id not in seen_ids:
+                    result.append(loaded_map[current_id])
+                    seen_ids.add(current_id)
+            elif fid is None or fid not in seen_ids:
+                result.append(feat)
+                if fid is not None:
+                    seen_ids.add(fid)
+        return result
 
     async def add_messages(self, set_id: SetIdT, history_ids: list[EpisodeIdT]) -> None:
         logger.info("Adding messages to set %s: %s", set_id, history_ids)
@@ -767,6 +969,7 @@ class SemanticService:
                 semantic_storage=self._semantic_storage,
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
+                related_to_threshold=self._related_to_threshold,
             ),
         )
 

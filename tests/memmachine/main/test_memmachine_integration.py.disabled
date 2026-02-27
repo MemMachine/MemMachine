@@ -66,19 +66,32 @@ class TestMemMachineLongMemEval:
         timeout_seconds: int = 1200,
     ) -> None:
         """Poll via the public list API until semantic memory finishes ingestion."""
+        import logging
 
-        for _ in range(timeout_seconds):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Waiting for semantic features (timeout: {timeout_seconds}s)...")
+
+        for iteration in range(timeout_seconds):
             list_result = await memmachine.list_search(
                 session_data,
                 target_memories=[MemoryType.Semantic],
                 page_size=1,
             )
             if list_result.semantic_memory:
+                logger.info(f"Semantic features found after {iteration + 1} seconds")
                 return
+
+            # Log progress every 10 seconds
+            if iteration > 0 and iteration % 10 == 0:
+                logger.info(
+                    f"Still waiting for semantic features... ({iteration}/{timeout_seconds}s)"
+                )
 
             await asyncio.sleep(1)
 
-        pytest.fail("Messages were not ingested by semantic memory")
+        pytest.fail(
+            f"Messages were not ingested by semantic memory after {timeout_seconds}s timeout"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.slow
@@ -156,20 +169,29 @@ class TestMemMachineLongMemEval:
         session_data,
         long_mem_conversations,
     ) -> None:
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Configure semantic service for faster ingestion
         semantic_service = await memmachine._resources.get_semantic_service()
         semantic_service._feature_update_message_limit = 0
         semantic_service._background_ingestion_interval_sec = 0.05
         semantic_service._feature_time_limit = timedelta(seconds=1)
 
+        logger.info("Semantic service configured for fast ingestion")
+
         smoke_convo = list(long_mem_conversations[0])
         if len(smoke_convo) > 2:
             smoke_convo = smoke_convo[:2]
 
+        logger.info(f"Ingesting {len(smoke_convo)} conversation turns...")
         await self._ingest_conversations(
             memmachine,
             session_data,
             [smoke_convo],
         )
+        logger.info("Conversations ingested, waiting for semantic features...")
 
         await self._wait_for_semantic_features(
             memmachine, session_data, timeout_seconds=120

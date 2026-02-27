@@ -1,0 +1,36 @@
+meta {
+  name: Multi-hop from Alice
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/search/multi-hop
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "node_uid": "{{aliceNodeUid}}",
+    "max_hops": 3,
+    "score_decay": 0.7
+  }
+}
+
+docs {
+  Multi-hop traversal starting from an Alice-related node.
+
+  Discovers nodes reachable through chains of relationships,
+  with scores decaying by 0.7 per hop. This is how the system
+  finds Bob (2 hops: Alice -> TensorFlow -> Bob) even when
+  vector similarity alone would not surface him.
+
+  Replace {{aliceNodeUid}} with the actual UID of an Alice node
+  from the search results or graph stats output.
+}

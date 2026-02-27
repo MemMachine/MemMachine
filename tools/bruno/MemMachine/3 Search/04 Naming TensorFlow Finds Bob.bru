@@ -1,0 +1,45 @@
+meta {
+  name: Naming TensorFlow Finds Bob
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/search
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "Who should I talk to about the TensorFlow dependency in Project Atlas?",
+    "top_k": 5,
+    "types": ["episodic"]
+  }
+}
+
+docs {
+  A/B comparison with "02 Episodic Only".
+  
+  The ONLY difference: this query names "TensorFlow" explicitly.
+  The other query says "Project Atlas dependencies" (generic).
+  
+  WHAT TO LOOK FOR:
+  
+  long_term_memory:
+    With "TensorFlow" in the query, Bob's episodes about
+    "TensorFlow optimization" and "TensorFlow performance tuning"
+    now have HIGH vector similarity and appear in the top 5.
+  
+  TAKEAWAY:
+    Vector search is keyword-sensitive.  Naming the technology
+    explicitly surfaces Bob.  NOT naming it (just saying
+    "dependencies") loses him entirely.  Feature extraction
+    doesn't have this problem — it captures the structured
+    relationship "Bob → TensorFlow expert" regardless of how
+    you phrase the query.
+}

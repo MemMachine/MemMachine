@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -7,6 +8,7 @@ from memmachine.common.episode_store import (
     EpisodeEntry,
     EpisodeStorage,
 )
+from memmachine.common.episode_store.episode_model import Episode
 from memmachine.common.filter.filter_parser import Comparison
 
 
@@ -56,6 +58,16 @@ async def test_mutations_invalidate_cache(wrapped_store):
     assert wrapped_store.get_episode_messages_count.await_count == 1
 
     entry = EpisodeEntry(content="x", producer_id="tester", producer_role="user")
+    mock_episode = Episode(
+        uid="1",
+        content="x",
+        session_key="abc",
+        producer_id="tester",
+        producer_role="user",
+        created_at=datetime.now(UTC),
+        is_new=True,
+    )
+    wrapped_store.add_episodes = AsyncMock(return_value=[mock_episode])
     await storage.add_episodes("abc", [entry])
 
     updated = await storage.get_episode_messages_count(filter_expr=session_filter)

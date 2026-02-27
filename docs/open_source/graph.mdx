@@ -1,9 +1,407 @@
 ---
-title: "Graph Memory"
-description: "Help your agents understand relationships and retrieve context"
-icon: "chart-line"
+title: "Knowledge Graph"
+description: "Entity types, multi-hop traversal, graph-filtered search, and GDS ranking"
+icon: "diagram-project"
 ---
 
-## We'll throw our graph memory stuff here.
+## Overview
 
-throw throw
+MemMachine uses Neo4j as a **knowledge graph**, not just a vector store.
+Nodes carry entity type labels (Person, Concept, Event, ...) alongside
+their collection label, enabling type-aware queries and relationship
+traversal that goes far beyond single-hop vector similarity lookups.
+
+### What changed
+
+| Capability | Before | After |
+|---|---|---|
+| Node identity | Collection label only | Collection label + entity type labels (Person, Project, Tool, ...) |
+| Write semantics | `CREATE` (duplicates possible) | `MERGE` (idempotent upserts with uniqueness constraints) |
+| Search | Single-hop ANN vector similarity | Multi-hop traversal, graph-filtered vector search, PageRank re-ranking |
+| Relationships | Generic edges, no types | Typed semantic edges: CONTRADICTS, SUPERSEDES, RELATED_TO, IMPLIES |
+| Analytics | None | PageRank, Louvain communities, betweenness/degree centrality, shortest path |
+| Deduplication | None | Embedding + property similarity detection, auto-merge or manual resolution |
+| API | Standard memory endpoints only | Dedicated `/api/v2/memories/graph/*` endpoints for all graph operations |
+
+---
+
+## Why this matters: The Bob Problem
+
+Consider a team building an AI product. Over several conversations, an
+agent stores memories like these (22 total in the test dataset):
+
+- _"Alice is the tech lead on Project Atlas"_
+- _"Project Atlas uses TensorFlow as the foundation of its machine learning pipeline"_
+- _"Project Atlas depends on Redis for caching and session management"_
+- _"Carol wrote all the technical documentation for Project Atlas"_
+- _"Bob specializes in TensorFlow optimization and has contributed to its open-source repository"_
+- _"Bob presented a talk on TensorFlow performance tuning at the last engineering all-hands"_
+
+### Before: flat vector similarity
+
+A query like **"Who should I talk to about Project Atlas dependencies?"**
+embeds the question and runs approximate nearest-neighbor (ANN) search.
+Results are ranked by cosine similarity to the query vector, then
+reranked by an RRF hybrid reranker:
+
+```text
+Query: "Who should I talk to about Project Atlas dependencies?"
+
+Results (vector similarity + reranker):
+  1. "Alice is the tech lead on Project Atlas"                    score: 0.0320
+  2. "Project Atlas depends on Redis for caching..."              score: 0.0318
+  3. "Project Atlas integrates with the payment processing..."    score: 0.0315
+  4. "Project Atlas uses TensorFlow as the foundation..."         score: 0.0313
+  5. "Carol wrote all the technical documentation..."             score: 0.0310
+```
+
+**Bob is missing.** His memories never mention "Project Atlas" or
+"dependencies" -- the embeddings are too distant from the query vector.
+Every result directly contains the words "Project Atlas." The connection
+through TensorFlow is invisible to vector search:
+
+```text
+Bob --[specializes in]--> TensorFlow <--[uses as ML pipeline]-- Project Atlas
+```
+
+### After: 5-hop traversal with path quality scoring
+
+With graph-enhanced retrieval, the same query goes through additional
+phases that discover Bob through the semantic Feature layer:
+
+<Steps>
+  <Step title="Vector search + reranking">
+    The initial ANN search and reranker run exactly as before, producing
+    the same set of results with their reranker scores.
+  </Step>
+  <Step title="Graph expansion through Feature nodes">
+    The top-10 results become **anchor nodes**. For each anchor, the
+    system traverses up to 5 hops through the knowledge graph, bridging
+    the episodic and semantic layers through Feature nodes:
+
+    ```text
+    5-hop traversal path:
+      Derivative → Episode ← Feature →(RELATED_TO)→ Feature → Episode ← Derivative
+
+    From "Atlas uses TensorFlow" (Derivative):
+      hop 1: Episode (uid=2)                    via DERIVED_FROM
+      hop 2: Feature "uses_tensorflow"           via EXTRACTED_FROM
+      hop 3: Feature "contributed_to_tensorflow"  via RELATED_TO (similarity=0.60)
+      hop 4: Episode (uid=12)                    via EXTRACTED_FROM
+      hop 5: Derivative "Bob specializes in TF"   via DERIVED_FROM  ← DISCOVERED
+    ```
+
+    The RELATED_TO edge between Features is the critical bridge -- it
+    connects "uses TensorFlow" (an Atlas feature) to "contributed to
+    TensorFlow" (a Bob feature). These edges are created automatically
+    during ingestion when Feature embeddings exceed the similarity
+    threshold.
+  </Step>
+  <Step title="Path quality scoring">
+    Not all graph paths are equal. The system computes a **path quality**
+    score -- the minimum RELATED_TO edge similarity along each path:
+
+    | Path | Quality | Why |
+    |------|---------|-----|
+    | Atlas → `presentation_topic` →(sim=1.0)→ Bob's `presentation_topic` | **1.0** | Exact semantic match between Features |
+    | Atlas → `uses_tensorflow` →(sim=0.6)→ Bob's `contributed_to_tensorflow` | **0.6** | Good but imperfect match |
+    | Any → `name` →(sim=null)→ `name` | **0.0** | Trivial connection, no boost |
+
+    Discoveries through high-quality paths get stronger boosts.
+    Discoveries through trivial paths (like matching on generic
+    `name` features with no similarity score) get no boost at all.
+  </Step>
+  <Step title="Graph boost">
+    The graph score is applied as a fraction of the top reranker score.
+    The formula:
+
+    `boosted = max(score, top_score * graph_score)`
+
+    At 5 hops with decay 0.85 and path quality 1.0, `graph_score ≈ 0.44`,
+    placing Bob at ~44% of the best result — solidly in the upper half
+    regardless of `top_k`. Anchoring to the top score (not the bottom-of-
+    window threshold) keeps the boost stable across different `top_k` values.
+
+    ```text
+    Final results (graph-enhanced):
+      1. "Alice is the tech lead on Project Atlas"                    score: 0.0320
+      2. "Bob presented a talk on TensorFlow performance tuning..."   score: 0.0141
+         discovered via: 5-hop traversal, path quality: 1.0
+      3. "Bob specializes in TensorFlow optimization..."              score: 0.0139
+         discovered via: 5-hop traversal, path quality: 0.97
+      4. "Project Atlas depends on Redis for caching..."              score: 0.0318  (approx)
+      5. "Project Atlas integrates with the payment processing..."    score: 0.0315  (approx)
+    ```
+
+    **Bob is now in the top results** regardless of `top_k`. His memories
+    were discovered through the TensorFlow connection even though they never
+    mention Atlas. The path quality scoring ensures that meaningful
+    connections (TensorFlow expertise) rank above trivial ones (shared name
+    fields).
+  </Step>
+</Steps>
+
+<Note>
+  If the agent later stores _"The team will continue using TensorFlow"_,
+  the ingestion pipeline detects that this **contradicts** the migration
+  decision and creates a `CONTRADICTS` edge. At retrieval time, the
+  contradiction is annotated on both facts so the consuming agent can
+  reason about it.
+</Note>
+
+---
+
+## Entity Ontology
+
+Every node in Neo4j can carry one or more **entity type labels** in
+addition to its collection label. Types are classified by the LLM during
+ingestion (Person, Location, Event, Concept, Organization, Temporal,
+Preference, or Other) and persisted as `ENTITY_TYPE_*` labels.
+
+```python
+from memmachine.common.vector_graph_store.data_types import Node
+
+node = Node(
+    uid="alice-001",
+    properties={"name": "Alice", "role": "engineer"},
+    entity_types=["Person"],
+)
+```
+
+Entity types enable **label-index scans** in Cypher. Filtering by entity
+type happens before vector similarity computation, dramatically reducing
+the candidate set for large collections.
+
+---
+
+## Multi-Hop Traversal
+
+Variable-length path traversal discovers nodes reachable through chains
+of relationships. The traversal bridges the episodic and semantic layers
+through Feature nodes, using both sanitized relationship types (like
+`DERIVED_FROM`) and raw semantic types (`EXTRACTED_FROM`, `RELATED_TO`).
+
+The `search_multi_hop_nodes` method accepts:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `min_hops` | 1 | Minimum path length |
+| `max_hops` | 5 | Maximum path length (capped at 5) |
+| `score_decay` | 0.85 | Score multiplier per hop (`decay ^ distance`) |
+| `relationship_types` | all | Sanitized relationship types to traverse |
+| `raw_relation_types` | none | Unsanitized semantic types (`EXTRACTED_FROM`, `RELATED_TO`) |
+| `target_collection` | same | Optional cross-collection traversal |
+
+For each discovered node, the system selects the path with the **best
+quality** -- not just the shortest. Path quality is the minimum
+`RELATED_TO` edge similarity along the path. A `RELATED_TO` edge with
+`similarity: null` contributes quality 0.0, filtering out trivial
+connections.
+
+The final score for each discovery is:
+`score = decay ^ hops * path_quality`
+
+### REST API
+
+```bash
+curl -X POST http://localhost:8000/api/v2/memories/graph/search/multi-hop \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "my-project",
+    "collection": "derivatives",
+    "anchor_uid": "alice-001",
+    "max_hops": 2,
+    "score_decay": 0.7,
+    "limit": 10
+  }'
+```
+
+---
+
+## Graph-Filtered Vector Search
+
+Two-phase search that narrows the candidate set using graph structure
+**before** computing vector similarity:
+
+1. Traverse from an anchor node to find structurally related candidates.
+2. Run ANN similarity only on those candidates.
+
+This is useful when you know the neighborhood you care about but still
+want semantic ranking within it.
+
+```bash
+curl -X POST http://localhost:8000/api/v2/memories/graph/search/filtered \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "my-project",
+    "collection": "derivatives",
+    "query": "machine learning frameworks",
+    "graph_filter": {
+      "anchor_uid": "project-atlas-001",
+      "anchor_collection": "derivatives",
+      "relation_types": ["DEPENDS_ON", "USES"],
+      "max_hops": 2,
+      "direction": "BOTH"
+    },
+    "limit": 5
+  }'
+```
+
+---
+
+## Feature Relationships
+
+Semantic features (user profile facts) are connected by typed edges that
+the ingestion pipeline creates automatically:
+
+| Relationship | Trigger | Example |
+|---|---|---|
+| `RELATED_TO` | Cosine similarity above threshold (default 0.70) | _"likes Python"_ -- _"enjoys coding"_ |
+| `CONTRADICTS` | LLM classifies DELETE+ADD pair as contradictory | _"prefers dark mode"_ vs _"prefers light mode"_ |
+| `SUPERSEDES` | LLM classifies DELETE+ADD pair as an update | _"lives in NYC"_ superseded by _"moved to SF"_ |
+| `IMPLIES` | Explicit API call | _"is a vegetarian"_ implies _"does not eat meat"_ |
+
+At retrieval time:
+- **RELATED_TO** features are appended to search results.
+- **CONTRADICTS** pairs are annotated so the agent can reason about
+  conflicts.
+- **SUPERSEDES** chains are resolved -- superseded facts are replaced by
+  their current version.
+
+### Configuration
+
+| Parameter | Default | Description |
+|---|---|---|
+| `related_to_threshold` | 0.70 | Minimum cosine similarity for RELATED_TO |
+| `max_relationship_llm_calls` | 10 | Budget cap for LLM classification per batch |
+
+---
+
+## Graph Analytics
+
+Analytics are available via the `/api/v2/memories/graph/analytics/`
+endpoints. Some require the
+[Neo4j Graph Data Science](https://neo4j.com/product/graph-data-science/)
+plugin; others work with pure Cypher.
+
+### Requires GDS
+
+| Endpoint | Description |
+|---|---|
+| `analytics/pagerank` | PageRank with configurable damping factor, optional write-back to node properties |
+| `analytics/communities` | Louvain community detection with optional write-back to `community_id` |
+| `analytics/betweenness-centrality` | Betweenness centrality with optional sampling for large graphs |
+
+### Pure Cypher (no GDS required)
+
+| Endpoint | Description |
+|---|---|
+| `analytics/stats` | Node count, edge count, average degree, relationship type distribution |
+| `analytics/degree-centrality` | In-degree, out-degree, and total degree per node |
+| `search/shortest-path` | Shortest unweighted path between two nodes |
+| `search/subgraph` | Ego-graph extraction around an anchor node |
+
+---
+
+## Automatic Pipeline Integration
+
+The knowledge graph capabilities are wired into the standard MemMachine
+pipeline -- no manual API calls are needed for the core features:
+
+<CardGroup cols={2}>
+  <Card title="Ingestion" icon="arrow-right-to-bracket">
+    - LLM classifies entity types during semantic extraction
+    - RELATED_TO edges created for similar features
+    - DELETE+ADD pairs classified as CONTRADICTS or SUPERSEDES
+    - Entity type labels applied to Neo4j nodes
+  </Card>
+  <Card title="Retrieval" icon="magnifying-glass">
+    - Episodic search expands results via multi-hop traversal
+    - PageRank scores re-rank results by structural importance
+    - Semantic search enriches with RELATED_TO features
+    - Contradictions annotated, supersessions resolved
+  </Card>
+</CardGroup>
+
+### Episodic Retrieval Enhancement
+
+When `DeclarativeMemory` is backed by a `GraphTraversalStore` (which
+it is with Neo4j), the search pipeline automatically:
+
+1. Uses top-10 vector results as anchors for 5-hop traversal through
+   Feature nodes (`DERIVED_FROM` → `EXTRACTED_FROM` → `RELATED_TO`)
+2. Computes path quality for each discovery (minimum RELATED_TO similarity)
+3. Merges discovered nodes into the result set (deduplicated by UID)
+4. Boosts graph-discovered episodes above the reranker inclusion threshold,
+   scaled by path quality
+
+### Semantic Retrieval Enhancement
+
+When `SemanticStorage` implements `SemanticRelationshipStorage` (which
+it does with Neo4j), search results are enriched:
+
+1. **RELATED_TO** -- related features loaded and appended
+2. **CONTRADICTS** -- `contradicted_by` field populated on each feature
+3. **SUPERSEDES** -- superseded features replaced by current version
+
+---
+
+## Configuration Reference
+
+All graph-related settings are configured in the database configuration:
+
+```yaml
+neo4j:
+  gds_enabled: true          # Enable Graph Data Science integration
+  pagerank_auto_enabled: true # Auto-compute PageRank after ingestion
+  pagerank_threshold: 50      # Minimum nodes before auto-PageRank
+  pagerank_blend_alpha: 0.8   # Weight of similarity vs PageRank (0-1)
+  dedup_enabled: true         # Enable duplicate detection
+  dedup_trigger_threshold: 1000  # Minimum nodes before auto-dedup
+  dedup_auto_merge: false     # Auto-merge duplicates (vs manual review)
+  related_to_threshold: 0.70  # Cosine similarity for RELATED_TO edges
+  max_relationship_llm_calls: 10  # LLM budget per ingestion batch
+```
+
+---
+
+## REST API Reference
+
+All graph endpoints live under `/api/v2/memories/graph/`. Each endpoint
+returns `501 Not Implemented` when the configured backend does not support
+the requested capability.
+
+### Search
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/search/multi-hop` | Multi-hop traversal from anchor node |
+| POST | `/search/filtered` | Graph-filtered vector search |
+| POST | `/search/shortest-path` | Shortest path between two nodes |
+| POST | `/search/subgraph` | Ego-graph extraction |
+
+### Relationships
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/relationships` | Create typed feature relationship |
+| POST | `/relationships/get` | Query relationships with filters |
+| POST | `/relationships/delete` | Delete a relationship |
+| POST | `/contradictions` | Find CONTRADICTS pairs in a feature set |
+
+### Deduplication
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/dedup/proposals` | List detected duplicate proposals |
+| POST | `/dedup/resolve` | Resolve duplicates (merge or dismiss) |
+
+### Analytics
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/analytics/pagerank` | Compute PageRank (GDS required) |
+| POST | `/analytics/communities` | Community detection (GDS required) |
+| POST | `/analytics/stats` | Graph statistics |
+| POST | `/analytics/degree-centrality` | Degree centrality |
+| POST | `/analytics/betweenness-centrality` | Betweenness centrality (GDS required) |

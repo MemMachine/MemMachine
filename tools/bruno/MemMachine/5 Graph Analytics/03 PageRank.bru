@@ -1,0 +1,40 @@
+meta {
+  name: PageRank
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/analytics/pagerank
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "damping_factor": 0.85,
+    "max_iterations": 20,
+    "write_back": true
+  }
+}
+
+docs {
+  Compute PageRank scores for all nodes in the collection.
+
+  Structurally important nodes (those with many relationships)
+  receive higher scores. With write_back=true, scores are
+  persisted to node properties and used during retrieval:
+
+    final_score = 0.8 * similarity + 0.2 * normalized_pagerank
+
+  This promotes well-connected hub nodes like Alice (tech lead
+  with many connections) even if their raw vector similarity
+  is slightly lower.
+
+  Requires GDS plugin (gds_enabled: true in Neo4j config).
+}

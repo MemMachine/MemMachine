@@ -5,7 +5,7 @@ import logging
 from asyncio import Lock
 from typing import Any, Self
 
-from neo4j import AsyncDriver, AsyncGraphDatabase
+from neo4j import AsyncDriver, AsyncGraphDatabase, NotificationDisabledClassification
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -116,6 +116,12 @@ class DatabaseManager:
             driver_kwargs: dict[str, Any] = {
                 "uri": conf.get_uri(),
                 "auth": (conf.user, conf.password.get_secret_value()),
+                # Suppress "unknown label" / "unknown property" warnings that
+                # fire when querying dynamically-created labels before the
+                # first node of that type exists.
+                "notifications_disabled_classifications": [
+                    NotificationDisabledClassification.UNRECOGNIZED,
+                ],
             }
             if conf.max_connection_pool_size is not None:
                 driver_kwargs["max_connection_pool_size"] = (
@@ -133,6 +139,18 @@ class DatabaseManager:
             params_kwargs: dict[str, Any] = {
                 "driver": driver,
                 "force_exact_similarity_search": conf.force_exact_similarity_search,
+                # PageRank auto settings
+                "pagerank_auto_enabled": conf.pagerank_auto_enabled,
+                "pagerank_trigger_threshold": conf.pagerank_trigger_threshold,
+                # Dedup settings
+                "dedup_trigger_threshold": conf.dedup_trigger_threshold,
+                "dedup_embedding_threshold": conf.dedup_embedding_threshold,
+                "dedup_property_threshold": conf.dedup_property_threshold,
+                "dedup_auto_merge": conf.dedup_auto_merge,
+                # GDS settings
+                "gds_enabled": conf.gds_enabled,
+                "gds_default_damping_factor": conf.gds_default_damping_factor,
+                "gds_default_max_iterations": conf.gds_default_max_iterations,
             }
             if conf.range_index_creation_threshold is not None:
                 params_kwargs["range_index_creation_threshold"] = (

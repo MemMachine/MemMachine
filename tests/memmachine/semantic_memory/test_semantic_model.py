@@ -6,6 +6,8 @@ import pytest
 
 from memmachine.common.episode_store import Episode
 from memmachine.semantic_memory.semantic_model import (
+    SemanticCommand,
+    SemanticCommandType,
     SemanticFeature,
     StructuredSemanticPrompt,
 )
@@ -240,6 +242,136 @@ class TestSemanticFeature:
         assert len(feature.metadata.citations) == 1
         assert feature.metadata.citations[0] == "456aw3w"
         assert feature.metadata.other == {"confidence": 0.95}
+
+
+class TestSemanticCommandEntityType:
+    """Tests for SemanticCommand entity_type field."""
+
+    def test_command_with_entity_type(self):
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="name",
+            tag="Demographics",
+            value="Alice",
+            entity_type="Person",
+        )
+        assert cmd.entity_type == "Person"
+
+    def test_command_without_entity_type(self):
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="name",
+            tag="Demographics",
+            value="Alice",
+        )
+        assert cmd.entity_type is None
+
+    def test_delete_command_no_entity_type(self):
+        cmd = SemanticCommand(
+            command=SemanticCommandType.DELETE,
+            feature="name",
+            tag="Demographics",
+            value="",
+        )
+        assert cmd.entity_type is None
+
+    def test_command_parsed_from_dict_with_entity_type(self):
+        data = {
+            "command": "add",
+            "tag": "Demographics",
+            "feature": "name",
+            "value": "Alice",
+            "entity_type": "Person",
+        }
+        cmd = SemanticCommand.model_validate(data)
+        assert cmd.entity_type == "Person"
+        assert cmd.command == SemanticCommandType.ADD
+
+    def test_command_parsed_from_dict_without_entity_type(self):
+        data = {
+            "command": "add",
+            "tag": "Demographics",
+            "feature": "name",
+            "value": "Alice",
+        }
+        cmd = SemanticCommand.model_validate(data)
+        assert cmd.entity_type is None
+
+    def test_command_serialization_includes_entity_type(self):
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="city",
+            tag="Location",
+            value="Berlin",
+            entity_type="Location",
+        )
+        data = cmd.model_dump()
+        assert data["entity_type"] == "Location"
+
+    def test_command_serialization_null_entity_type(self):
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="city",
+            tag="Location",
+            value="Berlin",
+        )
+        data = cmd.model_dump()
+        assert data["entity_type"] is None
+
+
+class TestSemanticFeatureEntityType:
+    """Tests for SemanticFeature entity_type field."""
+
+    def test_feature_with_entity_type(self):
+        feature = SemanticFeature(
+            category="Profile",
+            tag="location",
+            feature_name="city",
+            value="Berlin",
+            entity_type="Location",
+        )
+        assert feature.entity_type == "Location"
+
+    def test_feature_without_entity_type(self):
+        feature = SemanticFeature(
+            category="Profile",
+            tag="location",
+            feature_name="city",
+            value="Berlin",
+        )
+        assert feature.entity_type is None
+
+    def test_feature_serialization_with_entity_type(self):
+        feature = SemanticFeature(
+            category="Profile",
+            tag="people",
+            feature_name="name",
+            value="Alice",
+            entity_type="Person",
+        )
+        data = feature.model_dump()
+        assert data["entity_type"] == "Person"
+
+    def test_feature_deserialization_with_entity_type(self):
+        data = {
+            "category": "Profile",
+            "tag": "people",
+            "feature_name": "name",
+            "value": "Alice",
+            "entity_type": "Person",
+        }
+        feature = SemanticFeature.model_validate(data)
+        assert feature.entity_type == "Person"
+
+    def test_feature_deserialization_without_entity_type(self):
+        data = {
+            "category": "Profile",
+            "tag": "people",
+            "feature_name": "name",
+            "value": "Alice",
+        }
+        feature = SemanticFeature.model_validate(data)
+        assert feature.entity_type is None
 
 
 class TestStructuredSemanticPrompt:

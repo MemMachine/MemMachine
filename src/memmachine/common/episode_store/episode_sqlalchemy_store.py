@@ -1,5 +1,8 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
+import contextlib
+import hashlib
+import logging
 import socket
 from datetime import UTC
 from typing import Any, TypeVar, overload
@@ -17,15 +20,23 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    UniqueConstraint,
     delete,
     func,
-    insert,
     select,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+)
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
@@ -44,6 +55,19 @@ from memmachine.common.filter.filter_parser import (
     normalize_filter_field,
 )
 from memmachine.common.filter.sql_filter_util import compile_sql_filter
+
+logger = logging.getLogger(__name__)
+
+
+def compute_content_hash(session_key: str, producer_id: str, content: str) -> str:
+    """Compute a SHA-256 hash for episode deduplication.
+
+    The hash is derived from ``session_key``, ``producer_id``, and
+    ``content`` joined with null-byte separators to prevent ambiguity
+    between field boundaries.
+    """
+    payload = f"{session_key}\0{producer_id}\0{content}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class BaseEpisodeStore(DeclarativeBase):
@@ -84,8 +108,10 @@ class Episode(BaseEpisodeStore):
         server_default=func.now(),
         nullable=False,
     )
+    content_hash = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
+        UniqueConstraint("content_hash", name="uq_episode_content_hash"),
         Index("idx_session_key", "session_key"),
         Index("idx_producer_id", "producer_id"),
         Index("idx_producer_role", "producer_role"),
@@ -99,7 +125,7 @@ class Episode(BaseEpisodeStore):
         ),
     )
 
-    def to_typed_model(self) -> EpisodeE:
+    def to_typed_model(self, *, is_new: bool = True) -> EpisodeE:
         created_at = (
             self.created_at.replace(tzinfo=UTC)
             if self.created_at.tzinfo is None
@@ -115,6 +141,7 @@ class Episode(BaseEpisodeStore):
             episode_type=self.episode_type,
             created_at=created_at,
             metadata=self.json_metadata or None,
+            is_new=is_new,
         )
 
 
@@ -136,10 +163,167 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         try:
             async with self._engine.begin() as conn:
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
+            await self._migrate_content_hash()
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
                 "Failed to connect to the database during startup, please check your configuration."
             ) from err
+
+    async def _migrate_content_hash(self) -> None:
+        """Ensure the content_hash column and unique constraint exist, then backfill."""
+        dialect = self._engine.dialect.name
+
+        async with self._engine.begin() as conn:
+            # Check if column exists by inspecting the table.
+            has_column = await conn.run_sync(self._check_content_hash_column)
+
+            if not has_column:
+                if dialect == "postgresql":
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE episodestore "
+                            "ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)"
+                        )
+                    )
+                else:
+                    # SQLite: ALTER TABLE ADD COLUMN (no IF NOT EXISTS).
+                    with contextlib.suppress(OperationalError):
+                        await conn.execute(
+                            text(
+                                "ALTER TABLE episodestore "
+                                "ADD COLUMN content_hash VARCHAR(64)"
+                            )
+                        )
+
+            # Ensure the unique constraint exists.
+            has_constraint = await conn.run_sync(self._check_content_hash_constraint)
+            if not has_constraint:
+                # Backfill before adding the constraint so NULLs don't block it.
+                await self._backfill_content_hashes_in_conn(conn)
+                # Remove duplicate rows, keeping the one with the lowest id.
+                await self._remove_duplicate_hashes(conn, dialect)
+                if dialect == "postgresql":
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE episodestore "
+                            "ADD CONSTRAINT uq_episode_content_hash "
+                            "UNIQUE (content_hash)"
+                        )
+                    )
+                else:
+                    with contextlib.suppress(OperationalError):
+                        await conn.execute(
+                            text(
+                                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                                "uq_episode_content_hash "
+                                "ON episodestore (content_hash)"
+                            )
+                        )
+                logger.info("Created unique constraint uq_episode_content_hash")
+                return  # backfill already done above
+
+        # Backfill NULL content_hash rows (normal path when constraint exists).
+        await self._backfill_content_hashes()
+
+    @staticmethod
+    def _check_content_hash_column(conn: object) -> bool:
+        """Check if the content_hash column exists (sync, for run_sync)."""
+        from sqlalchemy import inspect as sa_inspect
+
+        inspector = sa_inspect(conn)  # type: ignore[arg-type]
+        columns = inspector.get_columns("episodestore")
+        return any(col["name"] == "content_hash" for col in columns)
+
+    @staticmethod
+    def _check_content_hash_constraint(conn: object) -> bool:
+        """Check if the uq_episode_content_hash constraint exists (sync, for run_sync)."""
+        from sqlalchemy import inspect as sa_inspect
+
+        inspector = sa_inspect(conn)  # type: ignore[arg-type]
+        unique_constraints = inspector.get_unique_constraints("episodestore")
+        if any(uc["name"] == "uq_episode_content_hash" for uc in unique_constraints):
+            return True
+        # Some backends report unique constraints as indexes instead.
+        indexes = inspector.get_indexes("episodestore")
+        return any(
+            idx.get("name") == "uq_episode_content_hash" and idx.get("unique")
+            for idx in indexes
+        )
+
+    async def _backfill_content_hashes(self) -> None:
+        """Compute and set content_hash for rows where it is NULL."""
+        batch_size = 500
+        async with self._create_session() as session:
+            while True:
+                result = await session.execute(
+                    select(Episode)
+                    .where(Episode.content_hash.is_(None))
+                    .limit(batch_size)
+                )
+                rows = result.scalars().all()
+                if not rows:
+                    break
+                for row in rows:
+                    row.content_hash = compute_content_hash(
+                        row.session_key, row.producer_id, row.content
+                    )
+                await session.commit()
+                logger.info("Backfilled content_hash for %d episodes", len(rows))
+
+    @staticmethod
+    async def _backfill_content_hashes_in_conn(conn: AsyncConnection) -> None:
+        """Backfill NULL content_hash rows using a raw connection (no ORM session)."""
+        batch_size = 500
+        while True:
+            result = await conn.execute(
+                text(
+                    "SELECT id, session_key, producer_id, content "
+                    "FROM episodestore WHERE content_hash IS NULL "
+                    f"LIMIT {batch_size}"
+                )
+            )
+            rows = result.fetchall()
+            if not rows:
+                break
+            for row in rows:
+                h = compute_content_hash(row.session_key, row.producer_id, row.content)
+                await conn.execute(
+                    text("UPDATE episodestore SET content_hash = :hash WHERE id = :id"),
+                    {"hash": h, "id": row.id},
+                )
+            logger.info(
+                "Backfilled content_hash for %d episodes (migration)", len(rows)
+            )
+
+    @staticmethod
+    async def _remove_duplicate_hashes(conn: AsyncConnection, dialect: str) -> None:
+        """Delete duplicate content_hash rows, keeping the row with the lowest id."""
+        if dialect == "postgresql":
+            result = await conn.execute(
+                text(
+                    "DELETE FROM episodestore "
+                    "WHERE id NOT IN ("
+                    "  SELECT MIN(id) FROM episodestore "
+                    "  WHERE content_hash IS NOT NULL "
+                    "  GROUP BY content_hash"
+                    ") AND content_hash IS NOT NULL"
+                )
+            )
+        else:
+            # SQLite compatible syntax.
+            result = await conn.execute(
+                text(
+                    "DELETE FROM episodestore "
+                    "WHERE content_hash IS NOT NULL AND id NOT IN ("
+                    "  SELECT MIN(id) FROM episodestore "
+                    "  WHERE content_hash IS NOT NULL "
+                    "  GROUP BY content_hash"
+                    ")"
+                )
+            )
+        deleted = result.rowcount
+        if deleted:
+            logger.info("Removed %d duplicate episode rows during migration", deleted)
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:
@@ -157,11 +341,15 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         values_to_insert: list[dict[str, Any]] = []
         for entry in episodes:
+            content_hash = compute_content_hash(
+                session_key, entry.producer_id, entry.content
+            )
             entry_values: dict[str, Any] = {
                 "content": entry.content,
                 "session_key": session_key,
                 "producer_id": entry.producer_id,
                 "producer_role": entry.producer_role,
+                "content_hash": content_hash,
             }
 
             if entry.produced_for_id is not None:
@@ -178,17 +366,82 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
             values_to_insert.append(entry_values)
 
-        insert_stmt = insert(Episode).returning(Episode)
+        all_hashes = [v["content_hash"] for v in values_to_insert]
+        return await self._insert_with_dedup(values_to_insert, all_hashes)
+
+    async def _insert_with_dedup(
+        self,
+        values_to_insert: list[dict[str, Any]],
+        all_hashes: list[str],
+    ) -> list[EpisodeE]:
+        """Insert episodes with ON CONFLICT dedup, return all in input order."""
+        dialect = self._engine.dialect.name
 
         async with self._create_session() as session:
-            result = await session.execute(insert_stmt, values_to_insert)
-            persisted_episodes = result.scalars().all()
+            # Snapshot which hashes already exist before the INSERT.
+            pre_existing = await self._fetch_existing_hashes(session, all_hashes)
 
+            # Insert new rows, silently skip duplicates.
+            await self._do_conflict_insert(session, dialect, values_to_insert)
             await session.commit()
 
-            res_episodes = [e.to_typed_model() for e in persisted_episodes]
+            # Fetch all rows (new + pre-existing) by hash.
+            all_rows = await self._fetch_by_hashes(session, all_hashes)
 
-        return res_episodes
+        # Build result in original input order with is_new flag.
+        row_by_hash: dict[str, Episode] = {ep.content_hash: ep for ep in all_rows}
+        ordered: list[EpisodeE] = []
+        for val in values_to_insert:
+            ch = val["content_hash"]
+            ep_orm = row_by_hash[ch]
+            ordered.append(ep_orm.to_typed_model(is_new=ch not in pre_existing))
+        return ordered
+
+    @staticmethod
+    async def _fetch_existing_hashes(
+        session: AsyncSession,
+        hashes: list[str],
+    ) -> set[str]:
+        """Return the subset of hashes that already exist in the table."""
+        result = await session.execute(
+            select(Episode.content_hash).where(Episode.content_hash.in_(hashes))
+        )
+        return {row[0] for row in result.all()}
+
+    @staticmethod
+    async def _do_conflict_insert(
+        session: AsyncSession,
+        dialect: str,
+        values: list[dict[str, Any]],
+    ) -> None:
+        """Run dialect-appropriate INSERT ... ON CONFLICT DO NOTHING."""
+        if dialect == "postgresql":
+            stmt = (
+                pg_insert(Episode)
+                .values(values)
+                .on_conflict_do_nothing(constraint="uq_episode_content_hash")
+            )
+            await session.execute(stmt)
+        else:
+            # SQLite: insert one-by-one with ON CONFLICT DO NOTHING.
+            for row_values in values:
+                stmt = (
+                    sqlite_insert(Episode)
+                    .values(**row_values)
+                    .on_conflict_do_nothing(index_elements=["content_hash"])
+                )
+                await session.execute(stmt)
+
+    @staticmethod
+    async def _fetch_by_hashes(
+        session: AsyncSession,
+        hashes: list[str],
+    ) -> list[Episode]:
+        """Fetch episode rows by their content_hash values."""
+        result = await session.execute(
+            select(Episode).where(Episode.content_hash.in_(hashes))
+        )
+        return list(result.scalars().all())
 
     @validate_call
     async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:

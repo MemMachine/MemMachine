@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import re as _re
 from typing import TypeVar
 
 from neo4j.time import DateTime as _Neo4jDateTime
@@ -110,9 +111,40 @@ def coerce_datetime_to_timestamp(
     return value
 
 
+# ---------------------------------------------------------------------------
+# Entity type label helpers
+# ---------------------------------------------------------------------------
+
+ENTITY_TYPE_PREFIX = "ENTITY_TYPE_"
+
+
+def sanitize_entity_type(name: str) -> str:
+    """Sanitize an entity type name into a safe Neo4j label.
+
+    Uses the ``ENTITY_TYPE_`` prefix (distinct from ``SANITIZED_`` used for
+    collection/property names) so that entity type labels can be reliably
+    distinguished from other labels when reading nodes back from Neo4j.
+    """
+    return ENTITY_TYPE_PREFIX + "".join(
+        c if c.isalnum() else f"_u{ord(c):x}_" for c in name
+    )
+
+
+def desanitize_entity_type(sanitized_name: str) -> str:
+    """Restore an entity type label to its original name."""
+    return _re.sub(
+        r"_u([0-9a-fA-F]+)_",
+        lambda match: chr(int(match[1], 16)),
+        sanitized_name.removeprefix(ENTITY_TYPE_PREFIX),
+    )
+
+
 __all__ = [
+    "ENTITY_TYPE_PREFIX",
     "coerce_datetime_to_timestamp",
+    "desanitize_entity_type",
     "render_comparison",
+    "sanitize_entity_type",
     "sanitize_value_for_neo4j",
     "value_from_neo4j",
 ]

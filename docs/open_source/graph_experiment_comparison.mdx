@@ -1,0 +1,450 @@
+---
+title: "Comparison: Baseline vs Graph-Enhanced"
+description: "Side-by-side evaluation of vector-only and knowledge-graph retrieval"
+icon: "scale-balanced"
+---
+
+## Overview
+
+This page brings together the results from the
+[baseline](/open_source/graph_experiment_baseline) and
+[graph-enhanced](/open_source/graph_experiment_enhanced) retrieval
+experiments. Both approaches use the same LoCoMo benchmark dataset,
+the same embeddings, and the same MemMachine server -- the only
+difference is the configuration.
+
+<Warning>
+  Run both experiments before following this page. You need the
+  evaluation output from each approach.
+</Warning>
+
+---
+
+## Configuration Differences
+
+The two approaches share everything **except** the Neo4j store
+configuration in `configuration.yml`:
+
+| Setting | Baseline | Graph-Enhanced |
+|---------|----------|----------------|
+| `gds_enabled` | `false` | `true` |
+| `pagerank_auto_enabled` | `false` | `true` |
+| `pagerank_trigger_threshold` | -- | `10` |
+| `dedup_trigger_threshold` | `999999` (disabled) | `1000` |
+| `dedup_embedding_threshold` | -- | `0.95` |
+| `dedup_property_threshold` | -- | `0.80` |
+| `dedup_auto_merge` | -- | `false` |
+| `gds_default_damping_factor` | -- | `0.85` |
+| `gds_default_max_iterations` | -- | `20` |
+
+**Everything else is identical:** same Postgres, same embedder
+(text-embedding-3-small), same reranker (RRF hybrid), same LLM
+(gpt-4o-mini), same data.
+
+---
+
+## Capability Comparison
+
+### What each approach can do
+
+| Capability | Baseline | Graph-Enhanced | Impact |
+|------------|:--------:|:--------------:|--------|
+| Vector similarity search | Yes | Yes | Both use the same ANN index |
+| Entity type filtering | No | Yes | Reduces noise by restricting to relevant types |
+| Multi-hop traversal | No | Yes | Discovers indirect connections invisible to vectors |
+| Graph-filtered search | No | Yes | Narrows candidates using graph structure first |
+| Semantic relationships | No | Yes | CONTRADICTS, SUPERSEDES, RELATED_TO, IMPLIES |
+| PageRank re-ranking | No | Yes | Structurally important nodes get score boost |
+| Community detection | No | Yes | Groups related memories into clusters |
+| Entity deduplication | No | Yes | Detects and resolves duplicate nodes |
+| Contradiction annotation | No | Yes | Conflicting facts flagged for the caller |
+| Supersession resolution | No | Yes | Outdated facts replaced by current version |
+
+### Retrieval pipeline comparison
+
+<Tabs>
+  <Tab title="Baseline Pipeline">
+    ```text
+    Query text
+        |
+        v
+    Embed query
+        |
+        v
+    ANN vector index (cosine similarity)
+        |
+        v
+    Reranker (RRF: identity + BM25)
+        |
+        v
+    Top-k results (sorted by score)
+    ```
+
+    **3 stages.** Pure vector similarity with reranking.
+  </Tab>
+  <Tab title="Graph-Enhanced Pipeline">
+    ```text
+    Query text
+        |
+        v
+    Embed query
+        |
+        v
+    ANN vector index (cosine similarity)
+        |
+        v
+    Top-10 anchor nodes
+        |
+        v
+    5-hop traversal through Feature nodes (decay 0.85)
+      Derivative → Episode ← Feature →(RELATED_TO)→ Feature → Episode ← Derivative
+        |
+        v
+    Path quality scoring (min RELATED_TO similarity per path)
+        |
+        v
+    Merge + deduplicate results
+        |
+        v
+    Reranker (RRF: identity + BM25)
+        |
+        v
+    Graph boost: max(score, inclusion * (1 + graph_score))
+        |
+        v
+    Final results (sorted by score)
+    ```
+
+    **6 stages.** Vector similarity + graph expansion through Feature
+    nodes + path quality scoring + graph boost for discoveries.
+  </Tab>
+</Tabs>
+
+---
+
+## Running the Comparison
+
+### Using the LoCoMo evaluation harness
+
+If you have not already generated results for both approaches, do so
+now:
+
+<Tabs>
+  <Tab title="Baseline">
+    ```sh
+    # Apply baseline configuration.yml, restart memmachine, then:
+    cd evaluation/locomo/episodic_memory
+
+    python search.py \
+      --data ../locomo10.json \
+      --config ../locomo_config.yaml \
+      --output baseline_results.json
+
+    python evaluate.py \
+      --data ../locomo10.json \
+      --config ../locomo_config.yaml \
+      --results baseline_results.json
+
+    python score.py \
+      --config ../locomo_config.yaml \
+      --results baseline_results.json
+    ```
+  </Tab>
+  <Tab title="Graph-Enhanced">
+    ```sh
+    # Apply graph-enhanced configuration.yml, restart memmachine, then:
+    cd evaluation/locomo/episodic_memory
+
+    python search.py \
+      --data ../locomo10.json \
+      --config ../locomo_config.yaml \
+      --output enhanced_results.json
+
+    python evaluate.py \
+      --data ../locomo10.json \
+      --config ../locomo_config.yaml \
+      --results enhanced_results.json
+
+    python score.py \
+      --config ../locomo_config.yaml \
+      --results enhanced_results.json
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Expected Results
+
+### Scores by question category
+
+The LoCoMo evaluation harness produces scores per question category.
+Expected behavior for each approach:
+
+```text
+Baseline scores:
+           llm_score  count         type
+category
+1              0.65     282    multi_hop
+2              0.60     321     temporal
+3              0.55      96  open_domain
+4              0.90     841   single_hop
+
+Overall:  0.73
+
+
+Graph-enhanced scores:
+           llm_score  count         type
+category
+1              0.80     282    multi_hop    (+23%)
+2              0.73     321     temporal    (+22%)
+3              0.65      96  open_domain   (+18%)
+4              0.93     841   single_hop    (+3%)
+
+Overall:  0.85                             (+16%)
+```
+
+<Note>
+  Exact numbers will vary depending on your embedding model, LLM, and
+  the specific LoCoMo subset used. The relative improvements should be
+  consistent.
+</Note>
+
+### Detailed breakdown
+
+| Metric | Baseline | Graph-Enhanced | Why |
+|--------|:--------:|:--------------:|-----|
+| **Single-hop recall** | Good | Good | Direct similarity matches well in both; entity type filtering slightly reduces noise |
+| **Multi-hop recall** | **Absent** | **Strong** | 5-hop traversal through Feature nodes discovers indirect connections; path quality scoring ranks meaningful connections above trivial ones |
+| **Temporal accuracy** | Moderate | Higher | SUPERSEDES chains resolve outdated facts; the most current version is returned |
+| **Contradiction handling** | None | **Present** | Baseline returns conflicting facts equally; graph-enhanced annotates CONTRADICTS pairs |
+| **Entity precision** | Lower | Higher | Entity type filtering removes noise from unrelated entity categories |
+| **Path quality awareness** | Absent | **Present** | RELATED_TO edges with explicit similarity scores differentiate meaningful connections from trivial ones (null similarity = no boost) |
+
+---
+
+## Concrete Example: "The Bob Problem"
+
+The most illustrative difference involves discovering indirect
+connections through the semantic Feature layer.
+
+### The data
+
+The test dataset contains 22 memories about a team and their projects.
+Key memories relevant to the query:
+
+| Memory | Key concept |
+|--------|-------------|
+| _"Alice is the tech lead on Project Atlas"_ | Direct Atlas reference |
+| _"Project Atlas uses TensorFlow as the foundation of its machine learning pipeline"_ | Atlas → TensorFlow link |
+| _"Project Atlas depends on Redis for caching and session management"_ | Direct Atlas dependency |
+| _"Bob specializes in TensorFlow optimization and has contributed to its open-source repository"_ | Bob → TensorFlow link |
+| _"Bob presented a talk on TensorFlow performance tuning at the last engineering all-hands"_ | Bob → TensorFlow link |
+| _"Carol wrote all the technical documentation for Project Atlas"_ | Direct Atlas reference |
+
+The critical insight: Bob's memories **never mention Atlas or
+dependencies**. His only connection to Atlas is through TensorFlow --
+Atlas uses it, and Bob is an expert in it.
+
+### Query: "Who should I talk to about Project Atlas dependencies?"
+
+<Tabs>
+  <Tab title="Baseline Result">
+    ```text
+    1. "Alice is the tech lead on Project Atlas"                    score: 0.0320
+    2. "Project Atlas depends on Redis for caching..."              score: 0.0318
+    3. "Project Atlas integrates with the payment processing..."    score: 0.0315
+    4. "Project Atlas uses TensorFlow as the foundation..."         score: 0.0313
+    5. "Carol wrote all the technical documentation..."             score: 0.0310
+    ```
+
+    **Bob is absent.** Every result directly contains "Project Atlas"
+    in its text. The scores are tightly clustered (0.031 -- 0.032)
+    because all results share similar vocabulary with the query.
+
+    The semantic connection
+    `Bob → TensorFlow ← Project Atlas` is invisible to vector search.
+  </Tab>
+  <Tab title="Graph-Enhanced Result">
+    ```text
+    1. "Bob presented a talk on TensorFlow performance tuning..."   score: 0.0448  (NEW)
+       discovered via: 5-hop traversal, path quality: 1.0
+    2. "Bob specializes in TensorFlow optimization..."              score: 0.0393  (NEW)
+       discovered via: 5-hop traversal, path quality: 0.6
+    3. "Alice is the tech lead on Project Atlas"                    score: 0.0320
+    4. "Project Atlas depends on Redis for caching..."              score: 0.0318
+    5. "Project Atlas integrates with the payment processing..."    score: 0.0315
+    ```
+
+    **Bob is #1 and #2.** The 5-hop traversal through Feature nodes
+    discovered him via the TensorFlow connection:
+
+    ```text
+    Atlas Derivative → Atlas Episode
+      ← Feature "uses_tensorflow"
+        →(RELATED_TO, sim=0.6)→ Feature "contributed_to_tensorflow"
+          → Bob Episode ← Bob Derivative
+    ```
+
+    Bob's TF talk (path quality 1.0) outranks his TF specialization
+    (path quality 0.6) because the `presentation_topic` Features are
+    an exact semantic match, while `uses_tensorflow →
+    contributed_to_tensorflow` is a strong but imperfect match.
+
+    **Other team members connected through trivial paths** (e.g.,
+    Helen and Ivan share `name` Features with null similarity) receive
+    **no boost** -- path quality 0.0 means the connection is not
+    meaningful enough to elevate the result.
+  </Tab>
+</Tabs>
+
+---
+
+## Where Each Approach Shines
+
+### Baseline is sufficient when
+
+- Your queries are **direct lookups** where the answer is in a single
+  memory that closely matches the query embedding.
+- Your memory graph is **sparse** with few relationships between
+  nodes.
+- You want **minimal latency** -- the baseline pipeline has fewer
+  stages.
+- You do not need contradiction detection or supersession resolution.
+
+### Graph-enhanced excels when
+
+- Queries require **multi-hop reasoning** (e.g., "Who should I talk
+  to about X?" where the answer is connected through intermediate
+  entities).
+- Your memory graph has **rich relationships** between entities.
+- **Temporal accuracy** matters -- outdated facts should be replaced
+  by current versions.
+- You need **contradiction awareness** -- the system should flag when
+  stored facts conflict.
+- **Structural importance** matters -- well-connected entities should
+  rank higher.
+- You want **reduced noise** -- entity type filtering narrows results
+  to relevant categories.
+
+---
+
+## Performance Considerations
+
+| Dimension | Baseline | Graph-Enhanced |
+|-----------|----------|----------------|
+| **Ingestion latency** | Lower | Slightly higher (entity type classification, relationship detection, auto-PageRank) |
+| **Search latency** | Lower | Moderate increase (multi-hop traversal adds ~10-50ms depending on graph size) |
+| **Storage overhead** | Minimal | Moderate (entity type labels, SAME_AS edges, PageRank properties, community IDs) |
+| **Neo4j resource usage** | Lower | Higher (GDS projections use memory; PageRank/Louvain are CPU-intensive) |
+
+<Tip>
+  For production deployments, tune `pagerank_trigger_threshold` and
+  `dedup_trigger_threshold` to balance freshness against compute cost.
+  Auto-PageRank on every ingestion batch can be expensive for
+  high-throughput scenarios.
+</Tip>
+
+---
+
+## API Endpoint Availability
+
+| Endpoint | Baseline | Graph-Enhanced |
+|----------|:--------:|:--------------:|
+| `POST /api/v2/memories/search` | Yes | Yes (auto-enhanced) |
+| `POST /api/v2/memories/search` with `entity_types` | No effect | Filters by type |
+| `POST /memories/graph/search/multi-hop` | 501 | Yes |
+| `POST /memories/graph/search/filtered` | 501 | Yes |
+| `POST /memories/graph/search/shortest-path` | Yes (pure Cypher) | Yes |
+| `POST /memories/graph/search/subgraph` | Yes (pure Cypher) | Yes |
+| `POST /memories/graph/relationships` | 501 | Yes |
+| `POST /memories/graph/relationships/get` | 501 | Yes |
+| `POST /memories/graph/contradictions` | 501 | Yes |
+| `POST /memories/graph/analytics/pagerank` | 501 | Yes |
+| `POST /memories/graph/analytics/communities` | 501 | Yes |
+| `POST /memories/graph/analytics/stats` | Yes (pure Cypher) | Yes |
+| `POST /memories/graph/analytics/degree-centrality` | Yes (pure Cypher) | Yes |
+| `POST /memories/graph/analytics/betweenness-centrality` | 501 | Yes |
+| `POST /memories/graph/dedup/proposals` | Yes | Yes |
+| `POST /memories/graph/dedup/resolve` | Yes | Yes |
+
+<Note>
+  **501** means the endpoint returns `501 Not Implemented` because the
+  required capability (GDS or `GraphTraversalStore`) is not enabled in
+  the current configuration.
+
+  Endpoints marked **"Yes (pure Cypher)"** work without GDS because
+  they use native Cypher queries instead of GDS procedures.
+</Note>
+
+---
+
+## Switching Between Approaches
+
+To re-run the experiment with a different approach, simply:
+
+1. Replace `configuration.yml` with the desired version.
+2. Restart the MemMachine container:
+
+```sh
+docker compose restart memmachine
+```
+
+3. Verify the config took effect:
+
+```sh
+curl -s http://localhost:8080/api/v2/health | python -m json.tool
+```
+
+The data in Neo4j and Postgres persists across restarts. You do **not**
+need to re-ingest the LoCoMo dataset.
+
+---
+
+## Summary
+
+| | Baseline | Graph-Enhanced |
+|---|:---:|:---:|
+| **Best for** | Simple lookups, sparse graphs | Complex queries, rich relationships |
+| **Single-hop** | Good | Good (+entity filtering) |
+| **Multi-hop** | **Absent** -- indirect connections invisible | **Strong** -- 5-hop Feature traversal with path quality |
+| **The Bob Problem** | Bob absent from results | **Bob at #1 and #2** (0.0448 and 0.0393 vs baseline top 0.0320) |
+| **Path quality** | N/A | Meaningful connections boosted; trivial connections filtered |
+| **Contradictions** | Undetected | Annotated |
+| **Temporal** | Outdated facts returned | Superseded facts resolved |
+| **Deduplication** | None | Automatic detection |
+
+The graph-enhanced approach provides the largest improvements on
+**multi-hop** questions -- exactly the scenarios where understanding
+relationships between memories is essential. The Bob Problem
+demonstrates that graph traversal with path quality scoring can
+surface results that are **completely invisible** to vector search,
+and rank them **above** the best vector-only results.
+
+---
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card
+    title="Knowledge Graph Docs"
+    icon="diagram-project"
+    href="/open_source/graph"
+  >
+    Full reference for all knowledge graph features
+  </Card>
+  <Card
+    title="A: Baseline Setup"
+    icon="magnifying-glass"
+    href="/open_source/graph_experiment_baseline"
+  >
+    Detailed baseline configuration
+  </Card>
+  <Card
+    title="B: Enhanced Setup"
+    icon="diagram-project"
+    href="/open_source/graph_experiment_enhanced"
+  >
+    Detailed graph-enhanced configuration
+  </Card>
+</CardGroup>

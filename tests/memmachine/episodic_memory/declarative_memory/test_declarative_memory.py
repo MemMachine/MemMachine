@@ -928,3 +928,121 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
     result_uids = {r.uid for r in results}
     assert "episode1" in result_uids
     assert "episode2" in result_uids
+
+
+# =====================================================================
+# PRODUCED_BY relationship (Episode -> Producer)
+# =====================================================================
+
+
+@requires_sentence_transformers
+@pytest.mark.asyncio
+async def test_produced_by_relationship_created(declarative_memory, neo4j_driver):
+    """Task 4.2: Episode gets a PRODUCED_BY relationship to a Producer node."""
+    now = datetime.now(tz=UTC)
+    episodes = [
+        Episode(
+            uid="ep-prod-1",
+            timestamp=now,
+            source="testuser",
+            content_type=ContentType.MESSAGE,
+            content="Hello from testuser.",
+        ),
+    ]
+    await declarative_memory.add_episodes(episodes)
+
+    records, _, _ = await neo4j_driver.execute_query(
+        """
+        MATCH (e {uid: $uid})-[:PRODUCED_BY]->(p)
+        WHERE any(label IN labels(p) WHERE label STARTS WITH 'SANITIZED_Producer')
+        RETURN p.producer_id AS producer_id
+        """,
+        uid="ep-prod-1",
+    )
+
+    assert len(records) == 1
+    assert records[0]["producer_id"] == "testuser"
+
+
+@requires_sentence_transformers
+@pytest.mark.asyncio
+async def test_multiple_episodes_same_producer_share_node(
+    declarative_memory, neo4j_driver
+):
+    """Task 4.3: Multiple episodes from same producer share one Producer node."""
+    now = datetime.now(tz=UTC)
+    episodes = [
+        Episode(
+            uid="ep-shared-1",
+            timestamp=now,
+            source="alice",
+            content_type=ContentType.MESSAGE,
+            content="First message from alice.",
+        ),
+        Episode(
+            uid="ep-shared-2",
+            timestamp=now + timedelta(seconds=1),
+            source="alice",
+            content_type=ContentType.MESSAGE,
+            content="Second message from alice.",
+        ),
+        Episode(
+            uid="ep-shared-3",
+            timestamp=now + timedelta(seconds=2),
+            source="alice",
+            content_type=ContentType.MESSAGE,
+            content="Third message from alice.",
+        ),
+    ]
+    await declarative_memory.add_episodes(episodes)
+
+    records, _, _ = await neo4j_driver.execute_query(
+        """
+        MATCH (e)-[:PRODUCED_BY]->(p {producer_id: $pid})
+        WHERE any(label IN labels(p) WHERE label STARTS WITH 'SANITIZED_Producer')
+        RETURN count(e) AS episode_count, count(DISTINCT p) AS producer_count
+        """,
+        pid="alice",
+    )
+
+    assert records[0]["episode_count"] == 3
+    assert records[0]["producer_count"] == 1
+
+
+@requires_sentence_transformers
+@pytest.mark.asyncio
+async def test_different_producers_separate_nodes(declarative_memory, neo4j_driver):
+    """Task 4.4: Episodes from different producers create separate Producer nodes."""
+    now = datetime.now(tz=UTC)
+    episodes = [
+        Episode(
+            uid="ep-diff-1",
+            timestamp=now,
+            source="alice",
+            content_type=ContentType.MESSAGE,
+            content="Message from alice.",
+        ),
+        Episode(
+            uid="ep-diff-2",
+            timestamp=now + timedelta(seconds=1),
+            source="bob",
+            content_type=ContentType.MESSAGE,
+            content="Message from bob.",
+        ),
+    ]
+    await declarative_memory.add_episodes(episodes)
+
+    records, _, _ = await neo4j_driver.execute_query(
+        """
+        MATCH (p)
+        WHERE any(label IN labels(p) WHERE label STARTS WITH 'SANITIZED_Producer')
+          AND p.producer_id IN $pids
+        RETURN p.producer_id AS pid
+        ORDER BY pid
+        """,
+        pids=["alice", "bob"],
+    )
+
+    assert len(records) == 2
+    assert records[0]["pid"] == "alice"
+    assert records[1]["pid"] == "bob"

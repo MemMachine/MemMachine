@@ -309,6 +309,7 @@ class EpisodicMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        entity_types: list[str] | None = None,
     ) -> QueryResponse | None:
         """
         Retrieve relevant context for a given query from all memory stores.
@@ -326,6 +327,7 @@ class EpisodicMemory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
+            entity_types: Optional entity type filter for graph-aware filtering.
 
         Returns:
             A tuple containing a list of short term memory Episode objects,
@@ -349,6 +351,7 @@ class EpisodicMemory:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
+                entity_types=entity_types,
             )
         elif self._long_term_memory is None:
             session_result = (
@@ -374,6 +377,7 @@ class EpisodicMemory:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=property_filter,
+                    entity_types=entity_types,
                 ),
             )
             short_episode, short_summary = session_result

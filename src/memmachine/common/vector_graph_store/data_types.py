@@ -1,5 +1,7 @@
 """Data types for nodes and edges in a vector graph store."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -38,6 +40,7 @@ class Node:
     embeddings: dict[str, tuple[list[float], SimilarityMetric]] = field(
         default_factory=dict,
     )
+    entity_types: list[str] = field(default_factory=list)
 
     def __eq__(self, other: object) -> bool:
         """Compare nodes by UID, properties, and embeddings."""
@@ -113,3 +116,68 @@ def demangle_embedding_name(mangled_embedding_name: str) -> str:
 def is_mangled_embedding_name(candidate_name: str) -> bool:
     """Return True if the candidate is a mangled embedding name."""
     return candidate_name.startswith(_MANGLE_EMBEDDING_NAME_PREFIX)
+
+
+# ---------------------------------------------------------------------------
+# Graph traversal and knowledge-graph data types
+# ---------------------------------------------------------------------------
+
+
+class TraversalDirection(Enum):
+    """Direction constraint for graph traversal."""
+
+    OUTGOING = "outgoing"
+    INCOMING = "incoming"
+    BOTH = "both"
+
+
+@dataclass(kw_only=True)
+class GraphFilter:
+    """Structural filter for graph-aware vector search.
+
+    Specifies a traversal pattern from an anchor node that narrows the
+    candidate set before vector similarity is computed.
+    """
+
+    anchor_node_uid: str
+    anchor_collection: str
+    relation_types: list[str] | None = None
+    max_hops: int = 1
+    direction: TraversalDirection = TraversalDirection.BOTH
+
+
+@dataclass(kw_only=True)
+class MultiHopResult:
+    """A node returned from a multi-hop traversal with distance metadata."""
+
+    node: Node
+    hop_distance: int
+    score: float
+    path_quality: float = 1.0
+    """Minimum ``RELATED_TO`` edge similarity along the traversal path.
+
+    Defaults to ``1.0`` when the path contains no ``RELATED_TO`` edges
+    or the store implementation does not compute it.  A value of ``0.0``
+    indicates the path crossed a ``RELATED_TO`` edge with no recorded
+    similarity (e.g. trivial same-name matches), signalling that the
+    traversal should not be trusted as a semantic discovery.
+    """
+
+
+class DuplicateResolutionStrategy(Enum):
+    """Strategy for resolving a detected duplicate pair."""
+
+    MERGE = "merge"
+    DISMISS = "dismiss"
+
+
+@dataclass(kw_only=True)
+class DuplicateProposal:
+    """A proposed duplicate pair detected by the deduplication process."""
+
+    node_uid_a: str
+    node_uid_b: str
+    embedding_similarity: float
+    property_similarity: float
+    detected_at: datetime
+    auto_merged: bool = False

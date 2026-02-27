@@ -1,0 +1,33 @@
+meta {
+  name: Betweenness Centrality
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/analytics/betweenness-centrality
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "collection": "Derivative_universal/universal",
+    "write_back": false
+  }
+}
+
+docs {
+  Compute betweenness centrality — identifies "bridge" nodes
+  that sit on the shortest paths between many other nodes.
+
+  High betweenness nodes are critical connectors in the graph.
+  For example, TensorFlow connects the Alice/Atlas cluster to
+  the Bob cluster and should score highly.
+
+  Requires GDS plugin (gds_enabled: true in Neo4j config).
+}

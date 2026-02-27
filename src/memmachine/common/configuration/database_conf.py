@@ -61,6 +61,72 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
         ),
     )
 
+    # --- Deduplication settings ---
+    dedup_trigger_threshold: int = Field(
+        default=1000,
+        description=(
+            "Number of nodes in a collection at which background "
+            "duplicate detection is triggered after add_nodes()."
+        ),
+    )
+    dedup_embedding_threshold: float = Field(
+        default=0.95,
+        description=(
+            "Minimum cosine similarity between two node embeddings "
+            "for them to be considered potential duplicates."
+        ),
+    )
+    dedup_property_threshold: float = Field(
+        default=0.8,
+        description=(
+            "Minimum Jaccard similarity between two nodes' property "
+            "sets for them to be considered potential duplicates."
+        ),
+    )
+    dedup_auto_merge: bool = Field(
+        default=False,
+        description=(
+            "When True, detected duplicates that exceed both thresholds "
+            "are automatically merged (newest properties win). "
+            "When False, duplicates are recorded as SAME_AS proposals only."
+        ),
+    )
+
+    # --- Background PageRank settings ---
+    pagerank_auto_enabled: bool = Field(
+        default=True,
+        description=(
+            "When True (and gds_enabled is also True), PageRank is "
+            "automatically computed on derivative collections after "
+            "add_nodes() once the node count reaches the threshold."
+        ),
+    )
+    pagerank_trigger_threshold: int = Field(
+        default=50,
+        description=(
+            "Minimum number of nodes in a derivative collection "
+            "before automatic PageRank computation is triggered."
+        ),
+    )
+
+    # --- Graph Data Science (GDS) settings ---
+    gds_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether to enable Graph Data Science plugin features "
+            "(PageRank, Louvain community detection). Requires the GDS "
+            "plugin to be installed in the Neo4j instance."
+        ),
+    )
+    gds_default_damping_factor: float = Field(
+        default=0.85,
+        description="Default damping factor for PageRank computation.",
+    )
+    gds_default_max_iterations: int = Field(
+        default=20,
+        description="Default maximum iterations for GDS algorithms.",
+    )
+
     def get_uri(self) -> str:
         if self.uri:
             return self.uri

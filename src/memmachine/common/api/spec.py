@@ -619,6 +619,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             examples=Examples.MEMORY_TYPES,
         ),
     ]
+    entity_types: Annotated[
+        list[str] | None,
+        Field(
+            default=None,
+            description=SpecDoc.ENTITY_TYPES,
+            examples=Examples.ENTITY_TYPES,
+        ),
+    ]
 
 
 class DeleteMemoriesSpec(_WithOrgAndProj):

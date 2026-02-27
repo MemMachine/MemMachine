@@ -1,0 +1,36 @@
+meta {
+  name: Create Relationship
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v2/memories/graph/relationships
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "source_id": "{{sourceFeatureId}}",
+    "target_id": "{{targetFeatureId}}",
+    "relationship_type": "RELATED_TO",
+    "confidence": 0.9,
+    "source": "manual"
+  }
+}
+
+docs {
+  Create a typed semantic relationship between two features.
+
+  Relationship types: CONTRADICTS, IMPLIES, RELATED_TO, SUPERSEDES.
+  Confidence ranges from 0.0 to 1.0.
+  Source indicates how the relationship was created (llm, rule, manual).
+
+  Replace {{sourceFeatureId}} and {{targetFeatureId}} with actual
+  feature IDs from semantic memory.
+}

@@ -80,6 +80,7 @@ from memmachine.common.errors import (
 from memmachine.main.memmachine import ALL_MEMORY_TYPES
 from memmachine.server.api_v2.config_router import config_router
 from memmachine.server.api_v2.exceptions import RestError
+from memmachine.server.api_v2.graph_router import graph_router
 from memmachine.server.api_v2.service import (
     _add_messages_to,
     _list_target_memories,
@@ -975,9 +976,13 @@ async def health_check() -> dict[str, str]:
     }
 
 
+_API_V2_PREFIX = "/api/v2"
+
+
 def load_v2_api_router(app: FastAPI, *, with_config_api: bool = False) -> APIRouter:
     """Load the API v2 router."""
-    app.include_router(router, prefix="/api/v2")
+    app.include_router(router, prefix=_API_V2_PREFIX)
+    app.include_router(graph_router, prefix=_API_V2_PREFIX)
     if with_config_api:
-        app.include_router(config_router, prefix="/api/v2")
+        app.include_router(config_router, prefix=_API_V2_PREFIX)
     return router
