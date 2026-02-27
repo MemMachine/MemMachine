@@ -1,9 +1,10 @@
 """Core MemMachine orchestration logic."""
 
 import asyncio
+import contextlib
 import logging
 from asyncio import Task
-from collections.abc import Coroutine, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import Any, Final, Protocol, cast
 
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -89,6 +90,8 @@ class MemMachine:
         else:
             self._resources = ResourceManagerImpl(conf)
         self._initialize_default_episodic_configuration()
+        self._deletion_queue = asyncio.Queue()
+        self._delete_worker = None
         self._started = False
 
     def _initialize_default_episodic_configuration(self) -> None:
@@ -158,7 +161,84 @@ class MemMachine:
         if stm.summary_prompt_user is None:
             stm.summary_prompt_user = self._conf.prompt.episode_summary_user_prompt
 
-    async def start(self) -> None:
+    async def _get_session_to_delete(self, queue: asyncio.Queue) -> SessionData | None:
+        sessions: list[MemMachine.SessionData] = []
+        while True:
+            while True:
+                try:
+                    session = queue.get_nowait()
+                    queue.task_done()
+                    if session is None:
+                        return None
+                    sessions.append(session)
+                except asyncio.QueueEmpty:
+                    break
+            if len(sessions) == 0:
+                session = await queue.get()
+                queue.task_done()
+                if session is None:
+                    return None
+                sessions.append(session)
+                continue
+            session = sessions[0]
+            sessions.pop(0)
+            return session
+        return None
+
+    async def _delete_session_worker(self) -> None:
+        """Background job that delete sessions."""
+        while True:
+            session = await self._get_session_to_delete(self._deletion_queue)
+            if session is None:
+                return
+
+            async def _delete_episode_store(session: str) -> None:
+                episode_store = await self._resources.get_episode_storage()
+                session_filter = FilterComparison(
+                    field="session_key",
+                    op="=",
+                    value=session,
+                )
+                await episode_store.delete_episode_messages(
+                    filter_expr=session_filter,
+                )
+
+            async def _delete_episodic_memory(session: str) -> None:
+                episodic_memory_manager = (
+                    await self._resources.get_episodic_memory_manager()
+                )
+
+                await episodic_memory_manager.delete_episodic_session(
+                    session_key=session
+                )
+
+            async def _delete_semantic_memory(session: MemMachine.SessionData) -> None:
+                semantic_memory_manager = (
+                    await self._resources.get_semantic_session_manager()
+                )
+                await asyncio.gather(
+                    semantic_memory_manager.delete_feature_set(
+                        session_data=session,
+                    ),
+                    semantic_memory_manager.delete_all_project_messages(
+                        session_data=session
+                    ),
+                )
+
+            tasks = [_delete_episode_store(session.session_key)]
+            if self._conf.episodic_memory.enabled:
+                tasks.append(_delete_episodic_memory(session.session_key))
+            if self._conf.semantic_memory.enabled:
+                tasks.append(_delete_semantic_memory(session))
+
+            await asyncio.gather(*tasks)
+            manager = await self._resources.get_session_data_manager()
+            await manager.delete_session(session_key=session.session_key)
+            logger.info("Deleted session %s", session.session_key)
+
+    async def start(
+        self, key_to_session: Callable[[str], SessionData] | None = None
+    ) -> None:
         """
         Start MemMachine background services.
 
@@ -168,6 +248,14 @@ class MemMachine:
         """
         if self._started:
             return
+        self._delete_worker = asyncio.create_task(self._delete_session_worker())
+        if key_to_session is not None:
+            session_data_manager = await self._resources.get_session_data_manager()
+            sessions = await session_data_manager.get_sessions_by_status(
+                SessionDataManager.SessionStatus.Deleted
+            )
+            for session in sessions:
+                self._deletion_queue.put_nowait(key_to_session(session))
         self._started = True
 
         if self._conf.semantic_memory.enabled:
@@ -189,7 +277,13 @@ class MemMachine:
         if not self._started:
             return
         self._started = False
-
+        self._deletion_queue.put_nowait(None)
+        await self._deletion_queue.join()
+        if self._delete_worker is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                self._delete_worker.cancel()
+                await self._delete_worker
+        self._delete_worker = None
         if self._conf.semantic_memory.enabled:
             semantic_service = await self._resources.get_semantic_service()
             await semantic_service.stop()
@@ -309,7 +403,9 @@ class MemMachine:
 
         """
         session_data_manager = await self._resources.get_session_data_manager()
-        return await session_data_manager.get_session_info(session_key)
+        return await session_data_manager.get_session_info(
+            session_key, status=SessionDataManager.SessionStatus.Active
+        )
 
     async def delete_session(self, session_data: SessionData) -> None:
         """
@@ -329,46 +425,15 @@ class MemMachine:
         if session is None:
             raise SessionNotFoundError(session_data.session_key)
 
-        async def _delete_episode_store() -> None:
-            episode_store = await self._resources.get_episode_storage()
-            session_filter = FilterComparison(
-                field="session_key",
-                op="=",
-                value=session_data.session_key,
-            )
-            await episode_store.delete_episode_messages(
-                filter_expr=session_filter,
-            )
+        if session.status == SessionDataManager.SessionStatus.Deleted:
+            return
 
-        async def _delete_episodic_memory() -> None:
-            episodic_memory_manager = (
-                await self._resources.get_episodic_memory_manager()
-            )
-
-            await episodic_memory_manager.delete_episodic_session(
-                session_key=session_data.session_key
-            )
-
-        async def _delete_semantic_memory() -> None:
-            semantic_memory_manager = (
-                await self._resources.get_semantic_session_manager()
-            )
-            await asyncio.gather(
-                semantic_memory_manager.delete_feature_set(
-                    session_data=session_data,
-                ),
-                semantic_memory_manager.delete_all_project_messages(
-                    session_data=session_data
-                ),
-            )
-
-        tasks = [_delete_episode_store()]
-        if self._conf.episodic_memory.enabled:
-            tasks.append(_delete_episodic_memory())
-        if self._conf.semantic_memory.enabled:
-            tasks.append(_delete_semantic_memory())
-
-        await asyncio.gather(*tasks)
+        session_manager = await self._resources.get_session_data_manager()
+        await session_manager.update_session_status(
+            session_key=session_data.session_key,
+            status=SessionDataManager.SessionStatus.Deleted,
+        )
+        self._deletion_queue.put_nowait(session_data)
 
     async def search_sessions(
         self,

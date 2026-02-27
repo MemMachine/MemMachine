@@ -390,3 +390,49 @@ async def test_delete_session_cascades_to_short_term_memory(
         match=f"session {session_key} does not have short term memory",
     ):
         await session_manager.get_short_term_memory(session_key)
+
+
+@pytest.mark.asyncio
+async def test_update_and_get_session_status(
+    session_manager: SessionDataManager,
+    episodic_memory_conf: EpisodicMemoryConf,
+):
+    """Test updating session status and retrieving by status."""
+    # Create sessions
+    await session_manager.create_new_session(
+        "session_active_1", {}, episodic_memory_conf, "", {}
+    )
+    await session_manager.create_new_session(
+        "session_active_2", {}, episodic_memory_conf, "", {}
+    )
+    await session_manager.create_new_session(
+        "session_to_delete", {}, episodic_memory_conf, "", {}
+    )
+
+    # Verify default status is active
+    active_sessions = await session_manager.get_sessions_by_status("active")
+    assert len(active_sessions) == 3
+    assert "session_active_1" in active_sessions
+    assert "session_active_2" in active_sessions
+    assert "session_to_delete" in active_sessions
+
+    # Update status
+    await session_manager.update_session_status("session_to_delete", "delete")
+
+    # Verify status update
+    session_info = await session_manager.get_session_info(
+        "session_to_delete", status=SessionDataManager.SessionStatus.Deleted
+    )
+    assert session_info is not None
+    assert session_info.status == "delete"
+
+    # Verify filtering by status
+    active_sessions = await session_manager.get_sessions_by_status("active")
+    assert len(active_sessions) == 2
+    assert "session_active_1" in active_sessions
+    assert "session_active_2" in active_sessions
+    assert "session_to_delete" not in active_sessions
+
+    delete_sessions = await session_manager.get_sessions_by_status("delete")
+    assert len(delete_sessions) == 1
+    assert "session_to_delete" in delete_sessions
