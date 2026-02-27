@@ -91,6 +91,7 @@ class MemMachineClient:
         base_url: str | None = None,
         timeout: int = 30,
         max_retries: int = 3,
+        is_playground: bool = False,
         **kwargs: ExtraOptions,
     ) -> None:
         """
@@ -102,6 +103,8 @@ class MemMachineClient:
                      Should be provided explicitly or via MEMORY_BACKEND_URL environment variable.
             timeout: Request timeout in seconds
             max_retries: Maximum number of retries for failed requests
+            is_playground: If True, enables playground mode where projects are created
+                          without API calls (default: False)
             **kwargs: Additional configuration options
 
         Raises:
@@ -110,6 +113,7 @@ class MemMachineClient:
         """
         self.api_key = api_key
         self._extra_options = kwargs
+        self.is_playground = is_playground
         # base_url is required
         if base_url is None:
             raise ValueError(
@@ -141,6 +145,25 @@ class MemMachineClient:
 
         if api_key:
             self._session.headers["Authorization"] = f"Bearer {api_key}"
+
+    def _build_api_url(self, path: str) -> str:
+        """
+        Build API URL based on playground mode.
+
+        Args:
+            path: API path (e.g., "projects", "memories/search")
+
+        Returns:
+            Full API URL
+
+        """
+        # In playground mode, use /v2/xxx instead of /api/v2/xxx
+        if self.is_playground:
+            if path.startswith("/api/v2/"):
+                path = path.replace("/api/v2/", "/v2/")
+            return f"{self.base_url}{path}"
+        else:
+            return f"{self.base_url}{path}"
 
     class RequestExtraOptions(TypedDict, total=False):
         """Extra options for the HTTP request."""
@@ -218,7 +241,7 @@ class MemMachineClient:
         if self._closed:
             raise RuntimeError("Cannot create project: client has been closed")
 
-        url = f"{self.base_url}/api/v2/projects"
+        url = self._build_api_url("/api/v2/projects")
         # Use shared API Pydantic models
         spec = CreateProjectSpec(
             org_id=org_id,
@@ -276,7 +299,7 @@ class MemMachineClient:
 
         self._validate_project_ids(org_id, project_id)
 
-        url = f"{self.base_url}/api/v2/projects/get"
+        url = self._build_api_url("/api/v2/projects/get")
         spec = GetProjectSpec(org_id=org_id, project_id=project_id)
         data = spec.model_dump(exclude_none=True)
 
@@ -411,6 +434,16 @@ class MemMachineClient:
         if self._closed:
             raise RuntimeError("Cannot get or create project: client has been closed")
 
+        # For playground mode, return an empty project without API calls
+        if self.is_playground:
+            return Project(
+                client=self,
+                org_id=org_id,
+                project_id=project_id,
+                description=description,
+                config=None,
+            )
+
         self._validate_project_ids(org_id, project_id)
 
         # First, try to get the project
@@ -449,7 +482,7 @@ class MemMachineClient:
         if self._closed:
             raise RuntimeError("Cannot list projects: client has been closed")
 
-        url = f"{self.base_url}/api/v2/projects/list"
+        url = self._build_api_url("/api/v2/projects/list")
         try:
             response = self.request("POST", url, timeout=timeout)
             response.raise_for_status()
@@ -501,7 +534,7 @@ class MemMachineClient:
         request_timeout = timeout if timeout is not None else self.timeout
         try:
             response = self._session.get(
-                f"{self.base_url}/api/v2/health",
+                self._build_api_url("/api/v2/health"),
                 timeout=request_timeout,
             )
             response.raise_for_status()
@@ -534,7 +567,7 @@ class MemMachineClient:
         request_timeout = timeout if timeout is not None else self.timeout
         try:
             response = self._session.get(
-                f"{self.base_url}/api/v2/metrics",
+                self._build_api_url("/api/v2/metrics"),
                 timeout=request_timeout,
             )
             response.raise_for_status()
