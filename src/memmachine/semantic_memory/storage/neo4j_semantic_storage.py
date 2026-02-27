@@ -696,26 +696,25 @@ class Neo4jSemanticStorage(SemanticStorage):
         if not history_ids:
             return
 
+        history_ids_param = [str(history_id) for history_id in history_ids]
+        timestamp = _utc_timestamp()
         await self._driver.execute_query(
             """
-            MATCH (h:SetHistory)
-            WHERE h.history_id IN $history_ids
-            DELETE h
+            WITH $history_ids AS history_ids, $ts AS ts
+            CALL {
+                WITH history_ids
+                MATCH (h:SetHistory)
+                WHERE h.history_id IN history_ids
+                DETACH DELETE h
+            }
+            WITH history_ids, ts
+            MATCH (f:Feature)
+            WHERE any(id IN f.citations WHERE id IN history_ids)
+            SET f.citations = [id IN f.citations WHERE NOT id IN history_ids],
+                f.updated_at_ts = ts
             """,
-            history_ids=[str(history_id) for history_id in history_ids],
-        )
-
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
-        if not set_ids:
-            return
-
-        await self._driver.execute_query(
-            """
-            MATCH (h:SetHistory)
-            WHERE h.set_id IN $set_ids
-            DELETE h
-            """,
-            set_ids=[str(set_id) for set_id in set_ids],
+            history_ids=history_ids_param,
+            ts=timestamp,
         )
 
     async def mark_messages_ingested(

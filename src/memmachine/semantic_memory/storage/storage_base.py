@@ -160,10 +160,7 @@ class SemanticStorage(ABC):
 
     @abstractmethod
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
+        """Delete history references and citations for the episode IDs."""
         raise NotImplementedError
 
     @abstractmethod

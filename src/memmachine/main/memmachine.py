@@ -311,6 +311,23 @@ class MemMachine:
         session_data_manager = await self._resources.get_session_data_manager()
         return await session_data_manager.get_session_info(session_key)
 
+    async def _cleanup_semantic_history(
+        self,
+        episode_ids: list[EpisodeIdT],
+    ) -> None:
+        """Remove semantic history and citations for the given episode IDs."""
+        try:
+            semantic_service = await self._resources.get_semantic_service()
+        except ResourceNotReadyError:
+            logger.exception(
+                "Semantic service not ready during history cleanup; "
+                "skipping cleanup for episode IDs %s",
+                episode_ids,
+            )
+            return
+
+        await semantic_service.delete_history(episode_ids)
+
     async def delete_session(self, session_data: SessionData) -> None:
         """
         Delete all data associated with a session.
@@ -336,9 +353,13 @@ class MemMachine:
                 op="=",
                 value=session_data.session_key,
             )
-            await episode_store.delete_episode_messages(
+            episodes = await episode_store.get_episode_messages(
                 filter_expr=session_filter,
             )
+            episode_ids = [episode.uid for episode in episodes]
+            if episode_ids:
+                await episode_store.delete_episodes(episode_ids)
+                await self._cleanup_semantic_history(episode_ids)
 
         async def _delete_episodic_memory() -> None:
             episodic_memory_manager = (
@@ -353,13 +374,8 @@ class MemMachine:
             semantic_memory_manager = (
                 await self._resources.get_semantic_session_manager()
             )
-            await asyncio.gather(
-                semantic_memory_manager.delete_feature_set(
-                    session_data=session_data,
-                ),
-                semantic_memory_manager.delete_all_project_messages(
-                    session_data=session_data
-                ),
+            await semantic_memory_manager.delete_feature_set(
+                session_data=session_data,
             )
 
         tasks = [_delete_episode_store()]

@@ -258,11 +258,6 @@ class SemanticService:
 
         _consolidate_errors_and_raise(res, "Failed to add message to sets")
 
-    async def delete_messages(self, *, set_ids: list[SetIdT]) -> None:
-        logger.info("Deleting messages from sets %s", set_ids)
-
-        await self._semantic_storage.delete_history_set(set_ids=set_ids)
-
     async def number_of_uningested(self, set_ids: list[SetIdT]) -> int:
         logger.debug("Getting number of uningested messages for set ids %s", set_ids)
 
@@ -537,7 +532,6 @@ class SemanticService:
         logger.info("Deleting set ids %s", set_ids)
 
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._semantic_storage.delete_history_set(set_ids=set_ids))
             tg.create_task(
                 self._semantic_storage.delete_feature_set(
                     filter_expr=_with_has_set_ids(set_ids=set_ids, filter_expr=None),

@@ -174,9 +174,6 @@ class MockSemanticStorage(SemanticStorage):
     ) -> None:
         await self.mark_messages_ingested_mock(set_id=set_id, ids=history_ids)
 
-    async def delete_history_set(self, set_ids: list[SetIdT]) -> None:
-        raise NotImplementedError
-
     async def get_history_set_ids(
         self,
         *,
