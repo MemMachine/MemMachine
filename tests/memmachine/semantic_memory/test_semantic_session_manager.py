@@ -158,7 +158,7 @@ async def test_search_returns_relevant_features(
         await session_manager.search(
             message="Why does alpha stay calm?",
             session_data=session_data,
-            min_distance=0.5,
+            distance_threshold=0.5,
         )
     )
 

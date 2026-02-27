@@ -92,7 +92,7 @@ class SemanticStorage(ABC):
         """Parameters controlling vector similarity constraints for retrieval."""
 
         query_embedding: InstanceOf[np.ndarray]
-        min_distance: float | None = None
+        distance_threshold: float | None = None
 
     @abstractmethod
     async def get_feature_set(

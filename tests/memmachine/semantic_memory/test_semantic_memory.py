@@ -383,7 +383,7 @@ async def test_search_returns_matching_features(
     results = await semantic_service.search(
         set_ids=["user-search"],
         query="Why does alpha prefer quiet chats?",
-        min_distance=0.5,
+        distance_threshold=0.5,
     )
 
     # Then only the matching feature is returned using the query embedding

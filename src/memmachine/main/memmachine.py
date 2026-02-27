@@ -603,6 +603,7 @@ class MemMachine:
                     session_data=session_data,
                     set_metadata=set_metadata,
                     limit=limit,
+                    distance_threshold=score_threshold,
                     search_filter=property_filter,
                 )
             )

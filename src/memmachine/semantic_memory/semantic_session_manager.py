@@ -176,7 +176,7 @@ class SemanticSessionManager:
         session_data: SessionData,
         *,
         set_metadata: Mapping[str, JsonValue] | None = None,
-        min_distance: float | None = None,
+        distance_threshold: float | None = None,
         limit: int | None = None,
         load_citations: bool = False,
         search_filter: FilterExpr | None = None,
@@ -191,7 +191,7 @@ class SemanticSessionManager:
         return await self._semantic_service.search(
             set_ids=list(set_ids),
             query=message,
-            min_distance=min_distance,
+            distance_threshold=distance_threshold,
             limit=limit,
             load_citations=load_citations,
             filter_expr=search_filter,

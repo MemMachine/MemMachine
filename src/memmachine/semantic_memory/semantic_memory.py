@@ -158,7 +158,7 @@ class SemanticService:
         *,
         set_id: str,
         embedding: list[float],
-        min_distance: float | None = None,
+        distance_threshold: float | None = None,
         limit: int | None = 30,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
@@ -173,7 +173,7 @@ class SemanticService:
             page_size=limit,
             vector_search_opts=SemanticStorage.VectorSearchOpts(
                 query_embedding=np.array(embedding),
-                min_distance=min_distance,
+                distance_threshold=distance_threshold,
             ),
             load_citations=load_citations,
         )
@@ -183,7 +183,7 @@ class SemanticService:
         set_ids: list[SetIdT],
         query: str,
         *,
-        min_distance: float | None = None,
+        distance_threshold: float | None = None,
         limit: int | None = 30,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
@@ -204,7 +204,7 @@ class SemanticService:
                     self._set_id_search(
                         set_id=set_id,
                         embedding=embeddings[set_id],
-                        min_distance=min_distance,
+                        distance_threshold=distance_threshold,
                         limit=limit,
                         load_citations=load_citations,
                         filter_expr=filter_expr,
