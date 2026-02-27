@@ -38,7 +38,7 @@ jobs:
         with:
           # This is the path to the directory containing your Python source code.
           # The action will scan this directory for dependencies.
-          path: ./src
+          path: ./packages
           # The name for the output artifact.
           artifact-name: MemMachine-SBOM
           # Specify the output format. SPDX is a common standard.

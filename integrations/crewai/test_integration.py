@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ruff: noqa: T201
 """
 Quick test script for CrewAI + MemMachine integration.
 
@@ -63,7 +62,7 @@ def test_playground_mode() -> None:
     print("Test 3: Playground Mode")
     print("=" * 60)
 
-    from memmachine import MemMachineClient
+    from memmachine_client import MemMachineClient
 
     # Create client with playground mode
     client = MemMachineClient(

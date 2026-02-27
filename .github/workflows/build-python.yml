@@ -36,7 +36,7 @@ jobs:
 
       - name: Build the packages with uv
         run: |
-          uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
+          uv build --project packages/common && uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
           ls -lh dist/
 
       - name: Upload built distributions as artifact

@@ -43,7 +43,9 @@ jobs:
 
       - name: Build server package
         run: |
-          uv build --project packages/server
+          uv build --project packages/common -o dist/
+          uv build --project packages/server -o dist/
+          ls -lh dist/memmachine_common-*
           ls -lh dist/memmachine_server-*
 
       - name: Install server package
@@ -51,16 +53,16 @@ jobs:
         run: |
           set -eo pipefail
           whl_name=$(ls dist/memmachine_server-*.whl | head -1)
-          pip install "$whl_name"
+          pip install --find-links dist/ "$whl_name"
 
       - name: Test server package imports
         shell: bash
         run: |
           set -eo pipefail
           python -c "
-          from memmachine.common.api import MemoryType
-          from memmachine.server.app import main
-          from memmachine.main.memmachine import MemMachine, ALL_MEMORY_TYPES
+          from memmachine_common.api import MemoryType
+          from memmachine_server.server.app import main
+          from memmachine_server.main.memmachine import MemMachine, ALL_MEMORY_TYPES
 
           print('All imports successful')
           print(f'MemoryType.Semantic = {MemoryType.Semantic.value}')
@@ -74,8 +76,8 @@ jobs:
         run: |
           set -eo pipefail
           python -c "
-          from memmachine.common.api import MemoryType
-          from memmachine.main.memmachine import ALL_MEMORY_TYPES
+          from memmachine_common.api import MemoryType
+          from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
 
           # Test MemoryType enum
           assert MemoryType.Semantic.value == 'semantic'
@@ -94,16 +96,16 @@ jobs:
         run: |
           set -eo pipefail
           python -c "
-          import memmachine
-          import memmachine.common.api
-          import memmachine.server.app
-          import memmachine.main.memmachine
+          import memmachine_server
+          import memmachine_common.api
+          import memmachine_server.server.app
+          import memmachine_server.main.memmachine
 
           # Check that modules exist
-          assert hasattr(memmachine.common.api, 'MemoryType')
-          assert hasattr(memmachine.server.app, 'main')
-          assert hasattr(memmachine.main.memmachine, 'MemMachine')
-          assert hasattr(memmachine.main.memmachine, 'ALL_MEMORY_TYPES')
+          assert hasattr(memmachine_common.api, 'MemoryType')
+          assert hasattr(memmachine_server.server.app, 'main')
+          assert hasattr(memmachine_server.main.memmachine, 'MemMachine')
+          assert hasattr(memmachine_server.main.memmachine, 'ALL_MEMORY_TYPES')
 
           print('Package structure verified')
           "
@@ -114,21 +116,21 @@ jobs:
           set -eo pipefail
           python -c "
           # Test that command-line tool modules can be imported
-          from memmachine.server.app import main as server_main
+          from memmachine_server.server.app import main as server_main
           print('memmachine-server module importable')
 
-          from memmachine.server.mcp_stdio import main as mcp_stdio_main
+          from memmachine_server.server.mcp_stdio import main as mcp_stdio_main
           print('memmachine-mcp-stdio module importable')
 
-          from memmachine.server.mcp_http import main as mcp_http_main
+          from memmachine_server.server.mcp_http import main as mcp_http_main
           print('memmachine-mcp-http module importable')
 
-          from memmachine.installation.memmachine_configure import main as configure_main
+          from memmachine_server.installation.memmachine_configure import main as configure_main
           print('memmachine-configure module importable')
 
           # Check if setup_nltk exists (for memmachine-nltk-setup)
-          import memmachine
-          if hasattr(memmachine, 'setup_nltk'):
+          import memmachine_server
+          if hasattr(memmachine_server, 'setup_nltk'):
               print('memmachine-nltk-setup function available')
           else:
               print('memmachine-nltk-setup function not found (may be optional)')

@@ -17,12 +17,11 @@ from agents import (
     set_tracing_export_api_key,
     trace,
 )
-from pydantic import BaseModel
-
-from memmachine.episodic_memory.episodic_memory import EpisodicMemory
-from memmachine.episodic_memory.episodic_memory_manager import (
+from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
+from pydantic import BaseModel
 
 LOCOMO_EXECUTOR_INSTRUCTIONS = """
 You are the executor agent. As the executor, your role is to answer the user's quesiton using the memories in the context and by querying for more memories if necessary.

@@ -1,4 +1,4 @@
-# ruff: noqa: T201,SLF001
+# ruff: noqa: SLF001
 """
 Use MemMachine with LangChain.
 

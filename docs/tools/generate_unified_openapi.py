@@ -4,8 +4,8 @@ import inspect
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
-from memmachine.server.api_v2.router import load_v2_api_router
-from memmachine.server.api_v2.mcp import mcp
+from memmachine_server.server.api_v2.router import load_v2_api_router
+from memmachine_server.server.api_v2.mcp import mcp
 
 def generate_unified_openapi():
     app = FastAPI(title="MemMachine Server", version="0.2.0")

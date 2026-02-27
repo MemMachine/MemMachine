@@ -1,96 +1,17 @@
-[build-system]
-requires = ["uv_build"]
-build-backend = "uv_build"
-
 [tool.uv.workspace]
-members = ["packages/client", "packages/server"]
+members = ["packages/client", "packages/common", "packages/server"]
 
 [tool.uv.sources]
+memmachine-common = { workspace = true }
 memmachine-server = { workspace = true }
 memmachine-client = { workspace = true }
-
-[project]
-name = "memmachine"
-version = "0.0.0"  # Placeholder version for workspace root
-dependencies = [
-    "alembic>=1.17.1",
-    "asyncpg>=0.31.0",
-    "aiosqlite>=0.20.0",
-    "boto3>=1.40.40",
-    "boto3-stubs==1.40.64",
-    "cohere>=5.20.0",
-    "coverage>=7.11.0",
-    "dotenv>=0.9.9",
-    "fastapi>=0.116.1",
-    "fastmcp>=2.14.0",
-    "instructor[bedrock]>=1.12.0",
-    "json-repair>=0.54",
-    "langchain-aws>=0.2.33",
-    "neo4j>=5.28.2",
-    "nltk>=3.9.1",
-    "openai>=2.21.0",
-    "pgvector>=0.4.1",
-    "prometheus-client>=0.22.1",
-    "pydantic>=2.11.7",
-    "pyyaml>=6.0.2",
-    "rank-bm25>=0.2.2",
-    "sqlalchemy>=2.0.43",
-    "uvicorn>=0.35.0",
-    "greenlet>=3.2.4",
-    "tzdata>=2024.1 ; sys_platform == 'win32'",
-    "psutil>=7.1.0",
-    "memmachine-server",
-    "memmachine-client",
-]
-requires-python = ">= 3.12"
-authors = [
-    { name = "MemMachine", email = "noreply@memmachine.ai" },
-]
-description = "MemMachine: Open-source long-term memory layer for AI agents and LLMs. Provides episodic memory, profile memory, and working memory to enable persistent, context-aware AI applications that learn and remember across sessions."
-readme = "README.md"
-keywords = [
-    "memmachine",
-    "ai-agents",
-    "llm-memory",
-    "long-term-memory",
-    "episodic-memory",
-    "agent-memory",
-    "ai-infrastructure",
-    "langchain",
-    "openai",
-    "anthropic",
-    "mcp",
-    "model-context-protocol",
-]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
-]
-license = "Apache-2.0"
-license-files = ["LICENSE"]
-
-[project.optional-dependencies]
-gpu = [
-    "sentence-transformers>=5.1.0",
-]
-
-[project.scripts]
-memmachine-server = "memmachine.server.app:main"
-memmachine-nltk-setup = "memmachine:setup_nltk"
-memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
-memmachine-mcp-http = "memmachine.server.mcp_http:main"
-memmachine-configure = "memmachine.installation.memmachine_configure:main"
-
-[project.urls]
-Homepage = "https://github.com/MemMachine/MemMachine"
-Issues = "https://github.com/MemMachine/MemMachine/issues"
 
 [dependency-groups]
 dev = [
     "complexipy>=4.2.0",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
-    "ruff~=0.14.0",
+    "ruff==0.15.1",
     "testcontainers[neo4j,postgres]>=4.13.1",
     "ty~=0.0.14",
     "pytest-cov>=7.0.0",
@@ -153,22 +74,31 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+# Do not add any new paths under packages/
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/client/client_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/server/server_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/common/common_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
-"src/memmachine/common/api/spec.py" = ["UP017", "UP035"]
-"src/memmachine/rest_client/client.py" = ["UP035"]
 "examples/**" = [
     "ANN",
+    "ARG",
     "ASYNC210",
+    "C901",
+    "D",
+    "PERF203",
+    "PTH",
+    "T201",
+    "TRY300",
+    "TRY401",
+]
+"integrations/**" = [
+    "ANN",
     "T201",
     "D",
     "ARG",
-    "T201",
-    "TRY401",
-    "C901",
-    "TRY300",
-    "PTH",
+    "PERF203",
 ]
 "evaluation/**/*.py" = [
     "D",
@@ -199,7 +129,7 @@ markers = [
 ]
 
 [tool.complexipy]
-paths = ["src", "tests"]
+paths = ["packages/server/src", "packages/client/src", "tests"]
 max-complexity-allowed = 10
 quiet = false
 ignore-complexity = false
@@ -210,7 +140,9 @@ exclude = []
 
 [tool.coverage.run]
 source = [
-    "src/memmachine",
+    "packages/server/src/memmachine",
+    "packages/client/src/memmachine_client",
+    "packages/common/src/memmachine_common",
 ]
 
 [tool.coverage.report]

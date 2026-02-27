@@ -8,10 +8,10 @@ The MemMachine Python SDK provides a convenient way to interact with your MemMac
 
 ## Simple Hello World Example
 ```python
-import memmachine
-from memmachine.episodic_memory.episodic_memory_manager import EpisodicMemoryManager
-from memmachine.episodic_memory.data_types import MemoryContext
-from memmachine.common.episode_store import ContentType, Episode
+import memmachine_server
+from memmachine_server.episodic_memory.episodic_memory_manager import EpisodicMemoryManager
+from memmachine_server.episodic_memory.data_types import MemoryContext
+from memmachine_server.common.episode_store import ContentType, Episode
 from datetime import datetime
 import uuid
 
@@ -30,7 +30,7 @@ This example demonstrates how to connect to the server, create a project, and ad
 </Note>
 
 ```python
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 # 1. Initialize the client
 # Replace 'http://localhost:8080' with your server's URL if different.

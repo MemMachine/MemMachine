@@ -2,7 +2,7 @@
 import json
 
 from fastapi import FastAPI
-from memmachine.server.api_v2.router import load_v2_api_router
+from memmachine_server.server.api_v2.router import load_v2_api_router
 
 def generate_openapi():
     app = FastAPI(servers=[{"url": "https://localhost:8080"}])

@@ -135,7 +135,7 @@ tools = MemMachineTools(
 )
 
 # Add memory
-from memmachine.common.api import EpisodeType
+from memmachine_server.common.api import EpisodeType
 
 result = tools.add_memory(
     content="User prefers Python over JavaScript",
@@ -205,7 +205,7 @@ researcher = Agent(
 # Create task
 task = Task(
     description="""Research the topic: {topic}
-    
+
     1. First, search memory to see if you've researched this topic before
     2. Research the topic thoroughly
     3. Store key findings in memory for future reference
@@ -237,4 +237,3 @@ print(result)
 - Use `user_id` to scope memories to specific users
 - Use `session_id` to scope memories to specific sessions
 - Memories persist across crew runs, enabling long-term context
-

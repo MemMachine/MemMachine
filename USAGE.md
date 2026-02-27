@@ -93,7 +93,7 @@ The Python SDK provides a convenient interface for interacting with MemMachine. 
 ### Basic Setup
 
 ```python
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 # Initialize client
 client = MemMachineClient(base_url="http://localhost:8080")
@@ -400,7 +400,7 @@ curl -X GET "http://localhost:8080/metrics"
 ### Pattern 1: Chatbot with Memory
 
 ```python
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 client = MemMachineClient(base_url="http://localhost:8080")
 project = client.get_project(org_id="my-org", project_id="chatbot-project")

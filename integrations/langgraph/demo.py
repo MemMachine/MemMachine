@@ -1,11 +1,10 @@
 """Demo showing MemMachine integration with LangGraph."""
 
-# ruff: noqa: T201
 import json
 import os
 from typing import Annotated, TypedDict
 
-from memmachine.rest_client.langgraph import (
+from memmachine_client import (
     MemMachineTools,
     create_add_memory_tool,
     create_search_memory_tool,

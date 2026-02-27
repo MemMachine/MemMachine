@@ -4,7 +4,7 @@ Integration tests for LangChain with MemMachine.
 This test suite verifies the complete integration of MemMachine memory with LangChain,
 including memory operations, persistence, and BaseMemory interface compliance.
 """
-# ruff: noqa: T201,SLF001
+# ruff: noqa: SLF001
 
 import os
 import sys

@@ -5,7 +5,6 @@ This example demonstrates how to integrate MemMachine memory operations
 into AWS Strands Agent SDK workflows.
 """
 
-# ruff: noqa: T201
 import json
 import os
 
