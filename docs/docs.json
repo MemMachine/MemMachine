@@ -153,11 +153,13 @@
           {
             "group": "PythonSDK Client",
             "pages": [
-              "api_reference/python/client",
-              "api_reference/python/client_api",
-              "api_reference/python/project_api",
-              "api_reference/python/memory_api",
-              "api_reference/python/project_api"
+              "api_reference/python/client",      
+              "api_reference/python/client_api",  
+              "api_reference/python/project_api", 
+              "api_reference/python/memory_api",  
+              "api_reference/python/semantic_api",
+              "api_reference/python/config_api",  
+              "api_reference/python/system_api"
             ]
           },
          {

@@ -1,0 +1,120 @@
+---
+title: "Semantic API"
+description: "Reference for managing structured Knowledge Sets, Categories, and Tags"
+icon: "diagram-project"
+---
+
+The `client.semantic` namespace manages the structured "Knowledge Graph" of your projects. Unlike episodic memory, which is a stream of events, semantic memory is used for organized facts, user preferences, and entity relationships.
+
+## Semantic Sets
+
+Sets are the top-level containers for structured data within a project (e.g., a "User Preferences" set or a "Product Catalog" set).
+
+### `create_set_type`
+Defines a new type of semantic set that can be instantiated.
+
+```python
+client.semantic.create_set_type(
+    org_id="my_org",
+    project_id="my_proj",
+    name="UserPreferences",
+    description="Stores long-term user habits and settings"
+)
+```
+
+| **Parameter** | **Type** | **Description**                        |
+| ------------- | -------- | -------------------------------------- |
+| `org_id`      | `str`    | Organization identifier.               |
+| `project_id`  | `str`    | Project identifier.                    |
+| `name`        | `str`    | Unique name for the set type.          |
+| `description` | `str`    | Optional summary of the set's purpose. |
+
+------
+
+## Categories
+
+Categories live inside Sets and define specific schemas for the data being stored.
+
+### `add_category`
+
+Adds a new category to an existing semantic set.
+
+```python
+client.semantic.add_category(
+    org_id="my_org",
+    project_id="my_proj",
+    set_id="set_123",
+    name="DietaryRestrictions",
+    template_id="v1_template"
+)
+```
+
+| **Parameter** | **Type** | **Description**                          |
+| ------------- | -------- | ---------------------------------------- |
+| `org_id`      | `str`    | Organization identifier.                 |
+| `project_id`  | `str`    | Project identifier.                      |
+| `set_id`      | `str`    | The ID of the parent Set.                |
+| `name`        | `str`    | Name of the category.                    |
+| `template_id` | `str`    | Optional schema template for validation. |
+
+------
+
+## Tags
+
+Tags are the individual "facts" or "labels" stored within a category.
+
+### `add_tag`
+
+Adds a specific semantic tag to a category.
+
+```python
+client.semantic.add_tag(
+    org_id="my_org",
+    project_id="my_proj",
+    category_id="cat_456",
+    value="Vegetarian",
+    metadata={"confidence": 0.98}
+)
+```
+
+| **Parameter** | **Type** | **Description**                              |
+| ------------- | -------- | -------------------------------------------- |
+| `org_id`      | `str`    | Organization identifier.                     |
+| `project_id`  | `str`    | Project identifier.                          |
+| `category_id` | `str`    | The ID of the parent Category.               |
+| `value`       | `str`    | The actual tag content (e.g., "Vegetarian"). |
+| `metadata`    | `dict`   | Optional key-value pairs for the tag.        |
+
+------
+
+## Retrieval
+
+### `get_features`
+
+Retrieves all semantic features (sets, categories, and tags) associated with a project or specific filter.
+
+| **Parameter** | **Type** | **Default**  | **Description**                        |
+| ------------- | -------- | ------------ | -------------------------------------- |
+| `org_id`      | `str`    | **Required** | Organization identifier.               |
+| `project_id`  | `str`    | **Required** | Project identifier.                    |
+| `filter_dict` | `dict`   | `None`       | Filter by specific tags or categories. |
+
+------
+
+## Deletion
+
+### `delete_tag`
+
+Removes a specific tag from a category.
+
+```python
+client.semantic.delete_tag(
+    org_id="my_org",
+    project_id="my_proj",
+    tag_id="tag_789"
+)
+```
+
+<Warning>
+Deleting a Set Type will recursively delete all Categories and Tags associated with it. This action cannot be undone.
+</Warning>
