@@ -7,15 +7,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, InstanceOf
 
+from memmachine.common.episode_store import Episode
+from memmachine.common.episode_store.episode_model import episodes_to_string
 from memmachine.common.filter.filter_parser import (
     FilterExpr,
 )
 from memmachine.common.language_model.language_model import LanguageModel
 from memmachine.common.reranker.reranker import Reranker
-from memmachine.episodic_memory.declarative_memory import (
-    DeclarativeMemory,
-    Episode,
-)
+from memmachine.episodic_memory import EpisodicMemory
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +37,9 @@ class QueryParam(BaseModel):
     query: str
     limit: int = 0
     expand_context: int = 0
+    score_threshold: float = -float("inf")
     property_filter: FilterExpr | None = None
-    memory: InstanceOf[DeclarativeMemory] | None = None
+    memory: InstanceOf[EpisodicMemory]
 
 
 class AgentToolBaseParam(BaseModel):
@@ -77,7 +77,7 @@ class AgentToolBase:
     def agent_description(self) -> str:
         pass
 
-    def _update_perf_matrics(
+    def _update_perf_metrics(
         self,
         source: dict[str, Any],
         target: dict[str, Any],
@@ -96,17 +96,14 @@ class AgentToolBase:
         self, query: QueryParam, episodes: list[Episode]
     ) -> list[Episode]:
         if query.limit <= 0:
-            return sorted(episodes, key=lambda x: x.timestamp)
+            return sorted(episodes, key=lambda x: x.created_at)
 
         if len(episodes) <= query.limit or self._reranker is None:
             if len(episodes) == 0:
                 return episodes
-            return sorted(episodes, key=lambda x: x.timestamp)
+            return sorted(episodes, key=lambda x: x.created_at)
 
-        contents = [
-            DeclarativeMemory.string_from_episode_context([episode])
-            for episode in episodes
-        ]
+        contents = [episodes_to_string([episode]) for episode in episodes]
         success = False
         max_retry = 60
         scores = []
@@ -135,7 +132,7 @@ class AgentToolBase:
 
         result = result[: query.limit] if query.limit > 0 else result
         res = [r[0] for r in result]
-        return sorted(res, key=lambda x: x.timestamp)
+        return sorted(res, key=lambda x: x.created_at)
 
     async def do_query(
         self, policy: QueryPolicy, query: QueryParam
@@ -148,13 +145,13 @@ class AgentToolBase:
             tasks.append(task)
         results = await asyncio.gather(*tasks)
         data: list[Episode] = []
-        perf_matrics: dict[str, Any] = {}
-        for res, p_matric in results:
+        perf_metrics: dict[str, Any] = {}
+        for res, p_metric in results:
             if res is None:
                 continue
             data.extend(res)
-            perf_matrics = self._update_perf_matrics(perf_matrics, p_matric)
-        return data, perf_matrics
+            perf_metrics = self._update_perf_metrics(perf_metrics, p_metric)
+        return data, perf_metrics
 
     @property
     @abstractmethod

@@ -13,10 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from evaluation.utils import agent_utils  # noqa: E402
-from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
-    ContentType,
-    Episode,
-)
+from memmachine.common.episode_store import Episode  # noqa: E402
 
 
 def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
@@ -74,14 +71,10 @@ async def main():
                 conversation[f"{session_id}_date_time"]
             )
 
-            await memory.add_episodes(
+            await memory.add_memory_episodes(
                 episodes=[
                     Episode(
                         uid=str(uuid4()),
-                        timestamp=session_datetime
-                        + message_index * timedelta(seconds=1),
-                        source=message["speaker"],
-                        content_type=ContentType.MESSAGE,
                         content=message["text"]
                         + (
                             f" [Attached {blip_caption}: {image_query}]"
@@ -106,7 +99,12 @@ async def main():
                                 )
                             )
                         ),
-                        user_metadata={
+                        session_key=group_id,
+                        created_at=session_datetime
+                        + message_index * timedelta(seconds=1),
+                        producer_id=message["speaker"],
+                        producer_role=message["speaker"],
+                        metadata={
                             "locomo_session_id": session_id,
                         },
                     )

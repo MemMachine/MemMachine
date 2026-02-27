@@ -5,13 +5,10 @@ from typing import Any
 
 import pytest
 
+from memmachine.common.episode_store import Episode, EpisodeResponse
 from memmachine.common.language_model.language_model import LanguageModel
 from memmachine.common.reranker.reranker import Reranker
-from memmachine.episodic_memory.declarative_memory import DeclarativeMemory
-from memmachine.episodic_memory.declarative_memory.data_types import (
-    ContentType,
-    Episode,
-)
+from memmachine.episodic_memory import EpisodicMemory
 from memmachine.retrieval_agent.agents import (
     ChainOfQueryAgent,
     MemMachineAgent,
@@ -78,24 +75,50 @@ class DummyReranker(Reranker):
         return [float(len(candidates) - idx) for idx in range(len(candidates))]
 
 
-class FakeDeclarativeMemory(DeclarativeMemory):
-    """DeclarativeMemory stub that returns preset episodes by query."""
+class FakeEpisodicMemory(EpisodicMemory):
+    """EpisodicMemory stub that returns preset long-term episodes by query."""
 
     def __init__(self, episodes_by_query: dict[str, list[Episode]]) -> None:
         self._episodes_by_query = episodes_by_query
+        self._session_key = "test-session"
         self.queries: list[str] = []
+        self.calls: list[dict[str, Any]] = []
 
-    async def search_scored(
+    async def query_memory(
         self,
         query: str,
         *,
-        max_num_episodes: int = 20,
+        limit: int | None = None,
         expand_context: int = 0,
+        score_threshold: float = -float("inf"),
         property_filter: Any | None = None,
-    ) -> list[tuple[float, Episode]]:
+        mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
+    ) -> EpisodicMemory.QueryResponse | None:
         self.queries.append(query)
+        self.calls.append(
+            {
+                "query": query,
+                "limit": limit,
+                "expand_context": expand_context,
+                "score_threshold": score_threshold,
+                "property_filter": property_filter,
+                "mode": mode,
+            }
+        )
         episodes = self._episodes_by_query.get(query, [])
-        return [(1.0, episode) for episode in episodes[:max_num_episodes]]
+        search_limit = limit if limit is not None else len(episodes)
+        return EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[
+                    EpisodeResponse(score=1.0, **episode.model_dump())
+                    for episode in episodes[:search_limit]
+                ]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
+        )
 
 
 @pytest.fixture
@@ -108,17 +131,22 @@ def query_policy() -> QueryPolicy:
     )
 
 
+def _build_episode(*, uid: str, content: str, created_at: datetime) -> Episode:
+    return Episode(
+        uid=uid,
+        content=content,
+        session_key="test-session",
+        created_at=created_at,
+        producer_id="unit-test",
+        producer_role="assistant",
+    )
+
+
 @pytest.mark.asyncio
 async def test_memmachine_agent_returns_episodes(query_policy: QueryPolicy) -> None:
     now = datetime.now(tz=UTC)
-    episode = Episode(
-        uid="e1",
-        timestamp=now,
-        source="unit-test",
-        content_type=ContentType.TEXT,
-        content="hello",
-    )
-    memory = FakeDeclarativeMemory({"hello": [episode]})
+    episode = _build_episode(uid="e1", content="hello", created_at=now)
+    memory = FakeEpisodicMemory({"hello": [episode]})
     reranker = DummyReranker()
     agent = MemMachineAgent(
         AgentToolBaseParam(
@@ -139,25 +167,58 @@ async def test_memmachine_agent_returns_episodes(query_policy: QueryPolicy) -> N
 
 
 @pytest.mark.asyncio
+async def test_memmachine_agent_queries_long_term_memory_only(
+    query_policy: QueryPolicy,
+) -> None:
+    now = datetime.now(tz=UTC)
+    episode = _build_episode(uid="callback-e1", content="from-memory", created_at=now)
+    memory = FakeEpisodicMemory({"callback-query": [episode]})
+    agent = MemMachineAgent(
+        AgentToolBaseParam(
+            model=None,
+            children_tools=[],
+            extra_params={},
+            reranker=DummyReranker(),
+        ),
+    )
+
+    result, metrics = await agent.do_query(
+        query_policy,
+        QueryParam(
+            query="callback-query",
+            limit=3,
+            expand_context=2,
+            score_threshold=0.55,
+            memory=memory,
+        ),
+    )
+
+    assert result == [episode]
+    assert metrics["memory_search_called"] == 1
+    assert memory.calls == [
+        {
+            "query": "callback-query",
+            "limit": 3,
+            "expand_context": 2,
+            "score_threshold": 0.55,
+            "property_filter": None,
+            "mode": EpisodicMemory.QueryMode.LONG_TERM_ONLY,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_split_query_agent_aggregates_sub_queries(
     query_policy: QueryPolicy,
 ) -> None:
     now = datetime.now(tz=UTC)
-    episode_a = Episode(
-        uid="a",
-        timestamp=now,
-        source="unit-test",
-        content_type=ContentType.TEXT,
-        content="alpha",
-    )
-    episode_b = Episode(
+    episode_a = _build_episode(uid="a", content="alpha", created_at=now)
+    episode_b = _build_episode(
         uid="b",
-        timestamp=now + timedelta(seconds=1),
-        source="unit-test",
-        content_type=ContentType.TEXT,
         content="beta",
+        created_at=now + timedelta(seconds=1),
     )
-    memory = FakeDeclarativeMemory({"Q1?": [episode_a], "Q2?": [episode_b]})
+    memory = FakeEpisodicMemory({"Q1?": [episode_a], "Q2?": [episode_b]})
     reranker = DummyReranker()
     memory_agent = MemMachineAgent(
         AgentToolBaseParam(
@@ -192,14 +253,8 @@ async def test_tool_select_agent_uses_selected_tool(
     query_policy: QueryPolicy,
 ) -> None:
     now = datetime.now(tz=UTC)
-    episode = Episode(
-        uid="tool",
-        timestamp=now,
-        source="unit-test",
-        content_type=ContentType.TEXT,
-        content="tool-select",
-    )
-    memory = FakeDeclarativeMemory({"tool query": [episode]})
+    episode = _build_episode(uid="tool", content="tool-select", created_at=now)
+    memory = FakeEpisodicMemory({"tool query": [episode]})
     reranker = DummyReranker()
     memory_agent = MemMachineAgent(
         AgentToolBaseParam(
@@ -210,7 +265,7 @@ async def test_tool_select_agent_uses_selected_tool(
         ),
     )
 
-    # LLM for the selector picks MemMachineAgent directly.
+    # LLM for the selector picks ChainOfQueryAgent directly.
     selector_model = DummyLanguageModel("ChainOfQueryAgent")
     split_agent = SplitQueryAgent(
         AgentToolBaseParam(
@@ -254,29 +309,19 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
     query_policy: QueryPolicy,
 ) -> None:
     now = datetime.now(tz=UTC)
-    fact1 = Episode(
-        uid="fact1",
-        timestamp=now,
-        source="unit-test",
-        content_type=ContentType.TEXT,
-        content="fact1",
-    )
-    fact2 = Episode(
+    fact1 = _build_episode(uid="fact1", content="fact1", created_at=now)
+    fact2 = _build_episode(
         uid="fact2",
-        timestamp=now + timedelta(seconds=1),
-        source="unit-test",
-        content_type=ContentType.TEXT,
         content="fact2",
+        created_at=now + timedelta(seconds=1),
     )
-    fact3 = Episode(
+    fact3 = _build_episode(
         uid="fact3",
-        timestamp=now + timedelta(seconds=2),
-        source="unit-test",
-        content_type=ContentType.TEXT,
         content="fact3",
+        created_at=now + timedelta(seconds=2),
     )
 
-    memory = FakeDeclarativeMemory(
+    memory = FakeEpisodicMemory(
         {
             "original_query?": [fact1],
             "sub_query_1": [fact2],
@@ -324,7 +369,7 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
 async def test_chain_of_query_agent_handles_empty_query_without_retrieval(
     query_policy: QueryPolicy,
 ) -> None:
-    memory = FakeDeclarativeMemory({})
+    memory = FakeEpisodicMemory({})
     reranker = DummyReranker()
     memory_agent = MemMachineAgent(
         AgentToolBaseParam(
@@ -363,26 +408,20 @@ async def test_rerank_logic(
     query_policy: QueryPolicy,
 ) -> None:
     now = datetime.now(tz=UTC)
-    episode_a = Episode(
+    episode_a = _build_episode(
         uid="a",
-        timestamp=now + timedelta(seconds=1),
-        source="unit-test",
-        content_type=ContentType.TEXT,
         content="alpha",
+        created_at=now + timedelta(seconds=1),
     )
-    episode_b = Episode(
+    episode_b = _build_episode(
         uid="b",
-        timestamp=now + timedelta(seconds=3),
-        source="unit-test",
-        content_type=ContentType.TEXT,
         content="beta",
+        created_at=now + timedelta(seconds=3),
     )
-    episode_c = Episode(
+    episode_c = _build_episode(
         uid="c",
-        timestamp=now + timedelta(seconds=2),
-        source="unit-test",
-        content_type=ContentType.TEXT,
         content="gamma",
+        created_at=now + timedelta(seconds=2),
     )
     memory_agent = MemMachineAgent(
         AgentToolBaseParam(
@@ -408,7 +447,7 @@ async def test_rerank_logic(
     )
 
     reranked = await coq_agent._do_rerank(
-        QueryParam(query="rerank?", limit=2),
+        QueryParam(query="rerank?", limit=2, memory=FakeEpisodicMemory({})),
         [episode_a, episode_b, episode_c],
     )
 

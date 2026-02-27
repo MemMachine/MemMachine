@@ -17,10 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from evaluation.utils import agent_utils  # noqa: E402
-from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
-    ContentType,
-    Episode,
-)
+from memmachine.common.episode_store import Episode  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -94,16 +91,17 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
         episodes.append(
             Episode(
                 uid=str(uuid4()),
-                timestamp=ts,
-                source="user",
-                content_type=ContentType.TEXT,
                 content=sent,
+                session_key="hotpotqa_group",
+                created_at=ts,
+                producer_id="user",
+                producer_role="user",
             )
         )
         if added_content % per_batch == 0 or sent == all_content[-1]:
             print(f"Adding batch of {len(episodes)} episodes...")
             t = time.perf_counter()
-            await memory.add_episodes(episodes=episodes)
+            await memory.add_memory_episodes(episodes=episodes)
             print(
                 f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
             )

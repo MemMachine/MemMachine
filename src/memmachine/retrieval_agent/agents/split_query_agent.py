@@ -5,8 +5,8 @@ import logging
 import time
 from typing import Any, cast
 
+from memmachine.common.episode_store import Episode
 from memmachine.common.language_model.language_model import LanguageModel
-from memmachine.episodic_memory.declarative_memory import Episode
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
@@ -162,7 +162,7 @@ class SplitQueryAgent(AgentToolBase):
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
         logger.info("CALLING %s with query: %s", self.agent_name, query.query)
-        perf_matrics: dict[str, Any] = {
+        perf_metrics: dict[str, Any] = {
             "queries": [],
             "llm_time": 0.0,
             "agent": self.agent_name,
@@ -172,7 +172,7 @@ class SplitQueryAgent(AgentToolBase):
         rsp, _, input_token, output_token = await cast(
             LanguageModel, self._model
         ).generate_response_with_token_usage(user_prompt=prompt)
-        perf_matrics["llm_time"] += time.time() - llm_start
+        perf_metrics["llm_time"] += time.time() - llm_start
         sub_queries: list[str] = []
         for line in rsp.split("\n"):
             if line.strip() == "":
@@ -184,7 +184,7 @@ class SplitQueryAgent(AgentToolBase):
         result: list[Episode] = []
         tasks = []
         for sub_query in sub_queries:
-            perf_matrics["queries"].append(sub_query)
+            perf_metrics["queries"].append(sub_query)
             param = query.model_copy()
             param.query = sub_query
             # TODO: make this self-adaptive
@@ -195,14 +195,14 @@ class SplitQueryAgent(AgentToolBase):
             if res is None:
                 continue
             result.extend(res)
-            perf_matrics = self._update_perf_matrics(perf, perf_matrics)
+            perf_metrics = self._update_perf_metrics(perf, perf_metrics)
 
-        self._update_perf_matrics(
+        self._update_perf_metrics(
             {
                 "input_token": input_token,
                 "output_token": output_token,
             },
-            perf_matrics,
+            perf_metrics,
         )
 
         # Rerank base on all queries concatenated
@@ -210,4 +210,4 @@ class SplitQueryAgent(AgentToolBase):
         if len(sub_queries) > 1:
             param.query += "\n".join(sub_queries)
         final_episodes = await self._do_rerank(param, result)
-        return final_episodes, perf_matrics
+        return final_episodes, perf_metrics

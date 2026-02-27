@@ -20,6 +20,7 @@ import datetime
 import logging
 import time
 from collections.abc import Coroutine, Iterable
+from enum import Enum
 from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
@@ -301,6 +302,51 @@ class EpisodicMemory:
         long_term_memory: LongTermMemoryResponse
         short_term_memory: ShortTermMemoryResponse
 
+    class QueryMode(str, Enum):
+        """Controls which memory backends are queried."""
+
+        BOTH = "both"
+        LONG_TERM_ONLY = "long_term_only"
+        SHORT_TERM_ONLY = "short_term_only"
+
+    async def _query_short_term_memory(
+        self,
+        *,
+        query: str,
+        limit: int,
+        property_filter: FilterExpr | None,
+    ) -> tuple[list[Episode], str]:
+        """Query short-term memory or return an empty result if unavailable."""
+        if self._short_term_memory is None:
+            return [], ""
+
+        return await self._short_term_memory.get_short_term_memory_context(
+            query,
+            limit=limit,
+            filters=property_filter,
+        )
+
+    async def _query_long_term_memory(
+        self,
+        *,
+        query: str,
+        limit: int,
+        expand_context: int,
+        score_threshold: float,
+        property_filter: FilterExpr | None,
+    ) -> list[tuple[float, Episode]]:
+        """Query long-term memory or return an empty result if unavailable."""
+        if self._long_term_memory is None:
+            return []
+
+        return await self._long_term_memory.search_scored(
+            query,
+            num_episodes_limit=limit,
+            expand_context=expand_context,
+            score_threshold=score_threshold,
+            property_filter=property_filter,
+        )
+
     async def query_memory(
         self,
         query: str,
@@ -309,6 +355,7 @@ class EpisodicMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        mode: QueryMode = QueryMode.BOTH,
     ) -> QueryResponse | None:
         """
         Retrieve relevant context for a given query from all memory stores.
@@ -326,6 +373,7 @@ class EpisodicMemory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
+            mode: Which memory backends to query.
 
         Returns:
             A tuple containing a list of short term memory Episode objects,
@@ -338,45 +386,62 @@ class EpisodicMemory:
         start_time = time.monotonic_ns()
         search_limit = limit if limit is not None else 20
 
-        if self._short_term_memory is None:
-            short_episode: list[Episode] = []
-            short_summary = ""
-            scored_long_episodes = await cast(
-                "LongTermMemory", self._long_term_memory
-            ).search_scored(
-                query,
-                num_episodes_limit=search_limit,
+        short_episode: list[Episode] = []
+        short_summary = ""
+        scored_long_episodes: list[tuple[float, Episode]] = []
+
+        if mode is EpisodicMemory.QueryMode.BOTH:
+            if self._short_term_memory is None:
+                scored_long_episodes = await self._query_long_term_memory(
+                    query=query,
+                    limit=search_limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    property_filter=property_filter,
+                )
+            elif self._long_term_memory is None:
+                short_episode, short_summary = await self._query_short_term_memory(
+                    query=query,
+                    limit=search_limit,
+                    property_filter=property_filter,
+                )
+            else:
+                # Concurrently search both memory stores.
+                session_result, scored_long_episodes = await asyncio.gather(
+                    self._query_short_term_memory(
+                        query=query,
+                        limit=search_limit,
+                        property_filter=property_filter,
+                    ),
+                    self._query_long_term_memory(
+                        query=query,
+                        limit=search_limit,
+                        expand_context=expand_context,
+                        score_threshold=score_threshold,
+                        property_filter=property_filter,
+                    ),
+                )
+                short_episode, short_summary = session_result
+        elif mode is EpisodicMemory.QueryMode.LONG_TERM_ONLY:
+            scored_long_episodes = await self._query_long_term_memory(
+                query=query,
+                limit=search_limit,
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
             )
-        elif self._long_term_memory is None:
-            session_result = (
-                await self._short_term_memory.get_short_term_memory_context(
-                    query,
-                    limit=search_limit,
-                    filters=property_filter,
-                )
+        elif mode is EpisodicMemory.QueryMode.SHORT_TERM_ONLY:
+            short_episode, short_summary = await self._query_short_term_memory(
+                query=query,
+                limit=search_limit,
+                property_filter=property_filter,
             )
-            scored_long_episodes = []
-            short_episode, short_summary = session_result
         else:
-            # Concurrently search both memory stores
-            session_result, scored_long_episodes = await asyncio.gather(
-                self._short_term_memory.get_short_term_memory_context(
-                    query,
-                    limit=search_limit,
-                    filters=property_filter,
-                ),
-                self._long_term_memory.search_scored(
-                    query,
-                    num_episodes_limit=search_limit,
-                    expand_context=expand_context,
-                    score_threshold=score_threshold,
-                    property_filter=property_filter,
-                ),
+            raise ValueError(
+                "Unsupported query mode."
+                f" Expected one of {[item.value for item in EpisodicMemory.QueryMode]},"
+                f" got {mode!r}."
             )
-            short_episode, short_summary = session_result
 
         # Deduplicate episodes from both memory stores, prioritizing
         # short-term memory

@@ -708,28 +708,67 @@ class MemMachine:
         search_filter: FilterExpr | None,
     ) -> EpisodicMemory.QueryResponse | None:
         """Build episodic query response using retrieval-agent long-term search."""
-        long_term_memory = episodic_session.long_term_memory
-        if long_term_memory is None:
+        if episodic_session.long_term_memory is None:
             return await episodic_session.query_memory(
                 query=query,
                 limit=limit,
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=search_filter,
+                mode=EpisodicMemory.QueryMode.SHORT_TERM_ONLY,
             )
 
         search_limit = limit if limit is not None else 20
-        short_episodes: list[Episode] = []
-        short_summary = ""
-        if episodic_session.short_term_memory is not None:
-            (
-                short_episodes,
-                short_summary,
-            ) = await episodic_session.short_term_memory.get_short_term_memory_context(
-                query,
-                limit=search_limit,
-                filters=search_filter,
+        normalized_long_episodes = await self._run_retrieval_agent_long_term_search(
+            episodic_session=episodic_session,
+            retrieval_agent=retrieval_agent,
+            query=query,
+            limit=search_limit,
+            expand_context=expand_context,
+            score_threshold=score_threshold,
+            search_filter=search_filter,
+        )
+
+        short_response = await self._query_short_term_response_for_agent(
+            episodic_session=episodic_session,
+            query=query,
+            limit=search_limit,
+            expand_context=expand_context,
+            score_threshold=score_threshold,
+            search_filter=search_filter,
+        )
+
+        unique_scored_long_episodes = (
+            MemMachine._dedupe_and_score_agent_long_term_episodes(
+                normalized_long_episodes=normalized_long_episodes,
+                short_response=short_response,
+                score_threshold=score_threshold,
             )
+        )
+
+        return EpisodicMemory.QueryResponse(
+            short_term_memory=short_response,
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[
+                    EpisodeResponse(score=score, **episode.model_dump())
+                    for score, episode in unique_scored_long_episodes
+                ],
+            ),
+        )
+
+    async def _run_retrieval_agent_long_term_search(
+        self,
+        *,
+        episodic_session: EpisodicMemory,
+        retrieval_agent: AgentToolBase,
+        query: str,
+        limit: int,
+        expand_context: int,
+        score_threshold: float,
+        search_filter: FilterExpr | None,
+    ) -> list[Episode]:
+        if episodic_session.long_term_memory is None:
+            return []
 
         long_episodes, _ = await retrieval_agent.do_query(
             QueryPolicy(
@@ -742,46 +781,67 @@ class MemMachine:
             ),
             QueryParam(
                 query=query,
-                limit=search_limit,
+                limit=limit,
                 expand_context=expand_context,
-                property_filter=long_term_memory.sanitize_property_filter(
-                    search_filter
-                ),
-                memory=long_term_memory.declarative_memory,
+                score_threshold=score_threshold,
+                property_filter=search_filter,
+                memory=episodic_session,
             ),
         )
-        normalized_long_episodes: list[Episode] = [
-            long_term_memory.episode_from_declarative_memory_episode(episode)
-            for episode in long_episodes
-        ]
 
+        return long_episodes
+
+    async def _query_short_term_response_for_agent(
+        self,
+        *,
+        episodic_session: EpisodicMemory,
+        query: str,
+        limit: int,
+        expand_context: int,
+        score_threshold: float,
+        search_filter: FilterExpr | None,
+    ) -> EpisodicMemory.QueryResponse.ShortTermMemoryResponse:
+        if episodic_session.short_term_memory is None:
+            return EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[""],
+            )
+
+        short_term_result = await episodic_session.query_memory(
+            query=query,
+            limit=limit,
+            expand_context=expand_context,
+            score_threshold=score_threshold,
+            property_filter=search_filter,
+            mode=EpisodicMemory.QueryMode.SHORT_TERM_ONLY,
+        )
+        if short_term_result is None:
+            return EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[""],
+            )
+        return short_term_result.short_term_memory
+
+    @staticmethod
+    def _dedupe_and_score_agent_long_term_episodes(
+        *,
+        normalized_long_episodes: list[Episode],
+        short_response: EpisodicMemory.QueryResponse.ShortTermMemoryResponse,
+        score_threshold: float,
+    ) -> list[tuple[float, Episode]]:
         scored_long_episodes = [
             (1.0, episode)
             for episode in normalized_long_episodes
             if score_threshold <= 1.0
         ]
-        episode_uid_set = {episode.uid for episode in short_episodes}
+        episode_uid_set = {episode.uid for episode in short_response.episodes}
         unique_scored_long_episodes: list[tuple[float, Episode]] = []
         for score, episode in scored_long_episodes:
-            if episode.uid not in episode_uid_set:
-                episode_uid_set.add(episode.uid)
-                unique_scored_long_episodes.append((score, episode))
-
-        return EpisodicMemory.QueryResponse(
-            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(**episode.model_dump())
-                    for episode in short_episodes
-                ],
-                episode_summary=[short_summary],
-            ),
-            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(score=score, **episode.model_dump())
-                    for score, episode in unique_scored_long_episodes
-                ],
-            ),
-        )
+            if episode.uid in episode_uid_set:
+                continue
+            episode_uid_set.add(episode.uid)
+            unique_scored_long_episodes.append((score, episode))
+        return unique_scored_long_episodes
 
     async def query_search(
         self,

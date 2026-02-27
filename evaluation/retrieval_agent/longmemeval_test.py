@@ -15,10 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from evaluation.utils import agent_utils  # noqa: E402
-from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
-    ContentType,
-    Episode,
-)
+from memmachine.common.episode_store import Episode  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -104,7 +101,13 @@ def _collect_supporting_facts(sample: dict[str, Any]) -> list[str]:
 
 
 def _set_safe_embedder_request_limits(memory: Any) -> None:
-    embedder = getattr(memory, "_embedder", None)
+    long_term_memory = getattr(memory, "long_term_memory", None)
+    declarative_memory = (
+        getattr(long_term_memory, "declarative_memory", None)
+        if long_term_memory is not None
+        else None
+    )
+    embedder = getattr(declarative_memory, "_embedder", None)
     if embedder is None:
         return
     if hasattr(embedder, "max_total_input_length_per_request"):
@@ -138,17 +141,18 @@ async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
         episodes.append(
             Episode(
                 uid=str(uuid4()),
-                timestamp=ts,
-                source="user",
-                content_type=ContentType.TEXT,
                 content=content,
+                session_key=session_id,
+                created_at=ts,
+                producer_id="user",
+                producer_role="user",
             )
         )
 
         if added_content % per_batch == 0 or content == all_content[-1]:
             print(f"Adding batch of {len(episodes)} episodes...")
             t = time.perf_counter()
-            await memory.add_episodes(episodes=episodes)
+            await memory.add_memory_episodes(episodes=episodes)
             print(
                 f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
             )

@@ -11,11 +11,13 @@ from memmachine.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
 )
+from memmachine.common.episode_store.episode_model import episodes_to_string
 from memmachine.common.language_model.language_model import LanguageModel
 from memmachine.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
     OpenAIResponsesLanguageModelParams,
 )
+from memmachine.common.metrics_factory import PrometheusMetricsFactory
 from memmachine.common.reranker.amazon_bedrock_reranker import (
     AmazonBedrockReranker,
     AmazonBedrockRerankerParams,
@@ -25,9 +27,13 @@ from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
-from memmachine.episodic_memory.declarative_memory import (
-    DeclarativeMemory,
-    DeclarativeMemoryParams,
+from memmachine.episodic_memory import EpisodicMemory
+from memmachine.episodic_memory.episodic_memory import (
+    EpisodicMemoryParams,
+)
+from memmachine.episodic_memory.long_term_memory import (
+    LongTermMemory,
+    LongTermMemoryParams,
 )
 from memmachine.retrieval_agent.agents import (
     ChainOfQueryAgent,
@@ -46,7 +52,7 @@ from memmachine.retrieval_agent.common.agent_api import (
 async def process_question(
     answer_prompt: str,
     query_agent: AgentToolBase,
-    memory: DeclarativeMemory,
+    memory: EpisodicMemory,
     model: openai.AsyncOpenAI,
     question: str,
     answer: str,
@@ -80,7 +86,7 @@ async def process_question(
         )
         memory_end = time.time()
 
-        formatted_context = memory.string_from_episode_context(chunks)
+        formatted_context = episodes_to_string(chunks)
     else:
         formatted_context = full_content
 
@@ -413,7 +419,7 @@ async def init_memmachine_params(
     session_id: str = "",
     agent_name: str = "ToolSelectAgent",
     message_sentence_chunking: bool = False,
-) -> tuple[DeclarativeMemory, openai.AsyncOpenAI, AgentToolBase]:
+) -> tuple[EpisodicMemory, openai.AsyncOpenAI, AgentToolBase]:
     openai_client = openai.AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
     )
@@ -442,14 +448,25 @@ async def init_memmachine_params(
         )
     )
 
-    memory = DeclarativeMemory(
-        DeclarativeMemoryParams(
-            session_id=session_id,
+    normalized_session_id = session_id or "evaluation_session"
+
+    long_term_memory = LongTermMemory(
+        LongTermMemoryParams(
+            session_id=normalized_session_id,
             vector_graph_store=vector_graph_store,
             embedder=embedder,
             reranker=reranker,
             message_sentence_chunking=message_sentence_chunking,
         )
+    )
+    memory = EpisodicMemory(
+        EpisodicMemoryParams(
+            session_key=normalized_session_id,
+            metrics_factory=PrometheusMetricsFactory(),
+            long_term_memory=long_term_memory,
+            short_term_memory=None,
+            enabled=True,
+        ),
     )
 
     agent_model: LanguageModel = OpenAIResponsesLanguageModel(

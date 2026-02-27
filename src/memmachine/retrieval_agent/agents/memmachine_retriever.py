@@ -1,13 +1,13 @@
-"""Memory-retrieval agent that queries declarative memory directly."""
+"""Memory-retrieval agent that queries episodic memory long-term context."""
 
+import datetime
 import logging
 import time
 from typing import Any
 
-from memmachine.episodic_memory.declarative_memory import (
-    DeclarativeMemory,
-    Episode,
-)
+from memmachine.common.api import EpisodeType
+from memmachine.common.episode_store import Episode
+from memmachine.episodic_memory import EpisodicMemory
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemMachineAgent(AgentToolBase):
-    """Agent that uses declarative memory search without query rewriting."""
+    """Agent that runs long-term episodic memory search without rewriting."""
 
     def __init__(self, param: AgentToolBaseParam) -> None:
         """Initialize retrieval behavior and shared dependencies."""
@@ -53,27 +53,40 @@ class MemMachineAgent(AgentToolBase):
         _ = policy
         logger.info("CALLING %s with query: %s", self.agent_name, query.query)
 
-        perf_matrics: dict[str, Any] = {
+        perf_metrics: dict[str, Any] = {
             "memory_search_called": 0,
             "memory_retrieval_time": 0.0,
             "agent": self.agent_name,
         }
-        memory = query.memory
-        if memory is None:
-            raise ValueError("QueryParam.memory must be provided for MemMachineAgent")
-        if not isinstance(memory, DeclarativeMemory):
-            raise TypeError(
-                f"QueryParam.memory must be DeclarativeMemory: {type(memory).__name__}"
-            )
         mem_retrieval_start = time.time()
-        scored_episodes = await memory.search_scored(
+        query_response = await query.memory.query_memory(
             query=query.query,
-            max_num_episodes=query.limit,
+            limit=query.limit,
             expand_context=query.expand_context,
+            score_threshold=query.score_threshold,
             property_filter=query.property_filter,
+            mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
         )
-        perf_matrics["memory_search_called"] += 1
-        perf_matrics["memory_retrieval_time"] += time.time() - mem_retrieval_start
+        if query_response is None:
+            episodes = []
+        else:
+            episodes = [
+                Episode(
+                    uid=episode.uid,
+                    content=episode.content,
+                    session_key=query.memory.session_key,
+                    created_at=episode.created_at
+                    or datetime.datetime.now(tz=datetime.UTC),
+                    producer_id=episode.producer_id,
+                    producer_role=episode.producer_role,
+                    produced_for_id=episode.produced_for_id,
+                    episode_type=episode.episode_type or EpisodeType.MESSAGE,
+                    metadata=episode.metadata,
+                )
+                for episode in query_response.long_term_memory.episodes
+            ]
 
-        episodes = [episode for _, episode in scored_episodes]
-        return episodes, perf_matrics
+        perf_metrics["memory_search_called"] += 1
+        perf_metrics["memory_retrieval_time"] += time.time() - mem_retrieval_start
+
+        return episodes, perf_metrics

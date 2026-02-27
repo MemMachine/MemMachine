@@ -3,8 +3,8 @@
 import logging
 from typing import Any, cast
 
+from memmachine.common.episode_store import Episode
 from memmachine.common.language_model.language_model import LanguageModel
-from memmachine.episodic_memory.declarative_memory import Episode
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,

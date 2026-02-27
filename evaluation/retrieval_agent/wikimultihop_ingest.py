@@ -15,10 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from evaluation.utils import agent_utils  # noqa: E402
-from memmachine.episodic_memory.declarative_memory import (  # noqa: E402
-    ContentType,
-    Episode,
-)
+from memmachine.common.episode_store import Episode  # noqa: E402
 
 
 def load_data(  # noqa: C901
@@ -132,16 +129,17 @@ async def main():
         episodes.append(
             Episode(
                 uid=str(uuid4()),
-                timestamp=ts,
-                source=source,
-                content_type=ContentType.TEXT,
                 content=c,
+                session_key="group1",
+                created_at=ts,
+                producer_id=source,
+                producer_role="system",
             )
         )
 
         if len(added_contexts) % num_batch == 0 or (c == contexts[-1]):
             t = time.perf_counter()
-            await memory.add_episodes(episodes=episodes)
+            await memory.add_memory_episodes(episodes=episodes)
             print(
                 f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
             )

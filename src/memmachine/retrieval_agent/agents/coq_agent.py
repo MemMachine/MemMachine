@@ -7,11 +7,9 @@ import time
 from collections.abc import Iterable
 from typing import Any, cast
 
+from memmachine.common.episode_store import Episode
+from memmachine.common.episode_store.episode_model import episodes_to_string
 from memmachine.common.language_model.language_model import LanguageModel
-from memmachine.episodic_memory.declarative_memory import (
-    DeclarativeMemory,
-    Episode,
-)
 from memmachine.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
@@ -182,7 +180,7 @@ class ChainOfQueryAgent(AgentToolBase):
                     return text[i : end + 1]
         return ""
 
-    def _init_perf_matrics(self) -> dict[str, Any]:
+    def _init_perf_metrics(self) -> dict[str, Any]:
         return {
             "queries": [],
             "is_sufficient": [],
@@ -207,12 +205,10 @@ class ChainOfQueryAgent(AgentToolBase):
         evidence = set(retrived_evidence)
         episodes = sorted(
             set(retrieved_episodes).union(retrived_evidence),
-            key=lambda e: (e.timestamp is None, e.timestamp),
+            key=lambda e: (e.created_at is None, e.created_at),
         )
         for idx, episode in enumerate(episodes):
-            context += (
-                f"[{idx}] {DeclarativeMemory.string_from_episode_context([episode])}"
-            )
+            context += f"[{idx}] {episodes_to_string([episode])}"
         used_query_str = "\n".join(used_queries)
         prompt = self._combined_prompt.format(
             original_query=query.query,
@@ -252,7 +248,7 @@ class ChainOfQueryAgent(AgentToolBase):
 
         final_episodes = set(evidence).union(retrieved_episodes)
         final_episodes = sorted(
-            final_episodes, key=lambda e: (e.timestamp is None, e.timestamp)
+            final_episodes, key=lambda e: (e.created_at is None, e.created_at)
         )
         return {
             "is_sufficient": response.get("is_sufficient", False),
@@ -277,7 +273,7 @@ class ChainOfQueryAgent(AgentToolBase):
         max_retry = 60
         while not success:
             try:
-                result, matrics = await super().do_query(policy, q)
+                result, metrics = await super().do_query(policy, q)
                 success = True
             except Exception as e:
                 max_retry -= 1
@@ -291,7 +287,7 @@ class ChainOfQueryAgent(AgentToolBase):
                     await asyncio.sleep(5)
                 else:
                     raise
-        return result, matrics
+        return result, metrics
 
     async def do_query(
         self,
@@ -299,7 +295,7 @@ class ChainOfQueryAgent(AgentToolBase):
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
         logger.info("CALLING %s with query: %s", self.agent_name, query.query)
-        perf_matrics = self._init_perf_matrics()
+        perf_metrics = self._init_perf_metrics()
         retrieved_evidence: set[Episode] = set()
         sufficiency_response: dict[str, Any] = {
             "is_sufficient": False,
@@ -320,8 +316,8 @@ class ChainOfQueryAgent(AgentToolBase):
                 break
             used_query.append(curr_query.query)
             # Step 1: Perform the query
-            result, p_matrics = await self._do_default_query(policy, curr_query)
-            self._update_perf_matrics(p_matrics, perf_matrics)
+            result, p_metrics = await self._do_default_query(policy, curr_query)
+            self._update_perf_metrics(p_metrics, perf_metrics)
 
             # Step 2: Check if the evidence is enough to answer the original query
             llm_start = time.time()
@@ -331,22 +327,19 @@ class ChainOfQueryAgent(AgentToolBase):
                 retrieved_evidence,
                 used_query,
             )
-            perf_matrics["llm_time"] += time.time() - llm_start
+            perf_metrics["llm_time"] += time.time() - llm_start
             retrieved_evidence.update(sufficiency_response["evidence"])
 
-            perf_matrics["queries"].append(curr_query.query)
-            perf_matrics["is_sufficient"].append(sufficiency_response["is_sufficient"])
-            perf_matrics["evidence"].append(
-                [
-                    DeclarativeMemory.string_from_episode_context([e])
-                    for e in sufficiency_response["evidence"]
-                ]
+            perf_metrics["queries"].append(curr_query.query)
+            perf_metrics["is_sufficient"].append(sufficiency_response["is_sufficient"])
+            perf_metrics["evidence"].append(
+                [episodes_to_string([e]) for e in sufficiency_response["evidence"]]
             )
-            perf_matrics["confidence_scores"].append(
+            perf_metrics["confidence_scores"].append(
                 sufficiency_response["confidence_score"]
             )
-            perf_matrics["input_token"] += sufficiency_response["input_token"]
-            perf_matrics["output_token"] += sufficiency_response["output_token"]
+            perf_metrics["input_token"] += sufficiency_response["input_token"]
+            perf_metrics["output_token"] += sufficiency_response["output_token"]
             if (
                 sufficiency_response["is_sufficient"]
                 and sufficiency_response["confidence_score"] >= self._confidence_score
@@ -361,4 +354,4 @@ class ChainOfQueryAgent(AgentToolBase):
         q = query.model_copy()
         q.query = query.query + "\n".join(used_query)
         final_episodes = await self._do_rerank(q, sufficiency_response["episodes"])
-        return final_episodes, perf_matrics
+        return final_episodes, perf_metrics
