@@ -133,6 +133,7 @@ class DatabaseManager:
             params_kwargs: dict[str, Any] = {
                 "driver": driver,
                 "force_exact_similarity_search": conf.force_exact_similarity_search,
+                "range_index_hierarchies": [["uid"], ["timestamp", "uid"]],
             }
             if conf.range_index_creation_threshold is not None:
                 params_kwargs["range_index_creation_threshold"] = (
