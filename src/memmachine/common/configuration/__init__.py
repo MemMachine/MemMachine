@@ -23,10 +23,13 @@ from memmachine.common.configuration.mixin_confs import (
     YamlSerializableMixin,
 )
 from memmachine.common.configuration.reranker_conf import RerankersConf
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.common.errors import (
     DefaultEmbedderNotConfiguredError,
+    DefaultLLMModelNotConfiguredError,
     DefaultRerankerNotConfiguredError,
     EmbedderNotFoundError,
+    LanguageModelNotFoundError,
     RerankerNotFoundError,
 )
 from memmachine.semantic_memory.semantic_model import SemanticCategory
@@ -298,6 +301,7 @@ class Configuration(BaseModel):
     """Aggregate configuration for MemMachine services."""
 
     episodic_memory: EpisodicMemoryConfPartial
+    retrieval_agent: RetrievalAgentConf = RetrievalAgentConf()
     semantic_memory: SemanticMemoryConf
     logging: LogConf
     prompt: PromptConf = PromptConf()
@@ -448,9 +452,16 @@ class Configuration(BaseModel):
             raise DefaultRerankerNotConfiguredError
         return long_term_memory.reranker
 
+    def check_llm_model(self, llm_model_name: str) -> None:
+        if not llm_model_name:
+            raise DefaultLLMModelNotConfiguredError
+        if not self.resources.language_models.contains_language_model(llm_model_name):
+            raise LanguageModelNotFoundError(llm_model_name)
+
     def to_yaml(self) -> str:
         data = {
             "episodic_memory": self.episodic_memory.to_yaml_dict(),
+            "retrieval_agent": self.retrieval_agent.to_yaml_dict(),
             "semantic_memory": self.semantic_memory.to_yaml_dict(),
             "logging": self.logging.to_yaml_dict(),
             "prompt": self.prompt.to_yaml_dict(),

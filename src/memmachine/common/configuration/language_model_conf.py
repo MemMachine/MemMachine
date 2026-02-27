@@ -192,6 +192,14 @@ class LanguageModelsConf(BaseModel):
         """Get Amazon Bedrock language model configuration by name."""
         return self.amazon_bedrock_language_model_confs[name]
 
+    def contains_language_model(self, language_model_id: str) -> bool:
+        """Return whether the language model id is known."""
+        return (
+            language_model_id in self.openai_responses_language_model_confs
+            or language_model_id in self.openai_chat_completions_language_model_confs
+            or language_model_id in self.amazon_bedrock_language_model_confs
+        )
+
     OPENAI_RESPONSE: ClassVar[str] = "openai-responses"
     OPEN_CHAT_COMPLETION: ClassVar[str] = "openai-chat-completions"
     AMAZON_BEDROCK: ClassVar[str] = "amazon-bedrock"

@@ -45,6 +45,7 @@ from memmachine.common.configuration.reranker_conf import (
     IdentityRerankerConf,
     RRFHybridRerankerConf,
 )
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine.installation.utilities import (
     DEFAULT_BEDROCK_EMBEDDING_MODEL,
     DEFAULT_BEDROCK_MODEL,
@@ -104,6 +105,7 @@ class ConfigurationWizard:
         """Generate the MemMachine configuration based on user input."""
         return Configuration(
             episodic_memory=self.episodic_memory_conf,
+            retrieval_agent=self.retrieval_agent_conf,
             semantic_memory=self.semantic_manager_conf,
             logging=self.log_conf,
             resources=self.resource_conf,
@@ -142,6 +144,14 @@ class ConfigurationWizard:
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
             vector_graph_store=self.NEO4J_DB_ID,
+        )
+
+    @cached_property
+    def retrieval_agent_conf(self) -> RetrievalAgentConf:
+        """Generate retrieval-agent configuration."""
+        return RetrievalAgentConf(
+            llm_model=self.LANGUAGE_MODEL_NAME,
+            reranker=self.RERANKER_NAME,
         )
 
     @cached_property

@@ -366,8 +366,10 @@ class Memory:
         expand_context: int = 0,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
-        set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
+        *,
+        set_metadata: dict[str, JsonValue] | None = None,
+        agent_mode: bool = False,
     ) -> SearchResult:
         """
         Search for memories.
@@ -387,8 +389,9 @@ class Memory:
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
                         if there are key conflicts.
-            set_metadata: Optional metadata key-value pairs used to select semantic sets.
             timeout: Request timeout in seconds (uses client default if not provided)
+            set_metadata: Optional metadata key-value pairs used to select semantic sets.
+            agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
         Returns:
             SearchResult object containing search results from both episodic and semantic memory
@@ -424,6 +427,7 @@ class Memory:
             top_k=limit or 10,
             expand_context=expand_context,
             score_threshold=score_threshold,
+            agent_mode=agent_mode,
             filter=filter_str,
             set_metadata=set_metadata,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types

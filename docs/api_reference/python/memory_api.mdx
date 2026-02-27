@@ -168,7 +168,7 @@ requests.RequestException: If the request fails
 Search for memories.
 
 ```python
-def search(query: str, limit: int | None, filter_dict: dict[str, Any] | None, timeout: int | None)
+def search(query: str, limit: int | None, expand_context: int, score_threshold: float | None, filter_dict: dict[str, str] | None, timeout: int | None, *, agent_mode: bool = False)
 ```
 
 **Parameters**
@@ -177,12 +177,15 @@ def search(query: str, limit: int | None, filter_dict: dict[str, Any] | None, ti
 | :--- | :--- | :--- |
 | `query` | `str` | Search query string |
 | `limit` | `int | None` | Maximum number of results to return |
-| `filter_dict` | `dict[str, Any] | None` | Additional filters for the search |
+| `expand_context` | `int` | Number of neighboring episodic entries to include around each long-term match |
+| `score_threshold` | `float | None` | Minimum episodic retrieval score to keep |
+| `filter_dict` | `dict[str, str] | None` | Additional filters for the search |
 | `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
+| `agent_mode` | `bool` | Whether to use retrieval-agent search orchestration (keyword-only; default `False`) |
 
 **Returns**
 
-Dictionary containing search results from both episodic and profile memory
+`SearchResult` containing results from episodic and semantic memory
 
 **Raises**
 

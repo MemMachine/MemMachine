@@ -80,7 +80,7 @@ Interface for managing episodic and profile memory.
 #### Methods
 
 - `add(content, producer, produced_for, episode_type, metadata)` - Add a memory
-- `search(query, limit, filter_dict)` - Search memories
+- `search(query, limit, expand_context, score_threshold, filter_dict, timeout, *, agent_mode=False)` - Search memories
 - `get_context()` - Get current context
 
 ## Examples
@@ -112,6 +112,10 @@ print(f"Profile memory: {results.get('profile_memory', [])}")
 # Search with filters
 work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
 print(f"Work results: {work_results}")
+
+# Search with options
+agent_results = memory.search("Summarize my preferences", agent_mode=True)
+print(f"Agent search results: {agent_results}")
 ```
 
 ### Multiple Users

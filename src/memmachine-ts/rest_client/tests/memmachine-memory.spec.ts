@@ -62,6 +62,48 @@ describe('MemMachine Memory', () => {
     expect(searchResponse).toEqual({ status: 0, content: {} })
   })
 
+  it('should pass search options in payload', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({
+      data: { status: 0, content: {} }
+    })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+
+    await memory.search('Test query', { top_k: 10 })
+
+    expect(postSpy).toHaveBeenCalledWith('/memories/search', {
+      ...mockProjectContext,
+      query: 'Test query',
+      top_k: 10,
+      filter: '',
+      expand_context: 0,
+      types: ['episodic', 'semantic'],
+      agent_mode: false
+    })
+  })
+
+  it('should pass agent_mode option in payload', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({
+      data: { status: 0, content: {} }
+    })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+
+    await memory.search('Test query', { agent_mode: true })
+
+    expect(postSpy).toHaveBeenCalledWith('/memories/search', {
+      ...mockProjectContext,
+      query: 'Test query',
+      top_k: 10,
+      filter: '',
+      expand_context: 0,
+      types: ['episodic', 'semantic'],
+      agent_mode: true
+    })
+  })
+
   it('should throw error if query is empty when searching memory', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
     const project = client.project(mockProjectContext)

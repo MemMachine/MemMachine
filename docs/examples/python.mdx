@@ -1,96 +1,56 @@
 ---
 title: "Python SDK"
-description: "Install and use the MemMachine Python Client"
+description: "Install and use the MemMachine Python client"
 icon: "python"
 ---
 
-The MemMachine Python SDK provides a convenient way to interact with your MemMachine Server. It handles authentication, project management, and memory operations.
+The MemMachine Python SDK provides a simple interface for project-scoped
+memory operations.
 
-## Simple Hello World Example
-```python
-import memmachine
-from memmachine.episodic_memory.episodic_memory_manager import EpisodicMemoryManager
-from memmachine.episodic_memory.data_types import MemoryContext
-from memmachine.common.episode_store import ContentType, Episode
-from datetime import datetime
-import uuid
-
-Install the MemMachine package using pip:
+## Install
 
 ```bash
-pip install memmachine-server
+pip install memmachine-client
 ```
 
-## Hello World Example
-
-This example demonstrates how to connect to the server, create a project, and add/retrieve memories.
-
-<Note>
-  Ensure your MemMachine server is running (see [Quickstart Guide](../getting_started/quickstart)) before running this code.
-</Note>
+## Hello World
 
 ```python
 from memmachine import MemMachineClient
 
-# 1. Initialize the client
-# Replace 'http://localhost:8080' with your server's URL if different.
-client = MemMachineClient(base_url="http://localhost:8080")
 
-# 2. Create a Project
-# Projects organize memories under an Organization.
-# If the project already exists, this will return the existing one.
-project = client.create_project(
-    org_id="my-org",
-    project_id="hello-world-project",
-    description="My first MemMachine project"
-)
+def main() -> None:
+    client = MemMachineClient(base_url="http://localhost:8080")
 
-print(f"Working with project: {project.org_id}/{project.project_id}")
+    project = client.get_or_create_project(
+        org_id="my-org",
+        project_id="hello-world-project",
+        description="My first MemMachine project",
+    )
 
-# 3. Create a Memory Interface
-# A Memory interface is scoped to a specific user/agent/session context.
-memory = project.memory(
-    user_id="user-alice",
-    agent_id="agent-bob",
-    session_id="session-1"
-)
+    memory = project.memory(
+        user_id="user-alice",
+        agent_id="agent-bob",
+        session_id="session-1",
+    )
 
-# 4. Add Memories
-# Add a user message
-memory.add(
-    content="My favorite color is blue.",
-    role="user"
-)
+    memory.add(content="My favorite color is blue.", role="user")
+    memory.add(
+        content="Got it. I will remember your favorite color is blue.",
+        role="assistant",
+    )
 
-# Add an agent response
-memory.add(
-    content="I'll remember that your favorite color is blue.",
-    role="assistant"
-)
+    result = memory.search("What is my favorite color?")
+    print(result)
 
-print("Memories added.")
 
-# 5. Search Memories
-# Search for the information we just added.
-results = memory.search("What is my favorite color?")
-
-print("\nSearch Results:")
-print(results)
+if __name__ == "__main__":
+    main()
 ```
 
 ## Key Concepts
 
-### Client (`MemMachineClient`)
-The entry point for the SDK. It manages the HTTP connection to the MemMachine server.
-
-### Project (`Project`)
-Represents a workspace within MemMachine. All memories are isolated within a project. You can create new projects or retrieve existing ones.
-
-### Memory (`Memory`)
-The interface for adding and retrieving memories. It is context-aware, meaning you initialize it with specific identifiers:
-- **user_id**: The ID of the human user.
-- **agent_id**: The ID of the AI agent.
-- **session_id**: (Optional) A specific conversation session ID.
-- **group_id**: (Optional) For multi-user/multi-agent groups.
-
-When you call `memory.add()` or `memory.search()`, these identifiers are automatically attached to the operations.
+- `MemMachineClient`: HTTP client for MemMachine server APIs.
+- `Project`: isolation boundary (`org_id` + `project_id`).
+- `Memory`: context-scoped interface for `add`, `search`, `list`, and `delete`.
+  Common context fields are `user_id`, `agent_id`, `session_id`, and `group_id`.

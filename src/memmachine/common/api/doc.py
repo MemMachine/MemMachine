@@ -216,7 +216,8 @@ class SpecDoc:
     """
 
     SCORE_THRESHOLD = """
-    The minimum score for a memory to be included in the search results. Defaults to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
+    The minimum score for a memory to be included in the search results. Defaults
+    to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
     """
 
     QUERY = """
@@ -234,6 +235,11 @@ class SpecDoc:
     MEMORY_TYPES = """
     A list of memory types to include in the search (e.g., episodic, semantic).
     If empty, all available types are searched.
+    """
+
+    AGENT_MODE = """
+    Whether to enable top-level retrieval-agent orchestration for episodic search.
+    When false, episodic search uses direct memory retrieval.
     """
 
     PAGE_SIZE = """
@@ -605,6 +611,7 @@ class Examples:
         "metadata.user_id=123 AND metadata.session_id=abc",
     ]
     MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
+    AGENT_MODE: ClassVar[list[bool]] = [False, True]
     MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
     PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]

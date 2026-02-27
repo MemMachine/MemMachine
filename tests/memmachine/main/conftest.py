@@ -15,6 +15,7 @@ from memmachine.common.configuration import (
     LogConf,
     PromptConf,
     ResourcesConf,
+    RetrievalAgentConf,
     SemanticMemoryConf,
     SessionManagerConf,
 )
@@ -249,6 +250,10 @@ def memmachine_config(
             short_term_memory=ShortTermMemoryConfPartial(
                 llm_model=language_model_id,
             ),
+        ),
+        retrieval_agent=RetrievalAgentConf(
+            llm_model=language_model_id,
+            reranker=reranker_id,
         ),
         semantic_memory=SemanticMemoryConf(
             database=postgres_db,

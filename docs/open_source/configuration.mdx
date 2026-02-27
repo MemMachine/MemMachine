@@ -100,6 +100,33 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
   </Accordion>
 
+  <Accordion title="Retrieval Agent">
+    Configuration for optional top-level retrieval-agent orchestration used by
+    episodic search when `agent_mode=true`.
+    <Tabs>
+      <Tab title="Parameters">
+      ```yaml
+      retrieval_agent:
+        llm_model: my-agent-llm
+        reranker: my-rrf-reranker
+      ```
+      </Tab>
+      <Tab title="With Comments">
+      ```yaml
+      retrieval_agent:
+        llm_model: my-agent-llm # ID of the Language Model from 'resources.language_models'
+        reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
+      ```
+      </Tab>
+    </Tabs>
+
+    **Parameter Descriptions:**
+    | Parameter             | Description                                                                 | Default      |
+    |-----------------------|-----------------------------------------------------------------------------|--------------|
+    | `llm_model`           | The language model ID used by retrieval-agent routing/rewrite steps.       | Auto-resolved from configured memory models when omitted. |
+    | `reranker`            | The reranker ID used by retrieval-agent result reranking.                  | Auto-resolved from episodic long-term-memory reranker when omitted. |
+  </Accordion>
+
   <Accordion title="Semantic Memory">
     Configuration for the semantic memory service, which handles declarative, knowledge-based memories.
     <Tabs>

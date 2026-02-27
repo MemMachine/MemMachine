@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,12 +17,14 @@ from memmachine.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
-from memmachine.common.episode_store import Episode, EpisodeEntry
+from memmachine.common.configuration.retrieval_config import RetrievalAgentConf
+from memmachine.common.episode_store import Episode, EpisodeEntry, EpisodeResponse
 from memmachine.common.errors import SessionNotFoundError
 from memmachine.common.filter.filter_parser import And as FilterAnd
 from memmachine.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine.episodic_memory import EpisodicMemory
 from memmachine.main.memmachine import MemMachine, MemoryType
+from memmachine.retrieval_agent.common.agent_api import AgentToolBase
 from memmachine.semantic_memory.semantic_model import SemanticFeature
 
 
@@ -80,8 +83,12 @@ def _minimal_conf(
     mock_embedders = MagicMock()
     mock_embedders.contains_embedder.return_value = True
 
+    mock_language_models = MagicMock()
+    mock_language_models.contains_language_model.return_value = True
+
     resource_conf = MagicMock()
     resource_conf.embedders = mock_embedders
+    resource_conf.language_models = mock_language_models
     resource_conf.rerankers = mock_rerankers
 
     ret = MagicMock()
@@ -102,6 +109,10 @@ def _minimal_conf(
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    ret.retrieval_agent = RetrievalAgentConf()
+    semantic_conf = MagicMock()
+    semantic_conf.llm_model = None
+    ret.semantic_memory = semantic_conf
     prompt_conf = MagicMock()
     prompt_conf.episode_summary_system_prompt = "You are a helpful assistant."
     prompt_conf.episode_summary_user_prompt = (
@@ -173,6 +184,24 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     assert (
         "Based on the following episodes" in conf.short_term_memory.summary_prompt_user
     )
+
+
+def test_with_default_retrieval_agent_llm_falls_back_to_stm_model(
+    minimal_conf_factory, patched_resource_manager
+):
+    min_conf = minimal_conf_factory()
+    assert min_conf.episodic_memory.short_term_memory is not None
+
+    min_conf.episodic_memory.short_term_memory.llm_model = "fallback-llm"
+    min_conf.semantic_memory.llm_model = None
+    min_conf.retrieval_agent.llm_model = None
+    min_conf.resources.language_models.contains_language_model.side_effect = (
+        lambda model_name: model_name == "fallback-llm"
+    )
+
+    memmachine = MemMachine(min_conf, patched_resource_manager)
+
+    assert memmachine._conf.retrieval_agent.llm_model == "fallback-llm"
 
 
 def test_with_default_short_conf_enable_status(
@@ -298,9 +327,214 @@ async def test_query_search_runs_targeted_memory_tasks(
 
     async_episodic.assert_awaited_once()
     semantic_manager.search.assert_awaited_once()
+    await_args = async_episodic.await_args
+    assert await_args is not None
+    assert await_args.kwargs["retrieval_agent"] is None
 
     assert result.episodic_memory is async_episodic.return_value
     assert result.semantic_memory == semantic_manager.search.return_value
+
+
+@pytest.mark.asyncio
+async def test_query_search_uses_retrieval_agent_when_agent_mode_enabled(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    dummy_session = DummySessionData("s1")
+    expected_retrieval_agent = object()
+    get_retrieval_agent = AsyncMock(return_value=expected_retrieval_agent)
+    monkeypatch.setattr(MemMachine, "_get_retrieval_agent", get_retrieval_agent)
+
+    async_episodic = AsyncMock(
+        return_value=EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
+        )
+    )
+    monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    await memmachine.query_search(
+        dummy_session,
+        target_memories=[MemoryType.Episodic],
+        query="hello world",
+        agent_mode=True,
+    )
+
+    get_retrieval_agent.assert_awaited_once()
+    await_args = async_episodic.await_args
+    assert await_args is not None
+    assert await_args.kwargs["retrieval_agent"] is expected_retrieval_agent
+
+
+@pytest.mark.asyncio
+async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    long_episode = _make_episode("long-1", "s1")
+    short_episode = _make_episode("short-1", "s1")
+
+    long_only_response = EpisodicMemory.QueryResponse(
+        long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+            episodes=[EpisodeResponse(score=0.8, **long_episode.model_dump())]
+        ),
+        short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+            episodes=[],
+            episode_summary=[""],
+        ),
+    )
+    short_only_response = EpisodicMemory.QueryResponse(
+        long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+            episodes=[]
+        ),
+        short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+            episodes=[EpisodeResponse(**short_episode.model_dump())],
+            episode_summary=["short-summary"],
+        ),
+    )
+
+    episodic_session = object.__new__(EpisodicMemory)
+    episodic_session._session_key = "s1"
+    episodic_session._long_term_memory = MagicMock()
+    episodic_session._short_term_memory = MagicMock()
+
+    async def _query_memory_side_effect(*_args, **kwargs):
+        mode = kwargs["mode"]
+        if mode is EpisodicMemory.QueryMode.LONG_TERM_ONLY:
+            return long_only_response
+        if mode is EpisodicMemory.QueryMode.SHORT_TERM_ONLY:
+            return short_only_response
+        raise AssertionError(f"Unexpected mode: {mode}")
+
+    episodic_session.query_memory = AsyncMock(side_effect=_query_memory_side_effect)
+
+    class _TestRetrievalAgent:
+        async def do_query(self, _policy, query_param):
+            assert query_param.memory is episodic_session
+            long_term_response = await query_param.memory.query_memory(
+                query=query_param.query,
+                limit=query_param.limit,
+                expand_context=query_param.expand_context,
+                score_threshold=query_param.score_threshold,
+                property_filter=query_param.property_filter,
+                mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
+            )
+            assert long_term_response is not None
+            episodes = [
+                Episode(
+                    uid=episode.uid,
+                    content=episode.content,
+                    session_key=query_param.memory.session_key,
+                    created_at=episode.created_at or datetime.now(UTC),
+                    producer_id=episode.producer_id,
+                    producer_role=episode.producer_role,
+                    produced_for_id=episode.produced_for_id,
+                    metadata=episode.metadata,
+                )
+                for episode in long_term_response.long_term_memory.episodes
+            ]
+            return episodes, {}
+
+    response = await memmachine._query_episodic_with_retrieval_agent(
+        episodic_session=episodic_session,
+        retrieval_agent=cast(AgentToolBase, _TestRetrievalAgent()),
+        query="hello world",
+        limit=5,
+        expand_context=0,
+        score_threshold=-float("inf"),
+        search_filter=None,
+    )
+
+    assert response is not None
+    assert [episode.uid for episode in response.long_term_memory.episodes] == ["long-1"]
+    assert [episode.uid for episode in response.short_term_memory.episodes] == [
+        "short-1"
+    ]
+    assert response.short_term_memory.episode_summary == ["short-summary"]
+    assert episodic_session.query_memory.await_count == 2
+    assert (
+        episodic_session.query_memory.await_args_list[0].kwargs["mode"]
+        is EpisodicMemory.QueryMode.LONG_TERM_ONLY
+    )
+    assert (
+        episodic_session.query_memory.await_args_list[1].kwargs["mode"]
+        is EpisodicMemory.QueryMode.SHORT_TERM_ONLY
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_episodic_with_retrieval_agent_skips_short_term_when_disabled(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    long_episode = _make_episode("long-2", "s1")
+    long_only_response = EpisodicMemory.QueryResponse(
+        long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+            episodes=[EpisodeResponse(score=0.9, **long_episode.model_dump())]
+        ),
+        short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+            episodes=[],
+            episode_summary=[""],
+        ),
+    )
+
+    episodic_session = object.__new__(EpisodicMemory)
+    episodic_session._session_key = "s1"
+    episodic_session._long_term_memory = MagicMock()
+    episodic_session._short_term_memory = None
+    episodic_session.query_memory = AsyncMock(return_value=long_only_response)
+
+    class _TestRetrievalAgent:
+        async def do_query(self, _policy, query_param):
+            assert query_param.memory is episodic_session
+            long_term_response = await query_param.memory.query_memory(
+                query=query_param.query,
+                limit=query_param.limit,
+                expand_context=query_param.expand_context,
+                score_threshold=query_param.score_threshold,
+                property_filter=query_param.property_filter,
+                mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
+            )
+            assert long_term_response is not None
+            episodes = [
+                Episode(
+                    uid=episode.uid,
+                    content=episode.content,
+                    session_key=query_param.memory.session_key,
+                    created_at=episode.created_at or datetime.now(UTC),
+                    producer_id=episode.producer_id,
+                    producer_role=episode.producer_role,
+                    produced_for_id=episode.produced_for_id,
+                    metadata=episode.metadata,
+                )
+                for episode in long_term_response.long_term_memory.episodes
+            ]
+            return episodes, {}
+
+    response = await memmachine._query_episodic_with_retrieval_agent(
+        episodic_session=episodic_session,
+        retrieval_agent=cast(AgentToolBase, _TestRetrievalAgent()),
+        query="hello world",
+        limit=5,
+        expand_context=0,
+        score_threshold=-float("inf"),
+        search_filter=None,
+    )
+
+    assert response is not None
+    assert [episode.uid for episode in response.long_term_memory.episodes] == ["long-2"]
+    assert response.short_term_memory.episodes == []
+    assert episodic_session.query_memory.await_count == 1
+    assert (
+        episodic_session.query_memory.await_args.kwargs["mode"]
+        is EpisodicMemory.QueryMode.LONG_TERM_ONLY
+    )
 
 
 @pytest.mark.asyncio

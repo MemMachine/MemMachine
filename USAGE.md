@@ -146,8 +146,10 @@ memory.add(
 # Search memories
 # Note: Default values when not specified:
 # - limit defaults to 10 (used as top_k)
+# - expand_context defaults to 0
+# - score_threshold defaults to None
+# - agent_mode defaults to False
 # - filter_dict defaults to None (but context filters from user_id/agent_id/session_id are auto-applied)
-# - types defaults to both episodic and semantic memory
 results = memory.search(
     query="What are the user's preferences?",
     limit=10  # Optional, defaults to 10
@@ -284,7 +286,7 @@ curl -X POST "http://localhost:8080/api/v2/memories" \
 
 #### Search Memories
 
-Search for memories across episodic and semantic memory. Required fields: `org_id`, `project_id`, `query`. Optional fields: `top_k` (defaults to `10`), `filter` (defaults to `""`), `types` (defaults to `[]` which means all memory types).
+Search for memories across episodic and semantic memory. Required fields: `org_id`, `project_id`, `query`. Optional fields: `top_k` (defaults to `10`), `filter` (defaults to `""`), `types` (defaults to `[]` which means all memory types), `agent_mode` (defaults to `false`; set to `true` to use retrieval-agent search. In agent mode, score-threshold filtering is not supported).
 
 ```bash
 curl -X POST "http://localhost:8080/api/v2/memories/search" \
@@ -312,6 +314,21 @@ curl -X POST "http://localhost:8080/api/v2/memories/search" \
     "top_k": 10,
     "filter": "metadata.user_id='user123'",
     "types": ["semantic"]
+  }'
+```
+
+**Example with retrieval-agent mode**:
+
+```bash
+curl -X POST "http://localhost:8080/api/v2/memories/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "my-org",
+    "project_id": "my-project",
+    "query": "user preferences",
+    "top_k": 10,
+    "types": ["episodic", "semantic"],
+    "agent_mode": true
   }'
 ```
 
@@ -568,12 +585,14 @@ except requests.HTTPError as e:
 
 ### Memory.search() (Python SDK)
 - `limit`: Defaults to `10` (used as `top_k` in API)
+- `expand_context`: Defaults to `0`
+- `score_threshold`: Defaults to `None` (no threshold filtering)
+- `agent_mode`: Defaults to `False`
 - `filter_dict`: Defaults to `None`, but context filters from `user_id`, `agent_id`, and `session_id` are automatically applied
-- `types`: Defaults to both `[MemoryType.Episodic, MemoryType.Semantic]`
 
 ### REST API v2 Defaults
 - **Add Memories**: `producer` defaults to `"user"`, `produced_for` defaults to `""`, `role` defaults to `""`, `timestamp` defaults to current time, `metadata` defaults to `{}`, `types` defaults to `[]` (all memory types)
-- **Search Memories**: `top_k` defaults to `10`, `filter` defaults to `""`, `types` defaults to `[]` (all memory types)
+- **Search Memories**: `top_k` defaults to `10`, `filter` defaults to `""`, `types` defaults to `[]` (all memory types), `agent_mode` defaults to `false`
 
 ## Best Practices
 

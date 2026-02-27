@@ -210,25 +210,27 @@ The Python Server SDK exposes several key APIs for managing memories. These are 
 
 ### Episodic Memory (`episodic_memory`)
 
-- Manages short-term memory tied to a user, agent, and session.
-- Stores conversation-like events that are context-specific and transient.
-- Main system calls: `add()`, `search()`, `get_all()`.
+- Manages both short-term and long-term episodic memory for a session key.
+- Stores conversation-like events (episodes) and retrieves contextual history.
+- Main system calls: `add_episodes()`, `query_search()`, `list_search()`.
 
 ### Episodic Memory Manager (`episodic_memory_manager`)
 
-- Provides management utilities for episodic memories across multiple sessions or users.
-- Handles session lifecycle, cleanup, and advanced memory queries.
+- Provides lifecycle and caching utilities for per-session episodic memories.
+- Main manager calls: `open_episodic_memory()`,
+  `open_or_create_episodic_memory()`, `delete_episodic_session()`.
 
-### Profile Memory (`profile_memory`)
+### Semantic/Profile Memory (`semantic_memory`)
 
-- Manages long-term, persistent user memory.
-- Stores attributes like preferences, traits, or other semantic knowledge.
-- Main system calls: `upsert()`, `get_all()`, `delete()`.
+- Manages long-term semantic features (e.g., preferences, traits, facts).
+- Main system calls: `add_features()`, `query_search()`, `list_search()`,
+  `delete_features()`.
 
 ### Memory Types (`memory_types`)
 
-- Defines the different types of memories available: episodic, profile, and possibly hybrid semantic stores.
-- Provides a consistent interface for creating, retrieving, and interacting with each memory type.
+- Defines the available target memories: `MemoryType.Episodic` and
+  `MemoryType.Semantic`.
+- Allows mixed operations through the same search/list APIs.
 
 ## Intended Audience
 

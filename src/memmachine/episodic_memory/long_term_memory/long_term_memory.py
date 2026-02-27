@@ -84,6 +84,11 @@ class LongTermMemory:
             ),
         )
 
+    @property
+    def declarative_memory(self) -> DeclarativeMemory:
+        """Expose the underlying declarative memory store."""
+        return self._declarative_memory
+
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         declarative_memory_episodes = [
             DeclarativeMemoryEpisode(
@@ -304,6 +309,15 @@ class LongTermMemory:
             ),
         )
 
+    @staticmethod
+    def episode_from_declarative_memory_episode(
+        declarative_memory_episode: DeclarativeMemoryEpisode,
+    ) -> Episode:
+        """Public wrapper that converts declarative-memory episodes."""
+        return LongTermMemory._episode_from_declarative_memory_episode(
+            declarative_memory_episode
+        )
+
     _MANGLE_FILTERABLE_METADATA_KEY_PREFIX = "metadata."
 
     @staticmethod
@@ -335,6 +349,13 @@ class LongTermMemory:
     def _sanitize_field(field: str) -> str:
         internal_name, _ = normalize_filter_field(field)
         return internal_name
+
+    @staticmethod
+    def sanitize_property_filter(
+        property_filter: FilterExpr | None,
+    ) -> FilterExpr | None:
+        """Public wrapper for external callers to normalize metadata filters."""
+        return LongTermMemory._sanitize_property_filter(property_filter)
 
     @staticmethod
     def _sanitize_filter_expr(expr: FilterExpr) -> FilterExpr:
