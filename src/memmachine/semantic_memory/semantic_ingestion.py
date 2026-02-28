@@ -103,16 +103,34 @@ class IngestionService:
                 for h_id in history_ids
             }
 
-        raw_messages = [tasks[h_id].result() for h_id in history_ids]
+        raw_messages = [
+            r for h_id in history_ids if (r := tasks[h_id].result()) is not None
+        ]
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
         if len(none_h_ids) != 0:
-            raise ValueError(
-                "Failed to retrieve messages. Invalid episode_ids exist for set_id "
-                f"{set_id}: {none_h_ids}"
+            logger.warning(
+                "Failed to retrieve messages. Invalid episode_ids exist for set_id %s; delisting the following messages as recovery: %s",
+                set_id,
+                none_h_ids,
             )
+            if self._debug_fail_loudly:
+                raise ValueError(
+                    f"Failed to retrieve messages for set_id {set_id} due to invalid episode_ids: {none_h_ids}"
+                )
 
-        raw_messages = [m for m in raw_messages if m is not None]
+            try:
+                await self._semantic_storage.delete_history(
+                    history_ids=none_h_ids,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to delete messages with invalid episode_ids for set_id %s",
+                    set_id,
+                )
+                if self._debug_fail_loudly:
+                    raise
+
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
         logger.info("Processing %d messages for set %s", len(messages), set_id)

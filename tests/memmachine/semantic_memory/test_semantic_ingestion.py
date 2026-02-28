@@ -452,3 +452,88 @@ async def test_deduplicate_features_merges_and_relabels(
     assert list(consolidated.metadata.citations) == [drop_history]
     embedder = cast(MockEmbedder, resources.embedder)
     assert embedder.ingest_calls == [["consolidated pizza"]]
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_deletes_invalid_episode_ids(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    embedder_double: MockEmbedder,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """When some episode_ids resolve to None, the service deletes them from
+    semantic storage and continues processing the valid ones."""
+    valid_id = await add_history(episode_storage, content="valid message")
+    # Use a numeric string so the episode store doesn't reject the format,
+    # but one that doesn't correspond to any real episode (returns None).
+    invalid_id = "99999"
+
+    await semantic_storage.add_history_to_set(set_id="user-999", history_id=valid_id)
+    await semantic_storage.add_history_to_set(set_id="user-999", history_id=invalid_id)
+
+    commands = [
+        SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="greeting",
+            tag="social",
+            value="hello",
+        ),
+    ]
+    llm_mock = AsyncMock(return_value=commands)
+    monkeypatch.setattr(
+        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_mock,
+    )
+
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            debug_fail_loudly=False,
+        )
+    )
+
+    await ingestion_service._process_single_set("user-999")
+
+    # The invalid episode_id should have been delisted from semantic storage
+    remaining_history = await semantic_storage.get_history_messages(
+        set_ids=["user-999"],
+        is_ingested=False,
+    )
+    assert invalid_id not in remaining_history
+
+    # The valid message should still have been processed
+    llm_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_raises_in_debug_mode_for_invalid_ids(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    semantic_category: SemanticCategory,
+):
+    """When debug_fail_loudly is True and invalid episode_ids are found,
+    the service raises a ValueError with set_id and invalid ids in the message."""
+    valid_id = await add_history(episode_storage, content="valid message")
+    invalid_id = "99999"
+
+    await semantic_storage.add_history_to_set(set_id="user-888", history_id=valid_id)
+    await semantic_storage.add_history_to_set(set_id="user-888", history_id=invalid_id)
+
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            debug_fail_loudly=True,
+        )
+    )
+
+    with pytest.raises(ValueError, match="user-888"):
+        await ingestion_service._process_single_set("user-888")
