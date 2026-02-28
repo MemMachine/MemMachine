@@ -598,20 +598,16 @@ class DeclarativeMemory:
             for derivative_node in derivative_nodes
         ]
 
-        delete_nodes_tasks = [
-            self._vector_graph_store.delete_nodes(
-                collection=self._episode_collection,
-                node_uids=uids,
-            ),
-            self._vector_graph_store.delete_nodes(
-                collection=self._derivative_collection,
-                node_uids=[
-                    derivative_node.uid for derivative_node in derived_derivative_nodes
-                ],
-            ),
-        ]
-
-        await asyncio.gather(*delete_nodes_tasks)
+        await self._vector_graph_store.delete_nodes(
+            collection=self._derivative_collection,
+            node_uids=[
+                derivative_node.uid for derivative_node in derived_derivative_nodes
+            ],
+        )
+        await self._vector_graph_store.delete_nodes(
+            collection=self._episode_collection,
+            node_uids=uids,
+        )
 
     @staticmethod
     def _unify_scored_anchored_episode_contexts(

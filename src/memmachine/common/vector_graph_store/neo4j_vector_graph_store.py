@@ -1134,14 +1134,19 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
-        await self._driver.execute_query(
-            _neo4j_query(
-                "UNWIND $node_uids AS node_uid\n"
-                f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
-                "DETACH DELETE n"
-            ),
-            node_uids=[str(node_uid) for node_uid in node_uids],
-        )
+        async with self._driver.session() as session:
+            result = await session.run(
+                _neo4j_query(
+                    "UNWIND $node_uids AS node_uid\n"
+                    f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
+                    "CALL {\n"
+                    "    WITH n\n"
+                    "    DETACH DELETE n\n"
+                    "} IN TRANSACTIONS OF 10000 ROWS"
+                ),
+                node_uids=[str(node_uid) for node_uid in node_uids],
+            )
+            await result.consume()
 
         end_time = time.monotonic()
         self._collect_metrics(
