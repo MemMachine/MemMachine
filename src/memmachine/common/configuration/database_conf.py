@@ -186,9 +186,10 @@ class SupportedDB(str, Enum):
 
     def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf:
         if self is SupportedDB.NEO4J:
-            return self.conf_cls(**conf)
+            return Neo4jConf(**conf)
+        assert self.dialect is not None and self.driver is not None
         conf_copy = {**conf, "dialect": self.dialect, "driver": self.driver}
-        return self.conf_cls(**conf_copy)
+        return SqlAlchemyConf(**conf_copy)  # ty: ignore[invalid-argument-type]
 
     @property
     def is_neo4j(self) -> bool:
