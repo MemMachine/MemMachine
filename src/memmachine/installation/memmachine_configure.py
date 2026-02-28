@@ -355,7 +355,7 @@ class WindowsEnvironment:
     def check_neo4j_running(self) -> bool:
         """Check if Neo4j service is running on Windows."""
         try:
-            service = psutil.win_service_get(NEO4J_WINDOWS_SERVICE_NAME)  # ty: ignore[possibly-missing-attribute]
+            service = psutil.win_service_get(NEO4J_WINDOWS_SERVICE_NAME)  # ty: ignore[unresolved-attribute]
             service_info = service.as_dict()
         except Exception as e:
             logger.debug("Failed to check Neo4j status: %s", e)

@@ -522,6 +522,7 @@ async def test_count_episodes_combines_search_filter(
     assert result == 3
     assert parsed_specs == ["topic = 'alpha'"]
 
+    assert episode_storage.get_episode_messages_count.await_args is not None
     combined_filter = episode_storage.get_episode_messages_count.await_args.kwargs[
         "filter_expr"
     ]
