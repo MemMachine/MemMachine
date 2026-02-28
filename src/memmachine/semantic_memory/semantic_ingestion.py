@@ -109,14 +109,14 @@ class IngestionService:
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
         if len(none_h_ids) != 0:
-            logger.error(
-                "Failed to retrieve messages. Invalid episode_ids exist for set_id %s, will delist following messages: %s",
+            logger.warning(
+                "Failed to retrieve messages. Invalid episode_ids exist for set_id %s; delisting the following messages as recovery: %s",
                 set_id,
                 none_h_ids,
             )
             if self._debug_fail_loudly:
                 raise ValueError(
-                    "Failed to retrieve messages due to invalide episode_ids"
+                    f"Failed to retrieve messages for set_id {set_id} due to invalid episode_ids: {none_h_ids}"
                 )
 
             try:
@@ -131,7 +131,6 @@ class IngestionService:
                 if self._debug_fail_loudly:
                     raise
 
-        raw_messages = [m for m in raw_messages if m is not None]
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
         logger.info("Processing %d messages for set %s", len(messages), set_id)
