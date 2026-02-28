@@ -1763,7 +1763,7 @@ class TestMemory:
         result = memory.configure_semantic_set(
             set_id="mem_user_set_abc",
             embedder_name="openai-embed",
-            llm_name="gpt-4",
+            llm_name="gpt-5.2",
         )
 
         assert result is True
@@ -1774,7 +1774,7 @@ class TestMemory:
         json_data = call_args[1]["json"]
         assert json_data["set_id"] == "mem_user_set_abc"
         assert json_data["embedder_name"] == "openai-embed"
-        assert json_data["llm_name"] == "gpt-4"
+        assert json_data["llm_name"] == "gpt-5.2"
 
     def test_configure_semantic_set_partial(self, mock_client):
         """Test set configuration with only embedder."""

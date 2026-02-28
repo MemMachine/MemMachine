@@ -269,7 +269,7 @@ Skipped (duplicates): 0 messages
 - **Comprehensive Logging** - Detailed logging for troubleshooting
 - **Error Handling** - Graceful failure with detailed error messages
 - **Skip Counter** - Shows how many duplicate messages were skipped
-- **OpenAI Integration** - AI-powered responses using GPT-4o-mini
+- **OpenAI Integration** - AI-powered responses using GPT-5 Mini
 - **Thread Support** - Responds in threads for better conversation flow
 
 ## Troubleshooting

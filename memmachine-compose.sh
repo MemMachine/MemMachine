@@ -130,8 +130,8 @@ select_llm_model() {
     case "$provider" in
         "OPENAI")
             print_prompt
-            read -p "Which OpenAI LLM model would you like to use? [gpt-4o-mini]: " llm_model
-            llm_model=$(echo "${llm_model:-gpt-4o-mini}" | tr -d '\n\r')
+            read -p "Which OpenAI LLM model would you like to use? [gpt-5-mini]: " llm_model
+            llm_model=$(echo "${llm_model:-gpt-5-mini}" | tr -d '\n\r')
             print_success "Selected OpenAI LLM model: $llm_model" >&2
             ;;
         "BEDROCK")
@@ -154,7 +154,7 @@ select_llm_model() {
             ;;
         *)
             print_warning "Unknown provider: $provider. Using default LLM model." >&2
-            llm_model="gpt-4o-mini"
+            llm_model="gpt-5-mini"
             ;;
     esac
     
@@ -999,7 +999,7 @@ case "${1:-}" in
         echo ""
         echo "Provider Options:"
         echo "  OpenAI    - Uses OpenAI's GPT models and embedding models"
-        echo "             Default LLM: gpt-4o-mini"
+        echo "             Default LLM: gpt-5-mini"
         echo "             Default embedding: text-embedding-3-small"
         echo "             Requires: OpenAI API key"
         echo "  Bedrock   - Uses AWS Bedrock models"

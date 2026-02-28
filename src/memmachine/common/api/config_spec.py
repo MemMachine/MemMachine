@@ -272,7 +272,7 @@ class AddOpenAIResponsesLanguageModelConfig(BaseModel):
     ]
     model: Annotated[
         str,
-        Field(default="gpt-4o", description=SpecDoc.MODEL_NAME),
+        Field(default="gpt-5.2", description=SpecDoc.MODEL_NAME),
     ]
     base_url: Annotated[
         str | None,
@@ -293,7 +293,7 @@ class AddOpenAIChatCompletionsLanguageModelConfig(BaseModel):
     ]
     model: Annotated[
         str,
-        Field(default="gpt-4o", description=SpecDoc.MODEL_NAME),
+        Field(default="gpt-5.2", description=SpecDoc.MODEL_NAME),
     ]
     base_url: Annotated[
         str | None,

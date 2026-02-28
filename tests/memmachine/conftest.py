@@ -99,7 +99,7 @@ def openai_integration_config():
 
     return {
         "api_key": open_api_key,
-        "llm_model": "gpt-4o-mini",
+        "llm_model": "gpt-5-mini",
         "embedding_model": "text-embedding-3-small",
     }
 
