@@ -95,6 +95,17 @@ class CountCachingEpisodeStorage(EpisodeStorage):
             end_time=end_time,
         )
 
+    async def get_episode_ids(
+        self,
+        *,
+        page_size: int,
+        filter_expr: FilterExpr | None = None,
+    ) -> list[EpisodeIdT]:
+        return await self._wrapped.get_episode_ids(
+            page_size=page_size,
+            filter_expr=filter_expr,
+        )
+
     async def get_episode_messages_count(
         self,
         *,

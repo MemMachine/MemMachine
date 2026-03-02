@@ -18,6 +18,7 @@ def wrapped_store():
     store.get_episode = AsyncMock()
     store.get_episode_messages = AsyncMock()
     store.get_episode_messages_count = AsyncMock()
+    store.get_episode_ids = AsyncMock()
     store.delete_episodes = AsyncMock()
     store.delete_episode_messages = AsyncMock()
     return store
@@ -108,3 +109,22 @@ async def test_non_session_filters_bypass_cache(wrapped_store):
     assert first == 7
     assert second == 9
     assert wrapped_store.get_episode_messages_count.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_episode_ids_passes_through(wrapped_store):
+    """CountCachingEpisodeStorage.get_episode_ids delegates to the wrapped store."""
+    wrapped_store.get_episode_ids.return_value = ["1", "2", "3"]
+    storage = CountCachingEpisodeStorage(wrapped_store)
+
+    session_filter = Comparison(field="session_key", op="=", value="s1")
+    result = await storage.get_episode_ids(
+        filter_expr=session_filter,
+        page_size=10,
+    )
+
+    assert result == ["1", "2", "3"]
+    wrapped_store.get_episode_ids.assert_awaited_once_with(
+        filter_expr=session_filter,
+        page_size=10,
+    )

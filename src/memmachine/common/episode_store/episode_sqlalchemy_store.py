@@ -344,6 +344,27 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return int(n_messages)
 
+    async def get_episode_ids(
+        self,
+        *,
+        page_size: int,
+        filter_expr: FilterExpr | None = None,
+    ) -> list[EpisodeIdT]:
+        stmt = select(Episode.id)
+
+        stmt = self._apply_episode_filter(
+            stmt,
+            filter_expr=filter_expr,
+        )
+
+        stmt = stmt.order_by(Episode.created_at.asc()).limit(page_size)
+
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+
+        return [EpisodeIdT(row) for row in rows]
+
     @validate_call
     async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
         try:

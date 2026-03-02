@@ -61,6 +61,15 @@ class EpisodeStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_episode_ids(
+        self,
+        *,
+        page_size: int,
+        filter_expr: FilterExpr | None = None,
+    ) -> list[EpisodeIdT]:
+        raise NotImplementedError
+
+    @abstractmethod
     async def delete_episodes(
         self,
         episode_ids: list[EpisodeIdT],
