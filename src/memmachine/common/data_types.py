@@ -14,11 +14,38 @@ OrderedValue = int | float | str | datetime
 
 
 class SimilarityMetric(Enum):
-    """Similarity metrics supported by embedding operations."""
+    """Similarity metrics supported by embedding operations. All scores are normalized to [0, 1], where higher is more similar."""
 
+    """
+    COSINE
+    with cosine_similarity as the raw cosine similarity in [-1, 1]:
+    score formula: S = (1 + cosine_similarity) / 2, where cosine_similarity is the raw cosine in [-1, 1].
+    inverse formula: cosine_similarity = 2 * S - 1
+    """
     COSINE = "cosine"
+
+    """
+    DOT
+    with dot_product as the raw dot product in (-inf, inf):
+    score formula: S = 1 / (1 + exp(-2 * arcsinh(dot_product)))
+    inverse formula: dot_product = (2 * S - 1) / (2 * sqrt(S * (1 - S)))
+    """
     DOT = "dot"
+
+    """
+    EUCLIDEAN
+    with euclidean_distance as the raw Euclidean distance in [0, inf):
+    score formula: S = 1 / (1 + euclidean_distance)
+    inverse formula: euclidean_distance = 1 / S - 1
+    """
     EUCLIDEAN = "euclidean"
+
+    """
+    MANHATTAN
+    with manhattan_distance as the raw Manhattan distance in [0, inf):
+    score formula: S = 1 / (1 + manhattan_distance)
+    inverse formula: manhattan_distance = 1 / S - 1
+    """
     MANHATTAN = "manhattan"
 
 
