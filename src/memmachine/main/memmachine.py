@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
+EPISODE_DELETE_BATCH_SIZE: Final[int] = 1000
 
 
 class MemMachine:
@@ -336,9 +337,16 @@ class MemMachine:
                 op="=",
                 value=session_data.session_key,
             )
-            await episode_store.delete_episode_messages(
-                filter_expr=session_filter,
-            )
+            while True:
+                episodes = await episode_store.get_episode_messages(
+                    filter_expr=session_filter,
+                    page_size=EPISODE_DELETE_BATCH_SIZE,
+                )
+                if not episodes:
+                    break
+                episode_ids = [episode.uid for episode in episodes]
+                await episode_store.delete_episodes(episode_ids)
+                await self._cleanup_semantic_history(episode_ids)
 
         async def _delete_episodic_memory() -> None:
             episodic_memory_manager = (
@@ -753,6 +761,19 @@ class MemMachine:
         tasks.append(episode_storage.delete_episodes(episode_ids))
         tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
+
+    async def _cleanup_semantic_history(self, episode_ids: list[str]) -> None:
+        """Delete semantic history entries for the given episode IDs.
+
+        Args:
+            episode_ids: IDs of episodes whose semantic history should be removed.
+
+        Returns:
+            None.
+
+        """
+        semantic_service = await self._resources.get_semantic_service()
+        await semantic_service.delete_history(episode_ids)
 
     async def delete_features(
         self,
