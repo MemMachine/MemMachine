@@ -338,13 +338,12 @@ class MemMachine:
                 value=session_data.session_key,
             )
             while True:
-                episodes = await episode_store.get_episode_messages(
+                episode_ids = await episode_store.get_episode_ids(
                     filter_expr=session_filter,
                     page_size=EPISODE_DELETE_BATCH_SIZE,
                 )
-                if not episodes:
+                if not episode_ids:
                     break
-                episode_ids = [episode.uid for episode in episodes]
                 await episode_store.delete_episodes(episode_ids)
                 await self._cleanup_semantic_history(episode_ids)
 
