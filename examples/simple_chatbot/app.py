@@ -16,7 +16,7 @@ from llm import chat, set_model
 from model_config import MODEL_CHOICES, MODEL_DISPLAY_NAMES
 
 # Constants
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_PERSONA = "Charlie"
 DEFAULT_SESSION_BASE = "Session"
 TYPING_SPEED = 0.02

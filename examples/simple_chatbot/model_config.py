@@ -2,9 +2,8 @@ import os
 
 PROVIDER_MODEL_MAP = {
     "openai": [
-        "gpt-4.1-mini",
-        "gpt-5",
         "gpt-5-mini",
+        "gpt-5.2",
         "gpt-5-nano",
     ],
     "anthropic": [
@@ -27,9 +26,8 @@ MODEL_TO_PROVIDER = {
 
 # Model display names with categories
 MODEL_DISPLAY_NAMES = {
-    "gpt-4.1-mini": "OpenAI - GPT-4.1 Mini",
-    "gpt-5": "OpenAI - GPT-5",
     "gpt-5-mini": "OpenAI - GPT-5 Mini",
+    "gpt-5.2": "OpenAI - GPT-5.2",
     "gpt-5-nano": "OpenAI - GPT-5 Nano",
     "anthropic.claude-haiku-4-5-20251001-v1:0": "AWS Bedrock - Anthropic - Claude Haiku 4.5",
     "anthropic.claude-sonnet-4-5-20250929-v1:0": "AWS Bedrock - Anthropic - Claude Sonnet 4.5",

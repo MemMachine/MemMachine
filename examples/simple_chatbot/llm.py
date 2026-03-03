@@ -50,7 +50,7 @@ load_dotenv()
 # ──────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────
-MODEL_STRING = "gpt-4.1-mini"  # we default on gpt-4.1-mini
+MODEL_STRING = "gpt-5-mini"  # we default on gpt-5-mini
 openai_api_key = os.getenv("OPENAI_API_KEY")
 # print(openai_api_key)  # Do NOT log secrets!
 client = openai.OpenAI(api_key=openai_api_key)

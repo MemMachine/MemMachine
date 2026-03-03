@@ -18,7 +18,7 @@ def mock_conf():
     conf = LanguageModelsConf(
         openai_responses_language_model_confs={
             "openai_4o_mini": OpenAIResponsesLanguageModelConf(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 api_key=SecretStr("DUMMY_OPENAI_API_KEY_1"),
             ),
             "openai_3_5_turbo": OpenAIResponsesLanguageModelConf(

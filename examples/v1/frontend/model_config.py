@@ -1,5 +1,5 @@
 PROVIDER_MODEL_MAP = {
-    "openai": ["gpt-4.1-mini"],
+    "openai": ["gpt-5-mini"],
     "anthropic": [
         "anthropic.claude-3-sonnet-20240229-v1:0",
         "anthropic.claude-3-5-haiku-20241022-v1:0",
