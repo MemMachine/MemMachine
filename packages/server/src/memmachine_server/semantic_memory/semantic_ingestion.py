@@ -63,7 +63,7 @@ class IngestionService:
                 logger.exception("Failed to process set_id %s", set_id)
                 raise
 
-        logger.info("Starting ingestion processing for set ids: %s", set_ids)
+        logger.debug("Starting ingestion processing for set ids: %s", set_ids)
 
         results = await asyncio.gather(
             *[_run(set_id) for set_id in set_ids],
@@ -84,7 +84,7 @@ class IngestionService:
         )
 
         if len(resources.semantic_categories) == 0:
-            logger.info(
+            logger.debug(
                 "No semantic categories configured for set %s, skipping ingestion",
                 set_id,
             )
@@ -133,7 +133,7 @@ class IngestionService:
 
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
-        logger.info("Processing %d messages for set %s", len(messages), set_id)
+        logger.debug("Processing %d messages for set %s", len(messages), set_id)
 
         async def process_semantic_type(
             semantic_category: InstanceOf[SemanticCategory],
@@ -195,7 +195,7 @@ class IngestionService:
 
         await asyncio.gather(*semantic_category_runners)
 
-        logger.info(
+        logger.debug(
             "Finished processing %d messages out of %d for set %s",
             len(mark_messages),
             len(messages),
