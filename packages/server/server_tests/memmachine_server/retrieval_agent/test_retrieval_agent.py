@@ -4,18 +4,18 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+
 from memmachine_server.common.episode_store import Episode, EpisodeResponse
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.episodic_memory import EpisodicMemory
-
-from memmachine.retrieval_agent.agents import (
+from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
     MemMachineAgent,
     SplitQueryAgent,
     ToolSelectAgent,
 )
-from memmachine.retrieval_agent.common.agent_api import (
+from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBaseParam,
     QueryParam,
     QueryPolicy,

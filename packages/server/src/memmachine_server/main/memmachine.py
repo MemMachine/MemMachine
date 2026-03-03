@@ -6,12 +6,6 @@ from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import Any, Final, Protocol, cast
 
-from memmachine.retrieval_agent import create_retrieval_agent
-from memmachine.retrieval_agent.common.agent_api import (
-    AgentToolBase,
-    QueryParam,
-    QueryPolicy,
-)
 from memmachine_common.api import MemoryType
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
 
@@ -52,6 +46,12 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.retrieval_agent import create_retrieval_agent
+from memmachine_server.retrieval_agent.common.agent_api import (
+    AgentToolBase,
+    QueryParam,
+    QueryPolicy,
+)
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )

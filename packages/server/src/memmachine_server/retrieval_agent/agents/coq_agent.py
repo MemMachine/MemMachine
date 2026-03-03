@@ -10,8 +10,7 @@ from typing import Any, cast
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model.language_model import LanguageModel
-
-from memmachine.retrieval_agent.common.agent_api import (
+from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
     QueryParam,
@@ -276,7 +275,7 @@ class ChainOfQueryAgent(AgentToolBase):
             try:
                 result, metrics = await super().do_query(policy, q)
                 success = True
-            except Exception as e:  # noqa: PERF203
+            except Exception as e:
                 max_retry -= 1
                 if max_retry == 0:
                     logger.exception("Reranker failed after maximum retries.")

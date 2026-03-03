@@ -20,7 +20,7 @@ import datetime
 import logging
 import time
 from collections.abc import Coroutine, Iterable
-from enum import Enum
+from enum import StrEnum
 from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
@@ -304,7 +304,7 @@ class EpisodicMemory:
         long_term_memory: LongTermMemoryResponse
         short_term_memory: ShortTermMemoryResponse
 
-    class QueryMode(str, Enum):
+    class QueryMode(StrEnum):
         """Controls which memory backends are queried."""
 
         BOTH = "both"

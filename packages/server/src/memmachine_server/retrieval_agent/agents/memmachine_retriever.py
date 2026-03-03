@@ -7,8 +7,7 @@ from typing import Any
 
 from memmachine_server.common.episode_store import Episode, EpisodeType
 from memmachine_server.episodic_memory import EpisodicMemory
-
-from memmachine.retrieval_agent.common.agent_api import (
+from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
     QueryParam,

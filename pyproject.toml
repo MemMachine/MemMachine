@@ -128,6 +128,12 @@ convention = "google"
     "PERF401",
 ]
 
+[tool.ty.environment]
+extra-paths = ["packages/common/src", "packages/server/src", "packages/client/src"]
+
+[tool.ty.src]
+exclude = ["packages/**/build/**"]
+
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
@@ -136,13 +142,6 @@ addopts = ["-m", "not integration"]
 markers = [
     "integration: mark the test as an integration test",
     "slow: mark the test as slow"
-]
-
-[tool.ty.environment]
-extra-paths = [
-    "packages/common/src",
-    "packages/server/src",
-    "packages/client/src",
 ]
 
 [tool.complexipy]

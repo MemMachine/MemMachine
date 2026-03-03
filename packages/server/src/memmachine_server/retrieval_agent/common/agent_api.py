@@ -7,6 +7,8 @@ import logging
 from abc import abstractmethod
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, InstanceOf
+
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.filter.filter_parser import (
@@ -15,7 +17,6 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.episodic_memory import EpisodicMemory
-from pydantic import BaseModel, ConfigDict, InstanceOf
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class AgentToolBase:
             if key not in target:
                 target[key] = value
             else:
-                if isinstance(value, (int, float)):
+                if isinstance(value, int | float):
                     target[key] += value
                 elif isinstance(value, list):
                     target[key].extend(value)
@@ -112,7 +113,7 @@ class AgentToolBase:
             try:
                 scores = await self._reranker.score(query.query, contents)
                 success = True
-            except Exception as e:  # noqa: PERF203
+            except Exception as e:
                 max_retry -= 1
                 if max_retry == 0:
                     logger.exception("Reranker failed after maximum retries.")

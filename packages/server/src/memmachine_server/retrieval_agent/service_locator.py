@@ -2,14 +2,13 @@
 
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.reranker import Reranker
-
-from memmachine.retrieval_agent.agents import (
+from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
     MemMachineAgent,
     SplitQueryAgent,
     ToolSelectAgent,
 )
-from memmachine.retrieval_agent.common.agent_api import (
+from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,
 )

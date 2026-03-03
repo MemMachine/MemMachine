@@ -77,6 +77,10 @@ package = true
 
 [tool.ty.environment]
 python-version = "3.12"
+extra-paths = ["../common/src", "../client/src"]
+
+[tool.ty.src]
+exclude = ["build/**"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"

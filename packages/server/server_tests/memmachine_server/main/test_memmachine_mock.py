@@ -8,7 +8,6 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from memmachine.retrieval_agent.common.agent_api import AgentToolBase
 
 from memmachine_server.common.configuration import (
     Configuration,
@@ -29,6 +28,7 @@ from memmachine_server.common.filter.filter_parser import And as FilterAnd
 from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main.memmachine import MemMachine, MemoryType
+from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 

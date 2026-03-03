@@ -65,7 +65,7 @@ chain-relationship questions.
 ## Where It Fits
 
 The retrieval agent is created in
-`src/memmachine/retrieval_agent/service_locator.py` and cached in `MemMachine`.
+`packages/server/src/memmachine_server/retrieval_agent/service_locator.py` and cached in `MemMachine`.
 It is used only for long-term episodic retrieval.
 
 - Request flow:
@@ -83,7 +83,7 @@ It is used only for long-term episodic retrieval.
 
 ### 1) Shared Agent API
 
-`src/memmachine/retrieval_agent/common/agent_api.py` defines:
+`packages/server/src/memmachine_server/retrieval_agent/common/agent_api.py` defines:
 
 - `QueryParam`: query text, limit, context expansion, optional property filter.
 - `QueryPolicy`: budget/quality policy inputs (currently mostly advisory).
@@ -94,7 +94,7 @@ It is used only for long-term episodic retrieval.
 
 ### 2) MemMachineAgent (Direct Retrieval)
 
-`src/memmachine/retrieval_agent/agents/memmachine_retriever.py`
+`packages/server/src/memmachine_server/retrieval_agent/agents/memmachine_retriever.py`
 
 - Calls `EpisodicMemory.query_memory(..., mode=LONG_TERM_ONLY)` directly.
 - Returns episodes plus basic metrics (`memory_search_called`,
@@ -103,7 +103,7 @@ It is used only for long-term episodic retrieval.
 
 ### 3) SplitQueryAgent (Independent Sub-Queries)
 
-`src/memmachine/retrieval_agent/agents/split_query_agent.py`
+`packages/server/src/memmachine_server/retrieval_agent/agents/split_query_agent.py`
 
 - Uses an LLM prompt to split a complex single-hop query into sub-queries.
 - Runs child retrieval for each sub-query.
@@ -112,7 +112,7 @@ It is used only for long-term episodic retrieval.
 
 ### 4) ChainOfQueryAgent (Iterative Multi-Hop)
 
-`src/memmachine/retrieval_agent/agents/coq_agent.py`
+`packages/server/src/memmachine_server/retrieval_agent/agents/coq_agent.py`
 
 - Iterates up to `max_attempts`.
 - Each iteration:
@@ -125,7 +125,7 @@ It is used only for long-term episodic retrieval.
 
 ### 5) ToolSelectAgent (Router)
 
-`src/memmachine/retrieval_agent/agents/tool_select_agent.py`
+`packages/server/src/memmachine_server/retrieval_agent/agents/tool_select_agent.py`
 
 - Uses an LLM prompt to choose exactly one strategy tool:
   - `ChainOfQueryAgent`
@@ -136,7 +136,7 @@ It is used only for long-term episodic retrieval.
 
 ## Assembly in Service Locator
 
-`src/memmachine/retrieval_agent/service_locator.py` creates a layered tool
+`packages/server/src/memmachine_server/retrieval_agent/service_locator.py` creates a layered tool
 tree:
 
 1. `MemMachineAgent` (leaf; direct memory search)
