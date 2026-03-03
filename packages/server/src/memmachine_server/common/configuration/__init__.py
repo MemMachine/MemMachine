@@ -119,6 +119,15 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+    max_features_per_update: int = Field(
+        default=50,
+        description=(
+            "Maximum number of existing features passed to the LLM per ingestion update call. "
+            "Limits the LLM response size to prevent token-budget overflow when the profile "
+            "has grown very large."
+        ),
+        gt=0,
+    )
 
     @model_validator(mode="after")
     def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:
