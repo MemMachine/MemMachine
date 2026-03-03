@@ -101,8 +101,15 @@ find_docker_compose() {
         print_error "Docker Compose is not installed. Please install Docker Compose first."
         exit 1
     fi
-    
-    print_success "Docker and Docker Compose are available"
+    if [[ -z "$COMPOSE_PROJECT" ]]; then
+        COMPOSE_PROJECT="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')"
+    fi
+    if [[ $(docker ps --format 'table {{.Names}}\t{{.Label "com.docker.compose.project"}}' |grep -q "$COMPOSE_PROJECT" && echo "yes" || echo "no") != "no" ]] && [[ "$1" -ne "clean" ]]; then
+        print_error "Existing Docker Compose project detected with name: $COMPOSE_PROJECT - please set a different project name (COMPOSE_PROJECT) or remove existing containers to avoid conflicts."
+        exit 1
+    fi
+    COMPOSE_CMD="$COMPOSE_CMD -p $COMPOSE_PROJECT"
+    print_success "Docker and Docker Compose are available (compose project: $COMPOSE_PROJECT)"
 }
 
 # Check if .env file exists
@@ -798,7 +805,7 @@ wait_for_health() {
     
     # Wait for PostgreSQL
     print_info "Waiting for PostgreSQL to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-postgres pg_isready -U ${POSTGRES_USER:-memmachine} -d ${POSTGRES_DB:-memmachine}; do sleep 2; done"; then
+    if timeout 120 bash -c "until $COMPOSE_CMD exec -T postgres pg_isready -U ${POSTGRES_USER:-memmachine} -d ${POSTGRES_DB:-memmachine}; do sleep 2; done"; then
         print_success "PostgreSQL is ready"
     else
         print_error "PostgreSQL failed to become ready in 120 seconds. Check container logs and configuration."
@@ -807,7 +814,7 @@ wait_for_health() {
     
     # Wait for Neo4j
     print_info "Waiting for Neo4j to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
+    if timeout 120 bash -c "until $COMPOSE_CMD exec -T neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
         print_success "Neo4j is ready"
     else
         print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
