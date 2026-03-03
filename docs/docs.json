@@ -108,7 +108,15 @@
           },
           {
             "group": "REST API",
-            "openapi": "openapi.json"
+            "pages": [
+              "api-reference/projects",
+              "api-reference/memories-core",
+              "api-reference/memories-semantic",
+              "api-reference/memories-episodic",
+              "api-reference/configuration-resources",
+              "api-reference/configuration-system",
+              "api-reference/systems"
+              ]
             },
           {
           "group": "Typescript REST SDK",
