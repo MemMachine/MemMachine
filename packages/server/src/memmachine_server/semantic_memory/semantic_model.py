@@ -57,7 +57,7 @@ class StructuredSemanticPrompt(BaseModel):
 
     @property
     def consolidation_prompt(self) -> str:
-        return semantic_prompt_template.build_consolidation_prompt()
+        return semantic_prompt_template.build_consolidation_prompt(tags=self.tags)
 
 
 class SemanticFeature(BaseModel):
