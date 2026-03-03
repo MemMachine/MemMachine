@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine.common.episode_store import Episode  # noqa: E402
+from memmachine_server.common.episode_store import Episode  # noqa: E402
 
 from evaluation.utils import agent_utils  # noqa: E402
 

@@ -145,7 +145,9 @@ run_test() {
             ;;
     esac
 
-    SCRIPT_DIR=$(dirname "$0")
+    SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+    REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+    export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/packages/common/src:${REPO_ROOT}/packages/server/src:${REPO_ROOT}/packages/client/src${PYTHONPATH:+:${PYTHONPATH}}"
     mkdir -p ${SCRIPT_DIR}/result/final_score
     RESULT_FILE="${SCRIPT_DIR}/result/${TEST}_${TEST_TARGET}_output_${RESULT_POSTFIX}.json"
     EVAL_FILE="${SCRIPT_DIR}/result/${TEST}_${TEST_TARGET}_evaluation_metrics_${RESULT_POSTFIX}.json"
@@ -156,20 +158,20 @@ run_test() {
 
     case "$TEST" in
         locomo)
-            INGEST_CMD=(python -u locomo_ingest.py --data-path $SCRIPT_DIR/../data/locomo10.json)
-            SEARCH_CMD=(python -u locomo_search.py --data-path $SCRIPT_DIR/../data/locomo10.json --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET")
+            INGEST_CMD=(python -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json")
+            SEARCH_CMD=(python -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET")
             ;;
         wikimultihop)
-            INGEST_CMD=(python -u wikimultihop_ingest.py --data-path $SCRIPT_DIR/../data/wikimultihop.json --length "$LENGTH")
-            SEARCH_CMD=(python -u wikimultihop_search.py --data-path $SCRIPT_DIR/../data/wikimultihop.json --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH")
+            INGEST_CMD=(python -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH")
+            SEARCH_CMD=(python -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH")
             ;;
         hotpotqa)
-            INGEST_CMD=(python -u hotpotQA_test.py --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
-            SEARCH_CMD=(python -u hotpotQA_test.py --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
+            INGEST_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
+            SEARCH_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
             ;;
         longmemeval)
-            INGEST_CMD=(uv run python -u longmemeval_test.py --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
-            SEARCH_CMD=(uv run python -u longmemeval_test.py --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
+            INGEST_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
+            SEARCH_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
             ;;
     esac
 
@@ -177,8 +179,8 @@ run_test() {
         "${INGEST_CMD[@]}"
     elif [[ "$INGEST" = "search" ]]; then
         "${SEARCH_CMD[@]}"
-        python evaluate.py --data-path "$RESULT_FILE" --target-path "$EVAL_FILE"
-        python generate_scores.py --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
+        python "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE"
+        python "$SCRIPT_DIR/generate_scores.py" --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
         cat "$FINAL_SCORE_FILE"
     else
         echo "Unknown RUN_TYPE: $INGEST"

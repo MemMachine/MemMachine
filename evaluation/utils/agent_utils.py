@@ -6,31 +6,31 @@ from typing import Any
 import boto3
 import neo4j
 import openai
-from memmachine.common.embedder.openai_embedder import (
+from memmachine_server.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
 )
-from memmachine.common.episode_store.episode_model import episodes_to_string
-from memmachine.common.language_model.language_model import LanguageModel
-from memmachine.common.language_model.openai_responses_language_model import (
+from memmachine_server.common.episode_store.episode_model import episodes_to_string
+from memmachine_server.common.language_model.language_model import LanguageModel
+from memmachine_server.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
     OpenAIResponsesLanguageModelParams,
 )
-from memmachine.common.metrics_factory import PrometheusMetricsFactory
-from memmachine.common.reranker.amazon_bedrock_reranker import (
+from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
+from memmachine_server.common.reranker.amazon_bedrock_reranker import (
     AmazonBedrockReranker,
     AmazonBedrockRerankerParams,
 )
-from memmachine.common.reranker.reranker import Reranker
-from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
+from memmachine_server.common.reranker.reranker import Reranker
+from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
-from memmachine.episodic_memory import EpisodicMemory
-from memmachine.episodic_memory.episodic_memory import (
+from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemoryParams,
 )
-from memmachine.episodic_memory.long_term_memory import (
+from memmachine_server.episodic_memory.long_term_memory import (
     LongTermMemory,
     LongTermMemoryParams,
 )
