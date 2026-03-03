@@ -35,6 +35,10 @@
     {
       "name": "Configuration: System",
       "description": "Global and project-level memory rail settings."
+    },
+    {
+        "name": "Systems",
+        "description": "System-level operations and metrics."
     }
   ],
   "paths": {
@@ -1376,7 +1380,7 @@
     "/metrics": {
       "get": {
         "tags": [
-          "System"
+          "Systems"
         ],
         "summary": "Metrics",
         "description": "Expose Prometheus metrics endpoint.",
@@ -1401,7 +1405,7 @@
     "/health": {
       "get": {
         "tags": [
-          "System"
+          "Systems"
         ],
         "summary": "Health Check",
         "description": "Health check endpoint for container orchestration.",
