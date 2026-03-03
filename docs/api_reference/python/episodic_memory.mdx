@@ -1,158 +1,76 @@
 ---
 title: "Episodic Memory"
-description: "Server-side Episodic Memory API"
-icon: "server"
+description: "Server-side implementation of session-based conversational memory."
+icon: "brain"
 ---
 
-Defines the core memory instance for a specific conversational context.
+The **Episodic Memory** module manages the "stream" of interactions for a specific session. It orchestrates the flow of data between the incoming API requests and the underlying vector and relational databases.
 
-This module provides the `EpisodicMemory` class, which acts as the primary
-orchestrator for an individual memory session. It integrates short-term
-(session) and long-term (declarative) memory stores to provide a unified
-interface for adding and retrieving conversational data.
+## The Ingestion Pipeline
 
-Key responsibilities include:
-- Managing the lifecycle of the memory instance through reference counting.
-- Adding new conversational `Episode` objects to both session and declarative
-  memory.
-- Retrieving relevant context for a query by searching both memory types.
-- Interacting with a language model for memory-related tasks.
-- Each instance is managed by the `EpisodicMemoryManager`.
+When the server receives an `AddMemoriesSpec` from the SDK, it triggers a transformation pipeline within the service layer.
 
-## Class `EpisodicFilter`
+### Data Mapping: SDK to Server
+The server maps the high-level `MemoryMessage` from the client into a persistent **`EpisodeEntry`**. This process includes:
 
-Callable protocol representing an episode filter predicate.
+- **Producer Mapping:** The SDK's `producer` field is mapped to the internal `producer_id`.
+- **Role Assignment:** Validates the `producer_role` (e.g., "user", "assistant").
+- **Timestamp Normalization:** Converts various incoming date formats into a standardized `AwareDatetime` (UTC).
+- **Metadata Casting:** Raw JSON payloads are cast to `dict[str, JsonValue]` for storage compatibility.
 
-```python
-def EpisodicFilter()
-```
 
-## Class `EpisodicMemoryParams`
 
-Parameters for configuring the EpisodicMemory.
+---
 
-Attributes:
-    session_key (str): The unique identifier for the session.
-    metrics_factory (MetricsFactory): The metrics factory.
-    long_term_memory (LongTermMemory): The long-term memory.
-    short_term_memory (ShortTermMemory): The short-term memory.
-    enabled (bool): Whether the episodic memory is enabled.
+## Memory Configuration
 
-```python
-def EpisodicMemoryParams()
-```
+The server allows for granular control over how episodic data is handled through two distinct sub-modules:
 
-### `validate_memory_params`
+### 1. Short-Term Memory (STM)
+- **Responsibility:** Manages the immediate context window.
+- **Server Logic:** Controls the retrieval of the most recent N episodes to provide "sliding window" context for LLM prompts.
+- **Operations:** `configure_short_term_memory` allows the server to toggle STM usage or adjust window sizes.
 
-```python
-def validate_memory_params()
-```
+### 2. Long-Term Memory (LTM)
+- **Responsibility:** Manages the persistent, vector-indexed history of a session.
+- **Server Logic:** Handles the "summarization" loop, where older episodic memories are condensed to save space while retaining semantic meaning.
+- **Operations:** `configure_long_term_memory` enables or disables the backend vector-search retrieval for historical context.
 
-**Parameters**
+---
 
-| Name | Type | Description |
+## Internal Server Classes
+
+### `EpisodicMemoryParams`
+This dataclass defines the environment for a memory instance.
+
+| Attribute | Type | Description |
 | :--- | :--- | :--- |
+| `session_key` | `str` | The `{org_id}/{project_id}` unique identifier. |
+| `long_term_memory` | `LongTermMemory` | The backend vector store instance for this session. |
+| `short_term_memory` | `ShortTermMemory` | The backend relational/cache store for the context window. |
+| `metrics_factory` | `MetricsFactory` | Telemetry provider for monitoring ingestion rates. |
 
-## Class `EpisodicMemory`
-
-Represents a single, isolated memory instance for a specific session.
-
-This class orchestrates the interaction between short-term (session)
-memory and long-term (declarative) memory. It manages the lifecycle of
-the memory, handles adding new information (episodes), and provides
-methods to retrieve contextual information for queries.
-
-Each instance is tied to a unique session key
+### `EpisodeEntry` (Internal Model)
+Unlike the SDK's `Episode`, the server's `EpisodeEntry` includes internal tracking fields:
 
 ```python
-def EpisodicMemory(params: EpisodicMemoryParams)
+# Internal server-side structure
+class EpisodeEntry:
+    content: str
+    producer_id: str
+    produced_for_id: str
+    producer_role: str
+    created_at: datetime
+    metadata: dict[str, JsonValue]
+    episode_type: EpisodeType # Defaults to MESSAGE
 ```
 
-**Parameters**
 
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `params` | `EpisodicMemoryParams` | - |
 
-### `short_term_memory`
+## Lifecycle Management
 
-Get the short-term memory of the episodic memory instance.
+Episodic memory instances are **stateful** but **cached**.
 
-```python
-def short_term_memory()
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-
-**Returns**
-
-The short-term memory of the episodic memory instance.
-
-### `short_term_memory`
-
-Set the short-term memory of the episodic memory instance.
-
-This makes the short term memory can be injected.
-
-```python
-def short_term_memory(value: ShortTermMemory | None)
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `value` | `ShortTermMemory | None` | The new short-term memory of the episodic memory instance. |
-
-### `long_term_memory`
-
-Get the long-term memory of the episodic memory instance.
-
-```python
-def long_term_memory()
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-
-**Returns**
-
-The long-term memory of the episodic memory instance.
-
-### `long_term_memory`
-
-Set the long-term memory of the episodic memory instance.
-
-This makes the long term memory can be injected.
-
-```python
-def long_term_memory(value: LongTermMemory | None)
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `value` | `LongTermMemory | None` | The new long-term memory of the episodic memory instance. |
-
-### `session_key`
-
-Get the session key of the episodic memory instance.
-
-```python
-def session_key()
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-
-**Returns**
-
-The session key of the episodic memory instance.
+1. **Creation:** When an API request arrives for a new session, the `EpisodicMemoryManager` instantiates the episodic sub-system.
+2. **Reference Counting:** The server tracks how many active requests are utilizing a specific session instance.
+3. **Cleanup:** Once the reference count drops to zero and the `max_life_time` is exceeded, the server flushes caches and closes database connections to conserve resources.

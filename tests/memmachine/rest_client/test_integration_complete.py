@@ -1030,7 +1030,7 @@ class TestMemMachineIntegration:
 
     def test_add_feature(self, memory, unique_test_ids):
         """Test adding a semantic feature."""
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
         feature_id = memory.add_feature(
             set_id=set_id,
             category_name="profile",
@@ -1049,7 +1049,7 @@ class TestMemMachineIntegration:
         result = memory.add("I love Italian food", role="user")
         episode_id = result[0].uid
 
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
         feature_id = memory.add_feature(
             set_id=set_id,
             category_name="profile",
@@ -1065,7 +1065,7 @@ class TestMemMachineIntegration:
 
     def test_get_feature(self, memory, unique_test_ids):
         """Test retrieving a semantic feature."""
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
 
         # Add a feature first
         feature_id = memory.add_feature(
@@ -1091,7 +1091,7 @@ class TestMemMachineIntegration:
         result = memory.add("I enjoy classical music too", role="user")
         episode_id = result[0].uid
 
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
 
         # Add a feature with citation
         feature_id = memory.add_feature(
@@ -1119,7 +1119,7 @@ class TestMemMachineIntegration:
 
     def test_update_feature(self, memory, unique_test_ids):
         """Test updating a semantic feature."""
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
 
         # Add a feature first
         feature_id = memory.add_feature(
@@ -1144,7 +1144,7 @@ class TestMemMachineIntegration:
 
     def test_update_feature_all_fields(self, memory, unique_test_ids):
         """Test updating all fields of a feature."""
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
 
         # Add a feature first
         feature_id = memory.add_feature(
@@ -1176,7 +1176,7 @@ class TestMemMachineIntegration:
 
     def test_feature_lifecycle(self, memory, unique_test_ids):
         """Test complete feature lifecycle: add, get, update, delete."""
-        set_id = f"mem_user_set_{unique_test_ids['user_id']}"
+        set_id = f"mem_project_set_{unique_test_ids['project_id']}"
 
         # Step 1: Add feature
         feature_id = memory.add_feature(

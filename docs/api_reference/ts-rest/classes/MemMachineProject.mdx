@@ -1,23 +1,42 @@
 ---
 title: "MemMachineProject"
-description: "Manage project-level configurations and access associated memory."
+description: "Class for managing the lifecycle, configuration, and memory scaling of a specific project."
 ---
 
-## Class `MemMachineProject`
+## Overview
 
-The `MemMachineProject` class provides methods to manage and interact with specific projects in MemMachine. It acts as the bridge between your high-level client and the specific memory engine for a project.
+The `MemMachineProject` class provides methods to manage and interact with projects within the MemMachine ecosystem[cite: 1]. It serves as a middle-tier controller, allowing you to create projects, check memory usage, and spawn dedicated memory management instances.
 
-While you can instantiate this class directly, the recommended way is to use the `client.project()` method.
+### Key Features
+* **Project Lifecycle:** Create, retrieve, and delete project entities on the server.
+* **Memory Factory:** Initialize `MemMachineMemory` instances scoped to this project.
+* **Usage Metrics:** Retrieve the total count of episodic memories stored within the project.
+
+---
+
+## Constructor
+
+### `new MemMachineProject()`
+
+Initializes a project instance. This is typically accessed via `client.project()`.
 
 ```typescript
-const project = client.project({ org_id: 'your_org', project_id: 'your_project' });
+new MemMachineProject(client: AxiosInstance, projectContext: ProjectContext)
 ```
 
-**Parameters**
+| **Parameter**    | **Type**                                                     | **Description**                                     |
+| ---------------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| `client`         | `AxiosInstance`                                              | Internal Axios instance for API communication.      |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | Scoping identifiers like `org_id` and `project_id`. |
 
-| **Name**         | **Type**                                                     | **Description**                           |
-| ---------------- | ------------------------------------------------------------ | ----------------------------------------- |
-| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | The organization and project identifiers. |
+------
+
+## Properties
+
+| **Property**     | **Type**                                                     | **Description**                              |
+| ---------------- | ------------------------------------------------------------ | -------------------------------------------- |
+| `client`         | `AxiosInstance`                                              | The underlying HTTP client.                  |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | The active organizational and project scope. |
 
 ------
 
@@ -25,103 +44,68 @@ const project = client.project({ org_id: 'your_org', project_id: 'your_project' 
 
 ### `create()`
 
-Creates a new project on the MemMachine server if it does not already exist.
+Initializes the project on the MemMachine server.
 
 ```typescript
-await project.create(options?: CreateProjectOptions)
+create(options?: CreateProjectOptions): Promise<Project>
 ```
 
-**Parameters**
-
-| **Name**  | **Type**                                                     | **Description**                                  |
-| --------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `options` | [`CreateProjectOptions`](../interfaces/ProjectContext) | Optional settings such as a project description. |
-
-**Returns**
-
-- `Promise<Project>` — The newly created [Project](../interfaces/Project) entity.
-
-------
-
-### `memory()`
-
-Creates a `MemMachineMemory` instance for managing and searching memories within this specific project.
-
-
-```typescript
-project.memory(memoryContext?: MemoryContext)
-```
-
-**Parameters**
-
-| **Name**        | **Type**                                                     | **Description**                              |
-| --------------- | ------------------------------------------------------------ | -------------------------------------------- |
-| `memoryContext` | [`MemoryContext`](../interfaces/Project) | Optional context to narrow the memory scope. |
-
-**Returns**
-
-- [`MemMachineMemory`](./MemMachineMemory)
-
-------
+- **Parameters:** `options` — [`CreateProjectOptions`](../interfaces/CreateProjectOptions) (Optional).
+- **Throws:** [`MemMachineAPIError`](./MemMachineAPIError) if the request fails.
 
 ### `get()`
 
-Fetches the current project details from the MemMachine server.
-
+Retrieves the current metadata and state of the project from the server.
 
 ```typescript
-await project.get()
+get(): Promise<Project>
 ```
 
-**Returns**
-
-- `Promise<Project>` — The [Project](../interfaces/Project) entity containing metadata and configuration.
-
-------
+- **Returns:** `Promise<Project>` — The current project data model.
 
 ### `getEpisodicCount()`
 
-Retrieves the total count of episodic memories currently stored within this project.
+Retrieves the total number of episodic memories associated with this project.
 
 ```typescript
-await project.getEpisodicCount()
+getEpisodicCount(): Promise<number>
 ```
 
-**Returns**
+### `memory()`
 
-- `Promise<number>` — The total count of memories.
+Creates a `MemMachineMemory` instance scoped to this project.
 
-------
+```typescript
+memory(memoryContext?: MemoryContext): MemMachineMemory
+```
+
+- **Parameters:** `memoryContext` — [`MemoryContext`](../interfaces/MemoryContext) (Optional).
+
 
 ### `delete()`
 
-Permanently removes the project and all of its associated episodic and semantic memories from the server.
+Permanently removes the project and all associated memories from the server.
 
 ```typescript
-await project.delete()
+delete(): Promise<null>
 ```
-
-**Throws**
-
-- [`MemMachineAPIError`](./MemMachineAPIError) if the project cannot be deleted.
 
 ------
 
 ## Usage Example
 
 ```typescript
-import { MemMachineClient } from '@memmachine/client';
+const project = client.project({ org_id: 'org_123', project_id: 'proj_456' });
 
-const client = new MemMachineClient({ base_url: 'your-base-url' });
-const project = client.project({ org_id: 'acme_corp', project_id: 'internal_ai' });
+// 1. Create the project if it doesn't exist
+await project.create({ description: 'AI Assistant Context' });
 
-// 1. Initialize the project on the server
-await project.create({ description: 'AI assistant memory storage' });
-
-// 2. Check how much memory we have stored
+// 2. Check the memory footprint
 const count = await project.getEpisodicCount();
 console.log(`Current memory count: ${count}`);
 
-// 3. Access the memory engine
+// 3. Access memory operations
 const memory = project.memory();
 ```
+
+<Note> This class is the recommended gateway for memory management. Always use `project.memory()` to ensure your operations are correctly scoped to your organization and project ID. </Note>

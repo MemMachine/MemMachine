@@ -1,108 +1,78 @@
 ---
-title: "Core Data structures" 
-description: "This document outlines the core data structures used for managing memory, including sessions, contexts, and individual events (episodes)." 
+title: "Memory Types & Models" 
+description: "Reference for the atomic Enums and Pydantic models used by the MemMachine server." 
 icon: "cube"
 ---
-These data types are the atomic building blocks of the MemMachine SDK. They define how individual events (`Episode`) are recorded and how memory instances are securely isolated for different conversations (`MemoryContext`).
 
-<a id="memmachine.core_types.ContentType"></a>
+The server utilizes a standardized set of types and models to ensure that data is validated and typed consistently across the **Service** and **Router** layers. These types are the "Source of Truth" for how the server interprets incoming requests.
 
-## ContentType (Enum)
+## API Enumerations
 
-```python
-class ContentType(Enum)
-```
+Enums are used to route logic within the service layer and categorize data in the persistent stores.
 
-This enumeration specifies the format of the data stored within an **`Episode`'s `content` field**.
+### `MemoryType`
+Defined in `memmachine.common.api`, this enum determines which store and service logic a request should target.
 
-| Member   | Value      | Description                            |
-| -------- | ---------- | -------------------------------------- |
-| `STRING` | `"string"` | The content is a standard text string. |
+| Member | Value | Description |
+| :--- | :--- | :--- |
+| `Episodic` | `"episodic"` | Targets session-based conversational stores. |
+| `Semantic` | `"semantic"` | Targets the structured knowledge graph and tag stores. |
 
-<Note> This design allows for future expansion to support other data formats like vector embeddings or image metadata without changing the core episode structure.</Note>
+### `EpisodeType`
+Used within episodic memory to distinguish between different kinds of events.
 
-<a id="memmachine.core_types.Episode"></a>
+| Member | Value | Description |
+| :--- | :--- | :--- |
+| `MESSAGE` | `"message"` | Represents a standard conversational exchange (User/Assistant). |
 
-## Episode Objects
+---
 
-```python
-@dataclass(kw_only=True)
-class Episode
-```
+## Core Specification Models (DTOs)
 
-An **`Episode`** represents a single, atomic event or piece of data in the memory system (e.g., a user message, an agent's internal thought).
+The server relies on Pydantic models defined in `spec.py` to validate and parse incoming data.
 
-The use of `@dataclass(kw_only=True)` means **all fields must be specified using keyword arguments** when you create an `Episode` instance.
-
-| Field                 | Type               | Description                                                  |
-| --------------------- | ------------------ | ------------------------------------------------------------ |
-| **`uuid`**            | `UUID`             | A unique identifier for this specific episode.               |
-| **`episode_type`**    | `str`              | The category of event (e.g., `'message'`, `'thought'`, `'action'`). |
-| **`content_type`**    | `ContentType`      | The type of the data stored in the `content` field.          |
-| **`content`**         | `Any`              | The actual data of the episode.                              |
-| **`timestamp`**       | `datetime`         | The date and time when the episode occurred.                 |
-| **`group_id`**        | `str`              | Identifier for the larger conversation **group**.            |
-| **`session_id`**      | `str`              | Identifier for the specific **session** this episode belongs to. |
-| **`producer_id`**     | `str`              | The ID of the user or agent that created this episode.       |
-| **`produced_for_id`** | `str | None`       | The ID of the intended recipient, if any.                    |
-| **`user_metadata`**   | `JSONValue | None` | A dictionary for any additional, custom metadata in a JSON-compatible format. |
-
-<a id="memmachine.core_types.MemoryContext"></a>
-
-## MemoryContext Objects
+### `MemoryMessage`
+The primary unit of ingestion for Episodic memory.
 
 ```python
-@dataclass
-class MemoryContext
+class MemoryMessage(BaseModel):
+    content: str        # The raw text of the message
+    producer: str       # The ID of the human or agent creator
+    produced_for: str   # The recipient ID
+    timestamp: datetime # Standardized UTC timestamp
+    role: str           # e.g., "user", "assistant", or "system"
+    metadata: dict      # Custom JSON metadata
 ```
 
-The **`MemoryContext`** is used by the `EpisodicMemoryManager` to define the unique identifier for a memory instance. It ensures that memory access is isolated to the correct conversation.
-
-| Field            | Type       | Description                                 |
-| ---------------- | ---------- | ------------------------------------------- |
-| **`group_id`**   | `str`      | The identifier for the group context.       |
-| **`agent_id`**   | `set[str]` | A set of agent identifiers for the context. |
-| **`user_id`**    | `set[str]` | A set of user identifiers for the context.  |
-| **`session_id`** | `str`      | The identifier for the session context.     |
 
 
-### Special Behavior for Isolation
-<Callout icon="key" color="#FFC107" iconType="regular">The `MemoryContext` implements custom equality (`__eq__`) and hashing (`__hash__`) methods. **A memory context is considered equal to another *if and only if* their `group_id` and `session_id` match.** This ensures that the manager correctly uses these two fields as the primary lookup key for active memory instances, regardless of how the agent and user sets are structured.</Callout>
+### `SemanticFeature`
 
+The standardized output format for knowledge retrieved from the Semantic store.
 
-<a id="memmachine.core_types.SessionInfo"></a>
+| **Field**         | **Type** | **Description**                                        |
+| ----------------- | -------- | ------------------------------------------------------ |
+| **`id`**          | `str`    | Unique UUID for the semantic tag.                      |
+| **`category_id`** | `str`    | The parent category this tag belongs to.               |
+| **`value`**       | `str`    | The actual knowledge value (e.g., "Likes Spicy Food"). |
+| **`metadata`**    | `dict`   | Contextual data regarding the source of the knowledge. |
 
-## SessionInfo Objects
+------
 
-```python
-@dataclass
-class SessionInfo
-```
+## Content and Serialization
 
-The **`SessionInfo`** holds all the persistent metadata about a single conversation session. This is retrieved from the `SessionManager` when an existing memory instance is opened.
+### `ContentType` (Enum)
 
-| Field               | Type        | Description                                                  |
-| ------------------- | ----------- | ------------------------------------------------------------ |
-| **`group_id`**      | `str`       | The identifier for the group conversation.                   |
-| **`session_id`**    | `str`       | The unique string identifier for the session.                |
-| **`agent_ids`**     | `list[str]` | A list of agent IDs participating in the session.            |
-| **`user_ids`**      | `list[str]` | A list of user IDs participating in the session.             |
-| **`configuration`** | `dict`      | A dictionary containing any custom configuration for this session. |
+Specifies the format of data stored within an entry.
 
-<a id="memmachine.core_types.GroupConfiguration"></a>
+| **Member** | **Value**  | **Description**                              |
+| ---------- | ---------- | -------------------------------------------- |
+| `STRING`   | `"string"` | The content is a standard UTF-8 text string. |
 
-## GroupConfiguration Objects
+<Note> While the current implementation primarily uses `STRING`, the server architecture is designed to support future serialization of vector embeddings or binary objects without altering the core schema. </Note>
 
-```python
-@dataclass
-class GroupConfiguration
-```
+------
 
-The **`GroupConfiguration`** holds persistent metadata about a multi-session conversation group.
+## Legacy Structures
 
-| Field               | Type        | Description                                                  |
-| ------------------- | ----------- | ------------------------------------------------------------ |
-| **`group_id`**      | `str`       | The unique identifier for the group.                         |
-| **`agent_list`**    | `list[str]` | A list of agent IDs that belong to the group.                |
-| **`user_list`**     | `list[str]` | A list of user IDs that belong to the group.                 |
-| **`configuration`** | `dict`      | A dictionary containing any custom configuration for the group. |
+<Warning> The `GroupConfiguration` and `MemoryContext` objects from v1 are deprecated in the v2 API. The server now uses an **Org/Project/Session** hierarchy for secure data isolation, which is managed via the `_WithOrgAndProj` base model in `spec.py`. </Warning>

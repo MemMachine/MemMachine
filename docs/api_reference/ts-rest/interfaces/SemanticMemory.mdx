@@ -1,0 +1,32 @@
+---
+title: "SemanticMemory"
+description: "The data model representing extracted knowledge or categorical facts."
+---
+
+## Overview
+
+`SemanticMemory` represents distilled knowledge or specific attributes extracted from episodic data, organized by categories and tags.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `category` | `string` | The high-level grouping for this memory (e.g., "preferences"). |
+| `feature_name` | `string` | The specific attribute name. |
+| `value` | `string` | The data or fact stored for this feature. |
+| `tag` | `string` | A searchable label associated with the memory. |
+| `set_id` | `string` | The identifier for the collection this memory belongs to. |
+| `metadata` | `string[]` | Associated citations and identifiers. |
+
+---
+
+## Usage Example
+
+```typescript
+const knowledge = searchResponse.content.semantic_memory;
+
+console.log('Knowledge points:');
+console.dir(knowledge , { depth: null });
+```

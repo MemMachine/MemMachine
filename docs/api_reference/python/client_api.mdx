@@ -1,165 +1,110 @@
 ---
 title: "Client API"
-description: "Low-level API reference for MemMachineClient"
+description: "High-level API reference for the Namespaced MemMachineClient"
 icon: "code"
 ---
 
-Client utilities for interacting with the MemMachine HTTP API.
+`MemMachineClient` is the primary interface for managing episodic and semantic memory. The client is organized into logical **Namespaces** to improve discoverability and match the modular backend architecture.
 
-## Class `MemMachineClient`
+## Initialization
 
-Main client class for interacting with MemMachine memory system.
-
-This client provides a high-level interface for managing episodic and profile
-memory. It handles authentication and provides convenient methods for memory operations.
+The client manages a persistent HTTP session, handles authentication, and provides global timeout settings for all sub-client requests.
 
 ```python
-def MemMachineClient(api_key: str | None, base_url: str | None, timeout: int, max_retries: int)
+from memmachine import MemMachineClient
+
+client = MemMachineClient(
+    base_url="http://localhost:8080",
+    api_key="your-api-key-here",
+    timeout=30.0
+)
 ```
 
-**Parameters**
+### Parameters
 
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `api_key` | `str | None` | - |
-| `base_url` | `str | None` | - |
-| `timeout` | `int` | - |
-| `max_retries` | `int` | - |
+| **Parameter** | **Type**     | **Default**               | **Description**                                       |
+| ------------- | ------------ | ------------------------- | ----------------------------------------------------- |
+| `base_url`    | `str`        | `"http://localhost:8080"` | The root URL of your MemMachine server.               |
+| `api_key`     | `str | None` | `None`                    | Optional bearer token for authenticated environments. |
+| `timeout`     | `float`      | `30.0`                    | Global request timeout in seconds.                    |
+
+------
+
+## Namespaces
+
+The client is divided into specialized sub-clients. Accessing these allows you to perform operations specific to those domains.
+
+| **Namespace**     | **Accessor**      | **Purpose**                                                |
+| ----------------- | ----------------- | ---------------------------------------------------------- |
+| **Projects**      | `client.projects` | Create, delete, and list isolated memory namespaces.       |
+| **Memories**      | `client.memories` | Ingest episodic messages and perform hybrid searches.      |
+| **Semantic**      | `client.semantic` | Manage the "Knowledge Graph" (Sets, Categories, and Tags). |
+| **Configuration** | `client.config`   | Manage LLMs, Embedders, and runtime memory settings.       |
+| **System**        | `client.system`   | Monitor health, metrics, and server versioning.            |
+
+------
+
+## Core Client Methods
+
+While most operations live in namespaces, the root client provides session management and raw request capabilities.
 
 ### `request`
 
-Make an HTTP request using the client's session.
+Make an authenticated HTTP request using the client's internal session.
 
 ```python
-def request(method: str, url: str, timeout: int | None)
+response = client.request(method="GET", path="/health")
 ```
 
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `method` | `str` | HTTP method (GET, POST, etc.) |
-| `url` | `str` | Request URL |
-| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided) **kwargs: Additional arguments passed to requests.Session.request()  |
-
-**Returns**
-
-Response object from the request
-
-**Raises**
-
-requests.RequestException: If the request fails
-
-### `create_project`
-
-Create a new project in MemMachine.
-
-```python
-def create_project(org_id: str, project_id: str, description: str, embedder: str, reranker: str, timeout: int | None)
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `org_id` | `str` | Organization identifier (required) |
-| `project_id` | `str` | Project identifier (required) |
-| `description` | `str` | Optional description for the project (default: "") |
-| `embedder` | `str` | Embedder model name to use (default: "default") |
-| `reranker` | `str` | Reranker model name to use (default: "default") |
-| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
-
-**Returns**
-
-Project instance representing the created project
-
-**Raises**
-
-requests.RequestException: If the request fails
-    RuntimeError: If the client has been closed
-
-### `get_project`
-
-Get an existing project from MemMachine.
-
-```python
-def get_project(org_id: str, project_id: str, timeout: int | None)
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `org_id` | `str` | Organization identifier (required) |
-| `project_id` | `str` | Project identifier (required) |
-| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
-
-**Returns**
-
-Project instance representing the project
-
-**Raises**
-
-requests.RequestException: If the request fails
-    RuntimeError: If the client has been closed
-
-### `health_check`
-
-Check the health status of the MemMachine server.
-
-```python
-def health_check(timeout: int | None)
-```
-
-**Parameters**
-
-| Name | Type | Description |
-| :--- | :--- | :--- |
-| `timeout` | `int | None` | Request timeout in seconds (uses client default if not provided)  |
-
-**Returns**
-
-Dictionary containing health status information
-
-**Raises**
-
-requests.RequestException: If the health check fails
+| **Parameter** | **Type** | **Description**                                            |
+| ------------- | -------- | ---------------------------------------------------------- |
+| `method`      | `str`    | HTTP verb (e.g., `"POST"`, `"GET"`, `"PUT"`, `"DELETE"`).  |
+| `path`        | `str`    | The endpoint path (e.g., `"/projects"`).                   |
+| `**kwargs`    | `any`    | Additional arguments passed to the underlying HTTP client. |
 
 ### `close`
 
-Close the client and clean up resources.
+Cleanly shut down the HTTP connection pool. This is called automatically if using the client as a context manager.
 
 ```python
-def close()
+client.close()
 ```
 
-**Parameters**
+### `health_check`
 
-| Name | Type | Description |
-| :--- | :--- | :--- |
-
-### `session`
-
-Expose the underlying requests session for advanced usage.
+A convenience method to verify connectivity to the server.
 
 ```python
-def session()
+status = client.health_check()
 ```
 
-**Parameters**
+**Returns:**
 
-| Name | Type | Description |
-| :--- | :--- | :--- |
+A dictionary containing `status`, `service`, and `version`.
 
-### `closed`
+------
 
-Check if the client has been closed.
+## Usage Patterns
+
+### Context Manager (Recommended)
+
+Using a context manager ensures that connections are released even if an error occurs.
 
 ```python
-def closed()
+with MemMachineClient(base_url="http://localhost:8080") as client:
+    project = client.projects.get("my_org", "my_proj")
+    # client.close() is called automatically here
 ```
 
-**Parameters**
+### Error Handling
 
-| Name | Type | Description |
-| :--- | :--- | :--- |
+The SDK raises custom `RestError` exceptions for API-level validation or logic errors, allowing for granular error catching.
+
+```python
+from memmachine.rest_client.exceptions import RestError
+
+try:
+    client.projects.delete("org", "non_existent_proj")
+except RestError as e:
+    print(f"Server returned {e.code}: {e.message}")
+```

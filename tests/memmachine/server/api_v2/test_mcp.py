@@ -222,9 +222,8 @@ async def test_search_memory_failure(mock_search, params, mcp_client):
     )
     mock_search.assert_awaited_once()
     assert result.data is not None
-    root = result.data
-    assert root["status"] == 422
-    assert "Not found" in root["message"]
+    assert result.data.status == 422
+    assert "Not found" in result.data.message
 
 
 @pytest.mark.asyncio
@@ -245,9 +244,9 @@ async def test_search_memory_variants(mock_search, params, mcp_client):
     )
     mock_search.assert_awaited_once()
     assert result.data is not None
-    root = result.data
-    assert root["status"] == 200
-    assert root["content"] == content
+    assert result.data.status == 200
+    assert result.data.content.episodic_memory is None
+    assert result.data.content.semantic_memory == []
 
 
 @pytest.mark.asyncio

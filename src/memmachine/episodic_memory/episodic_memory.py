@@ -24,7 +24,7 @@ from typing import cast, get_args
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
-from memmachine.common.data_types import FilterablePropertyValue
+from memmachine.common.data_types import PropertyValue
 from memmachine.common.episode_store import (
     Episode,
     EpisodeResponse,
@@ -221,7 +221,7 @@ class EpisodicMemory:
             if episode.metadata is not None and episode.filterable_metadata is None:
                 episode.filterable_metadata = {}
                 for key, value in episode.metadata.items():
-                    if isinstance(value, get_args(FilterablePropertyValue)):
+                    if isinstance(value, get_args(PropertyValue)):
                         episode.filterable_metadata[key] = value
 
         # Add the episode to both memory stores concurrently

@@ -1,58 +1,31 @@
 ---
-title: "The Workspace"
-description: "Project metadata and scoped memory context configurations."
+title: "Project"
+description: "The complete data model for a MemMachine project workspace."
 ---
 
-## Interface `Project`
+## Overview
 
-The `Project` object represents the high-level container for all your data. It defines the identity and the AI models (embedder/reranker) used for this specific workspace.
-
-| Property | Type | Description |
-| :--- | :--- | :--- |
-| `project_id` | `string` | **Required.** The unique identifier for the project. |
-| `org_id` | `string` | **Required.** The organization ID this project belongs to. |
-| `description` | `string` | *Optional.* A brief summary of the project's purpose. |
-| `config` | `object` | *Optional.* Technical settings including the `embedder` and `reranker` model names. |
+The `Project` interface represents the full metadata and configuration state of a project. It is the primary return type for the `getDetails()` method.
 
 ---
 
-## Interface `MemoryContext`
-
-While a Project is the broad container, the `MemoryContext` allows you to narrow your focus to specific users, sessions, or agents. This ensures that the AI only retrieves memories relevant to the current interaction.
+## Properties
 
 | Property | Type | Description |
 | :--- | :--- | :--- |
-| `session_id` | `string` | *Optional.* Filters memory to a specific conversation or session. |
-| `user_id` | `string \| string[]` | *Optional.* Filters memory to one or more specific user identifiers. |
-| `agent_id` | `string \| string[]` | *Optional.* Filters memory to one or more specific AI agent identifiers. |
-| `group_id` | `string` | *Optional.* Filters memory to a specific team or group ID. |
+| `org_id` | `string` | The unique identifier of the organization owning the project. |
+| `project_id` | `string` | The unique identifier of the project itself. |
+| `description` | `string` | A human-readable summary of the project. |
+| `config` | `object` | The active AI configuration, including `embedder` and `reranker` model strings. |
 
 ---
 
 ## Usage Example
 
-The context is usually passed when initializing the memory engine to ensure all subsequent searches are "scoped" correctly.
-
-
-
 ```typescript
-import { MemMachineClient } from '@memmachine/client';
+const project = client.project({ org_id: 'customer-support', project_id: 'customer-support' });
+const details = await project.get();
 
-const client = new MemMachineClient({ base_url: 'your-base-url' });
-
-// 1. Access the Project workspace
-const projectInstance = client.project({ 
-  org_id: 'acme_corp', 
-  project_id: 'customer_support' 
-});
-
-// 2. Narrow the scope to a specific user and session
-const memory = projectInstance.memory({
-  user_id: 'user_99',
-  session_id: 'chat_session_alpha',
-  agent_id: 'support_bot_v2'
-});
-
-// Any search now only looks at 'user_99' memories within this session
-const results = await memory.search("What did we discuss last time?");
+console.log(`Project: ${details.description}`);
+console.log(`Using Embedder: ${details.config.embedder}`);
 ```

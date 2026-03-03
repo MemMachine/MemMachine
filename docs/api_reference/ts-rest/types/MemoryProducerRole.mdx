@@ -1,0 +1,34 @@
+---
+title: "MemoryProducerRole"
+description: "Definition of roles that can contribute memories to the engine."
+---
+
+## Overview
+
+The `MemoryProducerRole` type is a string union that classifies the entity responsible for creating a specific memory entry. This helps the engine distinguish between human input and AI-generated responses.
+
+---
+
+## Type Definition
+
+```typescript
+type MemoryProducerRole = "user" | "assistant" | "system";
+```
+
+
+| **Value**     | **Description**                                              |
+| ------------- | ------------------------------------------------------------ |
+| `"user"`      | Represents the end-user or human participant in the interaction. |
+| `"assistant"` | Represents the AI model or bot providing a response.         |
+| `"system"`    | Represents background context or instructions provided by the application. |
+
+------
+
+## Usage Example
+
+
+```typescript
+import { MemoryProducerRole } from '@memmachine/client';
+
+const currentRole: MemoryProducerRole = 'assistant';
+```

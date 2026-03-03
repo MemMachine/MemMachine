@@ -12,6 +12,18 @@ from memmachine.common.filter.filter_parser import (
 from memmachine.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine.common.filter.filter_parser import (
+    In as FilterIn,
+)
+from memmachine.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine.common.filter.filter_parser import (
+    Not as FilterNot,
+)
+from memmachine.common.filter.filter_parser import (
+    Or as FilterOr,
+)
 from memmachine.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
@@ -615,10 +627,8 @@ async def test_get_matching_episodes(declarative_memory):
                 op="=",
                 value="memmachine",
             ),
-            right=FilterComparison(
+            right=FilterIsNull(
                 field="length",
-                op="is_null",
-                value=None,
             ),
         ),
     )
@@ -807,3 +817,114 @@ def test_string_from_episode_context():
     assert episode1.content in context_string
     assert episode2.content in context_string
     assert episode3.content in context_string
+
+
+@requires_sentence_transformers
+@pytest.mark.asyncio
+async def test_get_matching_episodes_extended_filters(declarative_memory):
+    now = datetime.now(tz=UTC)
+    episodes = [
+        Episode(
+            uid="episode1",
+            timestamp=now,
+            source="Alice",
+            content_type=ContentType.MESSAGE,
+            content="This test is broken. Who wrote this test?",
+            filterable_properties={"project": "memmachine", "length": "short"},
+            user_metadata={"some_key": "some_value"},
+        ),
+        Episode(
+            uid="episode2",
+            timestamp=now + timedelta(seconds=10),
+            source="Bob",
+            content_type=ContentType.MESSAGE,
+            content="Charlie.",
+            filterable_properties={"project": "other", "length": "short"},
+            user_metadata={"some_other_key": "some_other_value"},
+        ),
+        Episode(
+            uid="episode3",
+            timestamp=now + timedelta(seconds=20),
+            source="textbook",
+            content_type=ContentType.TEXT,
+            content="The mitochondria is the powerhouse of the cell.",
+            filterable_properties={"project": "testing", "length": "long"},
+        ),
+        Episode(
+            uid="episode4",
+            timestamp=now + timedelta(seconds=30),
+            source="pet rock",
+            content_type=ContentType.MESSAGE,
+            content="",
+        ),
+        Episode(
+            uid="episode5",
+            timestamp=now + timedelta(seconds=40),
+            source="Charlie",
+            content_type=ContentType.MESSAGE,
+            content="Edwin Yu: https://github.com/edwinyyyu\n",
+            filterable_properties={"project": "memmachine"},
+        ),
+    ]
+
+    await declarative_memory.add_episodes(episodes)
+
+    # != on project: != 'memmachine' → episodes with project=other, testing
+    results = await declarative_memory.get_matching_episodes(
+        property_filter=FilterComparison(
+            field="project",
+            op="!=",
+            value="memmachine",
+        ),
+    )
+    result_uids = {r.uid for r in results}
+    assert "episode2" in result_uids
+    assert "episode3" in result_uids
+    assert "episode1" not in result_uids
+    assert "episode5" not in result_uids
+
+    # In on project
+    results = await declarative_memory.get_matching_episodes(
+        property_filter=FilterIn(
+            field="project",
+            values=["memmachine", "other"],
+        ),
+    )
+    result_uids = {r.uid for r in results}
+    assert "episode1" in result_uids
+    assert "episode2" in result_uids
+    assert "episode5" in result_uids
+
+    # Not: NOT length = 'short'
+    results = await declarative_memory.get_matching_episodes(
+        property_filter=FilterNot(
+            expr=FilterComparison(
+                field="length",
+                op="=",
+                value="short",
+            )
+        ),
+    )
+    result_uids = {r.uid for r in results}
+    assert "episode1" not in result_uids
+    assert "episode2" not in result_uids
+    assert "episode3" in result_uids
+
+    # Or: project = 'other' OR length = 'short'
+    results = await declarative_memory.get_matching_episodes(
+        property_filter=FilterOr(
+            left=FilterComparison(
+                field="project",
+                op="=",
+                value="other",
+            ),
+            right=FilterComparison(
+                field="length",
+                op="=",
+                value="short",
+            ),
+        ),
+    )
+    result_uids = {r.uid for r in results}
+    assert "episode1" in result_uids
+    assert "episode2" in result_uids

@@ -136,6 +136,7 @@ def start_http() -> None:
         workers=workers,
         access_log=True,
         log_level=str(config.logging.level).lower(),
+        ws="websockets-sansio",
     )
 
 

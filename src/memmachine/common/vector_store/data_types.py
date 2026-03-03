@@ -1,11 +1,9 @@
 """Data types for vector store."""
 
 from dataclasses import dataclass
-from datetime import datetime
 from uuid import UUID
 
-# Types that can be used as property values.
-PropertyValue = bool | int | float | str | datetime
+from memmachine.common.data_types import PropertyValue
 
 
 @dataclass(kw_only=True)

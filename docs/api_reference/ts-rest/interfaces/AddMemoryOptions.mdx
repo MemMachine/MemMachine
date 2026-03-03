@@ -1,52 +1,49 @@
 ---
-title: "Storing Memory"
-description: "Input configurations and result schemas for adding new episodic data."
+title: "AddMemoryOptions"
+description: "Configuration options for ingesting new memories into the engine."
 ---
 
-## Interface `AddMemoryOptions`
+## Overview
 
-These options allow you to categorize and add rich context to a memory entry. This metadata is crucial for later filtering and semantic retrieval.
-
-| Property | Type | Description |
-| :--- | :--- | :--- |
-| `producer` | `string` | *Optional.* The Entity ID of who created the memory. |
-| `produced_for` | `string` | *Optional.* The Target Entity ID the memory is intended for. |
-| `role` | [`MemoryProducerRole`](./Types) | *Optional.* The role of the creator (`user`, `assistant`, or `system`). |
-| `episode_type` | `string` | *Optional.* A custom category for the entry (e.g., `'conversation'`, `'note'`). |
-| `metadata` | `Record<string, unknown>` | *Optional.* A key-value map for any additional custom data. |
-| `types` | [`MemoryType[]`](./Types) | *Optional.* Specify if this should be stored as `episodic`, `semantic`, or both. |
+The `AddMemoryOptions` interface defines the optional configuration used when adding a new memory via the `MemMachineMemory.add()` method. It allows for detailed categorization, role assignment, and metadata tagging.
 
 ---
 
-## Interface `AddMemoryResult`
+## Properties
 
-This is the confirmation object returned by the server after successfully adding a memory.
+All properties in this interface are optional, allowing for flexible memory ingestion depending on your use case.
 
 | Property | Type | Description |
 | :--- | :--- | :--- |
-| `results` | `object[]` | An array of objects, each containing a `uid` (string) for the newly created entry. |
+| `producer` | `string` | The ID of the entity that produced the memory. |
+| `role` | [`MemoryProducerRole`](../types/MemoryProducerRole) | The role of the producer (e.g., `user`, `assistant`). |
+| `produced_for` | `string` | The ID of the target entity the memory was produced for. |
+| `episode_type` | `string` | A custom classification for the type of interaction episode. |
+| `timestamp` | `string` | The specific time the memory occurred (ISO 8601 string). |
+| `metadata` | `Record<string, string>` | Key-value pairs for additional custom contextual data. |
+| `types` | [`MemoryType[]`](../types/MemoryType) | The classification of memories to be created (e.g., `episodic`). |
 
 ---
 
 ## Usage Example
 
+The following example shows how to use `AddMemoryOptions` to provide context when saving a user preference.
+
 ```typescript
-import { MemMachineClient } from '@memmachine/client';
+import { AddMemoryOptions } from '@memmachine/client';
 
-const memory = client.project({ org_id: 'org_1', project_id: 'proj_1' }).memory();
+const memory = project.memory();
 
-// Adding a memory with full context
-const response = await memory.add("The user prefers dark mode for the UI.", {
-  producer: "user_123",
-  role: "user",
-  episode_type: "preference",
+const options: AddMemoryOptions = {
+  role: 'user',
+  episode_type: 'preference_update',
   metadata: {
-    platform: "mobile",
-    timestamp: Date.now()
+    feature: 'dark_mode',
+    source: 'settings_ui'
   }
-});
+};
 
-// Accessing the new memory ID
-const newId = response.results[0].uid;
-console.log(`Memory stored with ID: ${newId}`);
+await memory.add('User toggled dark mode to "on" for the dashboard.', options);
 ```
+
+<Tip> While `metadata` is optional, using it consistently is recommended for advanced filtering during semantic searches. </Tip>

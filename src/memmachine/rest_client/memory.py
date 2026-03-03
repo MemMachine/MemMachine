@@ -366,6 +366,7 @@ class Memory:
         expand_context: int = 0,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
+        set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
     ) -> SearchResult:
         """
@@ -386,6 +387,7 @@ class Memory:
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
                         if there are key conflicts.
+            set_metadata: Optional metadata key-value pairs used to select semantic sets.
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -423,6 +425,7 @@ class Memory:
             expand_context=expand_context,
             score_threshold=score_threshold,
             filter=filter_str,
+            set_metadata=set_metadata,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
         )
         v2_search_data = spec.model_dump(mode="json", exclude_none=True)
@@ -451,6 +454,7 @@ class Memory:
         page_size: int = 100,
         page_num: int = 0,
         filter_dict: dict[str, str] | None = None,
+        set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
     ) -> ListResult:
         """
@@ -463,6 +467,7 @@ class Memory:
             page_size: Page size (server default is 100)
             page_num: Page number (0-based)
             filter_dict: Optional extra filters; merged with built-in context filters
+            set_metadata: Optional metadata key-value pairs used to select semantic sets.
             timeout: Request timeout override
 
         Returns:
@@ -487,6 +492,7 @@ class Memory:
             page_size=page_size,
             page_num=page_num,
             filter=filter_str,
+            set_metadata=set_metadata,
             type=memory_type,
         )
         v2_list_data = spec.model_dump(mode="json", exclude_none=True)

@@ -198,3 +198,11 @@ def test_apply_log_output_respects_levels(
         assert msg in content
     for msg in expected_absent:
         assert msg not in content
+
+
+def test_apply_suppresses_neo4j_notifications(restore_logging):
+    """Verify that neo4j.notifications logger does not log below WARNING level."""
+    c = LogConf()
+    c.apply()
+    neo4j_logger = logging.getLogger("neo4j.notifications")
+    assert neo4j_logger.getEffectiveLevel() >= logging.WARNING

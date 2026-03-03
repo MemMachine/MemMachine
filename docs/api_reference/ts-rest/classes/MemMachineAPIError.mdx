@@ -3,55 +3,79 @@ title: "MemMachineAPIError"
 description: "Custom error class for handling MemMachine SDK and API failures."
 ---
 
-## Class `MemMachineAPIError`
+## Overview
 
-The `MemMachineAPIError` is thrown whenever a request to the MemMachine server fails or when the SDK encounters an unexpected state. It extends the standard JavaScript `Error` class.
+The `MemMachineAPIError` class is a custom error implementation used to represent failures returned by MemMachine client methods. It serves as the primary mechanism for catching and identifying SDK-specific issues.
 
-Integrating this into your code allows you to differentiate between general network issues and specific MemMachine API failures.
+### Hierarchy
+* **Error** 
+    * **MemMachineAPIError** 
 
-```typescript
-new MemMachineAPIError(message: string)
-```
-**Parameters**
+---
 
-| **Name**  | **Type** | **Description**                            |
-| --------- | -------- | ------------------------------------------ |
-| `message` | `string` | A human-readable description of the error. |
+## Constructor
 
-------
+### `new MemMachineAPIError(message)`
+
+Initializes a new instance of the error with a specific descriptive message.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `message`  | `string`  | Error message describing the failure. |
+
+---
 
 ## Properties
 
-### `message`
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `message`  | `string`  | The error message inherited from the base `Error` class. |
+| `name`  | `string`  | The name identifier for the error class. |
+| `stack`  | `string`  | (Optional) A string representing the location in the code at which the error was thrown. |
+| `stackTraceLimit`  | `number`  | **Static.** Specifies the number of stack frames collected by a stack trace. Default is `10`. |
 
-The error message string provides details about why the operation failed.
+---
 
-### `name`
+## Methods
 
-Always set to `"MemMachineAPIError"` to allow for easy type checking.
+### `captureStackTrace()`
 
-### `stack`
+```typescript Static
+captureStackTrace(targetObject: object, constructorOpt?: Function): void
+```
 
-The standard V8 stack trace is useful for debugging the location of the failure in your source code.
+Creates a `.stack` property on `targetObject`, which when accessed returns a string representing the location in the code at which the method was called. This is useful for hiding implementation details of error generation from the user.
+
+
+
+### `prepareStackTrace()`
+
+```typescript
+prepareStackTrace(err: Error, stackTraces: CallSite[]): any
+```
+
+A static hook used to customize the formatting of stack traces.
 
 ------
 
-## Handling Errors
+## Usage Example
 
-To provide a robust user experience, we recommend wrapping your SDK calls in a `try/catch` block and checking for this specific error type.
+Integrate `MemMachineAPIError` into your error handling logic to differentiate between API-specific failures and general runtime errors.
 
 ```typescript
-import { MemMachineClient, MemMachineAPIError } from '@memmachine/client';
+import { MemMachineAPIError } from '@memmachine/client';
 
 try {
-  const projects = await client.getProjects();
+  // SDK Call
 } catch (error) {
   if (error instanceof MemMachineAPIError) {
-    // Handle specific API errors (e.g., 401 Unauthorized, 404 Not Found)
-    console.error(`MemMachine failed: ${error.message}`);
+    // Handle specific MemMachine failures
+    console.error(`API Error: ${error.message}`);
   } else {
-    // Handle unexpected system or network errors
-    console.error('An unexpected error occurred:', error);
+    // Handle standard JavaScript or network errors
+    console.error('System Error:', error);
   }
 }
 ```
+
+<Note> This class is defined in `src/errors/memmachine-api-error.ts`. </Note>
