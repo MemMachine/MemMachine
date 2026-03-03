@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import regex
 from pydantic import (
     AfterValidator,
+    AliasChoices,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -592,12 +593,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             examples=Examples.MEMORY_TYPES,
         ),
     ]
-    agent_mode: Annotated[
+    skill_mode: Annotated[
         bool,
         Field(
             default=False,
-            description=SpecDoc.AGENT_MODE,
-            examples=Examples.AGENT_MODE,
+            description=SpecDoc.SKILL_MODE,
+            examples=Examples.SKILL_MODE,
+            validation_alias=AliasChoices("skill_mode", "agent_mode"),
+            serialization_alias="skill_mode",
         ),
     ]
 
@@ -942,6 +945,10 @@ class SearchResultContent(BaseModel):
     semantic_memory: Annotated[
         list[SemanticFeature] | None,
         Field(default=None, description=SpecDoc.SEARCH_SEMANTIC_MEMORY),
+    ]
+    retrieval_trace: Annotated[
+        dict[str, JsonValue] | None,
+        Field(default=None, description=SpecDoc.SEARCH_RETRIEVAL_TRACE),
     ]
 
 

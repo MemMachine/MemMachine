@@ -129,7 +129,7 @@ def test_search_memory_param_get_search_query(params):
     assert spec.query == "hello"
     assert spec.filter == ""
     assert spec.types == ALL_MEMORY_TYPES
-    assert spec.agent_mode is False
+    assert spec.skill_mode is False
 
 
 @pytest_asyncio.fixture
@@ -254,6 +254,7 @@ async def test_search_memory_variants(mock_search, params, mcp_client):
     assert result.data.status == 200
     assert result.data.content.episodic_memory is None
     assert result.data.content.semantic_memory == []
+    assert result.data.content.retrieval_trace is None
 
 
 @pytest.mark.asyncio

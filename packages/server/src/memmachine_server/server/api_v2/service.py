@@ -111,11 +111,12 @@ async def _search_target_memories(
         score_threshold=spec.score_threshold
         if spec.score_threshold is not None
         else -float("inf"),
-        agent_mode=spec.agent_mode,
+        skill_mode=spec.skill_mode,
     )
     content = SearchResultContent(
         episodic_memory=None,
         semantic_memory=None,
+        retrieval_trace=None,
     )
     if results.episodic_memory is not None:
         content.episodic_memory = EpisodicSearchResult(
@@ -126,6 +127,8 @@ async def _search_target_memories(
             SemanticFeature(**f.model_dump(mode="json"))
             for f in results.semantic_memory
         ]
+    if results.retrieval_trace is not None:
+        content.retrieval_trace = results.retrieval_trace
     return SearchResult(
         status=0,
         content=content,

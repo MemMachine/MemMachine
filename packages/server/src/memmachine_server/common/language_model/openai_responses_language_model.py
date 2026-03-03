@@ -131,6 +131,26 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 "Number of tokens used for OpenAI language model",
             )
 
+    @property
+    def client(self) -> openai.AsyncOpenAI:
+        """Expose underlying OpenAI async client for live skill sessions."""
+        return self._client
+
+    @property
+    def model_name(self) -> str:
+        """Expose configured OpenAI model name."""
+        return self._model
+
+    @property
+    def max_retry_interval_seconds(self) -> int:
+        """Expose retry backoff cap for downstream live session wrappers."""
+        return self._max_retry_interval_seconds
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        """Expose optional reasoning effort config."""
+        return self._reasoning_effort
+
     async def generate_parsed_response(
         self,
         output_format: type[T],

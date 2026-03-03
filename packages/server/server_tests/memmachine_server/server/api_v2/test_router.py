@@ -287,7 +287,7 @@ def test_search_memories(client, mock_memmachine):
         "org_id": "test_org",
         "project_id": "test_proj",
         "query": "hello",
-        "agent_mode": True,
+        "skill_mode": True,
     }
 
     with patch(
@@ -330,7 +330,7 @@ def test_search_memories(client, mock_memmachine):
         assert await_args is not None
         search_call = cast(dict[str, Any], await_args.kwargs)
         assert search_call["spec"].query == "hello"
-        assert search_call["spec"].agent_mode is True
+        assert search_call["spec"].skill_mode is True
 
         # Invalid argument
         mock_search.reset_mock()
@@ -378,6 +378,41 @@ def test_search_memories_with_set_metadata(client, mock_memmachine):
         assert call_kwargs["spec"].set_metadata == {
             "user_id": "user123",
             "tenant": "acme",
+        }
+
+
+def test_search_memories_returns_retrieval_trace(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "query": "hello",
+        "skill_mode": True,
+    }
+
+    with patch(
+        "memmachine.server.api_v2.router._search_target_memories"
+    ) as mock_search:
+        mock_search.return_value = SearchResult.model_validate(
+            {
+                "status": 0,
+                "content": {
+                    "retrieval_trace": {
+                        "skill": "RetrieveSkill",
+                        "selected_route": "decompose",
+                        "selected_skill": "coq",
+                        "orchestrator_step_count": 4,
+                    },
+                },
+            }
+        )
+
+        response = client.post("/api/v2/memories/search", json=payload)
+        assert response.status_code == 200
+        assert response.json()["content"]["retrieval_trace"] == {
+            "skill": "RetrieveSkill",
+            "selected_route": "decompose",
+            "selected_skill": "coq",
+            "orchestrator_step_count": 4,
         }
 
 

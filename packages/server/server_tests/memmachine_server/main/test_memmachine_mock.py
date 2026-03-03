@@ -28,7 +28,7 @@ from memmachine_server.common.filter.filter_parser import And as FilterAnd
 from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main.memmachine import MemMachine, MemoryType
-from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
+from memmachine_server.retrieval_skill.common.skill_api import SkillToolBase
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 
@@ -333,20 +333,20 @@ async def test_query_search_runs_targeted_memory_tasks(
     semantic_manager.search.assert_awaited_once()
     await_args = async_episodic.await_args
     assert await_args is not None
-    assert await_args.kwargs["retrieval_agent"] is None
+    assert await_args.kwargs["retrieval_skill"] is None
 
     assert result.episodic_memory is async_episodic.return_value
     assert result.semantic_memory == semantic_manager.search.return_value
 
 
 @pytest.mark.asyncio
-async def test_query_search_uses_retrieval_agent_when_agent_mode_enabled(
+async def test_query_search_uses_retrieval_skill_when_skill_mode_enabled(
     minimal_conf, patched_resource_manager, monkeypatch
 ):
     dummy_session = DummySessionData("s1")
-    expected_retrieval_agent = object()
-    get_retrieval_agent = AsyncMock(return_value=expected_retrieval_agent)
-    monkeypatch.setattr(MemMachine, "_get_retrieval_agent", get_retrieval_agent)
+    expected_retrieval_skill = object()
+    get_retrieval_skill = AsyncMock(return_value=expected_retrieval_skill)
+    monkeypatch.setattr(MemMachine, "_get_retrieval_skill", get_retrieval_skill)
 
     async_episodic = AsyncMock(
         return_value=EpisodicMemory.QueryResponse(
@@ -366,17 +366,66 @@ async def test_query_search_uses_retrieval_agent_when_agent_mode_enabled(
         dummy_session,
         target_memories=[MemoryType.Episodic],
         query="hello world",
-        agent_mode=True,
+        skill_mode=True,
     )
 
-    get_retrieval_agent.assert_awaited_once()
+    get_retrieval_skill.assert_awaited_once()
     await_args = async_episodic.await_args
     assert await_args is not None
-    assert await_args.kwargs["retrieval_agent"] is expected_retrieval_agent
+    assert await_args.kwargs["retrieval_skill"] is expected_retrieval_skill
 
 
 @pytest.mark.asyncio
-async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
+async def test_query_search_includes_retrieval_trace_when_skill_mode_enabled(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    dummy_session = DummySessionData("s1")
+    expected_retrieval_skill = object()
+    monkeypatch.setattr(
+        MemMachine,
+        "_get_retrieval_skill",
+        AsyncMock(return_value=expected_retrieval_skill),
+    )
+
+    async def _search_with_trace(self, **kwargs):
+        trace_out = kwargs.get("retrieval_trace_out")
+        if isinstance(trace_out, dict):
+            trace_out.update(
+                {
+                    "skill": "RetrieveSkill",
+                    "selected_route": "direct_memory",
+                    "selected_skill": "direct_memory",
+                }
+            )
+        return EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
+        )
+
+    monkeypatch.setattr(MemMachine, "_search_episodic_memory", _search_with_trace)
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    result = await memmachine.query_search(
+        dummy_session,
+        target_memories=[MemoryType.Episodic],
+        query="hello world",
+        skill_mode=True,
+    )
+
+    assert result.retrieval_trace == {
+        "skill": "RetrieveSkill",
+        "selected_route": "direct_memory",
+        "selected_skill": "direct_memory",
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_episodic_with_retrieval_skill_searches_long_then_short(
     minimal_conf, patched_resource_manager
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
@@ -445,9 +494,9 @@ async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
             ]
             return episodes, {}
 
-    response = await memmachine._query_episodic_with_retrieval_agent(
+    response = await memmachine._query_episodic_with_retrieval_skill(
         episodic_session=episodic_session,
-        retrieval_agent=cast(AgentToolBase, _TestRetrievalAgent()),
+        retrieval_skill=cast(SkillToolBase, _TestRetrievalAgent()),
         query="hello world",
         limit=5,
         expand_context=0,
@@ -473,7 +522,7 @@ async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
 
 
 @pytest.mark.asyncio
-async def test_query_episodic_with_retrieval_agent_skips_short_term_when_disabled(
+async def test_query_episodic_with_retrieval_skill_skips_short_term_when_disabled(
     minimal_conf, patched_resource_manager
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
@@ -521,9 +570,9 @@ async def test_query_episodic_with_retrieval_agent_skips_short_term_when_disable
             ]
             return episodes, {}
 
-    response = await memmachine._query_episodic_with_retrieval_agent(
+    response = await memmachine._query_episodic_with_retrieval_skill(
         episodic_session=episodic_session,
-        retrieval_agent=cast(AgentToolBase, _TestRetrievalAgent()),
+        retrieval_skill=cast(SkillToolBase, _TestRetrievalAgent()),
         query="hello world",
         limit=5,
         expand_context=0,

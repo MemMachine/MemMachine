@@ -368,7 +368,8 @@ class Memory:
         timeout: int | None = None,
         *,
         set_metadata: dict[str, JsonValue] | None = None,
-        agent_mode: bool = False,
+        skill_mode: bool = False,
+        agent_mode: bool | None = None,
     ) -> SearchResult:
         """
         Search for memories.
@@ -390,7 +391,8 @@ class Memory:
                         if there are key conflicts.
             timeout: Request timeout in seconds (uses client default if not provided)
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
-            agent_mode: Whether to enable top-level retrieval-agent orchestration.
+            skill_mode: Whether to enable top-level retrieval-skill orchestration.
+            agent_mode: Deprecated alias for `skill_mode`.
 
         Returns:
             SearchResult object containing search results from both episodic and semantic memory
@@ -402,6 +404,9 @@ class Memory:
         """
         if self._client_closed:
             raise RuntimeError("Cannot search memories: client has been closed")
+
+        if agent_mode is not None:
+            skill_mode = agent_mode
 
         # Get built-in filters from metadata
         built_in_filters = self.get_default_filter_dict()
@@ -426,7 +431,7 @@ class Memory:
             top_k=limit or 10,
             expand_context=expand_context,
             score_threshold=score_threshold,
-            agent_mode=agent_mode,
+            skill_mode=skill_mode,
             filter=filter_str,
             set_metadata=set_metadata,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types

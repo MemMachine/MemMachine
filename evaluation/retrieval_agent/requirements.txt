@@ -1,3 +1,0 @@
--e ../../packages/common
--e ../../packages/server
-pandas>=2.2.0

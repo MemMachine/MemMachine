@@ -5,7 +5,7 @@ memory quality on benchmark datasets.
 
 ## Benchmark Suites
 
-- `retrieval_agent` (recommended): Current evaluation pipeline for retrieval
+- `retrieval_skill` (recommended): Current evaluation pipeline for retrieval
   behavior and answer quality. Uses MemMachine Python SDK.
 - `episodic_memory` (legacy): Earlier LoCoMo dataset episodic memory benchmark workflow. Uses
   both MemMachine REST API and Python SDK.
@@ -15,7 +15,7 @@ memory quality on benchmark datasets.
 The retrieval-agent benchmarks support three test targets:
 
 1. `memmachine`: MemMachine retrieval without retrieval-agent orchestration.
-2. `retrieval_agent`: MemMachine retrieval with retrieval-agent orchestration.
+2. `retrieval_skill`: MemMachine retrieval with retrieval-agent orchestration.
 3. `llm`: Pure LLM baseline without MemMachine retrieval
    (full session content provided by dataset context).
 
@@ -33,14 +33,7 @@ The retrieval-agent benchmarks support three test targets:
 
 ## Run Retrieval-Agent Benchmarks (Recommended)
 
-> **Configuration**: All retrieval-agent benchmarks require a
-> `configuration.yml` file placed in `evaluation/retrieval_agent/`. This file
-> controls the language model, embedder, reranker, and database for every run —
-> enabling non-OpenAI and local models. See
-> [evaluation/retrieval_agent/README.md](retrieval_agent/README.md) for full
-> details and ready-to-use configuration samples.
-
-Run from `evaluation/retrieval_agent/`:
+Run from `evaluation/retrieval_skill/`:
 
 ```sh
 ./run_test.sh <test> <test_specific_args> ...
@@ -60,25 +53,25 @@ Examples:
 - LoCoMo ingest:
 
 ```sh
-./run_test.sh locomo exp1 ingest retrieval_agent
+./run_test.sh locomo exp1 ingest retrieval_skill
 ```
 
 - LoCoMo search + scoring:
 
 ```sh
-./run_test.sh locomo exp1 search retrieval_agent
+./run_test.sh locomo exp1 search retrieval_skill
 ```
 
 - WikiMultiHop search (500 examples):
 
 ```sh
-./run_test.sh wikimultihop exp1 search retrieval_agent 500
+./run_test.sh wikimultihop exp1 search retrieval_skill 500
 ```
 
 - HotpotQA validation set search (200 examples):
 
 ```sh
-./run_test.sh hotpotqa exp1 search validation retrieval_agent 200
+./run_test.sh hotpotqa exp1 search validation retrieval_skill 200
 ```
 
 Sample output:
