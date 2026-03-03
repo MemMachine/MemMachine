@@ -53,6 +53,7 @@ from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
 )
+from memmachine_server.semantic_memory.storage.text_sanitizer import sanitize_pg_text
 
 logger = logging.getLogger(__name__)
 
@@ -235,9 +236,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             .values(
                 set_id=set_id,
                 semantic_category_id=category_name,
-                tag_id=tag,
-                feature=feature,
-                value=value,
+                tag_id=sanitize_pg_text(tag, context="feature.tag"),
+                feature=sanitize_pg_text(feature, context="feature.feature"),
+                value=sanitize_pg_text(value, context="feature.value"),
                 embedding=embedding,
                 json_metadata=metadata,
             )
@@ -275,11 +276,13 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         if category_name is not None:
             stmt = stmt.values(semantic_category_id=category_name)
         if feature is not None:
-            stmt = stmt.values(feature=feature)
+            stmt = stmt.values(
+                feature=sanitize_pg_text(feature, context="feature.feature")
+            )
         if value is not None:
-            stmt = stmt.values(value=value)
+            stmt = stmt.values(value=sanitize_pg_text(value, context="feature.value"))
         if tag is not None:
-            stmt = stmt.values(tag_id=tag)
+            stmt = stmt.values(tag_id=sanitize_pg_text(tag, context="feature.tag"))
         if embedding is not None:
             stmt = stmt.values(embedding=embedding)
         if metadata is not None:
