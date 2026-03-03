@@ -144,32 +144,6 @@ class SemanticSessionManager:
             for e in episodes:
                 tg.create_task(self._add_single_episode(e, session_data))
 
-    async def delete_all_project_messages(
-        self,
-        session_data: SessionData,
-    ) -> None:
-        self._assert_session_data_implements_protocol(session_data=session_data)
-
-        set_ids = await self._get_all_set_ids(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-        )
-
-        await self._semantic_service.delete_messages(set_ids=list(set_ids))
-
-    async def delete_all_org_messages(
-        self,
-        session_data: SessionData,
-    ) -> None:
-        self._assert_session_data_implements_protocol(session_data=session_data)
-
-        set_ids = await self._get_all_set_ids(
-            org_id=session_data.org_id,
-            project_id=None,
-        )
-
-        await self._semantic_service.delete_messages(set_ids=list(set_ids))
-
     async def search(
         self,
         message: str,

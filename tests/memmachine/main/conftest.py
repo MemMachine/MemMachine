@@ -301,10 +301,7 @@ async def session_data(memmachine: MemMachine):
         await memmachine._resources.get_semantic_session_manager()
     )
 
-    await asyncio.gather(
-        semantic_session.delete_feature_set(session_data=s_data),
-        semantic_session.delete_all_project_messages(session_data=s_data),
-    )
+    await semantic_session.delete_feature_set(session_data=s_data)
 
     await memmachine.create_session(s_data.session_key)
 
@@ -313,5 +310,4 @@ async def session_data(memmachine: MemMachine):
     await asyncio.gather(
         memmachine.delete_session(session_data=s_data),
         semantic_session.delete_feature_set(session_data=s_data),
-        semantic_session.delete_all_project_messages(session_data=s_data),
     )
