@@ -1,17 +1,16 @@
-FROM alpine:latest
+# ---- builder ----
+FROM node:20-alpine3.19 AS builder
+RUN npm install -g mint && npm cache clean --force
 
-# Install Node.js and npm
-RUN apk add --no-cache nodejs npm
-
-# Install Mintlify globally
-RUN npm install -g mint
-
-# Create working directory
+# ---- runtime ----
+FROM node:20-alpine3.19
 WORKDIR /docs
 
-# Expose port (Mintlify dev server default)
+# Copy full global prefix to preserve the mint wrapper exactly
+COPY --from=builder /usr/local /usr/local
+
+# trim common caches (optional)
+RUN rm -rf /root/.npm /tmp/*
+
 EXPOSE 3000
-
-# Default command
 CMD ["mint", "dev"]
-
