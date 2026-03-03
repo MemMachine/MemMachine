@@ -23,7 +23,11 @@ def llm_model(real_llm_model):
 
 @pytest.fixture(scope="session")
 def long_mem_data():
-    data_path = Path(__file__).resolve().parent / "longmemeval_snippet.json"
+    data_path = (
+        Path(__file__).resolve().parent.parent
+        / "test_data"
+        / "longmemeval_snippet.json"
+    )
     with data_path.open("r", encoding="utf-8") as file:
         return json.load(file)
 

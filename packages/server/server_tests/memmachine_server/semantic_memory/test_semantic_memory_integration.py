@@ -196,7 +196,11 @@ class TestLongMemEvalIngestion:
 
     @pytest.fixture
     def long_mem_raw_question(self):
-        data_path = Path("tests/data/longmemeval_snippet.json")
+        data_path = (
+            Path(__file__).resolve().parent.parent
+            / "test_data"
+            / "longmemeval_snippet.json"
+        )
         with data_path.open("r", encoding="utf-8") as file:
             data = json.load(file)
         return data
