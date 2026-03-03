@@ -1,0 +1,71 @@
+name: Sync Platform OpenAPI Spec
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Monday 9am UTC
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download platform OpenAPI spec
+        run: curl -sSf https://api.memmachine.ai/openapi.json -o docs/platform.openapi.json.tmp
+
+      - name: Normalize JSON formatting
+        run: |
+          python3 -c "
+          import json
+          with open('docs/platform.openapi.json.tmp') as f:
+              data = json.load(f)
+          with open('docs/platform.openapi.json.tmp', 'w') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          "
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if [ ! -f docs/platform.openapi.json ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "No existing platform spec found — will create."
+          elif diff -q docs/platform.openapi.json docs/platform.openapi.json.tmp > /dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Platform OpenAPI spec is up to date."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Platform OpenAPI spec has changed."
+          fi
+
+      - name: Update spec file
+        if: steps.diff.outputs.changed == 'true'
+        run: mv docs/platform.openapi.json.tmp docs/platform.openapi.json
+
+      - name: Clean up temp file
+        if: steps.diff.outputs.changed == 'false'
+        run: rm -f docs/platform.openapi.json.tmp
+
+      - name: Create Pull Request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automated/sync-platform-openapi
+          commit-message: "docs: sync platform openapi.json from api.memmachine.ai"
+          title: "docs: sync platform openapi.json"
+          body: |
+            This PR was automatically generated because the platform OpenAPI
+            spec at `https://api.memmachine.ai/openapi.json` differs from the
+            committed `docs/platform.openapi.json`.
+
+            Please review the changes before merging.
+          labels: documentation
+          delete-branch: true
