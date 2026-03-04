@@ -1,0 +1,35 @@
+---
+title: "ClientOptions"
+description: "Configuration settings for initializing the MemMachineClient."
+---
+
+## Overview
+
+The `ClientOptions` interface is used to configure the global behavior of the `MemMachineClient`, including authentication and network settings.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `api_key` | `string` | **Optional.** The API key used to authenticate requests. |
+| `base_url` | `string` | **Optional.** The root URL of your MemMachine server instance. |
+| `max_retries` | `number` | **Optional.** The number of times to attempt a request before failing. |
+| `timeout` | `number` | **Optional.** The maximum duration (in ms) to wait for a server response. |
+
+---
+
+## Usage Example
+
+```typescript
+import { MemMachineClient, ClientOptions } from '@memmachine/client';
+
+const config: ClientOptions = {
+  api_key: 'mm_live_...',
+  base_url: '[https://api.memmachine.ai](https://api.memmachine.ai)',
+  timeout: 5000
+};
+
+const client = new MemMachineClient(config);
+```

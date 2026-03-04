@@ -1,0 +1,49 @@
+---
+title: "AddMemoryOptions"
+description: "Configuration options for ingesting new memories into the engine."
+---
+
+## Overview
+
+The `AddMemoryOptions` interface defines the optional configuration used when adding a new memory via the `MemMachineMemory.add()` method. It allows for detailed categorization, role assignment, and metadata tagging.
+
+---
+
+## Properties
+
+All properties in this interface are optional, allowing for flexible memory ingestion depending on your use case.
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `producer` | `string` | The ID of the entity that produced the memory. |
+| `role` | [`MemoryProducerRole`](../types/MemoryProducerRole) | The role of the producer (e.g., `user`, `assistant`). |
+| `produced_for` | `string` | The ID of the target entity the memory was produced for. |
+| `episode_type` | `string` | A custom classification for the type of interaction episode. |
+| `timestamp` | `string` | The specific time the memory occurred (ISO 8601 string). |
+| `metadata` | `Record<string, string>` | Key-value pairs for additional custom contextual data. |
+| `types` | [`MemoryType[]`](../types/MemoryType) | The classification of memories to be created (e.g., `episodic`). |
+
+---
+
+## Usage Example
+
+The following example shows how to use `AddMemoryOptions` to provide context when saving a user preference.
+
+```typescript
+import { AddMemoryOptions } from '@memmachine/client';
+
+const memory = project.memory();
+
+const options: AddMemoryOptions = {
+  role: 'user',
+  episode_type: 'preference_update',
+  metadata: {
+    feature: 'dark_mode',
+    source: 'settings_ui'
+  }
+};
+
+await memory.add('User toggled dark mode to "on" for the dashboard.', options);
+```
+
+<Tip> While `metadata` is optional, using it consistently is recommended for advanced filtering during semantic searches. </Tip>

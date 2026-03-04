@@ -1,0 +1,17 @@
+{{- if .Values.postgres.enabled }}
+# postgres-service.yaml
+# ClusterIP Service for internal access to PostgreSQL on port 5432.
+# DNS inside the cluster: memmachine-postgres.<namespace>.svc.cluster.local
+# The MemMachine configuration.yml and .env both reference host: memmachine-postgres.
+apiVersion: v1
+kind: Service
+metadata:
+  name: memmachine-postgres
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: memmachine-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+{{- end }}

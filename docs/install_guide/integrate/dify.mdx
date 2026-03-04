@@ -1,0 +1,108 @@
+---
+title: "Dify"
+description: "Integrate MemMachine memory tools into your Dify workflows"
+icon: "rocket"
+---
+
+For the full plugin source code and contribution guidelines, see the official **[Dify Integration](https://github.com/MemMachine/MemMachine/tree/main/integrations/dify)** in the repository.
+
+## Overview
+
+The MemMachine Dify plugin allows you to seamlessly integrate persistent memory into your Dify applications. By adding MemMachine as a tool provider, your Dify agents can store chronological interactions (Episodic) and retrieve distilled knowledge (Semantic), enabling a deeper level of context awareness across user sessions.
+
+## Configuration
+
+When adding the MemMachine plugin to Dify, you will need to configure the following credentials:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `memmachine_api_key` | Your MemMachine API Key for authentication | (Required) |
+| `memmachine_base_url` | The URL of your MemMachine backend service | `https://api.memmachine.ai/v2` |
+
+<Info>
+  The `memmachine_base_url` is optional. If left empty, the plugin will default to the MemMachine Cloud API. If you are self-hosting, ensure you provide your local server address (e.g., `http://localhost:8080`).
+</Info>
+
+## Setup Guide
+
+<Steps>
+<Step title="Build and Package">
+Navigate to the integration directory and run the build script to generate the `.plugin` file:
+
+```bash
+cd integrations/dify
+# Build the plugin package
+python build_plugin.py --enable-base-url-credential
+```
+</Step>
+<Step title="Install in Dify">
+
+A. Open your Dify dashboard.
+B. Navigate to the **Plugins** tab.
+C. Upload the generated `.plugin` file. 
+
+</Step>
+<Step title="Configure Credentials"> 
+Navigate to **Tools > MemMachine** in Dify and enter your configuration:
+
+A. Paste your **API Key**.
+B. (Optional) Enter your **Base URL** if you are not using the cloud service.
+C. Click **Save**. 
+</Step>
+</Steps>
+
+## Usage
+
+Once installed, you can add MemMachine tools to any Dify **Chatflow** or **Agent**.
+
+### Memory Search
+
+Use the `search_memory` tool to retrieve relevant context. In a Chatflow, you can map the query input using Jinja2 templates:
+
+Code snippet
+
+```
+{{ sys.query }}
+```
+
+### Memory Storage
+
+Use the `add_memory` tool within your nodes to persist important information from the conversation, ensuring the agent "remembers" it in future sessions.
+
+------
+
+## Developer Guide (Contributors)
+
+If you wish to modify the plugin behavior or develop new tools for the Dify provider:
+
+### Requirements
+
+- Python 3.12+
+- Dify Plugin CLI (`dify`)
+- `jinja2` (for build-time template rendering)
+
+### Development Workflow
+
+The source of truth for the plugin provider and tool definitions is located in the `templates/` directory.
+
+1. **Modify Templates:** Edit files in `templates/` or add new tools to `tools/`.
+
+2. **Rebuild:** Run `python build_plugin.py` to render the `provider/` files.
+
+3. **Manual Package:**
+
+   Bash
+
+   ```
+   dify-plugin plugin package ./integrations/dify
+   ```
+
+### Repo Hygiene
+
+Note that generated provider files are ignored by git. Always modify the files in `templates/` and use the build script to ensure your changes are correctly propagated to the packaged plugin.
+
+## Requirements
+
+- A Dify instance (Cloud or Self-hosted)
+- MemMachine server running (default: http://localhost:8080) or Cloud account
+- Python 3.12+ (for building/contributing)

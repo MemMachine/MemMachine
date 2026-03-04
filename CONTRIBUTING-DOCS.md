@@ -22,10 +22,12 @@ create a pull request directly without filing an issue first.
 
 Follow these steps to set up your local environment:
 
-1. **Clone the Repository:**
+1. **Fork and Clone the Repository:**
+   
+    First, fork the project on GitHub to your own account. Then, clone your forked repository:
 
     ```bash
-    git clone https://github.com/MemMachine/MemMachine.git
+    git clone https://github.com/YOUR_USERNAME/MemMachine.git
     cd MemMachine
     ```
 

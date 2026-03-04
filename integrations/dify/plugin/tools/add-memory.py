@@ -8,11 +8,18 @@ import requests
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
 
-from tools._memmachine import DEFAULT_BASE_URL, DEFAULT_ORG_ID, DEFAULT_PROJECT_ID, MemMachineClient
+from tools._memmachine import (
+    DEFAULT_BASE_URL,
+    DEFAULT_ORG_ID,
+    DEFAULT_PROJECT_ID,
+    MemMachineClient,
+)
 
 
 class AddMemoryTool(Tool):
-    def _invoke(self, tool_parameters: dict[str, Any]) -> Generator[ToolInvokeMessage, None, None]:
+    def _invoke(
+        self, tool_parameters: dict[str, Any]
+    ) -> Generator[ToolInvokeMessage, None, None]:
         api_key = (self.runtime.credentials or {}).get("memmachine_api_key")
         base_url = (self.runtime.credentials or {}).get("memmachine_base_url")
         base_url_str = str(base_url).strip() if base_url is not None else ""
@@ -35,7 +42,9 @@ class AddMemoryTool(Tool):
         metadata = tool_parameters.get("metadata")
         if isinstance(metadata, dict) and metadata:
             # MemMachine expects string->string metadata per OpenAPI.
-            message["metadata"] = {str(k): str(v) for k, v in metadata.items() if v is not None}
+            message["metadata"] = {
+                str(k): str(v) for k, v in metadata.items() if v is not None
+            }
 
         body = {
             "org_id": DEFAULT_ORG_ID,

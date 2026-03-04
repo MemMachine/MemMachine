@@ -1,0 +1,100 @@
+---
+title: "TypeScript SDK"
+description: "The primary SDK for integrating MemMachine memory into TypeScript and JavaScript applications."
+icon: "code"
+---
+
+The MemMachine TypeScript SDK is built for modern AI workflows, providing a type-safe, metadata-driven interface to the MemMachine memory engine. 
+
+## Active Entry Point
+
+The latest version of the SDK leverages a unified client structure. Instead of managing multiple class instances, you perform all memory operations through the `MemMachineClient` using **Metadata Scoping**.
+
+<Card
+  title="MemMachineClient (Primary)"
+  icon="star"
+  href="./classes/MemMachineClient"
+>
+  The active class for all Episodic and Profile memory operations. Recommended for 100% of new integrations.
+</Card>
+
+---
+
+## Quick Start
+
+<Steps>
+  <Step title="Install">
+    ```bash
+    npm install @memmachine/sdk
+    ```
+  </Step>
+
+  <Step title="Initialize & Use">
+    Supply your `org_id` and `project_id` within the metadata context of your calls to maintain isolation.
+
+    ```typescript
+    import { MemMachineClient } from '@memmachine/client';
+
+    const client = new MemMachineClient({ api_key: 'your_api_key' });
+
+    // Scoped operation using Context
+    await client.addEpisodicMemory({
+      content: "User likes high-contrast UI.",
+      metadata: { org_id: "org_1", project_id: "proj_A", user_id: "user_1" }
+    });
+    ```
+  </Step>
+</Steps>
+
+---
+
+## API Reference
+
+Explore the detailed specifications for the SDK's classes and data models.
+
+### Interfaces & Types
+These define the shape of your interactions and the data returned by the SDK. They are organized by the lifecycle of a typical implementation.
+
+<AccordionGroup>
+  <Accordion title="1. Foundation (Context & Config)" icon="gears">
+    The essential building blocks for connecting and scoping your requests.
+    - **[ClientOptions](./interfaces/ClientOptions)**: Global client settings.
+    - **[ProjectContext](./interfaces/ProjectContext)**: Organization and Project scoping.
+    - **[MemoryContext](./interfaces/MemoryContext)**: User, Session, and Agent scoping.
+  </Accordion>
+  
+  <Accordion title="2. Operations (Input Parameters)" icon="arrow-pointer">
+    Interfaces used to define the "How" of your SDK method calls.
+    - **[CreateProjectOptions](./interfaces/CreateProjectOptions)**: Setup for new projects.
+    - **[AddMemoryOptions](./interfaces/AddMemoryOptions)**: Parameters for ingesting data.
+    - **[SearchMemoriesOptions](./interfaces/SearchMemoriesOptions)**: Filtering and threshold logic.
+    - **[ListMemoriesOptions](./interfaces/ListMemoriesOptions)**: Pagination and retrieval settings.
+  </Accordion>
+
+  <Accordion title="3. Data Models (Results & Units)" icon="database">
+    The structure of the data you receive back from the server.
+    - **[Project](./interfaces/Project)**: Full project configuration data.
+    - **[AddMemoryResult](./interfaces/AddMemoryResult)**: Confirmation and UIDs for new entries.
+    - **[SearchMemoriesResult](./interfaces/SearchMemoriesResult)**: Ranked search results wrapper.
+    - **[EpisodicMemory](./interfaces/EpisodicMemory)**: Individual interaction records.
+    - **[SemanticMemory](./interfaces/SemanticMemory)**: Extracted knowledge facts.
+    - **[HealthStatus](./interfaces/HealthStatus)**: Server heartbeat and version info.
+  </Accordion>
+
+  <Accordion title="4. Vocabulary (Shared Types)" icon="book">
+    Enums and union types used across the SDK.
+    - **[MemoryProducerRole](./types/MemoryProducerRole)**: Definitions for User, Assistant, and System roles.
+    - **[MemoryType](./types/MemoryType)**: Classifications for memory storage.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Contributing & Development
+
+1. **Install Dependencies:** `npm install`
+2. **Build the Package:** `npm run build`
+3. **Run Unit Tests:** `npm run test`
+
+## License
+MemMachine Typescript SDK is open-source software licensed under the [Apache-2.0 License](https://www.apache.org/licenses/LICENSE-2.0).

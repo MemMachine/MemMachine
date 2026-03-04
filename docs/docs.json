@@ -54,11 +54,24 @@
             "group": "Integrations",
             "icon": "puzzle-piece",
             "pages": [
-              "install_guide/integrate/claude_code_mcp",
               "install_guide/integrate/GPTStore",
-              "install_guide/integrate/LangGraph"
+              "install_guide/integrate/claude_code_mcp",
+              "install_guide/integrate/LangGraph",
+              "install_guide/integrate/LangChain",
+              "install_guide/integrate/crewai",
+              "install_guide/integrate/n8n",
+              "install_guide/integrate/dify",
+              "install_guide/integrate/Google_ADK",
+              "install_guide/integrate/LlamaIndex"
             ]
-           },
+          },
+          {
+            "group": "Tools",
+            "icon": "screwdriver-wrench",
+            "pages": [
+              "tools/ChatGPT2MemMachine"
+            ]
+          },
           {
             "group": "Core Concepts",
             "icon": "brain",
@@ -75,6 +88,7 @@
               "open_source/configuration",
               "open_source/memory_types",
               "open_source/databases",
+              "open_source/retrieval_agent_architecture",
               "open_source/community"
             ]
           }
@@ -100,22 +114,65 @@
             "openapi": "openapi.json"
             },
           {
+          "group": "Typescript REST SDK",
+          "pages": [
+            "api_reference/ts-rest/typescript", 
+            {
+              "group": "Classes",
+              "pages": [
+                "api_reference/ts-rest/classes/MemMachineClient",
+                "api_reference/ts-rest/classes/MemMachineAPIError",
+                "api_reference/ts-rest/classes/MemMachineMemory",
+                "api_reference/ts-rest/classes/MemMachineProject"
+              ]
+            },
+            {
+              "group": "Interfaces",
+              "pages": [
+                "api_reference/ts-rest/interfaces/ClientOptions",
+                "api_reference/ts-rest/interfaces/ProjectContext",
+                "api_reference/ts-rest/interfaces/MemoryContext",
+                "api_reference/ts-rest/interfaces/CreateProjectOptions",
+                "api_reference/ts-rest/interfaces/AddMemoryOptions",
+                "api_reference/ts-rest/interfaces/SearchMemoriesOptions",
+                "api_reference/ts-rest/interfaces/ListMemoriesOptions",
+                "api_reference/ts-rest/interfaces/Project",
+                "api_reference/ts-rest/interfaces/AddMemoryResult",
+                "api_reference/ts-rest/interfaces/SearchMemoriesResult",
+                "api_reference/ts-rest/interfaces/EpisodicMemory",
+                "api_reference/ts-rest/interfaces/SemanticMemory",
+                "api_reference/ts-rest/interfaces/HealthStatus"
+              ]
+            },
+            {
+              "group": "Types",
+              "pages": [
+                "api_reference/ts-rest/types/MemoryProducerRole",
+                "api_reference/ts-rest/types/MemoryType"
+              ]
+            }
+          ]
+        },
+          {
             "group": "PythonSDK Client",
             "pages": [
-              "api_reference/python/client",
-              "api_reference/python/client_api",
-              "api_reference/python/project_api",
-              "api_reference/python/memory_api"
+              "api_reference/python/client",      
+              "api_reference/python/client_api",  
+              "api_reference/python/project_api", 
+              "api_reference/python/memory_api",  
+              "api_reference/python/semantic_api",
+              "api_reference/python/config_api",  
+              "api_reference/python/system_api"
             ]
           },
-          {
-            "group": "PythonSDK Server",
+         {
+            "group": "Python SDK Server",
             "pages": [
               "api_reference/python/server",
-              "api_reference/python/episodic_memory",
-              "api_reference/python/episodic_memory_manager",
               "api_reference/python/memory_types",
-              "api_reference/python/profile_memory"
+              "api_reference/python/episodic_memory",
+              "api_reference/python/semantic_memory",
+              "api_reference/python/episodic_memory_manager"
             ]
           }
         ]

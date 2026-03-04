@@ -1,0 +1,69 @@
+{{- if .Values.postgres.enabled }}
+# postgres-deployment.yaml
+# Deploys PostgreSQL with the pgvector extension (1 replica).
+# Used by MemMachine for: episode storage, semantic memory, profile/config data,
+# and session management. Credentials (user, password, db name) are injected
+# from the postgres-secret Secret. The database is initialized with UTF-8
+# encoding and C locale via POSTGRES_INITDB_ARGS.
+# Data is persisted to the postgres-pvc PVC at /var/lib/postgresql/data.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memmachine-postgres
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memmachine-postgres
+  template:
+    metadata:
+      labels:
+        app: memmachine-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.user }}
+                - -d
+                - {{ .Values.postgres.database }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+{{- end }}

@@ -1,97 +1,31 @@
-[build-system]
-requires = ["uv_build"]
-build-backend = "uv_build"
-
 [tool.uv.workspace]
-members = ["packages/client", "packages/server"]
+members = ["packages/client", "packages/common", "packages/server"]
 
 [tool.uv.sources]
+memmachine-common = { workspace = true }
 memmachine-server = { workspace = true }
 memmachine-client = { workspace = true }
-
-[project]
-name = "memmachine"
-version = "0.1.0"
-dependencies = [
-    "alembic>=1.17.1",
-    "asyncpg>=0.31.0",
-    "aiosqlite>=0.20.0",
-    "boto3>=1.40.40",
-    "boto3-stubs==1.40.64",
-    "cohere>=5.20.0",
-    "coverage>=7.11.0",
-    "dotenv>=0.9.9",
-    "fastapi>=0.116.1",
-    "fastmcp>=2.12.0",
-    "instructor[bedrock]>=1.12.0",
-    "langchain-aws>=0.2.33",
-    "neo4j>=5.28.2",
-    "nltk>=3.9.1",
-    "openai>=1.104.2",
-    "pgvector>=0.4.1",
-    "prometheus-client>=0.22.1",
-    "pydantic>=2.11.7",
-    "pyyaml>=6.0.2",
-    "rank-bm25>=0.2.2",
-    "sqlalchemy>=2.0.43",
-    "uvicorn>=0.35.0",
-    "greenlet>=3.2.4",
-    "tzdata>=2024.1 ; sys_platform == 'win32'",
-    "psutil>=7.1.0",
-    "memmachine-server",
-    "memmachine-client",
-]
-requires-python = ">= 3.12"
-authors = [
-  {name="MemMachine", email="noreply@memmachine.ai"},
-]
-description = "MemMachine is an open-source memory layer for AI agents, giving your creations short-term, long-term, and personalization memory, enabling them to learn, adapt, and remember."
-readme = "README.md"
-keywords = ["memmachine"]
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
-]
-license = "Apache-2.0"
-license-files = ["LICENSE"]
-
-[project.optional-dependencies]
-gpu = [
-    "sentence-transformers>=5.1.0",
-]
-
-[project.scripts]
-memmachine-server = "memmachine.server.app:main"
-memmachine-nltk-setup = "memmachine:setup_nltk"
-memmachine-mcp-stdio = "memmachine.server.mcp_stdio:main"
-memmachine-mcp-http = "memmachine.server.mcp_http:main"
-memmachine-configure = "memmachine.installation.memmachine_configure:main"
-
-[project.urls]
-Homepage = "https://github.com/MemMachine/MemMachine"
-Issues = "https://github.com/MemMachine/MemMachine/issues"
 
 [dependency-groups]
 dev = [
     "complexipy>=4.2.0",
-    "mypy>=1.18.2",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
-    "ruff>=0.13.2",
+    "ruff==0.15.1",
     "testcontainers[neo4j,postgres]>=4.13.1",
-    "ty>=0.0.1a26",
+    "ty~=0.0.20",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
 
-[tool.mypy]
-follow_untyped_imports = true
-enable_error_code = ["deprecated"]
-exclude = ["venv/", ".venv/"]
-plugins = ['pydantic.mypy']
-
 [tool.ruff]
-exclude = ["tools"]
+exclude = [
+    "tools",
+    "build",
+    ".tmp",
+    "evaluation/retrieval_skill",
+    "src/memmachine-ts",
+]
 
 [tool.ruff.lint]
 select = [
@@ -143,26 +77,42 @@ ignore = [
     "TRY003",
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# Do not add any new paths under packages/
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/client/client_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/server/server_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/common/common_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
 "examples/**" = [
     "ANN",
+    "ARG",
     "ASYNC210",
+    "C901",
+    "D",
+    "FA",
+    "PERF203",
+    "PTH",
+    "T201",
+    "TRY300",
+    "TRY401",
+]
+"integrations/**" = [
+    "ANN",
     "T201",
     "D",
     "ARG",
-    "T201",
-    "TRY401",
-    "C901",
-    "TRY300",
-    "PTH",
+    "FA",
+    "PERF203",
 ]
 "evaluation/**/*.py" = [
     "D",
     "ARG",
     "T201",
     "ANN",
+    "FA",
     "PTH123",
     "PTH120",
     "PTH110",
@@ -173,12 +123,20 @@ ignore = [
     "B023",
     "B007",
     "TRY300",
+    "PERF203",
     "PERF401",
 ]
+
+[tool.ty.environment]
+extra-paths = ["packages/common/src", "packages/server/src", "packages/client/src"]
+
+[tool.ty.src]
+exclude = ["packages/**/build/**"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
+addopts = ["-m", "not integration"]
 
 markers = [
     "integration: mark the test as an integration test",
@@ -186,7 +144,7 @@ markers = [
 ]
 
 [tool.complexipy]
-paths = ["src", "tests"]
+paths = ["packages/server/src", "packages/client/src", "packages/common/src"]
 max-complexity-allowed = 10
 quiet = false
 ignore-complexity = false
@@ -197,7 +155,9 @@ exclude = []
 
 [tool.coverage.run]
 source = [
-  "src/memmachine",
+    "packages/server/src/memmachine",
+    "packages/client/src/memmachine_client",
+    "packages/common/src/memmachine_common",
 ]
 
 [tool.coverage.report]

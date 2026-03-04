@@ -20,6 +20,45 @@ app = FastAPI(
 writing_assistant_constructor = WritingAssistantQueryConstructor()
 
 
+def format_error_response(e: Exception, context: str):
+    """
+    Format a user-friendly error message based on the exception type.
+
+    Parameters
+    ----------
+    e : Exception
+        The exception that was raised, typically a `requests` exception.
+    context : str
+        A short description of the operation being performed when the error occurred.
+
+    Returns
+    -------
+    dict
+        A dictionary with the keys:
+        - ``status`` (str): Always set to ``"error"``.
+        - ``message`` (str): A human-readable error message tailored to the exception type and context.
+    """
+    if isinstance(e, requests.exceptions.Timeout):
+        return {
+            "status": "error",
+            "message": f"Request to memory service timed out during {context}. Please try again.",
+        }
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return {
+            "status": "error",
+            "message": f"Could not connect to memory service during {context}. Service might be down.",
+        }
+    if isinstance(e, requests.exceptions.HTTPError):
+        return {
+            "status": "error",
+            "message": f"Memory service returned an error during {context}.",
+        }
+    return {
+        "status": "error",
+        "message": f"Internal error occurred during {context}.",
+    }
+
+
 @app.post("/memory")
 async def store_data(user_id: str, query: str):
     """Store user data and handle writing style submissions"""
@@ -79,10 +118,7 @@ async def store_data(user_id: str, query: str):
 
     except Exception as e:
         logger.exception("Error occurred in /memory store_data")
-        return {
-            "status": "error",
-            "message": f"Internal error in /memory store_data: {e!s}",
-        }
+        return format_error_response(e, "data storage")
 
 
 @app.get("/memory")
@@ -176,10 +212,7 @@ async def get_data(query: str, user_id: str, timestamp: str):
 
     except Exception as e:
         logger.exception("Error occurred in /memory get_data")
-        return {
-            "status": "error",
-            "message": f"Internal error in /memory get_data: {e!s}",
-        }
+        return format_error_response(e, "data retrieval")
 
 
 @app.post("/memory/store-and-search")
@@ -305,10 +338,7 @@ async def store_and_search_data(user_id: str, query: str):
 
     except Exception as e:
         logger.exception("Error occurred in store_and_search_data")
-        return {
-            "status": "error",
-            "message": f"Internal error in store_and_search: {e!s}",
-        }
+        return format_error_response(e, "store and search operation")
 
 
 @app.post("/analyze-writing-style")
@@ -391,10 +421,7 @@ async def analyze_writing_style(user_id: str, query: str):
 
     except Exception as e:
         logger.exception("Error occurred in analyze_writing_style")
-        return {
-            "status": "error",
-            "message": f"Internal error in analyze_writing_style: {e!s}",
-        }
+        return format_error_response(e, "writing style analysis")
 
 
 @app.get("/writing-styles/{user_id}")

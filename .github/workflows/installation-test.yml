@@ -10,7 +10,6 @@ concurrency:
   # Don't cancel if running on a push to the main branch.
   cancel-in-progress: ${{ (github.event.pull_request.head.ref || github.ref) != 'refs/heads/main' }}
 
-
 on:
   push:
     branches: [main]
@@ -31,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
         python-version: ["3.12"]
 
     steps:
@@ -69,26 +68,13 @@ jobs:
           docker pull ollama/ollama
           docker run -d --name ollama -p 11434:11434 ollama/ollama
 
-      - name: Linux - Wait for Ollama and pull models
-        if: matrix.os == 'ubuntu-latest'
-        shell: bash
-        run: |
-          set -eo pipefail
-          until curl -s http://localhost:11434/ > /dev/null; do
-            echo "Ollama not up yet, sleeping..."
-            sleep 1
-          done
-
-          curl -sSf http://localhost:11434/api/pull -d '{"name": "qwen3:0.6b"}' -v
-          curl -sSf http://localhost:11434/api/pull -d '{"name": "nomic-embed-text"}' -v
-
       - name: Linux - Test installation
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           set -eo pipefail
           whl_name=$(ls *server*.whl)
-          python -m pip install "$whl_name"
+          python -m pip install --find-links . "$whl_name"
 
       #
       # ─────────────────────────────────────
@@ -111,16 +97,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          set -eo pipefail
           winget install Ollama.Ollama --accept-source-agreements
-
-          until curl -s http://localhost:11434/ > /dev/null; do
-            echo "Ollama not up yet, sleeping..."
-            sleep 1
-          done
-
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"qwen3:0.6b"}'
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"nomic-embed-text"}'
 
       - name: Windows - Install the package
         if: matrix.os == 'windows-latest'
@@ -129,7 +106,7 @@ jobs:
           set -eo pipefail
           export PYTHONUTF8=1
           whl_name=$(ls *server*.whl)
-          python -m pip install "$whl_name"
+          python -m pip install --find-links . "$whl_name"
 
       #
       # ─────────────────────────────────────
@@ -137,32 +114,62 @@ jobs:
       # ─────────────────────────────────────
       #
       - name: macOS - Install Ollama
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' || matrix.os == 'macos-15-intel'
         run: |
-          set -eo pipefail
           brew install ollama
           brew services start ollama
 
-          until curl -s http://localhost:11434/ > /dev/null; do
-            sleep 1
-          done
-
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"qwen3:0.6b"}'
-          curl -sSf http://localhost:11434/api/pull -d '{"name":"nomic-embed-text"}'
-
       - name: macOS - Test installation
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' || matrix.os == 'macos-15-intel'
         shell: bash
         run: |
           set -eo pipefail
           whl_name=$(ls *server*.whl)
-          python -m pip install "$whl_name"
+          python -m pip install --find-links . "$whl_name"
 
       #
       # ─────────────────────────────────────
       # Shared Steps (all OSes)
       # ─────────────────────────────────────
       #
+      - name: Wait for Ollama Readiness
+        shell: bash
+        run: |
+          set -eo pipefail
+          # Wait for Ollama to be responsive (up to 120s)
+          count=0
+          until curl -s http://localhost:11434/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Ollama service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
+          done
+
+          if [ $count -eq 24 ]; then
+            echo "Ollama failed to start within 120 seconds"
+            exit 1
+          fi
+          echo "Ollama is ready!"
+
+      - name: Pull Ollama Models
+        uses: nick-fields/retry@v3
+        with:
+          max_attempts: 5
+          retry_wait_seconds: 10
+          timeout_seconds: 300
+          shell: bash
+          command: |
+            set -eo pipefail
+
+            models=("qwen3:0.6b" "nomic-embed-text")
+            for model in "${models[@]}"; do
+              echo "Pulling model $model..."
+              response=$(curl -sS http://localhost:11434/api/pull -d "{\"name\": \"$model\"}")
+              echo "Response for $model: $response"
+              if ! echo "$response" | grep -q '"status":"success"'; then
+                echo "Model pull for $model did not complete successfully"
+                exit 1
+              fi
+            done
 
       - name: Run memmachine-configure
         shell: bash
@@ -171,7 +178,7 @@ jobs:
           y
           Ollama
           qwen3:0.6b
-      
+
           http://localhost:11434/v1
           nomic-embed-text
           768
@@ -180,53 +187,68 @@ jobs:
           EOF
 
       - name: Wait for Neo4j to be ready
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 12          # 12 × 5s = 60 seconds
-          retry_wait_seconds: 5
-          timeout_seconds: 5
-          shell: bash
-          command: |
-            echo "Checking Neo4j Bolt port on localhost:7687..."
-            curl -sf http://localhost:7474 || exit 1
+        shell: bash
+        run: |
+          set -eo pipefail
+          echo "Checking Neo4j HTTP port on localhost:7474..."
+
+          # Wait up to 120 seconds
+          count=0
+          until curl -sf http://localhost:7474/ > /dev/null || [ $count -eq 24 ]; do
+            echo "Waiting for Neo4j service ($((count * 5))/120s)..."
+            sleep 5
+            count=$((count + 1))
+          done
+
+          if [ $count -eq 24 ]; then
+            echo "Neo4j failed to start within 120 seconds"
+            exit 1
+          fi
+          echo "Neo4j is ready!"
 
       - name: Start memmachine-server
         shell: bash
         run: |
           set -eo pipefail
           echo "Starting memmachine-server..."
-          memmachine-server >server-out.log 2>&1 &
+          MEMMACHINE_CONFIG_API=1 memmachine-server >server-out.log 2>&1 &
           echo $! > server.pid
           echo "Server PID: $(cat server.pid)"
 
       - name: Wait for server to be ready
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 30          # 30 × 10s = 5 minutes
-          retry_wait_seconds: 10
-          timeout_seconds: 10
-          shell: bash
-          command: |
-            set -eo pipefail
+        shell: bash
+        run: |
+          set -eo pipefail
+          HEALTH_URL="http://127.0.0.1:8080/api/v2/health"
+          READY_URL="http://127.0.0.1:8080/api/v2/projects/list"
+          echo "Checking server liveness at $HEALTH_URL..."
 
-            SERVER_URL="http://127.0.0.1:8080/api/v2/projects/list"
+          # Stage 1: Wait for process liveness (up to 300 seconds)
+          count=0
+          until curl -sSf "$HEALTH_URL" > /dev/null || [ $count -eq 60 ]; do
+            echo "Waiting for memmachine-server process ($((count * 5))/300s)..."
+            sleep 5
+            count=$((count + 1))
+          done
 
-            echo "Checking server readiness..."
+          if [ $count -eq 60 ]; then
+            echo "memmachine-server failed to start within 5 minutes"
+            echo "===== Server Logs ====="
+            cat server-out.log || echo "Could not read server-out.log"
+            exit 1
+          fi
+          echo "Server process is alive!"
 
-            http_code=$(curl -X POST -s -o curl_body.tmp -w "%{http_code}" "$SERVER_URL" || true)
-            body=$( [ -f curl_body.tmp ] && cat curl_body.tmp || echo "empty body" )
-            rm -f curl_body.tmp
+          # Stage 2: Verify application readiness
+          echo "Verifying application readiness at $READY_URL..."
+          if ! curl -sSf -X POST "$READY_URL" > /dev/null; then
+            echo "Server is alive but application readiness check failed!"
+            echo "===== Server Logs ====="
+            cat server-out.log || echo "Could not read server-out.log"
+            exit 1
+          fi
 
-            if [ "$http_code" != "200" ]; then
-              echo "Server not ready yet (HTTP $http_code)"
-              echo "===== Response Body ====="
-              echo "$body"
-              exit 1   # triggers retry
-            fi
-
-            echo "Server is ready!"
-            echo "===== Server Response ====="
-            echo "$body"
+          echo "Server is fully ready!"
 
       - name: Install uv
         shell: bash
@@ -240,7 +262,7 @@ jobs:
         shell: bash
         run: |
           uv pip install pytest
-          uv run pytest tests/memmachine/rest_client/test_integration_complete.py -v --integration -m integration
+          uv run pytest packages/client/client_tests/test_integration_complete.py -v -m integration
 
       - name: Stop memmachine-server
         if: always()

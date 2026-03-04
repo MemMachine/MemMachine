@@ -36,7 +36,7 @@ Ready to see MemMachine in action? Click any link below to got directly to the [
     href="https://github.com/MemMachine/MemMachine/blob/main/examples/README.md"
   >
     Healthcare assistant for patient management
-  </Card>  
+  </Card>
   <Card
     title="Streamlit Frontend"
     icon="check"
@@ -51,9 +51,10 @@ Ready to see MemMachine in action? Click any link below to got directly to the [
 >
     AI-powered Writing assistant
   </Card>
+  <Card title="OpenAI Agent" icon="openai" href="https://github.com/MemMachine/MemMachine/blob/main/examples/openai_agent/README.md">
+    **Memory for Custom GPTs.** Set up MemMachine as a Custom Action for reliable history.
+  </Card>
 </Columns>
-
-<Warning>Advice recieved from using these examples comes from AI generation, and should not be considered the same as advice recieved from an expert in any given field.</Warning>
 
 
 These agents are designed to showcase how to integrate with MemMachine's memory services. Follow these simple steps to get an agent up and running in no time.
@@ -163,7 +164,7 @@ We offer four available agents to choose from, each tailored to different use ca
    - **Use Case:** Sales teams, customer support, and relationship management
    </Tab>
    <Tab title="Financial Analyst Agent" icon="coins">
-  
+
    - **File Directory:** `financial_analyst/`
    - **Purpose:** Financial analysis and reporting
    - **Port:** 8000 (configurable via `FINANCIAL_PORT`)
@@ -293,7 +294,7 @@ Open your browser to `http://localhost:8502`
    - **Terminal 1:** Start MemMachine backend
 
      ```bash
-     cd memmachine/src
+     cd memmachine/packages/server/src/memmachine_server
      python -m server.app
      ```
 

@@ -1,11 +1,14 @@
 """Demo showing MemMachine integration with LangGraph."""
 
-# ruff: noqa: T201
 import json
 import os
 from typing import Annotated, TypedDict
 
-from tool import MemMachineTools, create_add_memory_tool, create_search_memory_tool
+from memmachine_client import (
+    MemMachineTools,
+    create_add_memory_tool,
+    create_search_memory_tool,
+)
 
 # ============================================================================
 # Configuration
@@ -115,11 +118,14 @@ def simple_memory_workflow_demo() -> None:
 
         if result["status"] == "success":
             results = result["results"]
-            episodic = results.get("episodic_memory", [])
+            episodic = results.get("episodic_memory", {})
+            episodes = (
+                episodic.get("episodes", []) if isinstance(episodic, dict) else episodic
+            )
 
-            if episodic:
-                print(f"   Found {len(episodic)} relevant memories:")
-                for i, mem in enumerate(episodic[:3], 1):
+            if episodes:
+                print(f"   Found {len(episodes)} relevant memories:")
+                for i, mem in enumerate(episodes[:3], 1):
                     content = (
                         mem.get("content", "") if isinstance(mem, dict) else str(mem)
                     )

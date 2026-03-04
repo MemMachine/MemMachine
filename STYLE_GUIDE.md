@@ -20,8 +20,8 @@ They can be installed easily as part of the `dev` group using `uv sync`.
   - Ruff is an extremely fast code formatter that automatically formats Python code.
 - **Linter:** [**Ruff**](https://github.com/astral-sh/ruff)
   - Ruff is an extremely fast linter that is designed to be a drop-in replacement for tools like flake8 and isort. It catches common bugs and stylistic issues.
-- **Type Checker:** [**Mypy**](https://github.com/python/mypy)
-  - Mypy is a static type checker for Python.
+- **Type Checker:** [**ty**](https://github.com/astral-sh/ty)
+  - ty is a static type checker for Python.
 
 ### Markdown
 

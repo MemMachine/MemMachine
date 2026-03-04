@@ -14,16 +14,21 @@ episodic_memory:
     llm_model: openai_model
     message_capacity: 500
 
+retrieval_agent:
+  llm_model: openai_model
+  reranker: my_reranker_id
+
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
   database: profile_storage
+  config_database: profile_storage
 
 session_manager:
   database: profile_storage
 
 prompt:
-  session:
+  default_project_categories:
   - profile_prompt
 
 resources:
@@ -36,12 +41,18 @@ resources:
         user: postgres
         password: <YOUR_PASSWORD_HERE>
         db_name: postgres
+        pool_size: 5
+        max_overflow: 10
     my_storage_id:
       provider: neo4j
       config:
         uri: 'bolt://localhost:7687'
         username: neo4j
         password: <YOUR_PASSWORD_HERE>
+        max_connection_pool_size: 100
+        connection_acquisition_timeout: 60.0
+        range_index_creation_threshold: 10000
+        vector_index_creation_threshold: 10000
     sqlite_test:
       provider: sqlite
       config:
@@ -50,6 +61,7 @@ resources:
     openai_embedder:
       provider: openai
       config:
+        max_input_length: 2048
         model: "text-embedding-3-small"
         api_key: <YOUR_API_KEY>
         base_url: "https://api.openai.com/v1"
@@ -57,6 +69,7 @@ resources:
     aws_embedder_id:
       provider: 'amazon-bedrock'
       config:
+        max_input_length: 2048
         region: "us-west-2"
         aws_access_key_id: <AWS_ACCESS_KEY_ID>
         aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
@@ -65,6 +78,7 @@ resources:
     ollama_embedder:
       provider: openai
       config:
+        max_input_length: 2048
         model: "nomic-embed-text"
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
@@ -72,6 +86,7 @@ resources:
     openai_compatible_embedder:
       provider: openai
       config:
+        max_input_length: 2048
         model: "text-embedding-v4"
         api_key: <YOUR_API_KEY>
         base_url: "https://api.openai.com/v1"

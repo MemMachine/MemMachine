@@ -1,0 +1,30 @@
+---
+title: "ProjectContext"
+description: "Core identifiers used to scope operations to specific organizations and projects."
+---
+
+## Overview
+
+`ProjectContext` is the primary scoping mechanism in the SDK. It ensures that memories added or searched are isolated within the correct organizational and project boundaries.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `org_id` | `string` | The unique identifier for your organization. |
+| `project_id` | `string` | The unique identifier for the specific project workspace. |
+
+---
+
+## Usage Example
+
+```typescript
+import { ProjectContext } from '@memmachine/client';
+
+const context: ProjectContext = {
+  org_id: 'acme_corp',
+  project_id: 'customer_support_bot'
+};
+```

@@ -2,189 +2,257 @@ import json
 import os
 import time
 from datetime import datetime
-from pathlib import Path
 
 import requests
-
-episodic_memory_path = "memories/episodic"
+from utils import get_filename_safe_timestamp
 
 
 class MemMachineRestClient:
     def __init__(
         self,
         base_url="http://localhost:8080",
-        session=None,
-        producer=None,
-        produced_for=None,
+        api_version="v2",
         verbose=False,
-        statistic_file=None,
+        run_id=None,
     ):
         self.base_url = base_url
-        self.api_version = "v1"
-        self.session = session
-        if self.session is None:
-            self.session = {
-                "group_id": "test_group",
-                "agent_id": ["test_agent"],
-                "user_id": ["test_user"],
-                "session_id": "session_123",
-            }
-        self.producer = producer
-        if self.producer is None:
-            self.producer = "test_user"
-        self.produced_for = produced_for
-        if self.produced_for is None:
-            self.produced_for = "test_agent"
+        self.api_version = api_version
         self.verbose = verbose
-        self.statistic_file = statistic_file
-        if self.statistic_file is None:
-            # Use a filename-safe timestamp (Windows paths cannot contain colons)
-            timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
-            self.statistic_file = f"output/statistic_{timestamp}.csv"
-        if not os.path.exists(self.statistic_file):
-            os.makedirs(os.path.dirname(self.statistic_file), exist_ok=True)
-        with open(self.statistic_file, "w") as f:
-            f.write("timestamp,method,url,latency_ms\n")
-        self.statistic_fp = open(self.statistic_file, "a")
+        if self.verbose:
+            if not run_id:
+                run_id = get_filename_safe_timestamp()
+            self.api_requests_file = f"output/api_requests_{run_id}.csv"
+            self.trace_file = f"output/trace_{run_id}.txt"
+            os.makedirs(os.path.dirname(self.api_requests_file), exist_ok=True)
+            with open(self.api_requests_file, "w") as f:
+                f.write("timestamp,method,url,latency_ms,response_code\n")
+            self.api_requests_fp = open(self.api_requests_file, "a")
+            self.trace_fp = open(self.trace_file, "w")
+        else:
+            self.api_requests_fp = None
+            self.trace_fp = None
 
     def __del__(self):
-        self.statistic_fp.close()
+        if hasattr(self, "api_requests_fp") and self.api_requests_fp is not None:
+            self.api_requests_fp.close()
+        if hasattr(self, "trace_fp") and self.trace_fp is not None:
+            self.trace_fp.close()
 
     def _get_url(self, path):
-        return f"{self.base_url}/{self.api_version}/{path}"
+        return f"{self.base_url}/api/{self.api_version}/{path}"
 
     def _trace_request(self, method, url, payload=None, response=None, latency_ms=None):
-        """Trace API request details including latency and response info"""
-        timestamp = datetime.now().isoformat()
+        """Trace API request details for debugging and reproduction"""
+        if not self.verbose or self.trace_fp is None:
+            return
 
-        trace_info = {
-            "timestamp": timestamp,
-            "method": method,
-            "url": url,
-            "latency_ms": latency_ms,
-            "request_size_bytes": (
-                len(json.dumps(payload).encode("utf-8")) if payload else 0
-            ),
-            "response_size_bytes": len(response.content) if response else 0,
-            "status_code": response.status_code if response else None,
-            "response_headers": dict(response.headers) if response else None,
-        }
+        trace_lines = []
+        trace_lines.append("\n🔍 API TRACE")
+        trace_lines.append(f"   {method} {url}")
+        if payload:
+            trace_lines.append(
+                f"   Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}"
+            )
 
-        print(f"\n🔍 API TRACE [{timestamp}]")
-        print(f"   Method: {method}")
-        print(f"   URL: {url}")
-        print(f"   Latency: {latency_ms}ms" if latency_ms else "   Latency: N/A")
-        print(f"   Request Size: {trace_info['request_size_bytes']} bytes")
-        print(f"   Response Size: {trace_info['response_size_bytes']} bytes")
-        print(f"   Status Code: {trace_info['status_code']}")
+        # Always try to write response information
+        if response is not None:
+            try:
+                response_code = getattr(response, "status_code", None)
+                response_text = None
+                try:
+                    response_text = getattr(response, "text", None) or ""
+                except Exception:
+                    response_text = "<unable to read>"
 
-        if response and response.headers:
-            print(f"   Response Headers: {dict(response.headers)}")
+                trace_lines.append(f"   Response Code: {response_code}")
+                trace_lines.append(
+                    f"   Response Text: {response_text[:500] if response_text else '<empty>'}"
+                )
 
-        return trace_info
+                if response_code and response_code != 200:
+                    error_text = (
+                        response_text[:200]
+                        if response_text and response_text != "<unable to read>"
+                        else ""
+                    )
+                    trace_lines.append(f"   Error: {error_text}")
+            except Exception as e:
+                trace_lines.append(f"   Response Code: <error reading response: {e!s}>")
+        else:
+            trace_lines.append("   Response Code: <no response object>")
+
+        if latency_ms is not None:
+            trace_lines.append(f"   Latency: {latency_ms}ms")
+
+        # Write to trace file
+        self.trace_fp.write("\n".join(trace_lines) + "\n")
+        self.trace_fp.flush()  # Ensure immediate write
 
     """
-    curl -X POST "http://localhost:8080/v1/memories/episodic" \
+    curl -X POST "http://localhost:8080/api/v2/memories" \
     -H "Content-Type: application/json" \
     -d '{
-      "session": {
-        "group_id": "test_group",
-        "agent_id": ["test_agent"],
-        "user_id": ["test_user"],
-        "session_id": "session_123"
-      },
-      "producer": "test_user",
-      "produced_for": "test_agent",
-      "episode_content": "This is a simple test memory.",
-      "episode_type": "message",
-      "metadata": {}
+      "org_id": "my-org",
+      "project_id": "my-project",
+      "messages": [
+        {
+          "content": "This is a simple test memory.",
+          "producer": "user-alice",
+          "role": "user",
+          "timestamp": "2025-11-24T10:00:00Z",
+          "metadata": {
+            "user_id": "user-alice",
+          }
+        }
+      ],
+      "types": ["episodic", "semantic"]
     }'
     """
 
-    def post_episodic_memory(self, message, session_id=None):
-        episodic_memory_endpoint = self._get_url(episodic_memory_path)
-        if session_id is not None:
-            self.session["session_id"] = session_id
-        payload = {
-            "session": self.session,
-            "producer": self.producer,
-            "produced_for": self.produced_for,
-            "episode_content": message,
-            "episode_type": "message",
-            "metadata": {},
-        }
+    def ensure_project(self, org_id, project_id):
+        """Ensure a project exists, creating it if necessary.
 
+        Args:
+            org_id: Organization ID
+            project_id: Project ID
+        """
+        url = self._get_url("projects")
+        payload = {"org_id": org_id, "project_id": project_id}
         start_time = time.time()
-        response = requests.post(episodic_memory_endpoint, json=payload, timeout=300)
+        response = requests.post(url, json=payload, timeout=300)
         end_time = time.time()
 
         latency_ms = round((end_time - start_time) * 1000, 2)
-        # Trace the request
+
+        if self.verbose:
+            self._trace_request("POST", url, payload, response, latency_ms)
+            response_code = response.status_code if response is not None else ""
+            self.api_requests_fp.write(
+                f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
+            )
+            self.api_requests_fp.flush()
+
+        # 201 = created, 409 = already exists (both are fine)
+        if response.status_code not in (201, 409):
+            raise Exception(f"Failed to ensure project exists: {response.text}")
+
+    def add_memory(
+        self, org_id="", project_id="", messages=None, memory_types=None
+    ) -> dict:
+        add_memory_endpoint = self._get_url("memories")
+        payload = {
+            "messages": messages,
+        }
+        if org_id:
+            payload["org_id"] = org_id
+        if project_id:
+            payload["project_id"] = project_id
+        if memory_types:
+            payload["types"] = memory_types
+        start_time = time.time()
+        response = requests.post(add_memory_endpoint, json=payload, timeout=300)
+        end_time = time.time()
+
+        latency_ms = round((end_time - start_time) * 1000, 2)
+
+        # Trace the request if verbose
         if self.verbose:
             self._trace_request(
                 "POST",
-                episodic_memory_endpoint,
+                add_memory_endpoint,
                 payload,
                 response,
                 latency_ms,
             )
-        else:
-            self.statistic_fp.write(
-                f"{datetime.now().isoformat()},POST,{episodic_memory_endpoint},{latency_ms}\n",
+            # Write to API requests log file
+            response_code = response.status_code if response is not None else ""
+            self.api_requests_fp.write(
+                f"{datetime.now().isoformat()},POST,{add_memory_endpoint},{latency_ms},{response_code}\n",
             )
+            self.api_requests_fp.flush()  # Ensure immediate write
 
         if response.status_code != 200:
             raise Exception(f"Failed to post episodic memory: {response.text}")
         return response.json()
 
     """
-    curl -X POST "http://localhost:8080/v1/memories/episodic/search" \
+    curl -X POST "http://localhost:8080/api/v2/memories/search" \
     -H "Content-Type: application/json" \
     -d '{
-      "session": {
-        "group_id": "test_group",
-        "agent_id": ["test_agent"],
-        "user_id": ["test_user"],
-        "session_id": "session_123"
-      },
+      "org_id": "my-org",
+      "project_id": "my-project",
       "query": "simple test memory",
-      "filter": {},
-      "limit": 5
+      "top_k": 5,
+      "filter": "",
+      "types": ["episodic", "semantic"]
     }'
     """
 
-    def search_episodic_memory(self, query_str, limit=5):
-        search_episodic_memory_endpoint = self._get_url(
-            f"{episodic_memory_path}/search",
-        )
+    def configure_short_term_memory(self, org_id, project_id, enabled: bool):
+        """Configure short-term memory summarization for a project.
+
+        Args:
+            org_id: Organization ID
+            project_id: Project ID
+            enabled: Whether short-term memory summarization is enabled
+        """
+        url = self._get_url("memory/episodic/short_term/config")
+        payload = {
+            "org_id": org_id,
+            "project_id": project_id,
+            "enabled": enabled,
+        }
+        start_time = time.time()
+        response = requests.post(url, json=payload, timeout=300)
+        end_time = time.time()
+
+        latency_ms = round((end_time - start_time) * 1000, 2)
+
+        if self.verbose:
+            self._trace_request("POST", url, payload, response, latency_ms)
+            response_code = response.status_code if response is not None else ""
+            self.api_requests_fp.write(
+                f"{datetime.now().isoformat()},POST,{url},{latency_ms},{response_code}\n",
+            )
+            self.api_requests_fp.flush()
+
+        if response.status_code != 204:
+            raise Exception(f"Failed to configure short-term memory: {response.text}")
+
+    def search_memory(self, org_id, project_id, query_str, limit=5):
+        search_memory_endpoint = self._get_url("memories/search")
         query = {
-            "session": self.session,
+            "org_id": org_id,
+            "project_id": project_id,
             "query": query_str,
-            "filter": {},
-            "limit": limit,
+            "top_k": limit,
+            "types": ["episodic", "semantic"],
         }
 
         start_time = time.time()
         response = requests.post(
-            search_episodic_memory_endpoint,
+            search_memory_endpoint,
             json=query,
             timeout=300,
         )
         end_time = time.time()
         latency_ms = round((end_time - start_time) * 1000, 2)
 
+        # Trace the request if verbose
         if self.verbose:
             self._trace_request(
                 "POST",
-                search_episodic_memory_endpoint,
+                search_memory_endpoint,
                 query,
                 response,
                 latency_ms,
             )
-        else:
-            self.statistic_fp.write(
-                f"{datetime.now().isoformat()},POST,{search_episodic_memory_endpoint},{latency_ms}\n",
+            # Write to API requests log file
+            response_code = response.status_code if response is not None else ""
+            self.api_requests_fp.write(
+                f"{datetime.now().isoformat()},POST,{search_memory_endpoint},{latency_ms},{response_code}\n",
             )
+            self.api_requests_fp.flush()  # Ensure immediate write
 
         if response.status_code != 200:
             raise Exception(f"Failed to search episodic memory: {response.text}")
@@ -192,11 +260,24 @@ class MemMachineRestClient:
 
 
 if __name__ == "__main__":
+    print("Initializing client...")
     client = MemMachineRestClient(base_url="http://localhost:8080")
-    client.post_episodic_memory(
-        "I will start to write a new story today. There are 1 main characters in my story, lilith. she transmigrates into a game, After experiencing a series of bad endings, she breaks free in her final reincarnation, joining forces with her female companions to rebel and overthrow the corrupt dynasty.",
+    print("Client initialized")
+    print("Adding memory...")
+    org_id = "my-org"
+    project_id = "my-project"
+    client.add_memory(
+        org_id,
+        project_id,
+        [
+            {
+                "content": (
+                    "Starting a new story about lilith, who transmigrates into a game."
+                ),
+            }
+        ],
     )
-    results = client.search_episodic_memory("main character of my story")
+    results = client.search_memory(org_id, project_id, "main character of my story")
     if results["status"] != 0:
         raise Exception(f"Failed to search episodic memory: {results}")
     if results["content"] is None:
@@ -207,17 +288,23 @@ if __name__ == "__main__":
     else:
         episodic_memory = results["content"]["episodic_memory"]
         if episodic_memory is not None:
-            for memories in episodic_memory:
-                if len(memories) == 0:
-                    print("--- warn: empty memories found")
-                    continue
-                for memory in memories:
-                    if isinstance(memory, dict) and "content" in memory:
-                        print(memory["content"])
-                    elif isinstance(memory, str) and memory.strip():
-                        print(memory)
-                    else:
-                        # Skip empty strings or invalid data
-                        print(f"--- warn: invalid memory data found: {memory}")
+            long_term_memory = episodic_memory.get("long_term_memory", {})
+            short_term_memory = episodic_memory.get("short_term_memory", {})
+            if long_term_memory is not None:
+                episodes_in_long_term_memory = long_term_memory.get("episodes", [])
+                print(
+                    "Number of episodes in long term memory: ",
+                    len(episodes_in_long_term_memory),
+                )
+                for episode in long_term_memory.get("episodes", []):
+                    print(f"Episode: {episode['content']}")
+            if short_term_memory is not None:
+                episodes_in_short_term_memory = short_term_memory.get("episodes", [])
+                print(
+                    "Number of episodes in short term memory: ",
+                    len(episodes_in_short_term_memory),
+                )
+                for episode in episodes_in_short_term_memory:
+                    print(f"Episode: {episode['content']}")
         else:
             print("Episodic memory is empty")

@@ -1,0 +1,81 @@
+name: Generate OpenAPI Spec
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/server/src/memmachine_server/server/**'
+      - 'packages/common/src/memmachine_common/**'
+      - 'docs/tools/generate_openapi.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for setuptools-scm versioning
+
+      - name: Setup Python and uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install project
+        run: uv sync --frozen
+
+      - name: Generate OpenAPI spec
+        run: uv run python docs/tools/generate_openapi.py > docs/openapi.generated.json
+
+      - name: Check for changes
+        id: diff
+        run: |
+          # Normalize both files for comparison (consistent indent, trailing newline)
+          python3 -c "
+          import json, sys
+          for path in sys.argv[1:]:
+              with open(path) as f:
+                  data = json.load(f)
+              with open(path, 'w') as f:
+                  json.dump(data, f, indent=2)
+                  f.write('\n')
+          " docs/openapi.json docs/openapi.generated.json
+
+          if diff -q docs/openapi.json docs/openapi.generated.json > /dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "OpenAPI spec is up to date."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "OpenAPI spec has changed."
+            diff docs/openapi.json docs/openapi.generated.json || true
+          fi
+
+      - name: Update spec file
+        if: steps.diff.outputs.changed == 'true'
+        run: mv docs/openapi.generated.json docs/openapi.json
+
+      - name: Clean up generated file
+        if: steps.diff.outputs.changed == 'false'
+        run: rm -f docs/openapi.generated.json
+
+      - name: Create Pull Request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automated/regenerate-openapi
+          commit-message: "docs: regenerate openapi.json from source"
+          title: "docs: regenerate openapi.json"
+          body: |
+            This PR was automatically generated because the OpenAPI spec
+            derived from the source code differs from the committed
+            `docs/openapi.json`.
+
+            **Trigger:** push to `main` that modified server or API source files.
+
+            Please review the changes to ensure they are correct before merging.
+          labels: documentation
+          delete-branch: true

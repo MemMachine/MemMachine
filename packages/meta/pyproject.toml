@@ -1,16 +1,30 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "memmachine"
-version = "0.1.0"
-description = "Meta-package for MemMachine: Installs both client and server."
+dynamic = ["version"]
+description = "MemMachine: Open-source long-term memory layer for AI agents and LLMs. Provides episodic memory, profile memory, and working memory to enable persistent, context-aware AI applications that learn and remember across sessions."
 readme = "README.md"
-requires-python = ">=3.8"
+keywords = [
+    "memmachine",
+    "ai-agents",
+    "llm-memory",
+    "long-term-memory",
+    "episodic-memory",
+    "agent-memory",
+    "ai-infrastructure",
+    "langchain",
+    "openai",
+    "anthropic",
+    "mcp",
+    "model-context-protocol",
+]
+requires-python = ">=3.12"
 dependencies = [
-    "memmachine-client==0.1.0",
-    "memmachine-server==0.1.0"
+    "memmachine-client",
+    "memmachine-server"
 ]
 
 [project.urls]
@@ -18,3 +32,6 @@ Homepage = "https://github.com/memmachine/memmachine"
 
 [tool.setuptools]
 packages = []
+
+[tool.setuptools_scm]
+root = "../.."

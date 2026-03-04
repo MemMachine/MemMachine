@@ -1,0 +1,11 @@
+# Chart.yaml
+# Helm chart metadata for the MemMachine stack.
+# chart version (version) tracks chart changes independently from the app release (appVersion).
+# Bump `version` when the chart templates/values change; bump `appVersion` when the
+# container image version changes.
+apiVersion: v2
+name: memmachine
+description: A Helm chart for deploying memmachine, Neo4j, and Postgres
+type: application
+version: 0.1.0
+appVersion: "v0.2.6"

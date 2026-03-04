@@ -1,0 +1,31 @@
+---
+title: "Project"
+description: "The complete data model for a MemMachine project workspace."
+---
+
+## Overview
+
+The `Project` interface represents the full metadata and configuration state of a project. It is the primary return type for the `getDetails()` method.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `org_id` | `string` | The unique identifier of the organization owning the project. |
+| `project_id` | `string` | The unique identifier of the project itself. |
+| `description` | `string` | A human-readable summary of the project. |
+| `config` | `object` | The active AI configuration, including `embedder` and `reranker` model strings. |
+
+---
+
+## Usage Example
+
+```typescript
+const project = client.project({ org_id: 'customer-support', project_id: 'customer-support' });
+const details = await project.get();
+
+console.log(`Project: ${details.description}`);
+console.log(`Using Embedder: ${details.config.embedder}`);
+```

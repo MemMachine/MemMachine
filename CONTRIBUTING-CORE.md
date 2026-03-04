@@ -22,11 +22,19 @@ know that you are taking ownership of it.
 
 Follow these steps to set up your local development environment:
 
-1. **Clone the Repository:**
+1. **Fork and Clone the Repository:**
+
+    First, fork the project on GitHub to your own account. Then, clone your forked repository:
 
     ```bash
-    git clone https://github.com/MemMachine/MemMachine.git
+    git clone https://github.com/YOUR_USERNAME/MemMachine.git
     cd MemMachine
+    ```
+
+    Next, add the original repository as an `upstream` remote to keep your fork in sync:
+
+    ```bash
+    git remote add upstream https://github.com/MemMachine/MemMachine.git
     ```
 
 2. **Install the Package:**
@@ -59,14 +67,14 @@ Follow these steps to set up your local development environment:
 ## 3. Code Style and Quality
 
 The project enforces a strict code style using [Ruff](https://docs.astral.sh/ruff/) for formatting and linting.
-The project also uses [Mypy](https://mypy-lang.org/) for type checking.
+The project also uses [ty](https://docs.astral.sh/ty/) for type checking.
 
 These tools are installed automatically as part of the `dev` group if using uv.
 
 Alternatively, they may be installed by:
 ```
 pip install ruff
-pip install mypy
+pip install ty
 # OR, if pip is new enough:
 pip install --group dev
 ```
@@ -87,11 +95,11 @@ uv run ruff format
 ruff format
 ```
 
-To run the Mypy type checker:
+To run the ty type checker:
 ```
-uv run mypy src
+uv run ty check packages
 # OR
-mypy src
+ty check packages
 ```
 
 ## 4. Testing

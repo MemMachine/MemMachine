@@ -59,7 +59,7 @@ services:
   # MemMachine application
   memmachine:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
-    pull_policy: always
+    pull_policy: ${PULL_POLICY:-always}
     container_name: memmachine-app
     restart: unless-stopped
     ports:
@@ -84,10 +84,12 @@ services:
       GATEWAY_URL: ${GATEWAY_URL:-http://localhost:8080}
       FAST_MCP_LOG_LEVEL: ${FAST_MCP_LOG_LEVEL:-INFO}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MEMMACHINE_WORKERS: ${MEMMACHINE_WORKERS:-1}
+      MEMMACHINE_CONFIG_API: ${MEMMACHINE_CONFIG_API:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HOST: 0.0.0.0
     volumes:
-      - ./configuration.yml:/app/configuration.yml:ro,Z
+      - ./configuration.yml:/app/configuration.yml:rw,Z
       - memmachine_logs:/tmp/memory_logs
     depends_on:
       postgres:
@@ -102,6 +104,17 @@ services:
       start_period: 60s
     networks:
       - memmachine-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  docs:
+    build:
+      context: docs/
+      dockerfile: Dockerfile
+    ports:
+      - "${DOCS_PORT:-3000}:3000"
+    volumes:
+      - ./docs:/docs:ro,Z
 
 volumes:
   postgres_data:

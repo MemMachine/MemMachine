@@ -1,0 +1,66 @@
+{{- if .Values.neo4j.enabled }}
+# neo4j-deployment.yaml
+# Deploys Neo4j (1 replica) for long-term graph memory storage.
+# Plugins (APOC and Graph Data Science) are auto-downloaded at startup via
+# the NEO4J_PLUGINS env var. JVM heap is tunable via neo4j.heap.* values.
+# Authentication is set via NEO4J_AUTH (format: <user>/<password>).
+# Data is persisted to the neo4j-pvc PVC at /data.
+# Exposes: HTTP (7474), HTTPS (7473), Bolt (7687).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j
+  template:
+    metadata:
+      labels:
+        app: neo4j
+    spec:
+      containers:
+        - name: neo4j
+          image: {{ .Values.neo4j.image }}
+          ports:
+            - containerPort: 7474
+            - containerPort: 7473
+            - containerPort: 7687
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: neo4j-secret
+                  key: NEO4J_AUTH
+            - name: NEO4J_server_memory_heap_initial__size
+              value: {{ .Values.neo4j.heap.initial }}
+            - name: NEO4J_server_memory_heap_max__size
+              value: {{ .Values.neo4j.heap.max }}
+            - name: NEO4J_PLUGINS
+              value: '{{ .Values.neo4j.plugins | toJson }}'
+          resources:
+            {{- toYaml .Values.neo4j.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.neo4j.port }}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.neo4j.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+      volumes:
+        - name: neo4j-data
+          persistentVolumeClaim:
+            claimName: neo4j-pvc
+{{- end }}

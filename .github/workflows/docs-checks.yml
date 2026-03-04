@@ -71,3 +71,13 @@ jobs:
       - name: Mintlify - Validate OpenAPI spec
         run: mint openapi-check openapi.json
         working-directory: docs
+
+      # Step 8: Validate the Platform OpenAPI specification (if present)
+      - name: Mintlify - Validate Platform OpenAPI spec
+        run: |
+          if [ -f platform.openapi.json ]; then
+            mint openapi-check platform.openapi.json
+          else
+            echo "platform.openapi.json not found — skipping."
+          fi
+        working-directory: docs

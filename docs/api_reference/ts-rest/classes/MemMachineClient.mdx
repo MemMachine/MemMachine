@@ -1,0 +1,104 @@
+---
+title: "MemMachineClient"
+description: "The primary entry point for the MemMachine TypeScript REST client library."
+---
+
+## Overview
+
+The `MemMachineClient` serves as the unified API for memory management, project operations, and server health checks. It is designed to be the starting point for all interactions with the MemMachine service.
+
+### Key Features
+* **Hierarchical Management:** Generate `MemMachineMemory` and `MemMachineProject` instances for scoped operations.
+* **Resource Discovery:** List all projects accessible to your API key.
+* **Observability:** Access Prometheus metrics and perform real-time health checks on the server.
+
+---
+
+## Constructor
+
+### `new MemMachineClient()`
+
+Initializes a new client instance.
+
+```typescript
+new MemMachineClient(options?: ClientOptions)
+```
+
+| **Parameter** | **Type**                                                     | **Description**                                              |
+| ------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `options`     | [`ClientOptions`](../interfaces/ClientOptions) | (Optional) Configuration including `api_key`, `base_url`, `timeout`, and `max_retries`. |
+
+------
+
+## Properties
+
+| **Property** | **Type**        | **Description**                                              |
+| ------------ | --------------- | ------------------------------------------------------------ |
+| `client`     | `AxiosInstance` | The underlying Axios instance used for making HTTP requests. |
+
+------
+
+## Methods
+
+### `project()`
+
+Creates a `MemMachineProject` instance for managing a specific project.
+
+| **Parameter**    | **Type**                                                     | **Description**                                 |
+| ---------------- | ------------------------------------------------------------ | ----------------------------------------------- |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | Context options (e.g., `org_id`, `project_id`). |
+
+### `getProjects()`
+
+Retrieves a list of all projects accessible to the client.
+
+- **Returns:** `Promise<Project[]>` 
+- **Throws:** [`MemMachineAPIError`](./MemMachineAPIError) 
+
+### `healthCheck()`
+
+Checks the current health status of the MemMachine server.
+
+- **Returns:** `Promise<HealthStatus>` 
+- **Throws:** [`MemMachineAPIError`](./MemMachineAPIError) 
+
+### `getMetrics()`
+
+Retrieves Prometheus metrics from the server in string format.
+
+- **Returns:** `Promise<string>` 
+- **Throws:** [`MemMachineAPIError`](./MemMachineAPIError) 
+
+------
+
+## Usage Example
+
+The following example demonstrates the recommended pattern for initializing the client and traversing to a specific project and memory instance.
+
+```typescript
+import MemMachineClient from '@memmachine/client';
+
+async function main() {
+  // 1. Initialize the client
+  const client = new MemMachineClient({ 
+    api_key: 'your_api_key' 
+  });
+
+  // 2. Access a specific project
+  const project = client.project({ 
+    org_id: 'your_org_id', 
+    project_id: 'your_project_id' 
+  });
+
+  // 3. Initialize memory for that project
+  const memory = project.memory();
+  
+  // 4. Perform high-level health checks
+  const status = await client.healthCheck();
+  console.log(`Server Status: ${status.status}`);
+}
+
+main();
+```
+
+<Tip> For best performance, reuse a single `MemMachineClient` instance across your application to leverage connection pooling through the internal `AxiosInstance`. </Tip>

@@ -1,0 +1,130 @@
+---
+title: "MemMachineMemory"
+description: "Core class for managing episodic and semantic memories within a specific project context."
+---
+
+## Overview
+
+The `MemMachineMemory` class provides the primary interface for interacting with the memory engine. It allows for high-granularity control over adding, searching, listing, and deleting memories.
+
+### Key Capabilities
+* **Flexible Ingestion:** Add raw text as memories with specific episode types.
+* **Semantic Retrieval:** Search memories using natural language queries.
+* **Context Awareness:** Retrieve combined project and memory metadata.
+
+---
+
+## Constructor
+
+### `new MemMachineMemory()`
+
+Initializes a new memory management instance. This is typically handled internally by the `MemMachineProject.memory()` factory method.
+
+```typescript
+new MemMachineMemory(
+  client: AxiosInstance, 
+  projectContext: ProjectContext, 
+  memoryContext?: MemoryContext
+)
+```
+
+| **Parameter**    | **Type**                                                     | **Description**                                              |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `client`         | `AxiosInstance`                                              | Internal Axios instance for API communication.               |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | Scoping options including `org_id` and `project_id`.         |
+| `memoryContext`  | [`MemoryContext`](../interfaces/MemoryContext) | (Optional) Specific identifiers for the memory scope (e.g., `user_id`). |
+
+------
+
+## Properties
+
+| **Property**     | **Type**                                                     | **Description**                                         |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------- |
+| `client`         | `AxiosInstance`                                              | The underlying HTTP client.                             |
+| `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | The organizational and project scope for this instance. |
+| `memoryContext`  | [`MemoryContext`](../interfaces/MemoryContext) | The specific user or session context for this instance. |
+
+------
+
+## Methods
+
+### `add()`
+
+Adds a new memory to the system within the current project scope.
+
+```typescript
+add(content: string, options?: AddMemoryOptions): Promise&lt;AddMemoryResult&gt;
+```
+
+
+| **Parameter** | **Type**                                                     | **Description**                          |
+| ------------- | ------------------------------------------------------------ | ---------------------------------------- |
+| `content`     | `string`                                                     | The raw text content of the memory.      |
+| `options`     | [`AddMemoryOptions`](../interfaces/AddMemoryOptions) | (Optional) Metadata like `episode_type`. |
+
+### `search()`
+
+Performs a semantic and or episodic search against the stored memories.
+
+```typescript
+search(query: string, options?: SearchMemoriesOptions): Promise&lt;SearchMemoriesResult&gt;
+```
+
+| **Parameter** | **Type**                                                     | **Description**                               |
+| ------------- | ------------------------------------------------------------ | --------------------------------------------- |
+| `query`       | `string`                                                     | The natural language search term.             |
+| `options`     | [`SearchMemoriesOptions`](../interfaces/SearchMemoriesOptions) | (Optional) Search filters such as `top_k`, `filter`, `types`, and `agent_mode`. |
+
+### `list()`
+
+Retrieves a paginated list of memories.
+
+```typescript
+list(options?: ListMemoriesOptions): Promise&lt;SearchMemoriesResult&gt;
+```
+
+| **Parameter** | **Type**                                                     | **Description**                                           |
+| ------------- | ------------------------------------------------------------ | --------------------------------------------------------- |
+| `options`     | [`ListMemoriesOptions`](../interfaces/ListMemoriesOptions) | (Optional) Pagination settings (`page_size`, `page_num`). |
+
+### `delete()`
+
+Permanently removes a memory from the system.
+
+```typescript
+delete(id: string, type: MemoryType): Promise&lt;void&gt;
+```
+
+| **Parameter** | **Type**                                                     | **Description**                                  |
+| ------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| `id`          | `string`                                                     | The unique identifier of the memory.             |
+| `type`        | [`MemoryType`](../types/MemoryType) | The classification of memory (e.g., `episodic`). |
+
+### `getContext()`
+
+Retrieves the active project and memory context used by this instance.
+
+- **Returns:** `ProjectContext & MemoryContext`
+
+------
+
+## Usage Example
+
+```typescript
+const memory = project.memory();
+
+// 1. Add a memory with a specific type
+await memory.add('User prefers dark mode and high-contrast settings.', { 
+  episode_type: 'message' 
+});
+
+// 2. Search memories semantically
+const results = await memory.search('What are the user preferences?', { 
+  top_k: 3 
+});
+
+// 3. List recent memories
+const history = await memory.list({ page_size: 10 });
+```
+
+<Note>All methods in this class throw a [`MemMachineAPIError`](./MemMachineAPIError) if the server returns a non-200 status code.</Note>

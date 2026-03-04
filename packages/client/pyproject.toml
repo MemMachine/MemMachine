@@ -1,17 +1,18 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "memmachine-client"
-version = "0.1.0"
+dynamic = ["version"]
 dependencies = [
+    "memmachine-common",
     "pydantic>=2.0.0",
-    "regex>=2023.0.0",
     "requests>=2.31.0",
-    "urllib3>=2.0.0",
+    "typing-extensions>=4.0.0",
+    "urllib3>=2.6.3",
 ]
-requires-python = ">= 3.12"
+requires-python = ">= 3.10"
 authors = [
   {name="MemMachine", email="noreply@memmachine.ai"},
 ]
@@ -20,6 +21,11 @@ readme = "README.md"
 keywords = ["memmachine", "client", "memory", "ai", "agent"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 license = "Apache-2.0"
@@ -28,11 +34,19 @@ license = "Apache-2.0"
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
 
-[tool.setuptools]
-packages = ["memmachine", "memmachine.common.api", "memmachine.rest_client"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
-[tool.setuptools.package-data]
-"*" = ["*.md", "*.txt", "*.yml", "*.yaml"]
+[tool.setuptools_scm]
+root = "../.."
 
-[tool.setuptools.package-dir]
-"" = "src"
+[tool.uv]
+package = true
+
+[tool.ty.environment]
+python-version = "3.10"
+extra-paths = ["../common/src"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py310"

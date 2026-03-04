@@ -462,9 +462,7 @@ def render_sidebar() -> tuple[str, bool, bool, bool]:
         label_visibility="collapsed",
     )
     custom_persona = st.text_input("Or enter your name", "")
-    persona_name = (
-        custom_persona.strip() if custom_persona.strip() else selected_persona
-    )
+    persona_name = custom_persona.strip() or selected_persona
 
     # Memory toggle
     if "memmachine_enabled" not in st.session_state:

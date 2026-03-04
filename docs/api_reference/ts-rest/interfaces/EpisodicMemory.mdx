@@ -1,0 +1,35 @@
+---
+title: "EpisodicMemory"
+description: "The data model representing a chronological interaction or event."
+---
+
+## Overview
+
+`EpisodicMemory` represents a specific moment or interaction stored in the system. It includes the actual text content, who said it, and its relevance score when returned in a search.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `uid` | `string` | The unique identifier for this memory entry. |
+| `content` | `string` | The raw text of the memory. |
+| `score` | `number` | The relevance score (usually 0 to 1) from a semantic search. |
+| `producer_id` | `string` | The ID of the user or system that created this memory. |
+| `producer_role` | `string` | The role (e.g., `user`, `assistant`) of the producer. |
+| `episode_type` | `string` | The classification of the interaction. |
+| `created_at` | `string` | ISO timestamp of when the memory was ingested. |
+| `metadata` | `Record<string, any>` | **Optional.** Key-value pairs of additional context. |
+| `produced_for_id` | `string` | **Optional.** The ID of the recipient of the interaction. |
+
+---
+
+## Usage Example
+
+```typescript
+const { short_term_memory } = searchResponse.content.episodic_memory;
+const firstHit = short_term_memory.episodes[0];
+
+console.log(`[${firstHit.score}] ${firstHit.producer_role}: ${firstHit.content}`);
+```

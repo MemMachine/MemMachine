@@ -64,9 +64,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     custom_persona = st.text_input("Or enter your name", "")
-    persona_name = (
-        custom_persona.strip() if custom_persona.strip() else selected_persona
-    )
+    persona_name = custom_persona.strip() or selected_persona
 
     skip_rewrite = st.checkbox("Skip Rewrite")
     compare_personas = st.checkbox("Compare with Control persona")

@@ -1,0 +1,34 @@
+---
+title: "CreateProjectOptions"
+description: "Configuration for initializing a new memory project."
+---
+
+## Overview
+
+The `CreateProjectOptions` interface is used when calling `project.create()` to define the behavior and models for a new memory workspace. It allows you to specify the AI infrastructure that will power the semantic search and embedding storage.
+
+---
+
+## Properties
+
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `description` | `string` | A brief summary of the project's purpose. |
+| `embedder` | `string` | The specific model used to convert text into vector embeddings. |
+| `reranker` | `string` | The model used to re-score and refine semantic search results for accuracy. |
+
+---
+
+## Usage Example
+
+```typescript
+import { CreateProjectOptions } from '@memmachine/client';
+
+const newProjectConfig: CreateProjectOptions = {
+  description: 'Support bot for mobile app users',
+  embedder: 'text-embedding-3-small',
+  reranker: 'cohere-rerank-v3'
+};
+
+await client.project('mobile_support').create(newProjectConfig);
+```
