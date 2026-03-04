@@ -37,6 +37,7 @@ from memmachine_server.server.api_v2.service import (
     _delete_memories,
     _search_target_memories,
 )
+from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
 
 logger = logging.getLogger(__name__)
 
@@ -402,9 +403,11 @@ async def mcp_http_lifespan(application: FastAPI) -> AsyncIterator[None]:
         application: The FastAPI application instance.
 
     """
+    install_sigusr1_handler()
     async with global_memory_lifespan(), mcp_app.lifespan(application):
         application.state.mem_machine = mem_machine
         yield
+        dump_traceback()
 
 
 @mcp.tool(
