@@ -54,6 +54,11 @@ class OpenAIResponsesLanguageModelConf(
         description="Maximal retry interval in seconds when retrying API calls",
         gt=0,
     )
+    request_timeout_seconds: float = Field(
+        default=600,
+        description="Hard wall-clock timeout in seconds for a single LLM request.",
+        gt=0,
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -84,6 +89,11 @@ class OpenAIChatCompletionsLanguageModelConf(
     max_retry_interval_seconds: int = Field(
         default=120,
         description="Maximal retry interval in seconds when retrying API calls",
+        gt=0,
+    )
+    request_timeout_seconds: float = Field(
+        default=600,
+        description="Hard wall-clock timeout in seconds for a single LLM request.",
         gt=0,
     )
 

@@ -55,6 +55,11 @@ class OpenAIChatCompletionsLanguageModelParams(BaseModel):
         description="Maximal retry interval in seconds when retrying API calls",
         gt=0,
     )
+    request_timeout_seconds: float = Field(
+        600,
+        description="Hard wall-clock timeout in seconds for a single LLM request.",
+        gt=0,
+    )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
@@ -80,6 +85,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         self._model = params.model
 
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
+        self._request_timeout_seconds = params.request_timeout_seconds
 
         metrics_factory = params.metrics_factory
 
@@ -127,13 +133,27 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             generate_response_call_uuid = uuid4()
 
             try:
-                response = await self._client.with_options(
-                    max_retries=max_attempts,
-                ).chat.completions.parse(
-                    model=self._model,
-                    messages=input_prompts,
-                    response_format=output_format,
+                async with asyncio.timeout(self._request_timeout_seconds):
+                    response = await self._client.with_options(
+                        max_retries=max_attempts,
+                    ).chat.completions.parse(
+                        model=self._model,
+                        messages=input_prompts,
+                        response_format=output_format,
+                    )
+            except TimeoutError as e:
+                error_message = (
+                    f"[call uuid: {generate_response_call_uuid}] "
+                    "Giving up generating response "
+                    f"due to request timeout after {self._request_timeout_seconds} seconds"
                 )
+                logger.error(
+                    "[call uuid: %s] Timed out prompt payload:\n%s",
+                    generate_response_call_uuid,
+                    _format_prompt_for_logging(input_prompts),
+                )
+                logger.exception(error_message)
+                raise ExternalServiceAPIError(error_message) from e
             except openai.OpenAIError as e:
                 error_message = (
                     f"[call uuid: {generate_response_call_uuid}] "
@@ -216,12 +236,14 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                         args["tool_choice"] = (
                             tool_choice if tool_choice is not None else "auto"
                         )
-                    response = await self._client.chat.completions.create(**args)
+                    async with asyncio.timeout(self._request_timeout_seconds):
+                        response = await self._client.chat.completions.create(**args)
                     break
                 except (
                     openai.RateLimitError,
                     openai.APITimeoutError,
                     openai.APIConnectionError,
+                    TimeoutError,
                 ) as e:
                     # Exception may be retried.
                     if attempt >= max_attempts:
@@ -232,6 +254,12 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                             f"due to retryable {type(e).__name__}: "
                             f"max attempts {max_attempts} reached"
                         )
+                        if isinstance(e, (TimeoutError, openai.APITimeoutError)):
+                            logger.error(
+                                "[call uuid: %s] Timed out prompt payload:\n%s",
+                                generate_response_call_uuid,
+                                _format_prompt_for_logging(input_prompts),
+                            )
                         logger.exception(error_message)
                         raise ExternalServiceAPIError(error_message) from e
 
@@ -316,3 +344,11 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
             )
         except Exception:
             logger.exception("Failed to collect usage metrics")
+
+
+def _format_prompt_for_logging(prompt: Any) -> str:
+    """Serialize prompt payload for timeout logs without raising."""
+    try:
+        return json_repair.dumps(prompt, ensure_ascii=False)
+    except Exception:
+        return repr(prompt)
