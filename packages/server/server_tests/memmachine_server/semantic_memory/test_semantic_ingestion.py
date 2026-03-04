@@ -569,7 +569,7 @@ async def test_process_single_set_limits_features_sent_to_llm(
 
     llm_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_mock,
     )
 
