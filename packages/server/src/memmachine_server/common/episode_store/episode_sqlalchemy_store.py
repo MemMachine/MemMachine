@@ -1,5 +1,6 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
+import logging
 import socket
 from datetime import UTC
 from typing import Any, TypeVar, overload
@@ -23,8 +24,9 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
@@ -51,6 +53,13 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.filter.sql_filter_util import compile_sql_filter
 
+logger = logging.getLogger(__name__)
+
+_EPISODE_PG_ENUM = pg_dialect.ENUM(
+    *(member.name for member in EpisodeType),
+    name="episode_type",
+)
+
 
 class BaseEpisodeStore(DeclarativeBase):
     """Base class for SQLAlchemy Episode store."""
@@ -75,7 +84,7 @@ class Episode(BaseEpisodeStore):
 
     produced_for_id = mapped_column(String, nullable=True)
     episode_type = mapped_column(
-        SAEnum(EpisodeType, name="episode_type"),
+        SAEnum(EpisodeType, name="episode_type", create_type=False),
         default=EpisodeType.MESSAGE,
     )
 
@@ -141,6 +150,19 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     async def startup(self) -> None:
         try:
             async with self._engine.begin() as conn:
+                if conn.dialect.name == "postgresql":
+                    try:
+                        async with conn.begin_nested():
+                            await conn.run_sync(
+                                lambda sync_conn: _EPISODE_PG_ENUM.create(
+                                    sync_conn, checkfirst=True
+                                )
+                            )
+                    except (IntegrityError, ProgrammingError):
+                        logger.debug(
+                            "episode_type enum already exists (concurrent creation); continuing"
+                        )
+
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
