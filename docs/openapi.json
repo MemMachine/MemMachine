@@ -4627,7 +4627,7 @@
               }
             ],
             "title": "Score Threshold",
-            "description": "\n    The minimum score for a memory to be included in the search results. Defaults to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.\n    ",
+            "description": "\n    The minimum score for a memory to be included in the search results. Defaults\n    to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.\n    ",
             "examples": [
               0.0,
               0.5,
@@ -4646,6 +4646,16 @@
                 "episodic",
                 "semantic"
               ]
+            ]
+          },
+          "agent_mode": {
+            "type": "boolean",
+            "title": "Agent Mode",
+            "description": "\n    Whether to enable top-level retrieval-agent orchestration for episodic search.\n    When false, episodic search uses direct memory retrieval.\n    ",
+            "default": false,
+            "examples": [
+              false,
+              true
             ]
           }
         },
