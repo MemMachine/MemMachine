@@ -5,6 +5,7 @@ name: Publish OpenClaw plugin Package to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./integration/openclaw-plugin/
+        working-directory: ./integrations/openclaw/
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
