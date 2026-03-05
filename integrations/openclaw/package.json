@@ -1,6 +1,6 @@
 {
   "name": "@memmachine/openclaw-memmachine",
-  "version": "0.1.0",
+  "version": "0.0.0-development",
   "type": "module",
   "description": "OpenClaw MemMachine memory plugin",
   "homepage": "https://memmachine.ai",
@@ -8,13 +8,13 @@
     "type": "git",
     "url": "git+https://github.com/MemMachine/MemMachine.git"
   },
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
+      "require": "./dist/index.cjs",
       "import": "./dist/index.mjs"
     }
   },
@@ -23,34 +23,16 @@
     "openclaw.plugin.json"
   ],
   "scripts": {
-    "clean": "rimraf dist",
-    "build": "npm run clean && npx tsup",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && npm exec tsup",
     "prepublishOnly": "npm run build"
   },
-  "tsup": {
-    "entry": [
-      "index.ts"
-    ],
-    "format": [
-      "cjs",
-      "esm"
-    ],
-    "dts": {
-      "resolve": true
-    },
-    "splitting": false,
-    "sourcemap": true,
-    "clean": true,
-    "treeshake": true,
-    "minify": false
-  },
   "dependencies": {
-    "@memmachine/client": "^0.2.5",
+    "@memmachine/client": "^0.0.0-development",
     "@sinclair/typebox": "^0.34.48",
     "openclaw": "^2026.2.6"
   },
   "devDependencies": {
-    "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3"
   },
