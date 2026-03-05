@@ -15,7 +15,7 @@ metadata:
   namespace: {{ $namespace }}
 spec:
   accessModes:
-    - ReadWriteMany
+    - {{ .Values.accessMode }}
   resources:
     requests:
       storage: {{ .Values.pvcSize }}
@@ -30,7 +30,7 @@ metadata:
   namespace: {{ $namespace }}
 spec:
   accessModes:
-    - ReadWriteMany
+    - {{ .Values.accessMode }}
   resources:
     requests:
       storage: {{ .Values.pvcSize }}
@@ -44,7 +44,7 @@ metadata:
   namespace: {{ $namespace }}
 spec:
   accessModes:
-    - ReadWriteMany
+    - {{ .Values.accessMode }}
   resources:
     requests:
       storage: {{ .Values.pvcSize }}
