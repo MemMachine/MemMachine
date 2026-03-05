@@ -190,6 +190,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 client=openai.AsyncOpenAI(
                     api_key=conf.api_key.get_secret_value(),
                     base_url=conf.base_url,
+                    timeout=conf.timeout,
                 ),
                 model=conf.model,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
@@ -212,6 +213,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 client=openai.AsyncOpenAI(
                     api_key=conf.api_key.get_secret_value(),
                     base_url=conf.base_url,
+                    timeout=conf.timeout,
                 ),
                 model=conf.model,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
