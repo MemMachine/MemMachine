@@ -196,6 +196,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
                 request_timeout_seconds=conf.request_timeout_seconds,
+                log_full_prompt_on_timeout=conf.log_full_prompt_on_timeout,
             ),
         )
 
@@ -220,6 +221,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
                 request_timeout_seconds=conf.request_timeout_seconds,
+                log_full_prompt_on_timeout=conf.log_full_prompt_on_timeout,
             ),
         )
 

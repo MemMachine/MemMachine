@@ -67,6 +67,13 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
         description="Hard wall-clock timeout in seconds for a single LLM request.",
         gt=0,
     )
+    log_full_prompt_on_timeout: bool = Field(
+        False,
+        description=(
+            "Whether to include the full prompt payload in timeout logs. "
+            "Disabled by default due to prompt size and sensitive data concerns."
+        ),
+    )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
@@ -101,6 +108,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
         self._request_timeout_seconds = params.request_timeout_seconds
+        self._log_full_prompt_on_timeout = params.log_full_prompt_on_timeout
         self._reasoning_effort = params.reasoning_effort
 
         metrics_factory = params.metrics_factory
@@ -177,7 +185,10 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 logger.error(
                     "[call uuid: %s] Timed out prompt payload:\n%s",
                     generate_response_call_uuid,
-                    _format_prompt_for_logging(input_prompts),
+                    _format_prompt_for_logging(
+                        input_prompts,
+                        include_full_prompt=self._log_full_prompt_on_timeout,
+                    ),
                 )
                 logger.exception(error_message)
                 raise ExternalServiceAPIError(error_message) from e
@@ -252,82 +263,102 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
             response: Response | None = None
 
-            sleep_seconds = 1
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    logger.debug(
-                        "[call uuid: %s] "
-                        "Attempting to generate response using %s OpenAI language model: "
-                        "on attempt %d with max attempts %d",
-                        generate_response_call_uuid,
-                        self._model,
-                        attempt,
-                        max_attempts,
-                    )
-                    if tools is None:
-                        async with asyncio.timeout(self._request_timeout_seconds):
-                            response = await self._client.responses.create(
-                                model=self._model,
-                                input=input_prompts,
-                            )
-                    else:
-                        async with asyncio.timeout(self._request_timeout_seconds):
-                            response = await self._client.responses.create(
-                                model=self._model,
-                                input=input_prompts,
-                                tools=cast(list[ToolParam], tools),
-                                tool_choice=cast(
-                                    Any,
-                                    tool_choice if tool_choice is not None else "auto",
-                                ),
-                            )
-                    break
-                except (
-                    openai.RateLimitError,
-                    openai.APITimeoutError,
-                    openai.APIConnectionError,
-                    TimeoutError,
-                ) as e:
-                    # Exception may be retried.
-                    if attempt >= max_attempts:
-                        error_message = (
-                            f"[call uuid: {generate_response_call_uuid}] "
-                            "Giving up generating response "
-                            f"after failed attempt {attempt} "
-                            f"due to retryable {type(e).__name__}: "
-                            f"max attempts {max_attempts} reached"
-                        )
-                        if isinstance(e, (TimeoutError, openai.APITimeoutError)):
-                            logger.error(
-                                "[call uuid: %s] Timed out prompt payload:\n%s",
+            try:
+                async with asyncio.timeout(self._request_timeout_seconds):
+                    sleep_seconds = 1
+                    for attempt in range(1, max_attempts + 1):
+                        try:
+                            logger.debug(
+                                "[call uuid: %s] "
+                                "Attempting to generate response using %s OpenAI language model: "
+                                "on attempt %d with max attempts %d",
                                 generate_response_call_uuid,
-                                _format_prompt_for_logging(input_prompts),
+                                self._model,
+                                attempt,
+                                max_attempts,
                             )
-                        logger.exception(error_message)
-                        raise ExternalServiceAPIError(error_message) from e
+                            if tools is None:
+                                response = await self._client.responses.create(
+                                    model=self._model,
+                                    input=input_prompts,
+                                )
+                            else:
+                                response = await self._client.responses.create(
+                                    model=self._model,
+                                    input=input_prompts,
+                                    tools=cast(list[ToolParam], tools),
+                                    tool_choice=cast(
+                                        Any,
+                                        tool_choice if tool_choice is not None else "auto",
+                                    ),
+                                )
+                            break
+                        except (
+                            openai.RateLimitError,
+                            openai.APITimeoutError,
+                            openai.APIConnectionError,
+                        ) as e:
+                            # Exception may be retried.
+                            if attempt >= max_attempts:
+                                error_message = (
+                                    f"[call uuid: {generate_response_call_uuid}] "
+                                    "Giving up generating response "
+                                    f"after failed attempt {attempt} "
+                                    f"due to retryable {type(e).__name__}: "
+                                    f"max attempts {max_attempts} reached"
+                                )
+                                if isinstance(e, openai.APITimeoutError):
+                                    logger.error(
+                                        "[call uuid: %s] Timed out prompt payload:\n%s",
+                                        generate_response_call_uuid,
+                                        _format_prompt_for_logging(
+                                            input_prompts,
+                                            include_full_prompt=self._log_full_prompt_on_timeout,
+                                        ),
+                                    )
+                                logger.exception(error_message)
+                                raise ExternalServiceAPIError(error_message) from e
 
-                    logger.info(
-                        "[call uuid: %s] "
-                        "Retrying generating response in %d seconds "
-                        "after failed attempt %d due to retryable %s...",
-                        generate_response_call_uuid,
-                        sleep_seconds,
-                        attempt,
-                        type(e).__name__,
-                    )
-                    await asyncio.sleep(sleep_seconds)
-                    sleep_seconds *= 2
-                    sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
-                    continue
-                except openai.OpenAIError as e:
-                    error_message = (
-                        f"[call uuid: {generate_response_call_uuid}] "
-                        "Giving up generating response "
-                        f"after failed attempt {attempt} "
-                        f"due to non-retryable {type(e).__name__}"
-                    )
-                    logger.exception(error_message)
-                    raise ExternalServiceAPIError(error_message) from e
+                            logger.info(
+                                "[call uuid: %s] "
+                                "Retrying generating response in %d seconds "
+                                "after failed attempt %d due to retryable %s...",
+                                generate_response_call_uuid,
+                                sleep_seconds,
+                                attempt,
+                                type(e).__name__,
+                            )
+                            await asyncio.sleep(sleep_seconds)
+                            sleep_seconds *= 2
+                            sleep_seconds = min(
+                                sleep_seconds, self._max_retry_interval_seconds
+                            )
+                            continue
+                        except openai.OpenAIError as e:
+                            error_message = (
+                                f"[call uuid: {generate_response_call_uuid}] "
+                                "Giving up generating response "
+                                f"after failed attempt {attempt} "
+                                f"due to non-retryable {type(e).__name__}"
+                            )
+                            logger.exception(error_message)
+                            raise ExternalServiceAPIError(error_message) from e
+            except TimeoutError as e:
+                error_message = (
+                    f"[call uuid: {generate_response_call_uuid}] "
+                    "Giving up generating response "
+                    f"due to request timeout after {self._request_timeout_seconds} seconds"
+                )
+                logger.error(
+                    "[call uuid: %s] Timed out prompt payload:\n%s",
+                    generate_response_call_uuid,
+                    _format_prompt_for_logging(
+                        input_prompts,
+                        include_full_prompt=self._log_full_prompt_on_timeout,
+                    ),
+                )
+                logger.exception(error_message)
+                raise ExternalServiceAPIError(error_message) from e
 
             if response is None:
                 raise RuntimeError("OpenAI response was not generated")
@@ -393,9 +424,18 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             logger.exception("Failed to collect usage metrics")
 
 
-def _format_prompt_for_logging(prompt: Any) -> str:
+def _format_prompt_for_logging(prompt: Any, include_full_prompt: bool) -> str:
     """Serialize prompt payload for timeout logs without raising."""
     try:
-        return json_repair.dumps(prompt, ensure_ascii=False)
+        serialized = json_repair.dumps(prompt, ensure_ascii=False)
+        if include_full_prompt:
+            return serialized
+        return (
+            "Prompt logging redacted by default. "
+            "Set log_full_prompt_on_timeout=true to include full prompt. "
+            f"(bytes={len(serialized)})"
+        )
     except Exception:
-        return repr(prompt)
+        if include_full_prompt:
+            return repr(prompt)
+        return "Prompt logging redacted by default. Failed to serialize prompt."

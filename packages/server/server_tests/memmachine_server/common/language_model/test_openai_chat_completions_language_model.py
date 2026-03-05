@@ -9,7 +9,7 @@ from openai.types import chat as openai_chat
 from openai.types.chat.chat_completion_message_function_tool_call import (
     Function as ToolCallFunction,
 )
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.language_model.openai_chat_completions_language_model import (
@@ -395,6 +395,47 @@ async def test_generate_response_fail_after_max_retries(
     assert mock_sleep.call_count == 2
     mock_sleep.assert_any_await(1)
     mock_sleep.assert_any_await(2)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_timeout_error_maps_to_external_service_error(
+    mock_async_openai,
+    minimal_config,
+):
+    """TimeoutError should map to ExternalServiceAPIError without retrying."""
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = TimeoutError()
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    with pytest.raises(
+        ExternalServiceAPIError,
+        match=r"request timeout after",
+    ):
+        await lm.generate_response(max_attempts=3)
+
+    assert mock_client.chat.completions.create.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_timeout_error_maps_to_external_service_error(
+    mock_async_openai,
+    minimal_config,
+):
+    """TimeoutError in parse should map to ExternalServiceAPIError."""
+    mock_client = mock_async_openai.return_value
+    mock_client.with_options.return_value.chat.completions.parse.side_effect = (
+        TimeoutError()
+    )
+
+    class ResponseModel(BaseModel):
+        value: str
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    with pytest.raises(
+        ExternalServiceAPIError,
+        match=r"request timeout after",
+    ):
+        await lm.generate_parsed_response(output_format=ResponseModel)
 
 
 @pytest.mark.asyncio

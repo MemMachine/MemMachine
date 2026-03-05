@@ -59,6 +59,13 @@ class OpenAIResponsesLanguageModelConf(
         description="Hard wall-clock timeout in seconds for a single LLM request.",
         gt=0,
     )
+    log_full_prompt_on_timeout: bool = Field(
+        default=False,
+        description=(
+            "Whether to include full prompt payloads in timeout logs. "
+            "Disabled by default due to prompt size and sensitive data concerns."
+        ),
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -95,6 +102,13 @@ class OpenAIChatCompletionsLanguageModelConf(
         default=600,
         description="Hard wall-clock timeout in seconds for a single LLM request.",
         gt=0,
+    )
+    log_full_prompt_on_timeout: bool = Field(
+        default=False,
+        description=(
+            "Whether to include full prompt payloads in timeout logs. "
+            "Disabled by default due to prompt size and sensitive data concerns."
+        ),
     )
 
     @field_validator("base_url")

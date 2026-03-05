@@ -64,6 +64,8 @@ def test_valid_openai_model(openai_model_conf):
     assert conf.model == "gpt-4o-mini"
     assert conf.api_key == SecretStr("open-ai-key")
     assert conf.max_retry_interval_seconds == 120
+    assert conf.request_timeout_seconds == 600
+    assert conf.log_full_prompt_on_timeout is False
 
 
 def test_valid_aws_model(aws_model_conf):
@@ -81,6 +83,8 @@ def test_valid_openai_chat_completions_model(ollama_model_conf):
     assert conf.api_key == SecretStr("EMPTY")
     assert conf.base_url == "http://host.docker.internal:11434/v1"
     assert conf.max_retry_interval_seconds == 120
+    assert conf.request_timeout_seconds == 600
+    assert conf.log_full_prompt_on_timeout is False
 
 
 def test_full_language_model_conf(full_model_conf):
