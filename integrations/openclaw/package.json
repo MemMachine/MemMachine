@@ -47,7 +47,7 @@
   "dependencies": {
     "@memmachine/client": "^0.2.5",
     "@sinclair/typebox": "^0.34.48",
-    "openclaw": "^2026.2.6"
+    "openclaw": "^2026.3.2"
   },
   "devDependencies": {
     "rimraf": "^6.0.1",
