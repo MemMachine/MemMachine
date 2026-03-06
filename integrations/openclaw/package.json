@@ -23,34 +23,16 @@
     "openclaw.plugin.json"
   ],
   "scripts": {
-    "clean": "rimraf dist",
-    "build": "npm run clean && npx tsup",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && npm exec tsup",
     "prepublishOnly": "npm run build"
   },
-  "tsup": {
-    "entry": [
-      "index.ts"
-    ],
-    "format": [
-      "cjs",
-      "esm"
-    ],
-    "dts": {
-      "resolve": true
-    },
-    "splitting": false,
-    "sourcemap": true,
-    "clean": true,
-    "treeshake": true,
-    "minify": false
-  },
   "dependencies": {
-    "@memmachine/client": "^0.2.5",
+    "@memmachine/client": "^0.3.0",
     "@sinclair/typebox": "^0.34.48",
     "openclaw": "^2026.2.6"
   },
   "devDependencies": {
-    "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3"
   },

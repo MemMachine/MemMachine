@@ -1,10 +1,20 @@
 {
-  "$schema": "https://json-schema.org/tsconfig",
+  "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
-    "target": "ES2018",
+    "target": "ES2021",
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
+    "lib": ["ES2021", "DOM"],
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@sinclair/typebox": ["types/shims/typebox"],
+      "@memmachine/client": ["types/shims/memmachine-client"],
+      "openclaw/plugin-sdk": ["types/shims/openclaw-plugin-sdk"]
+    },
     "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
     "strict": false,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -14,6 +24,6 @@
     "outDir": "./dist",
     "rootDir": "."
   },
-  "include": ["index.ts"],
+  "include": ["index.mts", "types/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }
