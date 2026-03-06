@@ -284,3 +284,31 @@ class TestStructuredSemanticPrompt:
         assert "memory consolidation" in built_prompt
         assert "keep_memories" in built_prompt
         assert "consolidate_memories" in built_prompt
+
+    def test_consolidation_prompt_without_tags_omits_tag_section(self):
+        """When no tags are provided, the consolidation prompt should still
+        work but not contain a tag enumeration section."""
+        from memmachine.semantic_memory.util.semantic_prompt_template import (
+            build_consolidation_prompt,
+        )
+
+        prompt = build_consolidation_prompt()
+        assert "memory consolidation" in prompt
+        assert "valid tags for this category" not in prompt
+
+    def test_consolidation_prompt_should_include_user_tags(self):
+        """Consolidation prompt must contain user-defined tags so the LLM
+        knows which tags are valid and preserves them."""
+        tags = {
+            "bugfix": "Bugs the user has fixed",
+            "progress": "Project progress updates",
+            "decision": "Decisions the user has made",
+        }
+        prompt = StructuredSemanticPrompt(tags=tags, description="")
+        consolidation_text = prompt.consolidation_prompt
+
+        for tag_name in tags:
+            assert tag_name in consolidation_text, (
+                f"Consolidation prompt should contain tag '{tag_name}' "
+                f"so the LLM knows which tags are valid"
+            )
