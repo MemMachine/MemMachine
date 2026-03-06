@@ -55,9 +55,10 @@ class MemMachineSkill(SkillToolBase):
         perf_metrics: dict[str, Any] = {
             "memory_search_called": 0,
             "memory_retrieval_time": 0.0,
+            "memory_search_latency_seconds": [],
             "skill": self.skill_name,
         }
-        mem_retrieval_start = time.time()
+        mem_retrieval_start = time.perf_counter()
         query_response = await query.memory.query_memory(
             query=query.query,
             limit=query.limit,
@@ -85,7 +86,9 @@ class MemMachineSkill(SkillToolBase):
                 for episode in query_response.long_term_memory.episodes
             ]
 
+        elapsed_seconds = time.perf_counter() - mem_retrieval_start
         perf_metrics["memory_search_called"] += 1
-        perf_metrics["memory_retrieval_time"] += time.time() - mem_retrieval_start
+        perf_metrics["memory_retrieval_time"] += elapsed_seconds
+        perf_metrics["memory_search_latency_seconds"].append(elapsed_seconds)
 
         return episodes, perf_metrics

@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from memmachine_server.common.configuration.retrieval_config import (
+    RetrievalAgentConf,
+    RetrievalSkillSessionProvider,
+)
 from memmachine_server.common.episode_store import Episode, EpisodeResponse
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
@@ -163,6 +168,11 @@ async def test_memmachine_skill_returns_episodes(query_policy: QueryPolicy) -> N
 
     assert result == [episode]
     assert metrics["memory_search_called"] == 1
+    assert isinstance(metrics.get("memory_search_latency_seconds"), list)
+    assert len(metrics["memory_search_latency_seconds"]) == 1
+    assert float(metrics["memory_retrieval_time"]) >= float(
+        metrics["memory_search_latency_seconds"][0]
+    )
 
 
 @pytest.mark.asyncio
@@ -194,6 +204,8 @@ async def test_memmachine_skill_queries_long_term_memory_only(
 
     assert result == [episode]
     assert metrics["memory_search_called"] == 1
+    assert isinstance(metrics.get("memory_search_latency_seconds"), list)
+    assert len(metrics["memory_search_latency_seconds"]) == 1
     assert memory.calls == [
         {
             "query": "callback-query",
@@ -224,21 +236,60 @@ def test_service_locator_requires_openai_or_explicit_session_model() -> None:
         )
 
 
-def test_service_locator_ignores_legacy_skill_routes() -> None:
+def test_service_locator_rejects_legacy_skill_routes() -> None:
     model = DummyLanguageModel("MemMachineSkill")
     reranker = DummyReranker()
     session_model = ScriptedSkillSessionModel(model)
     for skill_name in [
         "MemMachineSkill",
-        "SplitSkill",
         "ChainOfQuerySkill",
         "ToolSelectSkill",
-        "RetrieveSkill",
     ]:
-        skill = create_retrieval_skill(
-            model=model,
-            reranker=reranker,
-            skill_name=skill_name,
-            skill_session_model=session_model,
-        )
-        assert skill.skill_name == "RetrieveSkill"
+        with pytest.raises(
+            ValueError, match="only supports skill_name='RetrieveSkill'"
+        ):
+            _ = create_retrieval_skill(
+                model=model,
+                reranker=reranker,
+                skill_name=skill_name,
+                skill_session_model=session_model,
+            )
+
+    skill = create_retrieval_skill(
+        model=model,
+        reranker=reranker,
+        skill_name="RetrieveSkill",
+        skill_session_model=session_model,
+    )
+    assert skill.skill_name == "RetrieveSkill"
+
+
+def test_service_locator_uses_provider_factory_from_retrieval_conf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = DummyLanguageModel("MemMachineSkill")
+    reranker = DummyReranker()
+    session_model = ScriptedSkillSessionModel(model)
+    factory = MagicMock(return_value=session_model)
+    monkeypatch.setattr(
+        "memmachine_server.retrieval_skill.service_locator.create_skill_session_model",
+        factory,
+    )
+    conf = RetrievalAgentConf(
+        skill_session_provider=RetrievalSkillSessionProvider.ANTHROPIC,
+        anthropic_api_key="anthropic-key",
+        skill_session_timeout_seconds=180,
+        skill_session_max_combined_calls=10,
+    )
+
+    skill = create_retrieval_skill(
+        model=model,
+        reranker=reranker,
+        retrieval_conf=conf,
+    )
+
+    assert skill.skill_name == "RetrieveSkill"
+    factory.assert_called_once_with(model=model, retrieval_conf=conf)
+    assert skill._global_timeout_seconds == 180
+    assert skill._max_combined_calls == 10
+    assert skill._available_sub_skills == ["coq"]

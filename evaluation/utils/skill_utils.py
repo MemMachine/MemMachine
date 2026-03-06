@@ -179,6 +179,19 @@ def _extract_llm_call_count(perf_metrics: dict[str, Any]) -> int:
     return inferred
 
 
+def _extract_memory_search_latency_breakdown(
+    perf_metrics: dict[str, Any],
+) -> list[float]:
+    raw = perf_metrics.get("memory_search_latency_seconds")
+    if not isinstance(raw, list):
+        return []
+    return [
+        float(item)
+        for item in raw
+        if isinstance(item, int | float) and not isinstance(item, bool)
+    ]
+
+
 async def process_question(
     answer_prompt: str,
     query_skill: SkillToolBase,
@@ -240,12 +253,18 @@ async def process_question(
         mem_retrieval_time = memory_end - memory_start
     llm_time = perf_metrics.get("llm_time", 0)
     llm_call_count = _extract_llm_call_count(perf_metrics)
+    memory_latency_breakdown = _extract_memory_search_latency_breakdown(perf_metrics)
     skill_used_label = _build_skill_used_label(perf_metrics)
+    memory_latency_line = ""
+    if memory_latency_breakdown:
+        rounded = [round(value, 3) for value in memory_latency_breakdown]
+        memory_latency_line = f"Memory search latency breakdown (s): {rounded}\n"
     print(
         f"Question: {question}\n"
         f"Skill used: {skill_used_label}\n"
         f"Memory search called: {perf_metrics.get('memory_search_called', 0)} times\n"
         f"Memory retrieval time: {mem_retrieval_time:.2f} seconds\n"
+        f"{memory_latency_line}"
         f"LLM called: {llm_call_count} times\n"
         f"LLM time for retrieval: {llm_time:.2f} seconds\n"
         f"LLM answering time: {rsp_end - rsp_start:.2f} seconds\n"

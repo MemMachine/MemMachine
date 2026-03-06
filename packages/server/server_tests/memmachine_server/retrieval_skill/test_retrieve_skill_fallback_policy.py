@@ -162,27 +162,14 @@ def _build_skill(model: LanguageModel, **extra_params: object) -> RetrieveSkill:
     )
 
 
-def _spawn_direct_memory_call(query: str = "hello") -> dict[str, Any]:
+def _spawn_coq_call(query: str = "hello") -> dict[str, Any]:
     return {
         "function": {
             "name": "spawn_sub_skill",
             "arguments": {
-                "skill_name": "direct_memory",
+                "skill_name": "coq",
                 "query": query,
                 "rationale": "branch",
-            },
-        }
-    }
-
-
-def _spawn_split_call(query: str = "hello") -> dict[str, Any]:
-    return {
-        "function": {
-            "name": "spawn_sub_skill",
-            "arguments": {
-                "skill_name": "split",
-                "query": query,
-                "rationale": "split",
             },
         }
     }
@@ -205,8 +192,8 @@ async def test_sub_skill_timeout_retries_once_then_fallback(
     memory = FakeEpisodicMemory({"hello": [fallback_episode]})
     model = PolicyLanguageModel(
         outputs=[
-            ("attempt-1", [_spawn_direct_memory_call("hello"), _return_final_call()]),
-            ("attempt-2", [_spawn_direct_memory_call("hello"), _return_final_call()]),
+            ("attempt-1", [_spawn_coq_call("hello"), _return_final_call()]),
+            ("attempt-2", [_spawn_coq_call("hello"), _return_final_call()]),
         ],
         sub_skill_delay_seconds=0.01,
     )
@@ -274,11 +261,11 @@ async def test_fallback_preserves_partial_evidence_before_timeout(
                             "arguments": {"query": "hello"},
                         }
                     },
-                    _spawn_direct_memory_call("hello"),
+                    _spawn_coq_call("hello"),
                     _return_final_call(),
                 ],
             ),
-            ("attempt-2", [_spawn_direct_memory_call("hello"), _return_final_call()]),
+            ("attempt-2", [_spawn_coq_call("hello"), _return_final_call()]),
         ],
         sub_skill_delay_seconds=0.01,
     )
@@ -296,40 +283,18 @@ async def test_fallback_preserves_partial_evidence_before_timeout(
 
 
 @pytest.mark.asyncio
-async def test_split_branch_failure_triggers_fallback(
+async def test_coq_invalid_sub_skill_output_triggers_fallback(
     query_policy: QueryPolicy,
 ) -> None:
-    fallback_episode = _build_episode("split-fallback", "split-fallback")
+    fallback_episode = _build_episode("coq-fallback", "coq-fallback")
     memory = FakeEpisodicMemory({"hello": [fallback_episode]})
     model = PolicyLanguageModel(
         outputs=[
             (
                 "top-level",
                 [
-                    _spawn_split_call("hello"),
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": "branch then detail",
-                            },
-                        }
-                    },
+                    _spawn_coq_call("branch then detail"),
                     _return_final_call(),
-                ],
-            ),
-            (
-                "split-planner",
-                [
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "summary": '{"sub_queries":["branch then detail"]}'
-                            },
-                        }
-                    }
                 ],
             ),
             (
@@ -345,5 +310,34 @@ async def test_split_branch_failure_triggers_fallback(
         QueryParam(query="hello", limit=5, memory=memory),
     )
 
-    assert [item.uid for item in episodes] == ["split-fallback"]
+    assert [item.uid for item in episodes] == ["coq-fallback"]
     assert metrics["fallback_trigger_reason"] == "sub_skill_exception"
+
+
+@pytest.mark.asyncio
+async def test_combined_call_budget_exceeded_triggers_fallback(
+    query_policy: QueryPolicy,
+) -> None:
+    fallback_episode = _build_episode("budget-fallback", "budget-fallback")
+    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
+    model = PolicyLanguageModel(
+        outputs=[
+            (
+                "top-level",
+                [
+                    _spawn_coq_call("hello"),
+                    _return_final_call(),
+                ],
+            ),
+        ],
+    )
+
+    skill = _build_skill(model, max_combined_calls=1)
+    episodes, metrics = await skill.do_query(
+        query_policy,
+        QueryParam(query="hello", limit=5, memory=memory),
+    )
+
+    assert [item.uid for item in episodes] == ["budget-fallback"]
+    assert metrics["fallback_trigger_reason"] == "session_call_budget_exceeded"
+    assert metrics["session_call_budget_limit"] == 1

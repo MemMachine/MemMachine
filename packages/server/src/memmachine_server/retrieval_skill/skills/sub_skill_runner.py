@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model import (
+    ProviderSkillBundle,
     SkillLanguageModel,
     SkillLanguageModelError,
     SkillRunResult,
@@ -17,6 +20,7 @@ from memmachine_server.common.language_model import (
     SkillSessionModelProtocol,
     SkillToolCallFormatError,
     SkillToolNotFoundError,
+    materialize_provider_skill_bundle,
 )
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.retrieval_skill.common.skill_api import (
@@ -60,6 +64,7 @@ class SubSkillExecutionResult(BaseModel):
     branch_success_count: int = 0
     branch_failure_count: int = 0
     branch_retry_count: int = 0
+    normalization_warnings: list[str] = Field(default_factory=list)
 
 
 class SubSkillRunner:
@@ -72,8 +77,7 @@ class SubSkillRunner:
         memory_tool: SkillToolBase,
         session_model: SkillSessionModelProtocol | None = None,
         spec_root: Path | None = None,
-        split_parallel_cap: int = 5,
-        split_branch_retry_limit: int = 1,
+        native_skill_bundle_root: str | None = None,
     ) -> None:
         """Initialize sub-skill runtime dependencies."""
         self._model = model
@@ -85,8 +89,7 @@ class SubSkillRunner:
         self._spec_root = spec_root or (
             Path(__file__).resolve().parent / "specs" / "sub_skills"
         )
-        self._split_parallel_cap = max(1, split_parallel_cap)
-        self._split_branch_retry_limit = max(0, split_branch_retry_limit)
+        self._native_skill_bundle_root = native_skill_bundle_root
 
     @staticmethod
     def _normalize_query_for_cache(query: str) -> str:
@@ -156,6 +159,20 @@ class SubSkillRunner:
             )
         return spec
 
+    def _native_skill_bundles(
+        self,
+        *,
+        spec: SkillSpecV1,
+    ) -> list[ProviderSkillBundle]:
+        markdown = spec.policy_markdown or spec.description
+        bundle = materialize_provider_skill_bundle(
+            name=spec.name,
+            description=spec.description,
+            skill_markdown=markdown,
+            bundle_root=self._native_skill_bundle_root,
+        )
+        return [bundle]
+
     def _raise_invalid_output(self, *, why: str, fallback_reason: str) -> None:
         raise SkillContractError(
             code=SkillContractErrorCode.INVALID_OUTPUT,
@@ -167,6 +184,19 @@ class SubSkillRunner:
                 fallback_trigger_reason=fallback_reason,
             ),
         )
+
+    @staticmethod
+    def _format_language_model_error(err: SkillLanguageModelError) -> str:
+        diagnostics = getattr(err, "diagnostics", None)
+        if not isinstance(diagnostics, dict) or not diagnostics:
+            return str(err)
+        try:
+            encoded = json.dumps(diagnostics, default=str)
+        except Exception:
+            encoded = repr(diagnostics)
+        if len(encoded) > 4000:
+            encoded = f"{encoded[:4000]}...[truncated]"
+        return f"{err} diagnostics={encoded}"
 
     def _query_with_override(self, query: QueryParam, text: str) -> QueryParam:
         next_query = query.model_copy()
@@ -250,6 +280,26 @@ class SubSkillRunner:
                     cached_from_query = detail.get("cached_from_query")
                     if isinstance(cached_from_query, str) and cached_from_query.strip():
                         call_arguments["cached_from_query"] = cached_from_query
+                    raw_wall_time = detail.get("wall_time_seconds")
+                    if isinstance(raw_wall_time, int | float) and not isinstance(
+                        raw_wall_time, bool
+                    ):
+                        call_arguments["wall_time_seconds"] = float(raw_wall_time)
+                    raw_reported_time = detail.get("reported_memory_retrieval_time")
+                    if isinstance(raw_reported_time, int | float) and not isinstance(
+                        raw_reported_time, bool
+                    ):
+                        call_arguments["reported_memory_retrieval_time"] = float(
+                            raw_reported_time
+                        )
+                    raw_breakdown = detail.get("memory_search_latency_seconds")
+                    if isinstance(raw_breakdown, list):
+                        call_arguments["memory_search_latency_seconds"] = [
+                            float(item)
+                            for item in raw_breakdown
+                            if isinstance(item, int | float)
+                            and not isinstance(item, bool)
+                        ]
                 call_arguments["episodes_human_readable"] = episodes_human_readable
                 result_summary = f"episodes={episodes_returned}"
                 if cached:
@@ -297,8 +347,8 @@ class SubSkillRunner:
         policy: QueryPolicy,
         query: QueryParam,
         user_prompt: str | None = None,
+        max_tool_calls: int | None = None,
     ) -> SubSkillExecutionResult:
-        prompt = spec.policy_markdown or spec.description
         bounded_max_steps = max(1, spec.max_steps)
         result = SubSkillExecutionResult(
             skill_name=skill_name,
@@ -347,19 +397,37 @@ class SubSkillRunner:
                 cached_from_query = matched_cache.get("query")
                 if not isinstance(cached_from_query, str):
                     cached_from_query = None
+                tool_elapsed_seconds = 0.0
+                reported_memory_retrieval_time = 0.0
+                search_latency_breakdown: list[float] = []
             else:
+                tool_started = time.perf_counter()
                 next_param = self._query_with_override(query, next_query)
                 episodes, memory_metrics = await self._memory_tool.do_query(
                     policy, next_param
+                )
+                tool_elapsed_seconds = time.perf_counter() - tool_started
+                reported_memory_retrieval_time = self._metric_as_float(
+                    memory_metrics,
+                    "memory_retrieval_time",
+                )
+                raw_search_latency_breakdown = memory_metrics.get(
+                    "memory_search_latency_seconds"
+                )
+                search_latency_breakdown = (
+                    [
+                        float(item)
+                        for item in raw_search_latency_breakdown
+                        if isinstance(item, int | float) and not isinstance(item, bool)
+                    ]
+                    if isinstance(raw_search_latency_breakdown, list)
+                    else []
                 )
                 memory_search_called += self._metric_as_int(
                     memory_metrics,
                     "memory_search_called",
                 )
-                memory_retrieval_time += self._metric_as_float(
-                    memory_metrics,
-                    "memory_retrieval_time",
-                )
+                memory_retrieval_time += reported_memory_retrieval_time
                 collected_episodes.extend(episodes)
                 cached_query_results.append(
                     {
@@ -381,6 +449,9 @@ class SubSkillRunner:
                     "episodes_human_readable": episode_lines,
                     "cached": cached,
                     "cached_from_query": cached_from_query,
+                    "wall_time_seconds": tool_elapsed_seconds,
+                    "reported_memory_retrieval_time": reported_memory_retrieval_time,
+                    "memory_search_latency_seconds": search_latency_breakdown,
                 }
             )
             response: dict[str, object] = {
@@ -388,6 +459,9 @@ class SubSkillRunner:
                 "query": next_query,
                 "cached": cached,
                 "episodes_human_readable": episode_lines,
+                "wall_time_seconds": tool_elapsed_seconds,
+                "reported_memory_retrieval_time": reported_memory_retrieval_time,
+                "memory_search_latency_seconds": search_latency_breakdown,
             }
             if cached_from_query:
                 response["cached_from_query"] = cached_from_query
@@ -402,7 +476,10 @@ class SubSkillRunner:
 
         try:
             live_result = await self._session_model.run_live_session(
-                system_prompt=prompt,
+                system_prompt=(
+                    "Use the attached sub-skill and available tools to resolve "
+                    "the user request."
+                ),
                 user_prompt=user_prompt or f"sub-skill query: {query.query}",
                 tools=sub_skill_tool_schemas(spec.allowed_tools),
                 tool_registry={
@@ -411,6 +488,7 @@ class SubSkillRunner:
                 },
                 max_turns=bounded_max_steps,
                 timeout_seconds=float(spec.timeout_seconds),
+                provider_skill_bundles=self._native_skill_bundles(spec=spec),
             )
         except SkillToolCallFormatError:
             self._raise_invalid_output(
@@ -429,7 +507,10 @@ class SubSkillRunner:
             )
         except SkillLanguageModelError as err:
             self._raise_invalid_output(
-                why=f"Sub-skill session runtime failed: {err}",
+                why=(
+                    "Sub-skill session runtime failed: "
+                    f"{self._format_language_model_error(err)}"
+                ),
                 fallback_reason="invalid_sub_skill_output",
             )
 
@@ -452,6 +533,14 @@ class SubSkillRunner:
             query=query,
             memmachine_call_details=memmachine_call_details,
         )
+        if max_tool_calls is not None and len(result.tool_calls) > max_tool_calls:
+            self._raise_invalid_output(
+                why=(
+                    "Sub-skill tool-call budget exceeded: "
+                    f"{len(result.tool_calls)} > {max_tool_calls}."
+                ),
+                fallback_reason="session_call_budget_exceeded",
+            )
         result.llm_time = float(live_result.llm_time_seconds)
         result.llm_call_count = int(live_result.turn_count)
         result.llm_input_tokens = int(live_result.llm_input_tokens)
@@ -460,6 +549,7 @@ class SubSkillRunner:
         result.memory_retrieval_time = memory_retrieval_time
         result.summary = summary_from_tool or live_result.final_response.strip()
         result.episodes = self._dedupe_episodes(result.episodes)
+        result.normalization_warnings = list(live_result.normalization_warnings)
         result.status = "success"
         return result
 
@@ -469,6 +559,7 @@ class SubSkillRunner:
         skill_name: str,
         policy: QueryPolicy,
         query: QueryParam,
+        max_tool_calls: int | None = None,
     ) -> SubSkillExecutionResult:
         """Execute one sub-skill and return merged episodes + tool-call records."""
         spec = self._load_sub_skill_spec(skill_name)
@@ -477,4 +568,5 @@ class SubSkillRunner:
             spec=spec,
             policy=policy,
             query=query,
+            max_tool_calls=max_tool_calls,
         )

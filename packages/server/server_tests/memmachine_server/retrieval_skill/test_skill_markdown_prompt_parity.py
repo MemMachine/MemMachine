@@ -50,13 +50,13 @@ def _assert_contains_all(policy: str, snippets: list[str]) -> None:
 
 
 def test_fixed_section_order_is_consistent_across_sub_skills() -> None:
-    for file_name in ("coq.md", "split.md"):
+    for file_name in ("coq.md",):
         policy = _policy_markdown(file_name)
         _assert_section_order(policy)
 
 
 def test_sub_skills_expose_examples_and_failure_modes() -> None:
-    for file_name in ("coq.md", "split.md"):
+    for file_name in ("coq.md",):
         policy = _policy_markdown(file_name)
         assert policy.count("### Example") >= 3
         assert policy.count("### Example") <= 6
@@ -68,7 +68,8 @@ def test_coq_prompt_parity_anchors_are_preserved() -> None:
     _assert_contains_all(
         policy,
         [
-            "Use only retrieved documents for sufficiency decisions.",
+            "Use retrieved memory as the primary source of knowledge.",
+            "Run at least one `memmachine_search` before any final sufficiency decision.",
             "Do not invent new entities.",
             "Strict sufficiency standard",
             "If uncertain, choose `is_sufficient=false`.",
@@ -96,59 +97,6 @@ def test_coq_output_contract_is_strict_v1_and_fail_closed() -> None:
     )
 
 
-def test_split_prompt_parity_anchors_are_preserved() -> None:
-    policy = _policy_markdown("split.md")
-    _assert_contains_all(
-        policy,
-        [
-            "Decide whether to split (default: do not split)",
-            "Tie-breaker: when unsure, prefer not splitting.",
-            "single-hop fact lookups only",
-            "Explicit ban on derived-operation wording",
-            "Pronouns/ambiguous references",
-            "Duplicate guardrail",
-            "if not splitting, return one line equal to original query",
-            "each line must be a full question ending with `?`",
-        ],
-    )
-
-
-def test_split_output_contract_is_strict_v1_and_fail_closed() -> None:
-    policy = _policy_markdown("split.md")
-    _assert_contains_all(
-        policy,
-        [
-            "`v1` required fields",
-            "`sub_queries`: array of query strings",
-            "`reason_code`: short snake_case code",
-            "`reason_note`: short human-readable note",
-            "`sub_queries` must contain 1-6 lines total",
-            "if splitting occurred, line count must be 2-6",
-        ],
-    )
-
-
-def test_split_keeps_derived_operation_ban_keywords() -> None:
-    policy = _policy_markdown("split.md").lower()
-    for keyword in (
-        "compare",
-        "difference",
-        "between",
-        "rate",
-        "top",
-        "average",
-        "change",
-        "increase",
-        "decrease",
-        "percent",
-        "rank",
-        "versus",
-        "more than",
-        "less than",
-    ):
-        assert keyword in policy
-
-
 def test_sub_skills_do_not_reintroduce_placeholder_language() -> None:
     disallowed_snippets = [
         "translated from legacy",
@@ -156,14 +104,14 @@ def test_sub_skills_do_not_reintroduce_placeholder_language() -> None:
         "summary placeholder",
         "todo: translate",
     ]
-    for file_name in ("coq.md", "split.md"):
+    for file_name in ("coq.md",):
         lower_text = _raw_text(file_name).lower()
         for snippet in disallowed_snippets:
             assert snippet not in lower_text
 
 
 def test_sub_skills_keep_explicit_v1_contract_markers() -> None:
-    for file_name in ("coq.md", "split.md"):
+    for file_name in ("coq.md",):
         policy = _policy_markdown(file_name)
         assert "`v1` required fields" in policy
         assert "Fail-closed requirements" in policy

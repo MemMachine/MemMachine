@@ -17,6 +17,7 @@ TOP_LEVEL_TOOL_NAMES = (
     "direct_memory_search",
     "return_final",
 )
+CANONICAL_SUB_SKILL_NAMES = ("coq",)
 SUB_SKILL_TOOL_NAMES = (
     "memmachine_search",
     "return_sub_skill_result",
@@ -56,9 +57,13 @@ class SubSkillToolAction(BaseModel):
     summary: str = ""
 
 
-def top_level_tool_schemas(allowed_tools: list[str]) -> list[dict[str, object]]:
+def top_level_tool_schemas(
+    allowed_tools: list[str],
+    available_sub_skills: list[str] | None = None,
+) -> list[dict[str, object]]:
     """Return function-call schemas for allowed top-level orchestration tools."""
     names = set(allowed_tools) if allowed_tools else set(TOP_LEVEL_TOOL_NAMES)
+    sub_skills = available_sub_skills or list(CANONICAL_SUB_SKILL_NAMES)
     schemas: list[dict[str, object]] = []
     if "spawn_sub_skill" in names:
         schemas.append(
@@ -69,7 +74,10 @@ def top_level_tool_schemas(allowed_tools: list[str]) -> list[dict[str, object]]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "skill_name": {"type": "string"},
+                        "skill_name": {
+                            "type": "string",
+                            "enum": sub_skills,
+                        },
                         "query": {"type": "string"},
                         "rationale": {"type": "string"},
                     },

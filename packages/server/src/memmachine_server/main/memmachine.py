@@ -294,6 +294,7 @@ class MemMachine:
                 self._retrieval_skill = create_retrieval_skill(
                     model=llm_model,
                     reranker=reranker,
+                    retrieval_conf=conf,
                 )
             except Exception:
                 logger.exception("Failed to initialize retrieval skill.")

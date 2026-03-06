@@ -106,7 +106,7 @@ async def run_wiki(
     memory, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         session_id="group1",  # Wikimultihop dataset does not have session concept
-        model_name="gpt-5-mini",
+        model_name="gpt-5.2",
         skill_name="RetrieveSkill"
         if args.test_target in {"retrieval_skill"}
         else "MemMachineSkill",

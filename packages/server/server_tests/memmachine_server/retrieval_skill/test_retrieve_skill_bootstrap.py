@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from memmachine_server.common.episode_store import Episode, EpisodeResponse
+from memmachine_server.common.language_model import SkillLanguageModelError
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.episodic_memory import EpisodicMemory
@@ -81,6 +82,40 @@ class FailingLanguageModel(DummyLanguageModel):
             None,
             1,
             1,
+        )
+
+
+class FailingSessionModel:
+    async def run_live_session(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, object]],
+        tool_registry: dict[str, object],
+        tool_choice: str | dict[str, str] = "auto",
+        max_turns: int = 16,
+        timeout_seconds: float | None = None,
+        provider_skill_bundles: list[object] | None = None,
+    ) -> object:
+        _ = (
+            system_prompt,
+            user_prompt,
+            tools,
+            tool_registry,
+            tool_choice,
+            max_turns,
+            timeout_seconds,
+            provider_skill_bundles,
+        )
+        raise SkillLanguageModelError(
+            "forced provider failure",
+            diagnostics={
+                "provider": "openai",
+                "operation": "responses.create",
+                "status_code": 400,
+                "response_body": '{"error":"bad request"}',
+            },
         )
 
 
@@ -200,6 +235,11 @@ async def test_retrieve_skill_bootstrap_fallback_reason_for_errors(
     assert metrics["route"] == "RetrieveSkill"
     assert metrics["fallback_trigger_reason"] == "downstream_tool_failure"
     assert metrics["skill_contract_error_code"] == "SKILL_CONTRACT_DOWNSTREAM_FAILURE"
+    error_diagnostics = metrics.get("error_diagnostics")
+    assert isinstance(error_diagnostics, dict)
+    assert error_diagnostics.get("context") == "top_level_unhandled_exception"
+    assert error_diagnostics.get("error_type") == "RuntimeError"
+    assert isinstance(metrics.get("skill_contract_error_payload"), dict)
 
 
 @pytest.mark.asyncio
@@ -224,3 +264,71 @@ async def test_retrieve_skill_bootstrap_invalid_entry_uses_fallback(
     assert metrics["route"] == "RetrieveSkill"
     assert metrics["fallback_trigger_reason"] == "invalid_skill_request"
     assert metrics["skill_contract_error_code"] == "SKILL_CONTRACT_INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_skill_attaches_all_skill_bundles_on_session_start(
+    query_policy: QueryPolicy,
+) -> None:
+    episode = _build_episode(uid="bundle-check")
+    memory = FakeEpisodicMemory({"hello": [episode]})
+    model = DummyLanguageModel("no-tool-calls")
+    session_model = ScriptedSkillSessionModel(model)
+    skill = create_retrieval_skill(
+        model=model,
+        reranker=DummyReranker(),
+        skill_session_model=session_model,
+    )
+
+    _, _ = await skill.do_query(
+        query_policy,
+        QueryParam(query="hello", limit=5, memory=memory),
+    )
+
+    assert len(session_model.provider_skill_bundles_history) == 1
+    bundle_names = [
+        bundle.name for bundle in session_model.provider_skill_bundles_history[0]
+    ]
+    assert bundle_names == ["retrieve-skill", "coq"]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_skill_fallback_records_provider_raw_error_response(
+    query_policy: QueryPolicy,
+) -> None:
+    episode = _build_episode(uid="provider-error")
+    memory = FakeEpisodicMemory({"hello": [episode]})
+    fallback_tool = MemMachineSkill(
+        SkillToolBaseParam(
+            model=None,
+            children_tools=[],
+            extra_params={},
+            reranker=DummyReranker(),
+        ),
+    )
+    retrieve_skill = RetrieveSkill(
+        SkillToolBaseParam(
+            model=DummyLanguageModel("unused"),
+            children_tools=[fallback_tool],
+            extra_params={
+                "fallback_tool_name": "MemMachineSkill",
+                "skill_session_model": FailingSessionModel(),
+            },
+            reranker=DummyReranker(),
+        ),
+    )
+
+    result, metrics = await retrieve_skill.do_query(
+        query_policy,
+        QueryParam(query="hello", limit=5, memory=memory),
+    )
+
+    assert result == [episode]
+    assert metrics["fallback_trigger_reason"] == "downstream_tool_failure"
+    assert metrics["skill_contract_error_code"] == "SKILL_CONTRACT_INVALID_OUTPUT"
+    assert metrics["provider_error_raw_response"] == '{"error":"bad request"}'
+    error_diagnostics = metrics.get("error_diagnostics")
+    assert isinstance(error_diagnostics, dict)
+    provider_diagnostics = error_diagnostics.get("provider_diagnostics")
+    assert isinstance(provider_diagnostics, dict)
+    assert provider_diagnostics.get("status_code") == 400

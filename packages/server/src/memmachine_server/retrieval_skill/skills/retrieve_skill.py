@@ -14,12 +14,14 @@ from typing import Any, cast
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model import (
+    ProviderSkillBundle,
     SkillLanguageModel,
     SkillLanguageModelError,
     SkillSessionLimitError,
     SkillSessionModelProtocol,
     SkillToolCallFormatError,
     SkillToolNotFoundError,
+    materialize_provider_skill_bundle,
 )
 from memmachine_server.retrieval_skill.common.skill_api import (
     QueryParam,
@@ -44,6 +46,7 @@ from memmachine_server.retrieval_skill.skills.sub_skill_runner import (
     SubSkillRunner,
 )
 from memmachine_server.retrieval_skill.skills.tool_protocol import (
+    CANONICAL_SUB_SKILL_NAMES,
     TOP_LEVEL_TOOL_NAMES,
     parse_top_level_tool_call,
     top_level_tool_schemas,
@@ -59,6 +62,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_RETRIEVE_SKILL_SPEC = (
     Path(__file__).resolve().parent / "specs" / "top_level" / "retrieve_skill.md"
 )
+DEFAULT_SUB_SKILL_SPEC_ROOT = Path(__file__).resolve().parent / "specs" / "sub_skills"
 
 
 class RetrieveSkill(SkillToolBase):
@@ -79,15 +83,15 @@ class RetrieveSkill(SkillToolBase):
         self._global_timeout_seconds = int(
             self._extra_params.get("global_timeout_seconds", self._spec.timeout_seconds)
         )
+        self._max_combined_calls = int(self._extra_params.get("max_combined_calls", 10))
         self._sub_skill_timeout_seconds = int(
             self._extra_params.get("sub_skill_timeout_seconds", 120)
         )
-        self._split_parallel_cap = int(self._extra_params.get("split_parallel_cap", 5))
-        self._split_branch_retry_limit = int(
-            self._extra_params.get("split_branch_retry_limit", 1)
-        )
         self._sub_skill_episode_line_cap = int(
             self._extra_params.get("sub_skill_episode_line_cap", 120)
+        )
+        self._native_skill_bundle_root = self._extra_params.get(
+            "native_skill_bundle_root"
         )
         raw_stage_threshold = self._extra_params.get(
             "stage_result_confidence_threshold",
@@ -99,12 +103,32 @@ class RetrieveSkill(SkillToolBase):
             self._stage_result_confidence_threshold = float(raw_stage_threshold)
         else:
             self._stage_result_confidence_threshold = 0.9
-        self._available_sub_skills = list(
-            self._extra_params.get(
-                "available_sub_skills",
-                ["direct_memory", "coq", "split"],
-            )
+        raw_available_sub_skills = self._extra_params.get(
+            "available_sub_skills",
+            list(CANONICAL_SUB_SKILL_NAMES),
         )
+        if not isinstance(raw_available_sub_skills, list) or any(
+            not isinstance(skill_name, str) for skill_name in raw_available_sub_skills
+        ):
+            raise ValueError(
+                "RetrieveSkill extra_params['available_sub_skills'] must be a list[str]."
+            )
+        invalid_sub_skills = [
+            skill_name
+            for skill_name in raw_available_sub_skills
+            if skill_name not in CANONICAL_SUB_SKILL_NAMES
+        ]
+        if invalid_sub_skills:
+            raise ValueError(
+                "RetrieveSkill extra_params['available_sub_skills'] must only "
+                f"contain {list(CANONICAL_SUB_SKILL_NAMES)}. "
+                f"Invalid: {invalid_sub_skills}"
+            )
+        self._available_sub_skills = list(dict.fromkeys(raw_available_sub_skills))
+        if not self._available_sub_skills:
+            raise ValueError(
+                "RetrieveSkill extra_params['available_sub_skills'] cannot be empty."
+            )
         fallback_name = self._extra_params.get("fallback_tool_name", "MemMachineSkill")
         self._memory_tool = self._find_child_tool(fallback_name)
         if self._memory_tool is None:
@@ -113,9 +137,10 @@ class RetrieveSkill(SkillToolBase):
             )
 
         raw_sub_skill_root = self._extra_params.get("sub_skill_spec_root")
-        sub_skill_root: Path | None = None
-        if raw_sub_skill_root is not None:
-            sub_skill_root = Path(str(raw_sub_skill_root))
+        if raw_sub_skill_root is None:
+            self._sub_skill_spec_root = DEFAULT_SUB_SKILL_SPEC_ROOT
+        else:
+            self._sub_skill_spec_root = Path(str(raw_sub_skill_root))
 
         raw_session_model = self._extra_params.get("skill_session_model")
         if raw_session_model is None:
@@ -134,9 +159,8 @@ class RetrieveSkill(SkillToolBase):
             model=self._model,
             memory_tool=self._memory_tool,
             session_model=self._session_model,
-            spec_root=sub_skill_root,
-            split_parallel_cap=self._split_parallel_cap,
-            split_branch_retry_limit=self._split_branch_retry_limit,
+            spec_root=self._sub_skill_spec_root,
+            native_skill_bundle_root=self._native_skill_bundle_root,
         )
 
     @property
@@ -167,6 +191,48 @@ class RetrieveSkill(SkillToolBase):
             if tool.skill_name == tool_name:
                 return tool
         return None
+
+    def _native_top_level_skill_bundles(self) -> list[ProviderSkillBundle]:
+        markdown = self._spec.policy_markdown or self._spec.description
+        bundles = [
+            materialize_provider_skill_bundle(
+                name=self._spec.name,
+                description=self._spec.description,
+                skill_markdown=markdown,
+                bundle_root=(
+                    str(self._native_skill_bundle_root)
+                    if self._native_skill_bundle_root is not None
+                    else None
+                ),
+            )
+        ]
+
+        # Attach top-level and all decomposition bundles in one session.
+        for sub_skill_name in CANONICAL_SUB_SKILL_NAMES:
+            sub_skill_spec = load_skill_spec(
+                self._sub_skill_spec_root / f"{sub_skill_name}.md"
+            )
+            if sub_skill_spec.kind != "sub-skill":
+                raise ValueError(
+                    "Sub-skill bundle spec must declare kind='sub-skill': "
+                    f"{sub_skill_name}"
+                )
+            sub_skill_markdown = (
+                sub_skill_spec.policy_markdown or sub_skill_spec.description
+            )
+            bundles.append(
+                materialize_provider_skill_bundle(
+                    name=sub_skill_spec.name,
+                    description=sub_skill_spec.description,
+                    skill_markdown=sub_skill_markdown,
+                    bundle_root=(
+                        str(self._native_skill_bundle_root)
+                        if self._native_skill_bundle_root is not None
+                        else None
+                    ),
+                )
+            )
+        return bundles
 
     def _new_session_state(self, query: QueryParam) -> TopLevelSkillSessionState:
         session = TopLevelSkillSessionState.new(
@@ -201,6 +267,59 @@ class RetrieveSkill(SkillToolBase):
             run.model_dump(mode="json") for run in session.sub_skill_runs
         ]
         return metrics
+
+    @staticmethod
+    def _serialize_diagnostic_object(
+        payload: object,
+        *,
+        max_chars: int = 20000,
+    ) -> str:
+        try:
+            serialized = json.dumps(payload, default=str)
+        except Exception:
+            serialized = repr(payload)
+        if len(serialized) <= max_chars:
+            return serialized
+        return f"{serialized[:max_chars]}...[truncated]"
+
+    def _record_error_diagnostics(
+        self,
+        *,
+        session: TopLevelSkillSessionState,
+        aggregated_metrics: dict[str, Any],
+        err: Exception,
+        context: str,
+        mapped_contract_error: SkillContractError | None = None,
+    ) -> None:
+        diagnostics: dict[str, object] = {
+            "context": context,
+            "error_type": type(err).__name__,
+            "error_message": str(err),
+        }
+        if isinstance(err, SkillLanguageModelError):
+            provider_diag = getattr(err, "diagnostics", None)
+            if isinstance(provider_diag, dict) and provider_diag:
+                diagnostics["provider_diagnostics"] = provider_diag
+                response_body = provider_diag.get("response_body")
+                if isinstance(response_body, str) and response_body:
+                    aggregated_metrics["provider_error_raw_response"] = response_body
+        if isinstance(err, SkillContractError):
+            diagnostics["contract_error"] = err.to_dict()
+            aggregated_metrics["skill_contract_error_payload"] = err.to_dict()
+        if mapped_contract_error is not None:
+            diagnostics["mapped_contract_error"] = mapped_contract_error.to_dict()
+            aggregated_metrics["skill_contract_error_payload"] = (
+                mapped_contract_error.to_dict()
+            )
+        aggregated_metrics["error_diagnostics"] = diagnostics
+        session.record_event(
+            actor="top-level",
+            event_type="error_diagnostics",
+            detail=(
+                f"{context}: {type(err).__name__}; "
+                f"diagnostics={self._serialize_diagnostic_object(diagnostics, max_chars=1200)}"
+            ),
+        )
 
     def _contract_error(self, *, why: str, fallback_reason: str) -> SkillContractError:
         return SkillContractError(
@@ -534,8 +653,7 @@ class RetrieveSkill(SkillToolBase):
                     selected_episode_indices
                 )
 
-        normalized_skill_name = skill_name.strip().replace("-", "_").lower()
-        if normalized_skill_name == "coq":
+        if skill_name == "coq":
             stage_results = self._normalize_stage_results(
                 summary_payload.get("stage_results")
             )
@@ -628,11 +746,8 @@ class RetrieveSkill(SkillToolBase):
 
     @staticmethod
     def _selected_skill_name_for_skill(skill_name: str) -> str:
-        normalized = skill_name.strip().replace("-", "_").lower()
-        if normalized == "coq":
+        if skill_name == "coq":
             return "ChainOfQuerySkill"
-        if normalized == "split":
-            return "SplitSkill"
         return "MemMachineSkill"
 
     def _build_stage_result_memory_episodes(
@@ -740,16 +855,21 @@ class RetrieveSkill(SkillToolBase):
             "query": query.query,
             "rationale": f"runtime_fallback:{reason}",
         }
+        fallback_raw_result: dict[str, object] = {
+            "query": query.query,
+            "episodes_returned": len(fallback_episodes),
+            "fallback_reason": reason,
+        }
+        if aggregated_metrics is not None:
+            raw_error = aggregated_metrics.get("error_diagnostics")
+            if isinstance(raw_error, dict):
+                fallback_raw_result["error_diagnostics"] = raw_error
         session.record_tool_call(
             tool_name="direct_memory_search",
             arguments=fallback_arguments,
             status="success",
             result_summary=f"episodes={len(fallback_episodes)}",
-            raw_result={
-                "query": query.query,
-                "episodes_returned": len(fallback_episodes),
-                "fallback_reason": reason,
-            },
+            raw_result=fallback_raw_result,
         )
         session.record_event(
             actor="top-level",
@@ -801,11 +921,31 @@ class RetrieveSkill(SkillToolBase):
         guardrail_retry_count = 0
         hop_count = 0
         branch_count = 0
+        combined_call_count = 0
         global_started = time.monotonic()
+        aggregated_metrics["session_call_budget_limit"] = self._max_combined_calls
+        aggregated_metrics["session_call_budget_consumed"] = 0
 
         def _global_timeout_exceeded() -> bool:
             elapsed = time.monotonic() - global_started
             return elapsed > float(self._global_timeout_seconds)
+
+        def _consume_call_budget(*, delta: int, source: str) -> None:
+            nonlocal combined_call_count
+            if delta <= 0:
+                return
+            next_count = combined_call_count + delta
+            if next_count > self._max_combined_calls:
+                self._raise_contract_error(
+                    why=(
+                        "Combined sub-skill/tool call budget exceeded: "
+                        f"next={next_count} > limit={self._max_combined_calls}; "
+                        f"source={source}."
+                    ),
+                    fallback_reason="session_call_budget_exceeded",
+                )
+            combined_call_count = next_count
+            aggregated_metrics["session_call_budget_consumed"] = combined_call_count
 
         try:
             _ = build_skill_request(query, route_name=route_name)
@@ -848,6 +988,7 @@ class RetrieveSkill(SkillToolBase):
                         fallback_reason="invalid_tool_call",
                     )
 
+                _consume_call_budget(delta=1, source="spawn_sub_skill")
                 hop_count += 1
                 branch_count += 1
                 if hop_count > self._max_hops:
@@ -865,6 +1006,17 @@ class RetrieveSkill(SkillToolBase):
                     )
 
                 sub_query = action.query or query.query
+                remaining_sub_skill_tool_budget = (
+                    self._max_combined_calls - combined_call_count
+                )
+                if remaining_sub_skill_tool_budget <= 0:
+                    self._raise_contract_error(
+                        why=(
+                            "Combined sub-skill/tool call budget exhausted "
+                            "before sub-skill execution."
+                        ),
+                        fallback_reason="session_call_budget_exceeded",
+                    )
 
                 async def _run_sub_skill_once() -> SubSkillExecutionResult:
                     nonlocal guardrail_retry_count
@@ -876,6 +1028,7 @@ class RetrieveSkill(SkillToolBase):
                                     skill_name=action.skill_name,
                                     policy=policy,
                                     query=self._query_with_override(query, sub_query),
+                                    max_tool_calls=remaining_sub_skill_tool_budget,
                                 ),
                                 timeout=float(self._sub_skill_timeout_seconds),
                             )
@@ -935,6 +1088,10 @@ class RetrieveSkill(SkillToolBase):
                     aggregated_metrics,
                 )
                 session.merge_episodes(sub_result.episodes)
+                _consume_call_budget(
+                    delta=len(sub_result.tool_calls),
+                    source=f"sub_skill:{sub_result.skill_name}",
+                )
 
                 if sub_result.branch_total > 0:
                     self._record_branch_metrics(
@@ -979,6 +1136,7 @@ class RetrieveSkill(SkillToolBase):
                     branch_success_count=sub_result.branch_success_count,
                     branch_failure_count=sub_result.branch_failure_count,
                     branch_retry_count=sub_result.branch_retry_count,
+                    normalization_warnings=sub_result.normalization_warnings,
                 )
                 episode_lines = [
                     line
@@ -1042,6 +1200,7 @@ class RetrieveSkill(SkillToolBase):
                     tool_name="direct_memory_search",
                     arguments=arguments,
                 )
+                _consume_call_budget(delta=1, source="direct_memory_search")
                 if action.action not in allowed_tools:
                     self._raise_contract_error(
                         why=(
@@ -1052,10 +1211,12 @@ class RetrieveSkill(SkillToolBase):
                     )
 
                 direct_query = action.query or query.query
+                tool_started = time.perf_counter()
                 episodes, perf_metrics = await self._memory_tool.do_query(
                     policy,
                     self._query_with_override(query, direct_query),
                 )
+                tool_elapsed_seconds = time.perf_counter() - tool_started
                 aggregated_metrics.update(
                     self._update_perf_metrics(perf_metrics, aggregated_metrics)
                 )
@@ -1073,7 +1234,25 @@ class RetrieveSkill(SkillToolBase):
                     "episodes_returned": len(episodes),
                     "query": direct_query,
                     "episodes_human_readable": episode_lines,
+                    "wall_time_seconds": tool_elapsed_seconds,
                 }
+                raw_reported_memory_time = perf_metrics.get("memory_retrieval_time")
+                if isinstance(raw_reported_memory_time, int | float) and not isinstance(
+                    raw_reported_memory_time,
+                    bool,
+                ):
+                    response_payload["reported_memory_retrieval_time"] = float(
+                        raw_reported_memory_time
+                    )
+                raw_search_latency_breakdown = perf_metrics.get(
+                    "memory_search_latency_seconds"
+                )
+                if isinstance(raw_search_latency_breakdown, list):
+                    response_payload["memory_search_latency_seconds"] = [
+                        float(item)
+                        for item in raw_search_latency_breakdown
+                        if isinstance(item, int | float) and not isinstance(item, bool)
+                    ]
                 session.record_tool_call(
                     tool_name="direct_memory_search",
                     arguments=direct_arguments,
@@ -1096,11 +1275,24 @@ class RetrieveSkill(SkillToolBase):
                     tool_name="return_final",
                     arguments=arguments,
                 )
+                _consume_call_budget(delta=1, source="return_final")
                 if action.action not in allowed_tools:
                     self._raise_contract_error(
                         why=(
                             f"Tool '{action.action}' not allowed by top-level "
                             "markdown policy."
+                        ),
+                        fallback_reason="invalid_tool_call",
+                    )
+                retrieval_actions_seen = any(
+                    call.tool_name in {"direct_memory_search", "spawn_sub_skill"}
+                    for call in session.tool_calls
+                )
+                if not retrieval_actions_seen and not session.merged_episodes:
+                    self._raise_contract_error(
+                        why=(
+                            "return_final emitted before any retrieval action. "
+                            "Run direct_memory_search or spawn_sub_skill first."
                         ),
                         fallback_reason="invalid_tool_call",
                     )
@@ -1273,17 +1465,24 @@ class RetrieveSkill(SkillToolBase):
                 tool_registry["return_final"] = _execute_return_final
 
             session_result = await self._session_model.run_live_session(
-                system_prompt=self._spec.policy_markdown or self._spec.description,
+                system_prompt=(
+                    "Use the attached retrieval skill and available tools to complete "
+                    "the user request."
+                ),
                 user_prompt=(
                     f"query: {query.query}\n"
                     f"available_sub_skills: {', '.join(self._available_sub_skills)}\n"
                     f"state: {session.prompt_snapshot()}\n"
                     "choose tool calls to complete retrieval"
                 ),
-                tools=top_level_tool_schemas(self._spec.allowed_tools),
+                tools=top_level_tool_schemas(
+                    self._spec.allowed_tools,
+                    self._available_sub_skills,
+                ),
                 tool_registry=tool_registry,
                 max_turns=self._spec.max_steps,
                 timeout_seconds=float(self._global_timeout_seconds),
+                provider_skill_bundles=self._native_top_level_skill_bundles(),
             )
             aggregated_metrics["llm_time"] = float(
                 aggregated_metrics.get("llm_time", 0.0)
@@ -1299,6 +1498,10 @@ class RetrieveSkill(SkillToolBase):
                 },
                 aggregated_metrics,
             )
+            if session_result.normalization_warnings:
+                aggregated_metrics["top_level_normalization_warnings"] = list(
+                    session_result.normalization_warnings
+                )
 
             if not session.completed:
                 if not session.tool_calls:
@@ -1385,10 +1588,13 @@ class RetrieveSkill(SkillToolBase):
                 metrics.get("top_level_sub_queries") or metrics.get("stage_sub_queries")
             )
             stage_result_memory_episodes: list[Episode] = []
-            if self._stage_result_gate_passes(
-                is_sufficient=bool(metrics.get("top_level_is_sufficient", False)),
-                confidence_score=top_level_confidence,
-            ) and top_level_stage_results:
+            if (
+                self._stage_result_gate_passes(
+                    is_sufficient=bool(metrics.get("top_level_is_sufficient", False)),
+                    confidence_score=top_level_confidence,
+                )
+                and top_level_stage_results
+            ):
                 stage_result_memory_episodes = self._build_stage_result_memory_episodes(
                     query=query,
                     stage_results=top_level_stage_results,
@@ -1415,29 +1621,41 @@ class RetrieveSkill(SkillToolBase):
             )
 
         except SkillToolCallFormatError:
-            err = self._contract_error(
+            contract_error = self._contract_error(
                 why="Top-level tool-call payload shape invalid.",
                 fallback_reason="invalid_tool_call",
             )
+            self._record_error_diagnostics(
+                session=session,
+                aggregated_metrics=aggregated_metrics,
+                err=contract_error,
+                context="top_level_tool_call_format_error",
+            )
             return await self._fallback_with_reason(
                 policy=policy,
                 query=query,
                 session=session,
-                reason=err.payload.fallback_trigger_reason,
-                code=err.code,
+                reason=contract_error.payload.fallback_trigger_reason,
+                code=contract_error.code,
                 aggregated_metrics=aggregated_metrics,
             )
         except SkillToolNotFoundError:
-            err = self._contract_error(
+            contract_error = self._contract_error(
                 why="Top-level requested unsupported tool name.",
                 fallback_reason="invalid_tool_call",
+            )
+            self._record_error_diagnostics(
+                session=session,
+                aggregated_metrics=aggregated_metrics,
+                err=contract_error,
+                context="top_level_tool_not_found",
             )
             return await self._fallback_with_reason(
                 policy=policy,
                 query=query,
                 session=session,
-                reason=err.payload.fallback_trigger_reason,
-                code=err.code,
+                reason=contract_error.payload.fallback_trigger_reason,
+                code=contract_error.code,
                 aggregated_metrics=aggregated_metrics,
             )
         except SkillSessionLimitError as err:
@@ -1447,6 +1665,13 @@ class RetrieveSkill(SkillToolBase):
             contract_error = self._contract_error(
                 why=f"Top-level live session exceeded configured guardrails: {err}",
                 fallback_reason=reason,
+            )
+            self._record_error_diagnostics(
+                session=session,
+                aggregated_metrics=aggregated_metrics,
+                err=err,
+                context="top_level_session_limit",
+                mapped_contract_error=contract_error,
             )
             return await self._fallback_with_reason(
                 policy=policy,
@@ -1461,6 +1686,13 @@ class RetrieveSkill(SkillToolBase):
                 why=f"Top-level live session failed: {err}",
                 fallback_reason="downstream_tool_failure",
             )
+            self._record_error_diagnostics(
+                session=session,
+                aggregated_metrics=aggregated_metrics,
+                err=err,
+                context="top_level_session_language_model_error",
+                mapped_contract_error=contract_error,
+            )
             return await self._fallback_with_reason(
                 policy=policy,
                 query=query,
@@ -1474,6 +1706,12 @@ class RetrieveSkill(SkillToolBase):
                 "RetrieveSkill contract failure. reason=%s code=%s",
                 err.payload.fallback_trigger_reason,
                 err.code,
+            )
+            self._record_error_diagnostics(
+                session=session,
+                aggregated_metrics=aggregated_metrics,
+                err=err,
+                context="top_level_contract_error",
             )
             return await self._fallback_with_reason(
                 policy=policy,
@@ -1492,6 +1730,13 @@ class RetrieveSkill(SkillToolBase):
                 "RetrieveSkill downstream failure. reason=%s code=%s",
                 mapped.payload.fallback_trigger_reason,
                 mapped.code,
+            )
+            self._record_error_diagnostics(
+                session=session,
+                aggregated_metrics=aggregated_metrics,
+                err=err,
+                context="top_level_unhandled_exception",
+                mapped_contract_error=mapped,
             )
             return await self._fallback_with_reason(
                 policy=policy,

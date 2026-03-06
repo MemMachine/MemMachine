@@ -8,6 +8,9 @@ from pydantic import ValidationError
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.retrieval_skill.skills.runtime import validate_skill_result
 from memmachine_server.retrieval_skill.skills.spec_loader import load_skill_spec
+from memmachine_server.retrieval_skill.skills.tool_protocol import (
+    top_level_tool_schemas,
+)
 from memmachine_server.retrieval_skill.skills.types import (
     SkillContractError,
     SkillContractErrorCode,
@@ -113,8 +116,7 @@ def test_invalid_result_after_normalize_raises_stable_error() -> None:
     assert normalizer_calls["count"] == 1
     assert exc_info.value.code == SkillContractErrorCode.INVALID_OUTPUT.value
     assert (
-        exc_info.value.payload.fallback_trigger_reason
-        == "invalid_after_normalization"
+        exc_info.value.payload.fallback_trigger_reason == "invalid_after_normalization"
     )
 
 
@@ -128,3 +130,12 @@ def test_invalid_result_without_normalizer_raises_error_code() -> None:
 
     assert exc_info.value.code == SkillContractErrorCode.INVALID_OUTPUT.value
     assert exc_info.value.payload.fallback_trigger_reason == "invalid_skill_output"
+
+
+def test_top_level_spawn_sub_skill_schema_uses_enum_constraints() -> None:
+    schemas = top_level_tool_schemas(["spawn_sub_skill"], ["coq"])
+    assert len(schemas) == 1
+    spawn_schema = schemas[0]
+    properties = spawn_schema["parameters"]["properties"]
+    skill_name_schema = properties["skill_name"]
+    assert skill_name_schema["enum"] == ["coq"]

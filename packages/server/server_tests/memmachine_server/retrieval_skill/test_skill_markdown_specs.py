@@ -51,21 +51,8 @@ def test_load_markdown_coq_sub_skill_spec_file() -> None:
     assert "evidence_indices" in spec.policy_markdown
 
 
-def test_load_markdown_split_sub_skill_spec_file() -> None:
-    spec_path = SUB_SKILL_SPEC_DIR / "split.md"
-    spec = load_skill_spec(spec_path)
-
-    assert spec.name == "split"
-    assert spec.kind == "sub-skill"
-    assert "return_sub_skill_result" in spec.allowed_tools
-    assert spec.policy_markdown is not None
-    assert "## Examples" in spec.policy_markdown
-    assert "## Failure Modes" in spec.policy_markdown
-    assert "sub_queries" in spec.policy_markdown
-
-
 def test_sub_skill_markdown_specs_do_not_use_placeholder_language() -> None:
-    for file_name in ("coq.md", "split.md"):
+    for file_name in ("coq.md",):
         raw_text = _read_sub_skill_spec_text(file_name)
         lower_text = raw_text.lower()
         assert "translated from legacy" not in lower_text

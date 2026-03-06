@@ -51,6 +51,7 @@ class SubSkillRunRecord(BaseModel):
     branch_success_count: int = 0
     branch_failure_count: int = 0
     branch_retry_count: int = 0
+    normalization_warnings: list[str] = Field(default_factory=list)
 
 
 class TopLevelSkillSessionState(BaseModel):
@@ -140,6 +141,7 @@ class TopLevelSkillSessionState(BaseModel):
         branch_success_count: int = 0,
         branch_failure_count: int = 0,
         branch_retry_count: int = 0,
+        normalization_warnings: list[str] | None = None,
     ) -> None:
         """Append a sub-skill execution record."""
         self.sub_skill_runs.append(
@@ -159,6 +161,7 @@ class TopLevelSkillSessionState(BaseModel):
                 branch_success_count=branch_success_count,
                 branch_failure_count=branch_failure_count,
                 branch_retry_count=branch_retry_count,
+                normalization_warnings=normalization_warnings or [],
             )
         )
 

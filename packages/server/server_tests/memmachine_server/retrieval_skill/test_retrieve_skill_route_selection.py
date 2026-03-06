@@ -213,11 +213,12 @@ async def test_coq_sub_skill_summary_sets_sufficiency_metrics(
 
 
 @pytest.mark.asyncio
-async def test_split_sub_skill_is_reflected_in_selected_skill_name(
+async def test_internal_split_via_top_level_actions_uses_direct_memory_skill_name(
     query_policy: QueryPolicy,
 ) -> None:
-    episode = _build_episode("route-split")
-    memory = FakeEpisodicMemory({"hello": [episode]})
+    episode_a = _build_episode("route-split-a")
+    episode_b = _build_episode("route-split-b")
+    memory = FakeEpisodicMemory({"branch a": [episode_a], "branch b": [episode_b]})
     model = ScriptedLanguageModel(
         outputs=[
             (
@@ -225,11 +226,17 @@ async def test_split_sub_skill_is_reflected_in_selected_skill_name(
                 [
                     {
                         "function": {
-                            "name": "spawn_sub_skill",
+                            "name": "direct_memory_search",
                             "arguments": {
-                                "skill_name": "split",
-                                "query": "hello",
-                                "rationale": "independent branches",
+                                "query": "branch a",
+                            },
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "direct_memory_search",
+                            "arguments": {
+                                "query": "branch b",
                             },
                         }
                     },
@@ -238,68 +245,10 @@ async def test_split_sub_skill_is_reflected_in_selected_skill_name(
                             "name": "return_final",
                             "arguments": {
                                 "final_response": "ok",
-                                "is_sufficient": False,
+                                "is_sufficient": True,
+                                "confidence_score": 0.93,
+                                "sub_queries": ["branch a", "branch b"],
                             },
-                        }
-                    },
-                ],
-            ),
-            (
-                "split",
-                [
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "summary": (
-                                    '{"sub_queries":["a?","b?"],'
-                                    '"reason_code":"split_needed",'
-                                    '"reason_note":"parallel lookups"}'
-                                )
-                            },
-                        }
-                    }
-                ],
-            ),
-        ]
-    )
-
-    skill = _build_skill(model)
-    episodes, metrics = await skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert episodes == []
-    assert metrics["selected_skill"] == "split"
-    assert metrics["selected_skill_name"] == "SplitSkill"
-
-
-@pytest.mark.asyncio
-async def test_removed_tool_select_sub_skill_is_rejected_by_runtime(
-    query_policy: QueryPolicy,
-) -> None:
-    fallback_episode = _build_episode("fallback-removed")
-    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
-    model = ScriptedLanguageModel(
-        outputs=[
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "tool_select",
-                                "query": "hello",
-                                "rationale": "legacy route selection",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "ok"},
                         }
                     },
                 ],
@@ -313,5 +262,7 @@ async def test_removed_tool_select_sub_skill_is_rejected_by_runtime(
         QueryParam(query="hello", limit=5, memory=memory),
     )
 
-    assert [item.uid for item in episodes] == ["fallback-removed"]
-    assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
+    assert [item.uid for item in episodes] == ["route-split-a", "route-split-b"]
+    assert metrics["selected_skill"] == "direct_memory"
+    assert metrics["selected_skill_name"] == "MemMachineSkill"
+    assert metrics.get("top_level_sub_queries") == ["branch a", "branch b"]
