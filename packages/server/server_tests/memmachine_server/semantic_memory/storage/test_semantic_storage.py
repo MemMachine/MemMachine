@@ -1258,6 +1258,24 @@ async def test_filter_features_by_created_at_range(
 
 
 @pytest.mark.asyncio
+async def test_add_feature_with_null_bytes_does_not_crash(
+    semantic_storage: SemanticStorage,
+):
+    """Regression test for issue #1147: null bytes in feature values must not crash."""
+    feature_id = await semantic_storage.add_feature(
+        set_id="user1",
+        category_name="profile",
+        feature="cultural\x00focus",
+        value="D\x00a de Los Muertos",
+        tag="Ins\x00ights",
+        embedding=np.array([1.0] * 1536, dtype=float),
+    )
+
+    stored = await semantic_storage.get_feature(feature_id)
+    assert stored is not None
+
+
+@pytest.mark.asyncio
 async def test_filter_equality(semantic_storage: SemanticStorage):
     feature_ids: list[FeatureIdT] = [
         await semantic_storage.add_feature(

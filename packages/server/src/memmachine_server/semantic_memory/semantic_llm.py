@@ -9,6 +9,7 @@ from pydantic import (
     Field,
     InstanceOf,
     TypeAdapter,
+    field_validator,
     validate_call,
 )
 
@@ -85,6 +86,13 @@ class LLMReducedFeature(BaseModel):
     tag: str
     feature: str
     value: str
+
+    @field_validator("tag", "feature", "value", mode="after")
+    @classmethod
+    def strip_null_bytes(cls, v: str) -> str:
+        if "\x00" in v:
+            return v.replace("\x00", "")
+        return v
 
 
 class SemanticConsolidateMemoryRes(BaseModel):
