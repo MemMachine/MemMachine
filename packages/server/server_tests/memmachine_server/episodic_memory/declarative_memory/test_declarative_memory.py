@@ -144,7 +144,7 @@ async def nebula_client(nebula_client_factory, nebula_connection_info):
 @pytest.fixture(scope="module")
 def nebula_vector_graph_store(nebula_client, nebula_connection_info):
     """NebulaGraph vector graph store for testing."""
-    from tests.memmachine.episodic_memory.conftest import (
+    from server_tests.memmachine_server.episodic_memory.conftest import (
         create_nebula_vector_graph_store,
     )
 

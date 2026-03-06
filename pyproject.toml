@@ -5,6 +5,7 @@ members = ["packages/client", "packages/common", "packages/server"]
 memmachine-common = { workspace = true }
 memmachine-server = { workspace = true }
 memmachine-client = { workspace = true }
+
 [dependency-groups]
 dev = [
     "complexipy>=4.2.0",
