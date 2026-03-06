@@ -9,21 +9,21 @@ import pytest_asyncio
 # Skip all tests if nebulagraph_python is not installed
 pytest.importorskip("nebulagraph_python")
 
-from memmachine.common.data_types import SimilarityMetric
-from memmachine.common.filter.filter_parser import (
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
-from memmachine.common.filter.filter_parser import (
+from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
-from memmachine.common.filter.filter_parser import (
+from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine.common.metrics_factory.prometheus_metrics_factory import (
+from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
 )
-from memmachine.common.vector_graph_store.data_types import Edge, Node
-from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
+from memmachine_server.common.vector_graph_store.data_types import Edge, Node
+from memmachine_server.common.vector_graph_store.nebula_graph_vector_graph_store import (
     NebulaGraphVectorGraphStore,
     NebulaGraphVectorGraphStoreParams,
 )
@@ -730,7 +730,7 @@ async def test_delete_all_data(nebula_client, vector_graph_store):
 @pytest.mark.asyncio
 async def test_sanitize_name():
     """Test name sanitization for GQL identifiers."""
-    from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
+    from memmachine_server.common.vector_graph_store.nebula_graph_vector_graph_store import (
         NebulaGraphVectorGraphStore,
     )
 

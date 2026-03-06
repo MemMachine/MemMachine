@@ -384,7 +384,7 @@ class DatabaseManager:
 
             # Create and store VectorGraphStore
             # Import here to avoid circular dependency
-            from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
+            from memmachine_server.common.vector_graph_store.nebula_graph_vector_graph_store import (
                 NebulaGraphVectorGraphStore,
                 NebulaGraphVectorGraphStoreParams,
             )

@@ -20,13 +20,13 @@ from typing import TYPE_CHECKING, Any
 
 from nebulagraph_python.py_data_types import NVector
 
-from memmachine.common.data_types import SimilarityMetric
-from memmachine.common.filter.filter_parser import And, Comparison, FilterExpr, Or
-from memmachine.common.vector_graph_store.data_types import (
+from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
+from memmachine_server.common.filter.filter_parser import And, Comparison, FilterExpr, Or
+
+from .data_types import (
     Edge,
     EntityType,
     Node,
-    OrderedPropertyValue,
     PropertyValue,
     demangle_embedding_name,
     demangle_property_name,
@@ -35,7 +35,7 @@ from memmachine.common.vector_graph_store.data_types import (
     mangle_embedding_name,
     mangle_property_name,
 )
-from memmachine.common.vector_graph_store.vector_graph_store import VectorGraphStore
+from .vector_graph_store import VectorGraphStore
 
 if TYPE_CHECKING:
     from nebulagraph_python.client import NebulaAsyncClient
@@ -746,7 +746,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         *,
         collection: str,
         by_properties: Iterable[str],
-        starting_at: Iterable[OrderedPropertyValue | None],
+        starting_at: Iterable[OrderedValue | None],
         order_ascending: Iterable[bool],
         include_equal_start: bool = False,
         limit: int | None = 1,

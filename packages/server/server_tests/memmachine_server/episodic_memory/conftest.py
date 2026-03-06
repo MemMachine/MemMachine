@@ -119,7 +119,7 @@ def create_nebula_vector_graph_store(nebula_client, connection_info):
     Returns:
         NebulaGraphVectorGraphStore instance
     """
-    from memmachine.common.vector_graph_store.nebula_graph_vector_graph_store import (
+    from memmachine_server.common.vector_graph_store.nebula_graph_vector_graph_store import (
         NebulaGraphVectorGraphStore,
         NebulaGraphVectorGraphStoreParams,
     )
