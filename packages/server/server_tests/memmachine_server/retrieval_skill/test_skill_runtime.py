@@ -9,6 +9,7 @@ from memmachine_server.common.episode_store import Episode
 from memmachine_server.retrieval_skill.skills.runtime import validate_skill_result
 from memmachine_server.retrieval_skill.skills.spec_loader import load_skill_spec
 from memmachine_server.retrieval_skill.skills.tool_protocol import (
+    sub_skill_tool_schemas,
     top_level_tool_schemas,
 )
 from memmachine_server.retrieval_skill.skills.types import (
@@ -139,3 +140,15 @@ def test_top_level_spawn_sub_skill_schema_uses_enum_constraints() -> None:
     properties = spawn_schema["parameters"]["properties"]
     skill_name_schema = properties["skill_name"]
     assert skill_name_schema["enum"] == ["coq"]
+
+
+def test_sub_skill_return_schema_supports_structured_fields() -> None:
+    schemas = sub_skill_tool_schemas(["return_sub_skill_result"])
+    assert len(schemas) == 1
+    return_schema = schemas[0]
+    properties = return_schema["parameters"]["properties"]
+    assert "summary" in properties
+    assert "is_sufficient" in properties
+    assert "new_query" in properties
+    assert "answer_candidate" in properties
+    assert "generated_sub_queries" in properties

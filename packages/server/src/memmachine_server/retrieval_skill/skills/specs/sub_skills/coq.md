@@ -77,6 +77,11 @@ Query rules:
 - grounded in `original_query` + resolved evidence,
 - specific to the missing fact,
 - non-duplicate after normalization.
+- first hop should resolve entity identity before terminal attributes.
+  - Example: prefer `Jean Martin (Singer) husband` before
+    `Jean Martin (Singer) husband died`.
+  - Example: prefer `World And Time Enough director` before
+    `World And Time Enough director nationality`.
 
 Next-best rewritten query objective:
 - target the earliest blocking hop,
@@ -159,6 +164,10 @@ When insufficient due to uncertainty, keep confidence below `0.70`.
 - `memmachine_search`: retrieve evidence for each iterative hop query.
 - `return_sub_skill_result`: required final action; `summary` must be strict
   JSON text matching the output contract.
+  - Preferred: provide output-contract fields directly as
+    `return_sub_skill_result` arguments (`is_sufficient`, `new_query`,
+    `confidence_score`, etc.) so runtime can serialize canonical JSON.
+  - Backward compatible: `summary` may still be JSON object text.
 
 ## Output Contract
 

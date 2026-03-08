@@ -50,11 +50,25 @@ class TopLevelToolAction(BaseModel):
 class SubSkillToolAction(BaseModel):
     """Validated sub-skill tool action emitted by LLM tool calls."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Permit optional structured summary fields so the runtime can consume
+    # either legacy `summary` strings or first-class structured payload values.
+    model_config = ConfigDict(extra="ignore")
 
     action: Literal["memmachine_search", "return_sub_skill_result"]
     query: str | None = None
     summary: str = ""
+    is_sufficient: bool | None = None
+    evidence_indices: list[int] | None = None
+    new_query: str | None = None
+    confidence_score: float | None = None
+    reason_code: str | None = None
+    reason_note: str | None = None
+    answer_candidate: str | None = None
+    stage_results: list[dict[str, object]] | None = None
+    generated_sub_queries: list[str] | None = None
+    sub_queries: list[str] | None = None
+    related_episode_indices: list[int] | None = None
+    selected_episode_indices: list[int] | None = None
 
 
 def top_level_tool_schemas(
@@ -179,7 +193,49 @@ def sub_skill_tool_schemas(allowed_tools: list[str]) -> list[dict[str, object]]:
                 "description": "Finalize sub-skill result payload.",
                 "parameters": {
                     "type": "object",
-                    "properties": {"summary": {"type": "string"}},
+                    "properties": {
+                        "summary": {"type": "string"},
+                        "is_sufficient": {"type": "boolean"},
+                        "evidence_indices": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                        },
+                        "new_query": {"type": "string"},
+                        "confidence_score": {"type": "number"},
+                        "reason_code": {"type": "string"},
+                        "reason_note": {"type": "string"},
+                        "answer_candidate": {"type": "string"},
+                        "stage_results": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {"type": "string"},
+                                    "stage_result": {"type": "string"},
+                                    "confidence_score": {"type": "number"},
+                                    "reason_note": {"type": "string"},
+                                },
+                                "required": ["query", "stage_result"],
+                                "additionalProperties": True,
+                            },
+                        },
+                        "generated_sub_queries": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "sub_queries": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "related_episode_indices": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                        },
+                        "selected_episode_indices": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                        },
+                    },
                     "required": [],
                     "additionalProperties": False,
                 },

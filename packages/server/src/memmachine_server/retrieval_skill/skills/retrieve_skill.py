@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -403,15 +404,32 @@ class RetrieveSkill(SkillToolBase):
         stripped = summary.strip()
         if not stripped:
             return None
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError:
-            return None
-        if isinstance(parsed, dict):
-            wrapped_v1 = parsed.get("v1")
-            if isinstance(wrapped_v1, dict):
-                return cast(dict[str, object], wrapped_v1)
-            return cast(dict[str, object], parsed)
+        candidates: list[str] = [stripped]
+        fenced_blocks = re.findall(
+            r"```(?:json)?\s*(\{.*?\})\s*```",
+            stripped,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        candidates.extend(block for block in fenced_blocks if block.strip())
+        if "{" in stripped and "}" in stripped:
+            first_open = stripped.find("{")
+            last_close = stripped.rfind("}")
+            if first_open != -1 and last_close > first_open:
+                candidates.append(stripped[first_open : last_close + 1])
+
+        for candidate in candidates:
+            candidate_stripped = candidate.strip()
+            if not candidate_stripped:
+                continue
+            try:
+                parsed = json.loads(candidate_stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                wrapped_v1 = parsed.get("v1")
+                if isinstance(wrapped_v1, dict):
+                    return cast(dict[str, object], wrapped_v1)
+                return cast(dict[str, object], parsed)
         return None
 
     @staticmethod
@@ -1386,6 +1404,18 @@ class RetrieveSkill(SkillToolBase):
                     aggregated_metrics["top_level_reason_code"] = action.reason_code
                 if isinstance(action.reason_note, str) and action.reason_note.strip():
                     aggregated_metrics["top_level_reason_note"] = action.reason_note
+                if (
+                    top_level_is_sufficient
+                    and isinstance(final_response, str)
+                    and final_response.strip()
+                    and not (
+                        isinstance(aggregated_metrics.get("answer_candidate"), str)
+                        and str(aggregated_metrics.get("answer_candidate")).strip()
+                    )
+                ):
+                    candidate = final_response.strip()
+                    aggregated_metrics["answer_candidate"] = candidate
+                    aggregated_metrics["latest_answer_candidate"] = candidate
                 if related_episode_indices:
                     aggregated_metrics["top_level_related_episode_indices"] = (
                         related_episode_indices

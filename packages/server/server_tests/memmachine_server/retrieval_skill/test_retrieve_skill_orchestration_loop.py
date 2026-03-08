@@ -316,6 +316,8 @@ async def test_return_final_captures_top_level_sufficiency_fields(
     assert metrics["top_level_reason_note"] == "supporting evidence found"
     assert metrics["top_level_related_episode_indices"] == [0]
     assert metrics["top_level_selected_episode_indices"] == [0]
+    assert metrics["answer_candidate"] == "finalized"
+    assert metrics["latest_answer_candidate"] == "finalized"
 
 
 @pytest.mark.asyncio
@@ -856,6 +858,158 @@ async def test_coq_sub_skill_reuses_cached_results_for_near_duplicate_queries(
     assert memmachine_calls[1]["raw_result"]["cached_from_query"] == q1
     assert metrics["memory_search_called"] == 1
     assert float(metrics["memory_retrieval_time"]) > 0.0
+
+
+@pytest.mark.asyncio
+async def test_coq_first_query_rewrites_to_earliest_blocking_hop(
+    query_policy: QueryPolicy,
+) -> None:
+    original_query = "When did Jean Martin (Singer)'s husband die?"
+    model_query = "Jean Martin (Singer) husband died"
+    rewritten_query = "Jean Martin (Singer) husband"
+    episode = _build_episode("coq-first-hop", "Jean Martin spouse is William Black.")
+    memory = FakeEpisodicMemory({rewritten_query: [episode]})
+    model = ScriptedLanguageModel(
+        [
+            (
+                "top-level",
+                [
+                    {
+                        "function": {
+                            "name": "spawn_sub_skill",
+                            "arguments": {
+                                "skill_name": "coq",
+                                "query": original_query,
+                            },
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "return_final",
+                            "arguments": {"final_response": "done"},
+                        }
+                    },
+                ],
+            ),
+            (
+                "coq",
+                [
+                    {
+                        "function": {
+                            "name": "memmachine_search",
+                            "arguments": {"query": model_query},
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "return_sub_skill_result",
+                            "arguments": {
+                                "is_sufficient": False,
+                                "confidence_score": 0.52,
+                                "reason_code": "missing_final_attribute",
+                                "new_query": original_query,
+                            },
+                        }
+                    },
+                ],
+            ),
+        ]
+    )
+    retrieve_skill = _build_skill(model)
+
+    _episodes, metrics = await retrieve_skill.do_query(
+        query_policy,
+        QueryParam(query=original_query, limit=5, memory=memory),
+    )
+
+    assert memory.queries == [rewritten_query]
+    sub_runs = metrics["orchestrator_sub_skill_runs"]
+    assert isinstance(sub_runs, list)
+    memmachine_calls = [
+        call
+        for call in sub_runs[0]["tool_calls"]
+        if call["tool_name"] == "memmachine_search"
+    ]
+    assert len(memmachine_calls) == 1
+    assert memmachine_calls[0]["arguments"]["query"] == rewritten_query
+    assert memmachine_calls[0]["raw_result"]["rewritten_from_query"] == model_query
+
+
+@pytest.mark.asyncio
+async def test_coq_artifact_query_falls_back_to_original_query(
+    query_policy: QueryPolicy,
+) -> None:
+    original_query = (
+        "Are Doboy Railway Station and Adamstown Railway Station, New South Wales "
+        "located in the same country?"
+    )
+    artifact_query = "coq-d9c2d46bbe0cdece SKILL.md"
+    episode = _build_episode("coq-artifact", "Both stations are in Australia.")
+    memory = FakeEpisodicMemory({original_query: [episode]})
+    model = ScriptedLanguageModel(
+        [
+            (
+                "top-level",
+                [
+                    {
+                        "function": {
+                            "name": "spawn_sub_skill",
+                            "arguments": {
+                                "skill_name": "coq",
+                                "query": original_query,
+                            },
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "return_final",
+                            "arguments": {"final_response": "done"},
+                        }
+                    },
+                ],
+            ),
+            (
+                "coq",
+                [
+                    {
+                        "function": {
+                            "name": "memmachine_search",
+                            "arguments": {"query": artifact_query},
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "return_sub_skill_result",
+                            "arguments": {
+                                "is_sufficient": False,
+                                "confidence_score": 0.41,
+                                "reason_code": "artifact_query_rewritten",
+                                "new_query": original_query,
+                            },
+                        }
+                    },
+                ],
+            ),
+        ]
+    )
+    retrieve_skill = _build_skill(model)
+
+    _episodes, metrics = await retrieve_skill.do_query(
+        query_policy,
+        QueryParam(query=original_query, limit=5, memory=memory),
+    )
+
+    assert memory.queries == [original_query]
+    sub_runs = metrics["orchestrator_sub_skill_runs"]
+    assert isinstance(sub_runs, list)
+    memmachine_calls = [
+        call
+        for call in sub_runs[0]["tool_calls"]
+        if call["tool_name"] == "memmachine_search"
+    ]
+    assert len(memmachine_calls) == 1
+    assert memmachine_calls[0]["arguments"]["query"] == original_query
+    assert memmachine_calls[0]["raw_result"]["rewritten_from_query"] == artifact_query
 
 
 @pytest.mark.asyncio

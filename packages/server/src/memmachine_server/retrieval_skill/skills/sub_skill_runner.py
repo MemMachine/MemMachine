@@ -6,6 +6,7 @@ import json
 import re
 import time
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -70,6 +71,46 @@ class SubSkillExecutionResult(BaseModel):
 class SubSkillRunner:
     """Run one sub-skill using markdown policy and memory-search tool access."""
 
+    _COQ_ARTIFACT_QUERY_PATTERN = re.compile(
+        r"(?i)(?:\bSKILL\.md\b|\.planning/|/tmp/|coq-[a-f0-9]{8,}|/skills/specs/)"
+    )
+    _COQ_INSTRUCTIONAL_QUERY_PATTERN = re.compile(
+        r"(?i)\b(decompose|step\s*\d+|identify\b.*\bthen\b|first\b.*\bthen\b)\b"
+    )
+    _COQ_TERMINAL_ATTRIBUTE_SUFFIX_PATTERNS: tuple[str, ...] = (
+        r"(?:\b(?:place of death|date of death|death date|cause of death|died where|died in|died|death)\b[\s,]*)+$",
+        r"(?:\b(?:place of birth|birth place|birthplace|born where|born in|born|birth)\b[\s,]*)+$",
+        r"(?:\b(?:nationality|country(?: of origin)?|from which country|same country|same nationality)\b[\s,]*)+$",
+        r"(?:\b(?:works? at|workplace|employer|work)\b[\s,]*)+$",
+        r"(?:\b(?:graduated from|graduated|education)\b[\s,]*)+$",
+        r"(?:\b(?:award(?:s)?(?: won)?|prize(?: won)?)\b[\s,]*)+$",
+        r"(?:\b(?:earlier|later|older|younger|first)\b[\s,]*)+$",
+    )
+    _COQ_ANCHOR_ROLE_TOKENS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "director",
+            "composer",
+            "creator",
+            "performer",
+            "author",
+            "producer",
+            "founder",
+        }
+    )
+    _COQ_TERMINAL_RELATION_TOKENS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "father",
+            "mother",
+            "spouse",
+            "husband",
+            "wife",
+            "child",
+            "children",
+            "son",
+            "daughter",
+        }
+    )
+
     def __init__(
         self,
         *,
@@ -131,6 +172,206 @@ class SubSkillRunner:
                 sanitized[key] = value
                 continue
         return sanitized or None
+
+    @classmethod
+    def _looks_like_non_query_artifact(cls, raw_query: str) -> bool:
+        normalized = raw_query.strip()
+        if not normalized:
+            return True
+        alpha_numeric_count = len(re.findall(r"[A-Za-z0-9]", normalized))
+        if alpha_numeric_count < 3:
+            return True
+        return bool(cls._COQ_ARTIFACT_QUERY_PATTERN.search(normalized))
+
+    @classmethod
+    def _strip_terminal_attribute_suffixes(cls, raw_query: str) -> str:
+        candidate = raw_query.strip()
+        if not candidate:
+            return candidate
+        for _ in range(4):
+            updated = candidate
+            for pattern in cls._COQ_TERMINAL_ATTRIBUTE_SUFFIX_PATTERNS:
+                updated = re.sub(pattern, "", updated, flags=re.IGNORECASE)
+            updated = re.sub(r"[\s,;:.!?-]+$", "", updated).strip()
+            if updated == candidate:
+                break
+            candidate = updated
+        return re.sub(r"\s+", " ", candidate).strip()
+
+    @classmethod
+    def _rewrite_first_coq_hop_query(
+        cls,
+        *,
+        original_query: str,
+        candidate_query: str,
+    ) -> str:
+        normalized_original = re.sub(r"\s+", " ", original_query.strip())
+        normalized_candidate = re.sub(r"\s+", " ", candidate_query.strip())
+        if not normalized_candidate:
+            return normalized_original or normalized_candidate
+        if cls._looks_like_non_query_artifact(normalized_candidate):
+            return normalized_original or normalized_candidate
+        if cls._COQ_INSTRUCTIONAL_QUERY_PATTERN.search(normalized_candidate):
+            return normalized_candidate
+
+        rewritten = re.sub(
+            r"(?i)\bpaternal\s+(grandmother|grandfather)\b",
+            "father",
+            normalized_candidate,
+        )
+        rewritten = re.sub(
+            r"(?i)\bmaternal\s+(grandmother|grandfather)\b",
+            "mother",
+            rewritten,
+        )
+        rewritten = re.sub(r"(?i)\bstepmother\b", "father", rewritten)
+        rewritten = re.sub(r"(?i)\bstepfather\b", "mother", rewritten)
+        rewritten = cls._strip_terminal_attribute_suffixes(rewritten)
+
+        words = rewritten.split()
+        if words:
+            trailing = words[-1].lower()
+            lowered_words = {word.lower() for word in words[:-1]}
+            if (
+                trailing in cls._COQ_TERMINAL_RELATION_TOKENS
+                and lowered_words & cls._COQ_ANCHOR_ROLE_TOKENS
+            ):
+                rewritten = " ".join(words[:-1]).strip()
+
+        rewritten = re.sub(r"\s+", " ", rewritten).strip()
+        if len(cls._query_tokens(rewritten)) < 2:
+            return normalized_original or normalized_candidate
+        return rewritten
+
+    @classmethod
+    def _rewrite_sub_skill_query(
+        cls,
+        *,
+        skill_name: str,
+        original_query: str,
+        candidate_query: str,
+        search_index: int,
+    ) -> str:
+        normalized_candidate = re.sub(r"\s+", " ", candidate_query.strip())
+        if skill_name != "coq":
+            return normalized_candidate or original_query.strip()
+
+        if search_index <= 0:
+            return cls._rewrite_first_coq_hop_query(
+                original_query=original_query,
+                candidate_query=normalized_candidate or original_query,
+            )
+        if cls._looks_like_non_query_artifact(normalized_candidate):
+            return original_query.strip() or normalized_candidate
+        return normalized_candidate or original_query.strip()
+
+    @staticmethod
+    def _normalize_episode_indices(raw: object) -> list[int]:
+        if not isinstance(raw, list):
+            return []
+        normalized: list[int] = []
+        seen: set[int] = set()
+        for item in raw:
+            if isinstance(item, bool):
+                continue
+            value: int | None = None
+            if isinstance(item, int):
+                value = item
+            elif isinstance(item, float) and item.is_integer():
+                value = int(item)
+            if value is None or value < 0 or value in seen:
+                continue
+            seen.add(value)
+            normalized.append(value)
+        return normalized
+
+    @staticmethod
+    def _normalize_string_list(
+        raw: object,
+        *,
+        max_items: int = 32,
+        max_len: int = 400,
+    ) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            value = item.strip()
+            if not value:
+                continue
+            clipped = value[:max_len]
+            if clipped in seen:
+                continue
+            seen.add(clipped)
+            normalized.append(clipped)
+            if len(normalized) >= max_items:
+                break
+        return normalized
+
+    @classmethod
+    def _structured_summary_payload(  # noqa: C901
+        cls,
+        *,
+        arguments: dict[str, object],
+        original_query: str,
+        observed_sub_queries: list[str],
+    ) -> dict[str, object] | None:
+        payload: dict[str, object] = {}
+        raw_is_sufficient = arguments.get("is_sufficient")
+        if isinstance(raw_is_sufficient, bool):
+            payload["is_sufficient"] = raw_is_sufficient
+
+        evidence_indices = cls._normalize_episode_indices(arguments.get("evidence_indices"))
+        if evidence_indices:
+            payload["evidence_indices"] = evidence_indices
+
+        raw_new_query = arguments.get("new_query")
+        if isinstance(raw_new_query, str) and raw_new_query.strip():
+            payload["new_query"] = raw_new_query.strip()
+
+        raw_confidence = arguments.get("confidence_score")
+        if isinstance(raw_confidence, int | float) and not isinstance(
+            raw_confidence,
+            bool,
+        ):
+            payload["confidence_score"] = max(0.0, min(1.0, float(raw_confidence)))
+
+        for key in ("reason_code", "reason_note", "answer_candidate"):
+            value = arguments.get(key)
+            if isinstance(value, str) and value.strip():
+                payload[key] = value.strip()
+
+        stage_results = arguments.get("stage_results")
+        if isinstance(stage_results, list):
+            payload["stage_results"] = stage_results
+
+        related_indices = cls._normalize_episode_indices(
+            arguments.get("related_episode_indices")
+        )
+        if related_indices:
+            payload["related_episode_indices"] = related_indices
+
+        selected_indices = cls._normalize_episode_indices(
+            arguments.get("selected_episode_indices")
+        )
+        if selected_indices:
+            payload["selected_episode_indices"] = selected_indices
+
+        explicit_sub_queries = cls._normalize_string_list(
+            arguments.get("generated_sub_queries") or arguments.get("sub_queries")
+        )
+        if explicit_sub_queries:
+            payload["generated_sub_queries"] = explicit_sub_queries
+        elif observed_sub_queries:
+            payload["generated_sub_queries"] = observed_sub_queries
+
+        if isinstance(payload.get("is_sufficient"), bool) and "new_query" not in payload:
+            payload["new_query"] = original_query.strip()
+
+        return payload or None
 
     def _spec_path_for(self, skill_name: str) -> Path:
         candidates = [
@@ -316,11 +557,29 @@ class SubSkillRunner:
                 )
                 continue
             if action.action == "return_sub_skill_result":
+                return_arguments: dict[str, object] = {"summary": action.summary}
+                for key in (
+                    "is_sufficient",
+                    "evidence_indices",
+                    "new_query",
+                    "confidence_score",
+                    "reason_code",
+                    "reason_note",
+                    "answer_candidate",
+                    "stage_results",
+                    "generated_sub_queries",
+                    "sub_queries",
+                    "related_episode_indices",
+                    "selected_episode_indices",
+                ):
+                    value = getattr(action, key, None)
+                    if value is not None:
+                        return_arguments[key] = value
                 records.append(
                     SkillToolCallRecord(
                         step=step_index,
                         tool_name=action.action,
-                        arguments={"summary": action.summary},
+                        arguments=return_arguments,
                         status="success",
                         result_summary="summary recorded",
                         raw_result=self._sanitize_raw_tool_result(execution.output),
@@ -366,7 +625,14 @@ class SubSkillRunner:
             arguments: dict[str, object],
         ) -> dict[str, object]:
             nonlocal memory_search_called, memory_retrieval_time
-            next_query = str(arguments.get("query") or query.query)
+            raw_next_query = str(arguments.get("query") or query.query)
+            search_index = len(memmachine_call_details)
+            next_query = self._rewrite_sub_skill_query(
+                skill_name=skill_name,
+                original_query=query.query,
+                candidate_query=raw_next_query,
+                search_index=search_index,
+            )
             normalized_query = self._normalize_query_for_cache(next_query)
             query_tokens = self._query_tokens(next_query)
             matched_cache: dict[str, object] | None = None
@@ -446,6 +712,9 @@ class SubSkillRunner:
             memmachine_call_details.append(
                 {
                     "query": next_query,
+                    "rewritten_from_query": (
+                        raw_next_query if raw_next_query.strip() != next_query else None
+                    ),
                     "episodes_human_readable": episode_lines,
                     "cached": cached,
                     "cached_from_query": cached_from_query,
@@ -463,6 +732,8 @@ class SubSkillRunner:
                 "reported_memory_retrieval_time": reported_memory_retrieval_time,
                 "memory_search_latency_seconds": search_latency_breakdown,
             }
+            if raw_next_query.strip() != next_query:
+                response["rewritten_from_query"] = raw_next_query
             if cached_from_query:
                 response["cached_from_query"] = cached_from_query
             return response
@@ -471,7 +742,23 @@ class SubSkillRunner:
             arguments: dict[str, object],
         ) -> dict[str, object]:
             nonlocal summary_from_tool
-            summary_from_tool = str(arguments.get("summary") or "").strip()
+            observed_sub_queries = [
+                str(detail.get("query") or "").strip()
+                for detail in memmachine_call_details
+                if isinstance(detail, dict) and str(detail.get("query") or "").strip()
+            ]
+            structured_payload = self._structured_summary_payload(
+                arguments=arguments,
+                original_query=query.query,
+                observed_sub_queries=observed_sub_queries,
+            )
+            if structured_payload is not None:
+                summary_from_tool = json.dumps(
+                    structured_payload,
+                    separators=(",", ":"),
+                )
+            else:
+                summary_from_tool = str(arguments.get("summary") or "").strip()
             return {"summary_recorded": bool(summary_from_tool)}
 
         try:

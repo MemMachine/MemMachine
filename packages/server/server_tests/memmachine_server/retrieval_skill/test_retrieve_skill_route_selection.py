@@ -213,6 +213,73 @@ async def test_coq_sub_skill_summary_sets_sufficiency_metrics(
 
 
 @pytest.mark.asyncio
+async def test_coq_sub_skill_structured_return_fields_set_metrics(
+    query_policy: QueryPolicy,
+) -> None:
+    episode = _build_episode("route-coq-structured")
+    memory = FakeEpisodicMemory({"hello": [episode]})
+    model = ScriptedLanguageModel(
+        outputs=[
+            (
+                "top-level",
+                [
+                    {
+                        "function": {
+                            "name": "spawn_sub_skill",
+                            "arguments": {
+                                "skill_name": "coq",
+                                "query": "hello",
+                            },
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "return_final",
+                            "arguments": {"final_response": "ok"},
+                        }
+                    },
+                ],
+            ),
+            (
+                "coq",
+                [
+                    {
+                        "function": {
+                            "name": "return_sub_skill_result",
+                            "arguments": {
+                                "is_sufficient": True,
+                                "confidence_score": 0.93,
+                                "reason_code": "structured_summary",
+                                "answer_candidate": "alice",
+                                "new_query": "hello",
+                                "generated_sub_queries": [
+                                    "Who is the target person?",
+                                    "What is their attribute?",
+                                ],
+                            },
+                        }
+                    }
+                ],
+            ),
+        ]
+    )
+
+    skill = _build_skill(model)
+    episodes, metrics = await skill.do_query(
+        query_policy,
+        QueryParam(query="hello", limit=5, memory=memory),
+    )
+
+    assert [item.uid for item in episodes] == ["route-coq-structured"]
+    assert metrics["latest_sufficiency_signal_skill"] == "coq"
+    assert metrics["evidence_sufficient"] is True
+    assert metrics["top_level_is_sufficient"] is True
+    assert metrics["latest_answer_candidate"] == "alice"
+    assert metrics["selected_skill"] == "coq"
+    assert metrics["selected_skill_name"] == "ChainOfQuerySkill"
+
+
+@pytest.mark.asyncio
 async def test_internal_split_via_top_level_actions_uses_direct_memory_skill_name(
     query_policy: QueryPolicy,
 ) -> None:
