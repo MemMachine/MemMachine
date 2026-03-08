@@ -260,12 +260,24 @@ def _is_unknown_like_answer(text: str) -> bool:
         for marker in (
             "i don't know",
             "i don’t know",
+            "i do not know",
             "unknown",
             "not sure",
+            "unclear",
             "cannot determine",
             "can't determine",
+            "cannot be determined",
+            "can't be determined",
+            "cannot confirm",
+            "can't confirm",
+            "cannot find",
+            "can't find",
+            "not specified",
+            "not mentioned",
+            "no information",
             "insufficient",
             "not enough information",
+            "insufficient evidence",
         )
     )
 
@@ -288,6 +300,30 @@ def _is_same_country_or_nationality_question(question: str) -> bool:
     )
 
 
+def _looks_like_non_answer(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return True
+    if _is_unknown_like_answer(normalized):
+        return True
+    if normalized.endswith("?"):
+        return True
+    return normalized.startswith(
+        (
+            "i ",
+            "there ",
+            "this ",
+            "that ",
+            "which ",
+            "do ",
+            "does ",
+            "did ",
+            "it is unclear",
+            "it is unknown",
+        )
+    )
+
+
 def _needs_answer_verification(
     *,
     question: str,
@@ -295,6 +331,10 @@ def _needs_answer_verification(
     draft_answer: str,
 ) -> bool:
     if _is_unknown_like_answer(draft_answer):
+        return True
+    if _looks_like_non_answer(draft_answer):
+        return True
+    if not bool(perf_metrics.get("top_level_is_sufficient", False)):
         return True
     if _is_same_country_or_nationality_question(question):
         return True
@@ -307,6 +347,41 @@ def _needs_answer_verification(
         ):
             return True
     return False
+
+
+async def _rescue_unknown_answer(
+    *,
+    model: openai.AsyncOpenAI,
+    question: str,
+    model_name: str,
+) -> tuple[str, bool]:
+    rescue_prompts = [
+        (
+            "Answer the question using best available world knowledge. "
+            "Do not say unknown unless truly unknowable. "
+            "Provide only the concise final answer.\n"
+            f"Question: {question}"
+        ),
+        (
+            "Provide your single best concrete answer to the question. "
+            "Do not use uncertainty language like \"I don't know\", "
+            "'unknown', or 'not enough information'. "
+            "Return only the final answer.\n"
+            f"Question: {question}"
+        ),
+    ]
+    rescue_model_name = "gpt-5.2" if model_name == "gpt-5-mini" else model_name
+    for rescue_prompt in rescue_prompts:
+        rescue_rsp = await model.responses.create(
+            model=rescue_model_name,
+            max_output_tokens=512,
+            top_p=1,
+            input=[{"role": "user", "content": rescue_prompt}],
+        )
+        rescue_text = rescue_rsp.output_text.strip()
+        if rescue_text and not _is_unknown_like_answer(rescue_text):
+            return rescue_text, True
+    return "", False
 
 
 async def process_question(
@@ -367,22 +442,13 @@ async def process_question(
     open_domain_rescue_used = False
     answer_verification_used = False
     if _is_unknown_like_answer(rsp_text):
-        rescue_prompt = (
-            "Answer the question using best available world knowledge. "
-            "Do not say unknown unless truly unknowable. "
-            "Provide only the concise final answer.\n"
-            f"Question: {question}"
+        rescue_text, open_domain_rescue_used = await _rescue_unknown_answer(
+            model=model,
+            question=question,
+            model_name=model_name,
         )
-        rescue_rsp = await model.responses.create(
-            model=model_name,
-            max_output_tokens=512,
-            top_p=1,
-            input=[{"role": "user", "content": rescue_prompt}],
-        )
-        rescue_text = rescue_rsp.output_text.strip()
-        if rescue_text and not _is_unknown_like_answer(rescue_text):
+        if rescue_text:
             rsp_text = rescue_text
-            open_domain_rescue_used = True
 
     if _needs_answer_verification(
         question=question,
@@ -413,8 +479,11 @@ Requirements:
         )
         verified_text = verification_rsp.output_text.strip()
         if verified_text:
-            rsp_text = verified_text
-            answer_verification_used = True
+            verified_is_unknown = _is_unknown_like_answer(verified_text)
+            draft_is_unknown = _is_unknown_like_answer(rsp_text)
+            if not (verified_is_unknown and not draft_is_unknown):
+                rsp_text = verified_text
+                answer_verification_used = True
     answer_end = time.time()
 
     mem_retrieval_time = perf_metrics.get("memory_retrieval_time", 0)
