@@ -47,6 +47,10 @@ from memmachine_server.retrieval_skill.subskills.direct_memory_skill import (
 
 RETRIEVE_SKILL_NAME = "RetrieveSkill"
 DIRECT_MEMORY_SKILL_NAME = "MemMachineSkill"
+RETRIEVAL_HINT_UNCERTAINTY_PATTERN = re.compile(
+    r"(?i)\b(if|likely|probably|suggests?|inferred?|assum(?:e|ed|ption)|"
+    r"traditional|uncertain|unknown|not explicit|no explicit|may be|might)\b"
+)
 
 
 def _normalize_sub_skill_name(raw_name: str) -> str | None:
@@ -116,29 +120,80 @@ def _build_skill_used_label(perf_metrics: dict[str, Any]) -> str:
     return ", ".join(labels) if labels else "N/A"
 
 
+def _extract_confidence_from_metrics(
+    perf_metrics: dict[str, Any],
+    *keys: str,
+) -> float | None:
+    for key in keys:
+        value = perf_metrics.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def _retrieval_hint_reliability(
+    confidence: float | None, reason_note: str | None
+) -> str:
+    if confidence is not None and confidence >= 0.85:
+        if isinstance(reason_note, str) and RETRIEVAL_HINT_UNCERTAINTY_PATTERN.search(
+            reason_note
+        ):
+            return "tentative"
+        return "high"
+    return "tentative"
+
+
+def _format_retrieval_candidate_hint(
+    *,
+    prefix: str,
+    candidate: str,
+    reliability: str,
+    confidence: float | None,
+    reason_note: str | None,
+) -> str:
+    confidence_text = f", confidence={confidence:.2f}" if confidence is not None else ""
+    hint = (
+        "[Retrieval-Skill Summary] "
+        f"{prefix} (reliability={reliability}{confidence_text}): "
+        f"{candidate.strip()}."
+    )
+    if reliability == "tentative":
+        hint += " Status: unverified; corroborate before final use."
+    if isinstance(reason_note, str) and reason_note.strip():
+        hint += f" Reason: {reason_note.strip()}."
+    return hint
+
+
 def _build_retrieval_answer_hint(perf_metrics: dict[str, Any]) -> str:
-    if bool(perf_metrics.get("top_level_sufficiency_signal_seen", False)) and bool(
-        perf_metrics.get("top_level_is_sufficient", False)
-    ):
+    if bool(perf_metrics.get("top_level_is_sufficient", False)):
         answer_candidate = perf_metrics.get("answer_candidate")
         if not isinstance(answer_candidate, str) or not answer_candidate.strip():
             answer_candidate = perf_metrics.get("latest_answer_candidate")
         reason_note = perf_metrics.get("top_level_reason_note")
+        confidence = _extract_confidence_from_metrics(
+            perf_metrics,
+            "top_level_confidence_score",
+            "latest_sufficiency_confidence_score",
+        )
+        reliability = _retrieval_hint_reliability(
+            confidence=confidence,
+            reason_note=reason_note if isinstance(reason_note, str) else None,
+        )
         if isinstance(answer_candidate, str) and answer_candidate.strip():
-            if isinstance(reason_note, str) and reason_note.strip():
-                return (
-                    "[Retrieval-Skill Summary] "
-                    f"Top-level answer candidate: {answer_candidate.strip()}. "
-                    f"Reason: {reason_note.strip()}."
-                )
-            return (
-                "[Retrieval-Skill Summary] "
-                f"Top-level answer candidate: {answer_candidate.strip()}."
+            return _format_retrieval_candidate_hint(
+                prefix="Top-level answer candidate",
+                candidate=answer_candidate,
+                reliability=reliability,
+                confidence=confidence,
+                reason_note=reason_note if isinstance(reason_note, str) else None,
             )
         if isinstance(reason_note, str) and reason_note.strip():
-            return (
-                "[Retrieval-Skill Summary] "
-                f"Top-level sufficiency reason: {reason_note.strip()}."
+            return _format_retrieval_candidate_hint(
+                prefix="Top-level sufficiency reason",
+                candidate=reason_note,
+                reliability=reliability,
+                confidence=confidence,
+                reason_note=None,
             )
 
     if not bool(perf_metrics.get("latest_sufficiency_signal", False)):
@@ -147,13 +202,19 @@ def _build_retrieval_answer_hint(perf_metrics: dict[str, Any]) -> str:
     if not isinstance(answer_candidate, str) or not answer_candidate.strip():
         return ""
     reason_note = perf_metrics.get("latest_sufficiency_reason_note")
-    if isinstance(reason_note, str) and reason_note.strip():
-        return (
-            "[Retrieval-Skill Summary] "
-            f"Answer candidate: {answer_candidate.strip()}. "
-            f"Reason: {reason_note.strip()}."
-        )
-    return f"[Retrieval-Skill Summary] Answer candidate: {answer_candidate.strip()}."
+    confidence = _extract_confidence_from_metrics(
+        perf_metrics,
+        "latest_sufficiency_confidence_score",
+    )
+    # Latest sub-skill signals without top-level sufficiency are provisional.
+    reliability = "tentative"
+    return _format_retrieval_candidate_hint(
+        prefix="Sub-skill provisional answer candidate",
+        candidate=answer_candidate,
+        reliability=reliability,
+        confidence=confidence,
+        reason_note=reason_note if isinstance(reason_note, str) else None,
+    )
 
 
 def _metric_as_int(value: object) -> int:

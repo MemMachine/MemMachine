@@ -33,10 +33,21 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
    - For questions phrased as "work at"/employer/organization, output organization names (not role titles). If both appear, prefer organization entities. If an intergovernmental organization appears in memory for the resolved person, include that organization in the answer.
    - For place-of-death questions, if no explicit "died in/at" location exists but a compact lifespan line exists with a single location token (e.g., `[birth_year] [city] - [death_year]`), use that location as best-available answer.
    - For relation-chain questions (parent/spouse/child/grandparent and similar), resolve each hop and return only the final requested entity/attribute, not an intermediate hop entity.
-   - If memory contains `[StageResult ...] Query: ... Answer: ...` lines, treat each `Answer:` field as high-priority distilled evidence for that stage query.
+   - If memory contains `[StageResult ...] Query: ... Answer: ...` lines:
+     - `reliability=high` (or confidence >= 0.85): treat as strong distilled evidence unless contradicted.
+     - `reliability=tentative` (or confidence < 0.85): treat as a hypothesis; require explicit corroboration from memory or use open-domain fallback.
+     - If stage text includes uncertainty cues (e.g., "if", "likely", "inferred", "unknown", "traditional"), do not treat it as final by itself.
+   - If memory contains `Sub-skill provisional answer candidate (...)`, treat it as weak evidence only; never treat it as final without explicit corroboration.
+   - For any candidate tagged `reliability=tentative` or `Status: unverified`, do not copy it verbatim unless explicit memory evidence directly supports the final asked attribute.
+   - For yes/no same-country or same-nationality questions, compare normalized country/nationality sets and answer **yes** if they share at least one country/nationality (e.g., "British-American" overlaps with "American").
+   - For same-country/same-nationality questions, before answering **no**, expand each side with commonly known dual/multiple nationalities from open-domain knowledge and re-check overlap.
+   - For country/nationality questions, do not infer from industry labels or context words alone (e.g., "Bollywood", "Hollywood", language, genre); require explicit country/nationality evidence or use open-domain fallback.
+   - If question asks for a country and evidence gives only a demonym/adjectival nationality (e.g., "American"), normalize to the corresponding country ("United States").
+   - For place/location questions, reject date-only or non-location candidates as insufficient and continue reasoning/fallback.
 
 3. Uncertainty rule:
    - Do **not** say “unknown/not mentioned” if open-domain knowledge can reasonably answer.
+   - Prefer a best-supported concrete answer from open-domain knowledge when memory evidence is sparse/conflicting but a widely accepted answer exists.
    - If neither memories nor general knowledge allow a confident answer, say “I don’t know” (optionally add a brief reason).
 
 4. Ambiguity handling:
@@ -108,7 +119,7 @@ async def run_wiki(
         session_id="group1",  # Wikimultihop dataset does not have session concept
         model_name="gpt-5.2",
         skill_name="RetrieveSkill"
-        if args.test_target in {"retrieval_skill"}
+        if args.test_target == "retrieval_skill"
         else "MemMachineSkill",
     )
 
