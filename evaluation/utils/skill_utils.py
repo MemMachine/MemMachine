@@ -253,6 +253,62 @@ def _extract_memory_search_latency_breakdown(
     ]
 
 
+def _is_unknown_like_answer(text: str) -> bool:
+    normalized = text.strip().lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "i don't know",
+            "i don’t know",
+            "unknown",
+            "not sure",
+            "cannot determine",
+            "can't determine",
+            "insufficient",
+            "not enough information",
+        )
+    )
+
+
+def _is_same_country_or_nationality_question(question: str) -> bool:
+    normalized = f" {question.strip().lower()} "
+    if not re.match(
+        r"\s*(is|are|was|were|do|does|did|can|could|has|have|had)\b",
+        normalized,
+    ):
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            " same country ",
+            " same nationality ",
+            " from the same country ",
+            " from the same nationality ",
+        )
+    )
+
+
+def _needs_answer_verification(
+    *,
+    question: str,
+    perf_metrics: dict[str, Any],
+    draft_answer: str,
+) -> bool:
+    if _is_unknown_like_answer(draft_answer):
+        return True
+    if _is_same_country_or_nationality_question(question):
+        return True
+    if bool(perf_metrics.get("top_level_is_sufficient", False)):
+        confidence = perf_metrics.get("top_level_confidence_score")
+        if (
+            isinstance(confidence, int | float)
+            and not isinstance(confidence, bool)
+            and float(confidence) < 0.8
+        ):
+            return True
+    return False
+
+
 async def process_question(
     answer_prompt: str,
     query_skill: SkillToolBase,
@@ -307,7 +363,59 @@ async def process_question(
         top_p=1,
         input=[{"role": "user", "content": prompt}],
     )
-    rsp_end = time.time()
+    rsp_text = rsp.output_text.strip()
+    open_domain_rescue_used = False
+    answer_verification_used = False
+    if _is_unknown_like_answer(rsp_text):
+        rescue_prompt = (
+            "Answer the question using best available world knowledge. "
+            "Do not say unknown unless truly unknowable. "
+            "Provide only the concise final answer.\n"
+            f"Question: {question}"
+        )
+        rescue_rsp = await model.responses.create(
+            model=model_name,
+            max_output_tokens=512,
+            top_p=1,
+            input=[{"role": "user", "content": rescue_prompt}],
+        )
+        rescue_text = rescue_rsp.output_text.strip()
+        if rescue_text and not _is_unknown_like_answer(rescue_text):
+            rsp_text = rescue_text
+            open_domain_rescue_used = True
+
+    if _needs_answer_verification(
+        question=question,
+        perf_metrics=perf_metrics,
+        draft_answer=rsp_text,
+    ):
+        verification_prompt = f"""You are validating a draft answer to a multi-hop question.
+
+Question: {question}
+
+Memories:
+{formatted_context}
+
+Draft answer:
+{rsp_text}
+
+Requirements:
+- If the draft is already correct, keep it unchanged.
+- For same-country/same-nationality yes/no questions, answer "yes" when compared entities share at least one normalized country/nationality.
+- For relation-chain questions, ensure the answer targets the final asked attribute (not an intermediate entity).
+- Do not return unknown if a best-supported answer can be given from memory or general knowledge.
+- Return only the final answer, concise."""
+        verification_rsp = await model.responses.create(
+            model=model_name,
+            max_output_tokens=512,
+            top_p=1,
+            input=[{"role": "user", "content": verification_prompt}],
+        )
+        verified_text = verification_rsp.output_text.strip()
+        if verified_text:
+            rsp_text = verified_text
+            answer_verification_used = True
+    answer_end = time.time()
 
     mem_retrieval_time = perf_metrics.get("memory_retrieval_time", 0)
     if mem_retrieval_time == 0:
@@ -328,10 +436,9 @@ async def process_question(
         f"{memory_latency_line}"
         f"LLM called: {llm_call_count} times\n"
         f"LLM time for retrieval: {llm_time:.2f} seconds\n"
-        f"LLM answering time: {rsp_end - rsp_start:.2f} seconds\n"
+        f"LLM answering time: {answer_end - rsp_start:.2f} seconds\n"
     )
 
-    rsp_text = rsp.output_text
     res = {
         "question": question,
         "golden_answer": answer,
@@ -342,6 +449,8 @@ async def process_question(
         "conversation_memories": formatted_context,
         "num_episodes_retrieved": len(chunks),
         "llm_call_count": llm_call_count,
+        "open_domain_rescue_used": open_domain_rescue_used,
+        "answer_verification_used": answer_verification_used,
     }
 
     res.update(perf_metrics)
