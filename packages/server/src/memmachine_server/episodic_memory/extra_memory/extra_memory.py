@@ -4,21 +4,30 @@ import asyncio
 import datetime
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from uuid import UUID, uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.utils import extract_sentences
+from memmachine_server.common.utils import (
+    compute_similarity,
+    extract_sentences,
+    similarity_gt,
+    unflatten_like,
+)
 from memmachine_server.common.vector_store import (
     Collection,
     Record,
+)
+from memmachine_server.common.vector_store.data_types import (
+    QueryResult as VectorStoreQueryResult,
 )
 
 from .data_types import (
@@ -189,48 +198,210 @@ class ExtraMemory:
             for segment_derivatives in segments_derivatives
             for derivative in segment_derivatives
         ]
+        derivative_uuids_set = {d.uuid for d in derivatives}
 
         derivative_embeddings = await self._embedder.ingest_embed(
             [derivative.content for derivative in derivatives],
         )
 
-        if self._derivative_consolidation_threshold is not None:
-            # TODO: Logic to discover existing derivatives.
-            pass
+        if self._derivative_consolidation_threshold is None:
+            await self._segment_linker.register_segments(
+                session_key=self._session_key,
+                links={
+                    segment: [derivative.uuid for derivative in segment_derivatives]
+                    for segment, segment_derivatives in zip(
+                        segments,
+                        segments_derivatives,
+                        strict=True,
+                    )
+                },
+                active=None,
+            )
 
-        # TODO: Loop condition
-        while True:
-            try:
-                await self._segment_linker.register_segments(
-                    session_key=self._session_key,
-                    links={
-                        segment: [derivative.uuid for derivative in segment_derivatives]
-                        for segment, segment_derivatives in zip(
-                            segments,
-                            segments_derivatives,
-                            strict=True,
-                        )
-                    },
-                    active=None,
+            derivative_records = [
+                Record(
+                    uuid=derivative.uuid,
+                    vector=derivative_embedding,
                 )
-                break
-            except DerivativeNotActiveError:
-                # TODO: Logic to use new derivatives instead of existing ones.
-                break
+                for derivative, derivative_embedding in zip(
+                    derivatives,
+                    derivative_embeddings,
+                    strict=True,
+                )
+            ]
 
-        derivative_records = [
-            Record(
-                uuid=derivative.uuid,
-                vector=derivative_embedding,
+        else:
+            derivative_query_results = await self._collection.query(
+                query_vectors=derivative_embeddings,
+                score_threshold=self._derivative_consolidation_threshold,
+                limit=1,
+                return_vector=False,
+                return_properties=False,
             )
-            for derivative, derivative_embedding in zip(
-                derivatives,
-                derivative_embeddings,
-                strict=True,
-            )
-        ]
 
-        await self._collection.upsert(records=derivative_records)
+            # Retry on stale derivative matches.
+            excluded_uuids: set[UUID] = set()
+            while True:
+                consolidated_uuids = ExtraMemory._consolidate_derivatives(
+                    derivatives=derivatives,
+                    derivative_embeddings=derivative_embeddings,
+                    derivative_query_results=derivative_query_results,
+                    excluded_uuids=excluded_uuids,
+                    score_threshold=self._derivative_consolidation_threshold,
+                    similarity_metric=self._embedder.similarity_metric,
+                )
+                active_uuids = set(consolidated_uuids) - derivative_uuids_set
+
+                consolidated_uuids_per_segment = unflatten_like(
+                    consolidated_uuids, segments_derivatives
+                )
+                links = dict(zip(segments, consolidated_uuids_per_segment, strict=True))
+
+                try:
+                    await self._segment_linker.register_segments(
+                        session_key=self._session_key,
+                        links=links,
+                        active=active_uuids,
+                    )
+                    break
+                except DerivativeNotActiveError as e:
+                    excluded_uuids |= e.not_active
+
+            derivative_records = [
+                Record(
+                    uuid=derivative.uuid,
+                    vector=derivative_embedding,
+                )
+                for consolidated_uuid, derivative, derivative_embedding in zip(
+                    consolidated_uuids,
+                    derivatives,
+                    derivative_embeddings,
+                    strict=True,
+                )
+                if consolidated_uuid == derivative.uuid
+            ]
+
+        if derivative_records:
+            await self._collection.upsert(records=derivative_records)
+
+    @staticmethod
+    def _consolidate_derivatives(
+        derivatives: Iterable[Derivative],
+        derivative_embeddings: Iterable[list[float]],
+        derivative_query_results: Iterable[VectorStoreQueryResult],
+        excluded_uuids: Iterable[UUID],
+        score_threshold: float,
+        similarity_metric: SimilarityMetric,
+    ) -> list[UUID]:
+        """
+        Consolidate derivatives by deduplicating within-batch and against the DB.
+
+        Args:
+            derivatives (Iterable[Derivative]): The derivatives to consolidate.
+            derivative_embeddings (Iterable[list[float]]): The embeddings of the derivatives, in the same order.
+            derivative_query_results (Iterable[VectorStoreQueryResult]): Pre-fetched DB query results for the derivatives, in the same order.
+            excluded_uuids (Iterable[UUID]): DB derivative UUIDs to exclude from consolidation.
+            score_threshold (float): Score threshold for consolidation.
+            similarity_metric (SimilarityMetric): Metric to use for comparing similarity scores.
+
+        Returns:
+            list[UUID]: The consolidated UUID for each derivative, in the same order.
+
+        """
+        consolidated_uuids: list[UUID] = []
+        representatives: dict[UUID, list[float]] = {}
+
+        for derivative, derivative_embedding, derivative_query_result in zip(
+            derivatives,
+            derivative_embeddings,
+            derivative_query_results,
+            strict=True,
+        ):
+            derivative_matches = derivative_query_result.matches
+
+            best_db_uuid: UUID | None = None
+            best_db_score: float | None = None
+            for match in derivative_matches:
+                if match.record.uuid not in excluded_uuids:
+                    best_db_uuid = match.record.uuid
+                    best_db_score = match.score
+                    break
+
+            consolidated_uuid = ExtraMemory._find_best_consolidation_match(
+                derivative_uuid=derivative.uuid,
+                derivative_embedding=derivative_embedding,
+                representatives=representatives,
+                best_db_uuid=best_db_uuid,
+                best_db_score=best_db_score,
+                score_threshold=score_threshold,
+                similarity_metric=similarity_metric,
+            )
+            consolidated_uuids.append(consolidated_uuid)
+
+            if consolidated_uuid == derivative.uuid:
+                representatives[consolidated_uuid] = derivative_embedding
+
+        return consolidated_uuids
+
+    @staticmethod
+    def _find_best_consolidation_match(
+        derivative_uuid: UUID,
+        derivative_embedding: list[float],
+        representatives: Mapping[UUID, list[float]],
+        best_db_uuid: UUID | None,
+        best_db_score: float | None,
+        score_threshold: float,
+        similarity_metric: SimilarityMetric,
+    ) -> UUID:
+        """
+        Find the best consolidation match for a derivative embedding.
+
+        Args:
+            derivative_uuid (UUID): The UUID of the derivative being consolidated.
+            derivative_embedding (list[float]): The embedding of the derivative being consolidated.
+            representatives (Mapping[UUID, list[float]]): Representative derivative UUIDs and their embeddings for within-batch consolidation.
+            best_db_score (float | None): The pre-computed best similarity score against the DB for this derivative, or None if there are no matches.
+            best_db_uuid (UUID | None): The UUID of the best DB match for this derivative, or None if there are no matches.
+            score_threshold (float): The similarity score threshold for consolidation.
+            similarity_metric (SimilarityMetric): The similarity metric to use for comparing scores.
+
+        Returns:
+            UUID:
+                The UUID of the best match for consolidation.
+                If no match exceeds the threshold, returns the derivative's own UUID.
+
+        """
+        gt = similarity_gt(similarity_metric)
+
+        best_uuid: UUID = derivative_uuid
+        best_score: float | None = None
+
+        # Check within-batch representatives.
+        representative_uuids = list(representatives.keys())
+        batch_scores = compute_similarity(
+            query_embedding=derivative_embedding,
+            candidate_embeddings=list(representatives.values()),
+            similarity_metric=similarity_metric,
+        )
+
+        # We do not use max() because gt is similarity-metric dependent.
+        for uuid, score in zip(representative_uuids, batch_scores, strict=True):
+            if gt(score, score_threshold) and (
+                best_score is None or gt(score, best_score)
+            ):
+                best_score = score
+                best_uuid = uuid
+
+        # Check DB match.
+        if (
+            best_db_uuid is not None
+            and best_db_score is not None
+            and gt(best_db_score, score_threshold)
+            and (best_score is None or gt(best_db_score, best_score))
+        ):
+            best_uuid = best_db_uuid
+
+        return best_uuid
 
     async def _create_segments(
         self,
@@ -391,7 +562,7 @@ class ExtraMemory:
         )[0]
 
         # Search derivative collection for matches.
-        query_results = next(
+        query_matches = next(
             iter(
                 await self._collection.query(
                     query_vectors=[query_embedding],
@@ -403,7 +574,7 @@ class ExtraMemory:
         )
 
         matched_derivative_uuids = [
-            query_result.record.uuid for query_result in query_results
+            query_match.record.uuid for query_match in query_matches
         ]
 
         segments_by_derivatives = (
