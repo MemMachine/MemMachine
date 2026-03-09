@@ -7,6 +7,7 @@ import logging
 from collections.abc import Iterable
 from uuid import UUID, uuid4
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.embedder import Embedder
@@ -14,7 +15,7 @@ from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.utils import chunk_text, extract_sentences
+from memmachine_server.common.utils import extract_sentences
 from memmachine_server.common.vector_store import (
     Collection,
     Record,
@@ -50,7 +51,7 @@ class ExtraMemoryParams(BaseModel):
         reranker (Reranker):
             Reranker instance for reranking search results.
         derive_sentences (bool):
-            Whether to derive sentence-level derivatives from message content (default: False).
+            Whether to derive sentence-level derivatives from content (default: False).
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation (default: 2000).
         derivative_consolidation_threshold (float):
@@ -79,7 +80,7 @@ class ExtraMemoryParams(BaseModel):
     )
     derive_sentences: bool = Field(
         False,
-        description="Whether to derive sentence-level derivatives from message content",
+        description="Whether to derive sentence-level derivatives from content",
     )
     max_text_chunk_length: int = Field(
         2000,
@@ -111,9 +112,46 @@ class ExtraMemory:
         self._reranker = params.reranker
 
         self._derive_sentences = params.derive_sentences
-        self._max_text_chunk_length = params.max_text_chunk_length
         self._derivative_consolidation_threshold = (
             params.derivative_consolidation_threshold
+        )
+
+        self._text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=params.max_text_chunk_length,
+            chunk_overlap=0,
+            separators=[
+                "\n\n",
+                "],\n",
+                "},\n",
+                "),\n",
+                "]\n",
+                "}\n",
+                ")\n",
+                ",\n",
+                "\uff1f\n",  # Fullwidth question mark
+                "?\n",
+                "\uff01\n",  # Fullwidth exclamation mark
+                "!\n",
+                "\u3002\n",  # Ideographic full stop
+                ".\n",
+                "\uff1f",  # Fullwidth question mark
+                "? ",
+                "\uff01",  # Fullwidth exclamation mark
+                "! ",
+                "\u3002",  # Ideographic full stop
+                ". ",
+                "; ",
+                ": ",
+                "—",
+                "--",
+                "\uff0c",  # Fullwidth comma
+                "\u3001",  # Ideographic comma
+                ", ",
+                "\u200b",  # Zero-width space
+                " ",
+                "",
+            ],
+            keep_separator="end",
         )
 
     async def encode_episodes(
@@ -213,40 +251,40 @@ class ExtraMemory:
         for block, content in enumerate(episode.content):
             match content:
                 case MessageContent(source=source, text=text):
-                    chunks = chunk_text(text, max_length=self._max_text_chunk_length)
-                    for chunk in chunks:
-                        segments.append(
-                            Segment(
-                                uuid=uuid4(),
-                                episode_uuid=episode.uuid,
-                                block=block,
-                                index=len(segments),
-                                timestamp=episode.timestamp,
-                                content=MessageContent(source=source, text=chunk),
-                                properties=episode.properties,
-                            )
+                    chunks = self._text_splitter.split_text(text)
+                    segments.extend(
+                        Segment(
+                            uuid=uuid4(),
+                            episode_uuid=episode.uuid,
+                            block=block,
+                            index=index,
+                            timestamp=episode.timestamp,
+                            content=MessageContent(source=source, text=chunk),
+                            properties=episode.properties,
                         )
+                        for index, chunk in enumerate(chunks)
+                    )
                 case TextContent(text=text):
-                    chunks = chunk_text(text, max_length=self._max_text_chunk_length)
-                    for chunk in chunks:
-                        segments.append(
-                            Segment(
-                                uuid=uuid4(),
-                                episode_uuid=episode.uuid,
-                                block=block,
-                                index=len(segments),
-                                timestamp=episode.timestamp,
-                                content=TextContent(text=chunk),
-                                properties=episode.properties,
-                            )
+                    chunks = self._text_splitter.split_text(text)
+                    segments.extend(
+                        Segment(
+                            uuid=uuid4(),
+                            episode_uuid=episode.uuid,
+                            block=block,
+                            index=index,
+                            timestamp=episode.timestamp,
+                            content=TextContent(text=chunk),
+                            properties=episode.properties,
                         )
+                        for index, chunk in enumerate(chunks)
+                    )
                 case ImageContent():
                     segments.append(
                         Segment(
                             uuid=uuid4(),
                             episode_uuid=episode.uuid,
                             block=block,
-                            index=len(segments),
+                            index=0,
                             timestamp=episode.timestamp,
                             content=content,
                             properties=episode.properties,
@@ -305,6 +343,7 @@ class ExtraMemory:
                     for sentence in sentences
                 ]
             case ImageContent():
+                # TODO: Generate image description.
                 logger.warning("Image content derivatives are not yet supported")
                 return []
             case _:
