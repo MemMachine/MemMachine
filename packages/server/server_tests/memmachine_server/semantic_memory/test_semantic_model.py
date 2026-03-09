@@ -288,7 +288,7 @@ class TestStructuredSemanticPrompt:
     def test_consolidation_prompt_without_tags_omits_tag_section(self):
         """When no tags are provided, the consolidation prompt should still
         work but not contain a tag enumeration section."""
-        from memmachine.semantic_memory.util.semantic_prompt_template import (
+        from memmachine_server.semantic_memory.util.semantic_prompt_template import (
             build_consolidation_prompt,
         )
 
