@@ -5,6 +5,11 @@ name: Publish TypeScript Client Package to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 0.3.0, without v prefix)'
+        required: true
 
 permissions:
   contents: read
@@ -24,6 +29,17 @@ jobs:
         with:
           node-version: '20.19.x'
           registry-url: 'https://registry.npmjs.org/'
+
+      - name: Set version from release tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          npm version "$VERSION" --no-git-tag-version
 
       - name: Install dependencies
         run: npm install

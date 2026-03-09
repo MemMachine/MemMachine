@@ -1,9 +1,12 @@
 # utility for interacting with MemMachine
-# There are 2 copies of this file, please keep them both the same
-# 1. memmachine-test/benchmark/mem0_locomo/tests/memmachine
-# 2. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
+# There are multiple copies of this file, please keep all of them the same
+# 1. memmachine-test/benchmark/amemgym/utils
+# 2. memmachine-test/benchmark/longmemeval/utils
+# 3. memmachine-test/benchmark/mem0_locomo/tests/memmachine
+# 4. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
 # ruff: noqa: PTH118, C901, RUF059, SIM108
 
+import json
 import logging
 import os
 import sys
@@ -68,22 +71,14 @@ class MemmachineHelperBase:
         if not self.rest_variation:
             raise AssertionError(f"ERROR: cannot parse variation from data={data}")
 
-    def locomo_timestamp_format(self, timestamp_str):
-        """timestamp format that is in locomo10.json dataset
-        when running the mem0 evaluation of locomo benchmark.
-        We use this to replicate Edwin's benchmark scores
-        """
-        new_str = timestamp_str
-        try:
-            ts_obj = datetime.fromisoformat(timestamp_str)
-            date_str = ts_obj.date().strftime("%A, %B %d, %Y")
-            time_str = ts_obj.time().strftime("%I:%M %p")
-            new_str = f"{date_str} at {time_str}"
-        except Exception:
-            pass
-        return new_str
-
-    def build_episodic_ctx(self, data, use_xml=None, do_summary=None):
+    def build_episodic_ctx(
+        self,
+        data,
+        use_xml=None,
+        do_short_term=None,
+        do_summary=None,
+        do_json_str=None,
+    ):
         """combine data returned by search memory into a context text string
 
         Only episodic memory is used.  Semantic memory is not added into context.
@@ -101,12 +96,21 @@ class MemmachineHelperBase:
         return self.build_ctx(
             data,
             use_xml=use_xml,
+            do_short_term=do_short_term,
             do_summary=do_summary,
+            do_json_str=do_json_str,
             do_episodic=True,
             do_semantic=False,
         )
 
-    def build_semantic_ctx(self, data, use_xml=None, do_summary=None):
+    def build_semantic_ctx(
+        self,
+        data,
+        use_xml=None,
+        do_short_term=None,
+        do_summary=None,
+        do_json_str=None,
+    ):
         """combine data returned by search memory into a context text string
 
         Only semantic memory is used.  Episodic memory is not added into context.
@@ -126,13 +130,22 @@ class MemmachineHelperBase:
         return self.build_ctx(
             data,
             use_xml=use_xml,
+            do_short_term=do_short_term,
             do_summary=do_summary,
+            do_json_str=do_json_str,
             do_episodic=False,
             do_semantic=True,
         )
 
     def build_ctx(
-        self, data, use_xml=None, do_summary=None, do_episodic=None, do_semantic=None
+        self,
+        data,
+        use_xml=None,
+        do_short_term=None,
+        do_summary=None,
+        do_json_str=None,
+        do_episodic=None,
+        do_semantic=None,
     ):
         """combine data returned by search memory into a context text string
 
@@ -150,6 +163,8 @@ class MemmachineHelperBase:
         Outputs:
             ctx (str): context string, add question, then feed into LLM
         """
+        if do_short_term is None:
+            do_short_term = True
         if do_summary is None:
             do_summary = True
         if do_episodic is None:
@@ -166,21 +181,25 @@ class MemmachineHelperBase:
         ctx = ""
         if not self.rest_variation:
             self.check_rest_variation(data)
-        if self.rest_variation == 1:
-            ltm_ctx = self.build_ltm_ctx_v1(data, use_xml=use_xml)
-            stm_ctx = self.build_stm_ctx_v1(data, use_xml=use_xml)
-            stm_sum_ctx = self.build_stm_sum_ctx_v1(data, use_xml=use_xml)
-            sm_ctx = self.build_sm_ctx_v1(data, use_xml=use_xml)
-        elif self.rest_variation == 2:
-            ltm_ctx = self.build_ltm_ctx_v2(data, use_xml=use_xml)
-            stm_ctx = self.build_stm_ctx_v2(data, use_xml=use_xml)
-            stm_sum_ctx = self.build_stm_sum_ctx_v2(data, use_xml=use_xml)
-            sm_ctx = self.build_sm_ctx_v2(data, use_xml=use_xml)
 
+        # fmt: off
+        ltm_ctx = self.build_ltm_ctx(
+            data, use_xml=use_xml, do_json_str=do_json_str
+        )
+        stm_ctx = self.build_stm_ctx(
+            data, use_xml=use_xml, do_json_str=do_json_str
+        )
+        stm_sum_ctx = self.build_stm_sum_ctx(
+            data, use_xml=use_xml, do_json_str=do_json_str
+        )
+        sm_ctx = self.build_sm_ctx(
+            data, use_xml=use_xml, do_json_str=do_json_str
+        )
+        # fmt: on
         if ltm_ctx and do_episodic:
             ctx += ltm_ctx
             ctx += "\n"
-        if stm_ctx and do_episodic:
+        if stm_ctx and do_episodic and do_short_term:
             ctx += stm_ctx
             ctx += "\n"
         if stm_sum_ctx and do_summary:
@@ -190,19 +209,6 @@ class MemmachineHelperBase:
             ctx += sm_ctx
             ctx += "\n"
         return ctx
-
-    def split_data(self, data):
-        le = []  # long term memory episodes
-        se = []  # short term memory episodes
-        ss = []  # short term memory summaries
-        sm = []  # semantic memory facts
-        if not self.rest_variation:
-            self.check_rest_variation(data)
-        if self.rest_variation == 1:
-            le, se, ss, sm = self.split_data_v1(data)
-        elif self.rest_variation == 2:
-            le, se, ss, sm = self.split_data_v2(data)
-        return le, se, ss, sm
 
     def split_data_count(self, data):
         le, se, ss, sm = self.split_data(data)
@@ -221,271 +227,149 @@ class MemmachineHelperBase:
             num_types += 1
         return num_types, le_len, se_len, ss_len, sm_len
 
-    ############################################################
-    # v1 functions
-
-    def build_ltm_ctx_v1(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "episodic_memory" not in data["content"]:
-            return ""
-        em = data["content"]["episodic_memory"]
-        ltm_ctx = ""
-        if len(em) < 1:
-            return ""
-        ltm_episodes = em[0]
-        for episode in ltm_episodes:
-            metadata = episode["user_metadata"]
-            if not metadata:
-                metadata = {}
-            if "source_timestamp" in metadata:
-                ts = metadata["source_timestamp"]
-            else:
-                ts = episode["timestamp"]
-            ts = self.locomo_timestamp_format(ts)
-            if "source_speaker" in metadata:
-                user = metadata["source_speaker"]
-            else:
-                user = episode["producer_id"]
-            content = episode["content"]
-            if not content:
-                continue
-            ctx = f"[{ts}] {user}: {content}"
-            ltm_ctx += f"{ctx}\n"
-        if ltm_ctx and use_xml:
-            ltm_ctx = (
-                f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
-            )
-        return ltm_ctx
-
-    def build_stm_ctx_v1(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "episodic_memory" not in data["content"]:
-            return ""
-        em = data["content"]["episodic_memory"]
-        stm_ctx = ""
-        if len(em) < 2:
-            return ""
-        stm_episodes = em[1]
-        for episode in stm_episodes:
-            metadata = episode["user_metadata"]
-            if not metadata:
-                metadata = {}
-            if "source_timestamp" in metadata:
-                ts = metadata["source_timestamp"]
-            else:
-                ts = episode["timestamp"]
-            ts = self.locomo_timestamp_format(ts)
-            if "source_speaker" in metadata:
-                user = metadata["source_speaker"]
-            else:
-                user = episode["producer_id"]
-            content = episode["content"]
-            if not content:
-                continue
-            ctx = f"[{ts}] {user}: {content}"
-            stm_ctx += f"{ctx}\n"
-        if stm_ctx and use_xml:
-            stm_ctx = (
-                f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
-            )
-        return stm_ctx
-
-    def build_stm_sum_ctx_v1(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "episodic_memory" not in data["content"]:
-            return ""
-        em = data["content"]["episodic_memory"]
-        stm_sum_ctx = ""
-        if len(em) < 3:
-            return ""
-        stm_summaries = em[2]
-        for stm_summary in stm_summaries:
-            if not stm_summary:
-                continue
-            stm_sum_ctx += f"{stm_summary}\n"
-        if stm_sum_ctx and use_xml:
-            stm_sum_ctx = (
-                f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
-            )
-        return stm_sum_ctx
-
-    def build_sm_ctx_v1(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "profile_memory" not in data["content"]:
-            return ""
-        sm_list = data["content"]["profile_memory"]
-        sm_ctx = ""
-        print(f"ERROR: @@@@@ not implemented yet sm_list={sm_list}")
-        return sm_ctx
-
-    def split_data_v1(self, data):
-        """split data returned by search memory into its components
-
-        Inputs:
-            data (dict): data returned by search memories
-        Outputs:
-            le = long term memory episodes
-            se = short term memory episodes
-            ss = short term memory summaries
-            sm = semantic memory facts
+    def locomo_timestamp_format(self, timestamp_str):
+        """timestamp format that is in locomo10.json dataset
+        when running the mem0 evaluation of locomo benchmark.
+        We use this to replicate Edwin's benchmark scores
         """
-        le = []  # long term memory episodes
-        se = []  # short term memory episodes
-        ss = []  # short term memory summaries
-        sm = []  # semantic memory facts
+        new_str = timestamp_str
         try:
-            content = data.get("content", {})
-            em = content.get("episodic_memory", [])
-            sm = content.get("profile_memory", [])
-            if len(em) > 0:
-                le = em[0]
-            if len(em) > 1:
-                se = em[1]
-            if len(em) > 2:
-                ss = em[2]
-            if ss == [""]:
-                ss = []
+            ts_obj = datetime.fromisoformat(timestamp_str)
+            date_str = ts_obj.date().strftime("%A, %B %d, %Y")
+            time_str = ts_obj.time().strftime("%I:%M %p")
+            new_str = f"{date_str} at {time_str}"
         except Exception:
             pass
-        return le, se, ss, sm
+        return new_str
 
-    ############################################################
-    # v2 functions
-
-    def build_ltm_ctx_v2(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "episodic_memory" not in data["content"]:
-            return ""
-        em = data["content"]["episodic_memory"]
-        ltm_ctx = ""
-        ltm = em["long_term_memory"]
-        ltm_episodes = ltm["episodes"]
-        for episode in ltm_episodes:
-            metadata = episode["metadata"]
-            if not metadata:
-                metadata = {}
-            if "source_timestamp" in metadata:
-                ts = metadata["source_timestamp"]
-            else:
-                ts = episode["created_at"]
-            ts = self.locomo_timestamp_format(ts)
-            if "source_speaker" in metadata:
-                user = metadata["source_speaker"]
-            else:
-                user = episode["producer_id"]
-            content = episode["content"]
-            if not content:
-                continue
-            ctx = f"[{ts}] {user}: {content}"
-            ltm_ctx += f"{ctx}\n"
-        if ltm_ctx and use_xml:
-            ltm_ctx = (
-                f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
-            )
-        return ltm_ctx
-
-    def build_stm_ctx_v2(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "episodic_memory" not in data["content"]:
-            return ""
-        em = data["content"]["episodic_memory"]
-        stm_ctx = ""
-        stm = em["short_term_memory"]
-        stm_episodes = stm["episodes"]
-        for episode in stm_episodes:
-            metadata = episode["metadata"]
-            if not metadata:
-                metadata = {}
-            if "source_timestamp" in metadata:
-                ts = metadata["source_timestamp"]
-            else:
-                ts = episode["created_at"]
-            ts = self.locomo_timestamp_format(ts)
-            if "source_speaker" in metadata:
-                user = metadata["source_speaker"]
-            else:
-                user = episode["producer_id"]
-            content = episode["content"]
-            if not content:
-                continue
-            ctx = f"[{ts}] {user}: {content}"
-            stm_ctx += f"{ctx}\n"
-        if stm_ctx and use_xml:
-            stm_ctx = (
-                f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
-            )
-        return stm_ctx
-
-    def build_stm_sum_ctx_v2(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "episodic_memory" not in data["content"]:
-            return ""
-        em = data["content"]["episodic_memory"]
-        stm_sum_ctx = ""
-        stm = em["short_term_memory"]
-        stm_summaries = stm["episode_summary"]
-        for stm_summary in stm_summaries:
-            if not stm_summary:
-                continue
-            stm_sum_ctx += f"{stm_summary}\n"
-        if stm_sum_ctx and use_xml:
-            stm_sum_ctx = (
-                f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
-            )
-        return stm_sum_ctx
-
-    def build_sm_ctx_v2(self, data, use_xml=None):
-        if use_xml is None:
-            use_xml = True
-        if "content" not in data or "semantic_memory" not in data["content"]:
-            return ""
-        sm_list = data["content"]["semantic_memory"]
-        sm_ctx = ""
-        for sm_item in sm_list:
-            feature = sm_item["feature_name"]
-            value = sm_item["value"]
-            if not feature or not value:
-                continue
-            sm_ctx += f"- {feature}: {value}\n"
-        if sm_ctx and use_xml:
-            sm_ctx = f"<SEMANTIC MEMORY>\n{sm_ctx}\n</SEMANTIC MEMORY>"
-        return sm_ctx
-
-    def split_data_v2(self, data):
-        """split data returned by search memory into its components
-
-        Inputs:
-            data (dict): data returned by search memories
-        Outputs:
-            le = long term memory episodes
-            se = short term memory episodes
-            ss = short term memory summaries
-            sm = semantic memory facts
-        """
-        le = []  # long term memory episodes
-        se = []  # short term memory episodes
-        ss = []  # short term memory summaries
-        sm = []  # semantic memory facts
+    def quote_by_json_str(self, content):
         try:
-            content = data.get("content", {})
-            em = content.get("episodic_memory", [])
-            sm = content.get("semantic_memory", [])
-            ltm = em.get("long_term_memory", {})
-            stm = em.get("short_term_memory", {})
-            le = ltm.get("episodes", [])
-            se = stm.get("episodes", [])
-            ss = stm.get("episode_summary", [])
-            if ss == [""]:
-                ss = []
+            new_content = json.dumps(f"{content}")
         except Exception:
-            pass
-        return le, se, ss, sm
+            new_content = content
+        return new_content
 
-    ############################################################
+    #################################################################
+    # rest api functions
+    #################################################################
+    def get_health(self, headers=None, timeout=None):
+        raise NotImplementedError
+
+    def get_metrics(self, headers=None, timeout=None, quiet=False):
+        raise NotImplementedError
+
+    def diff_metrics(self, metrics_before=None, metrics_after=None):
+        raise NotImplementedError
+
+    def list_memory(
+        self,
+        org_id=None,
+        project_id=None,
+        filter_str=None,
+        mem_type=None,
+        page_size=None,
+        page_num=None,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    def add_project(
+        self,
+        org_id,
+        project_id,
+        description=None,
+        config=None,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    def get_project(
+        self,
+        org_id,
+        project_id,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    def add_memory(
+        self,
+        org_id=None,
+        project_id=None,
+        producer=None,
+        produced_for=None,
+        timestamp=None,
+        role=None,
+        content=None,
+        mem_type=None,
+        types=None,
+        metadata=None,
+        messages=None,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    def search_memory(
+        self,
+        query,
+        org_id=None,
+        project_id=None,
+        top_k=None,
+        filter_str=None,
+        types=None,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    async def async_add_memory(
+        self,
+        org_id=None,
+        project_id=None,
+        producer=None,
+        produced_for=None,
+        timestamp=None,
+        role=None,
+        content=None,
+        mem_type=None,
+        types=None,
+        metadata=None,
+        messages=None,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    async def async_search_memory(
+        self,
+        query,
+        org_id=None,
+        project_id=None,
+        top_k=None,
+        filter_str=None,
+        types=None,
+        headers=None,
+        timeout=None,
+    ):
+        raise NotImplementedError
+
+    #################################################################
+    # rest api parsers
+    #################################################################
+    def build_ltm_ctx(self, data, use_xml=None, do_json_str=None):
+        raise NotImplementedError
+
+    def build_stm_ctx(self, data, use_xml=None, do_json_str=None):
+        raise NotImplementedError
+
+    def build_stm_sum_ctx(self, data, use_xml=None, do_json_str=None):
+        raise NotImplementedError
+
+    def build_sm_ctx(self, data, use_xml=None, do_json_str=None):
+        raise NotImplementedError
+
+    def split_data(self, data):
+        raise NotImplementedError
