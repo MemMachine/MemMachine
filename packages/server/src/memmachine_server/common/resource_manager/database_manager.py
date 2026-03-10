@@ -41,7 +41,7 @@ class DatabaseManager:
         # String annotation "NebulaAsyncClient" (forward reference) because the type
         # is only imported under TYPE_CHECKING and doesn't exist at runtime.
         # Type checkers see it, but runtime treats it as a string literal.
-        self.nebula_clients: dict[str, "NebulaAsyncClient"] = {}
+        self.nebula_clients: dict[str, NebulaAsyncClient] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
@@ -419,14 +419,19 @@ class DatabaseManager:
     @staticmethod
     async def validate_nebula_client(name: str, client: "NebulaAsyncClient") -> None:
         """Validate connectivity to a NebulaGraph instance."""
+
+        def _check_query_results(rows: list) -> None:
+            """Check if query returned results."""
+            if not rows:
+                raise ValueError("Query returned no results")
+
         try:
             logger.info("Validating NebulaGraph client '%s'", name)
             result = await client.execute("RETURN 1 AS ok")
 
             # Extract first row using iteration (consistent with vector_graph_store usage)
             rows = list(result)
-            if not rows:
-                raise ValueError("Query returned no results")
+            _check_query_results(rows)
 
             row = rows[0]
             ok = row["ok"]

@@ -67,33 +67,28 @@ async def nebula_client_factory():
             await client.execute(
                 f"CREATE SCHEMA IF NOT EXISTS {connection_info['schema_name']}"
             )
-            await client.execute(
-                f"SESSION SET SCHEMA {connection_info['schema_name']}"
-            )
+            await client.execute(f"SESSION SET SCHEMA {connection_info['schema_name']}")
             await client.execute(
                 f"CREATE GRAPH TYPE IF NOT EXISTS {connection_info['graph_type_name']} AS {{}}"
             )
             await client.execute(
                 f"CREATE GRAPH IF NOT EXISTS {connection_info['graph_name']} TYPED {connection_info['graph_type_name']}"
             )
-            await client.execute(
-                f"SESSION SET GRAPH {connection_info['graph_name']}"
-            )
+            await client.execute(f"SESSION SET GRAPH {connection_info['graph_name']}")
 
             clients.append((client, connection_info))
-            return client
 
         except Exception as e:
             pytest.skip(f"NebulaGraph not available: {e}")
+        else:
+            return client
 
     yield _create_client
 
     # Cleanup all created clients
     for client, connection_info in clients:
         try:
-            await client.execute(
-                f"SESSION SET SCHEMA {connection_info['schema_name']}"
-            )
+            await client.execute(f"SESSION SET SCHEMA {connection_info['schema_name']}")
             await client.execute(
                 f"DROP GRAPH IF EXISTS {connection_info['graph_name']}"
             )

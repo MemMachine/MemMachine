@@ -21,7 +21,13 @@ from typing import TYPE_CHECKING, Any
 from nebulagraph_python.py_data_types import NVector
 
 from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
-from memmachine_server.common.filter.filter_parser import And, Comparison, FilterExpr, Or
+from memmachine_server.common.filter.filter_parser import (
+    And,
+    Comparison,
+    FilterExpr,
+    IsNull,
+    Or,
+)
 
 from .data_types import (
     Edge,
@@ -325,12 +331,15 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         for edge in edges_list:
             all_properties.update(edge.properties)
             # Merge embeddings - later edges with same embedding name override earlier ones
-            for emb_name, (emb_vec, metric) in edge.embeddings.items():
-                all_embeddings[emb_name] = (emb_vec, metric)
+            all_embeddings.update(edge.embeddings)
 
         # Ensure edge type exists in graph type
         await self._ensure_graph_type_for_edges(
-            relation, source_collection, target_collection, all_properties, all_embeddings
+            relation,
+            source_collection,
+            target_collection,
+            all_properties,
+            all_embeddings,
         )
 
         sanitized_relation = self._sanitize_name(relation)
@@ -467,8 +476,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         # Decide on search mode.
         # ANN requires both a vector index AND a function that supports APPROXIMATE.
         # cosine() is KNN-only in NebulaGraph, so COSINE must always use exact search.
-        metric_supports_ann = self._similarity_metric_to_nebula(similarity_metric) is not None
-        use_ann = has_index and not self._force_exact_similarity_search and metric_supports_ann
+        metric_supports_ann = (
+            self._similarity_metric_to_nebula(similarity_metric) is not None
+        )
+        use_ann = (
+            has_index
+            and not self._force_exact_similarity_search
+            and metric_supports_ann
+        )
 
         # Build WHERE clause from property filter
         where_clause = ""
@@ -487,7 +502,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 search_limit = effective_limit
 
             # Choose similarity function, order, and index metric
-            distance_func, order_dir = self._get_distance_func_and_order(similarity_metric)
+            distance_func, order_dir = self._get_distance_func_and_order(
+                similarity_metric
+            )
             metric_name = self._similarity_metric_to_nebula(similarity_metric)
 
             # Build vector literal
@@ -521,6 +538,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             nodes = []
             for row in result:
                 node_data = row["n"]
+                # Unwrap ValueWrapper if needed
+                if hasattr(node_data, "cast_primitive"):
+                    node_data = node_data.cast_primitive()
+                    if "properties" in node_data:
+                        node_data = node_data["properties"]
                 nodes.append(self._nebula_result_to_node(collection, node_data))
 
             # Check fallback threshold
@@ -746,7 +768,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         *,
         collection: str,
         by_properties: Iterable[str],
-        starting_at: Iterable[OrderedValue | None],
+        starting_at: Iterable[OrderedValue | str | None],
         order_ascending: Iterable[bool],
         include_equal_start: bool = False,
         limit: int | None = 1,
@@ -815,7 +837,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         active = [
             (i, prop, val, asc)
             for i, (prop, val, asc) in enumerate(
-                zip(by_properties_list, starting_at_list, order_ascending_list, strict=False)
+                zip(
+                    by_properties_list,
+                    starting_at_list,
+                    order_ascending_list,
+                    strict=False,
+                )
             )
             if val is not None
         ]
@@ -850,13 +877,19 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
                 # Comparison at position k
                 if is_last:
-                    op = (">=" if k_asc else "<=") if include_equal_start else (">" if k_asc else "<")
+                    op = (
+                        (">=" if k_asc else "<=")
+                        if include_equal_start
+                        else (">" if k_asc else "<")
+                    )
                 else:
                     op = ">" if k_asc else "<"
                 sub_conds.append(f"n.{k_sanitized} {op} {k_expr}")
 
                 or_clauses.append(
-                    sub_conds[0] if len(sub_conds) == 1 else "(" + " AND ".join(sub_conds) + ")"
+                    sub_conds[0]
+                    if len(sub_conds) == 1
+                    else "(" + " AND ".join(sub_conds) + ")"
                 )
 
             if len(or_clauses) == 1:
@@ -950,7 +983,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         try:
             result = await self._client.execute(query)
         except Exception as exc:
-            # NS228: node label not found – collection was never written to (e.g.
+            # NS228: node label not found - collection was never written to (e.g.
             # add_nodes was called with an empty list).  Treat as empty result set.
             if "NS228" in str(exc) or "not found in graph type" in str(exc):
                 return []
@@ -1460,7 +1493,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 sanitized_prop = self._sanitize_name(prop_name)
                 prop_ref = f"{node_alias}.{sanitized_prop}"
 
-                if expr.op == "==":
+                if expr.op in ("=", "=="):
                     value_str = self._format_value(expr.value)
                     return f"{prop_ref} = {value_str}"
                 if expr.op == "!=":
@@ -1484,9 +1517,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     value_strs = [self._format_value(v) for v in expr.value]
                     values_list = ", ".join(value_strs)
                     return f"{prop_ref} IN [{values_list}]"
-                if expr.op == "is_null":
-                    return f"{prop_ref} IS NULL"
                 raise ValueError(f"Unsupported operator: {expr.op}")
+
+            if isinstance(expr, IsNull):
+                prop_name = mangle_property_name(expr.field)
+                sanitized_prop = self._sanitize_name(prop_name)
+                prop_ref = f"{node_alias}.{sanitized_prop}"
+                return f"{prop_ref} IS NULL"
 
             if isinstance(expr, And):
                 left_clause = render(expr.left)
@@ -1522,9 +1559,26 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             result = await self._client.execute("SHOW INDEXES")
 
             for row in result:
-                index_name = row["name"]
-                state = row["state"]
-                index_type = row["index_type"]
+                index_name_raw = row["name"]
+                state_raw = row["state"]
+                index_type_raw = row["index_type"]
+
+                # Unwrap ValueWrapper if needed
+                index_name = (
+                    index_name_raw.cast_primitive()
+                    if hasattr(index_name_raw, "cast_primitive")
+                    else index_name_raw
+                )
+                state = (
+                    state_raw.cast_primitive()
+                    if hasattr(state_raw, "cast_primitive")
+                    else state_raw
+                )
+                index_type = (
+                    index_type_raw.cast_primitive()
+                    if hasattr(index_type_raw, "cast_primitive")
+                    else index_type_raw
+                )
 
                 # Only track vector and normal indexes that are valid
                 if state == "Valid":
@@ -1716,12 +1770,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if edge_key in self._graph_type_schemas:
                 # Edge type exists - check for schema evolution
                 cached_schema = self._graph_type_schemas[edge_key]
-                new_properties = {}
 
                 # Find properties that aren't in the cached schema
-                for prop_name, prop_type in incoming_schema.items():
-                    if prop_name not in cached_schema:
-                        new_properties[prop_name] = prop_type
+                new_properties = {
+                    prop_name: prop_type
+                    for prop_name, prop_type in incoming_schema.items()
+                    if prop_name not in cached_schema
+                }
 
                 # If no new properties, we're done
                 if not new_properties:

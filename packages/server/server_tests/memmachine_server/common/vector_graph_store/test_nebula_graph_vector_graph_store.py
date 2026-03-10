@@ -17,6 +17,9 @@ from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
 from memmachine_server.common.filter.filter_parser import (
+    IsNull as FilterIsNull,
+)
+from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
@@ -334,7 +337,7 @@ async def test_search_similar_nodes_with_filter(vector_graph_store):
 
     # Search with filter
     query_vec = [1.0, 0.0, 0.0]
-    filter_expr = FilterComparison(field="category", op="==", value="tech")
+    filter_expr = FilterComparison(field="category", op="=", value="tech")
 
     results = await vector_graph_store.search_similar_nodes(
         collection=collection,
@@ -459,7 +462,7 @@ async def test_search_related_nodes(vector_graph_store):
         this_node_uid=bob.uid,
         find_targets=True,
         find_sources=False,
-        node_property_filter=FilterComparison(field="industry", op="==", value="tech"),
+        node_property_filter=FilterComparison(field="industry", op="=", value="tech"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Acme"
@@ -472,7 +475,7 @@ async def test_search_related_nodes(vector_graph_store):
         this_node_uid=bob.uid,
         find_targets=True,
         find_sources=False,
-        edge_property_filter=FilterComparison(field="seniority", op="==", value=2),
+        edge_property_filter=FilterComparison(field="seniority", op="=", value=2),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Acme"
@@ -488,17 +491,29 @@ async def test_search_directional_nodes(vector_graph_store):
     nodes = [
         Node(
             uid=str(uuid4()),
-            properties={"timestamp": now - timedelta(hours=3), "priority": 1, "tagged": "no"},
+            properties={
+                "timestamp": now - timedelta(hours=3),
+                "priority": 1,
+                "tagged": "no",
+            },
             embeddings={},
         ),
         Node(
             uid=str(uuid4()),
-            properties={"timestamp": now - timedelta(hours=2), "priority": 2, "tagged": "yes"},
+            properties={
+                "timestamp": now - timedelta(hours=2),
+                "priority": 2,
+                "tagged": "yes",
+            },
             embeddings={},
         ),
         Node(
             uid=str(uuid4()),
-            properties={"timestamp": now - timedelta(hours=1), "priority": 3, "tagged": "yes"},
+            properties={
+                "timestamp": now - timedelta(hours=1),
+                "priority": 3,
+                "tagged": "yes",
+            },
             embeddings={},
         ),
     ]
@@ -578,7 +593,7 @@ async def test_search_directional_nodes(vector_graph_store):
         order_ascending=[True],
         include_equal_start=False,
         limit=10,
-        property_filter=FilterComparison(field="tagged", op="==", value="yes"),
+        property_filter=FilterComparison(field="tagged", op="=", value="yes"),
     )
     assert len(results) == 2
     assert all(r.properties["tagged"] == "yes" for r in results)
@@ -632,7 +647,7 @@ async def test_search_matching_nodes(vector_graph_store):
     # is_null filter: nodes with no "price" property
     results = await vector_graph_store.search_matching_nodes(
         collection=collection,
-        property_filter=FilterComparison(field="price", op="is_null", value=None),
+        property_filter=FilterIsNull(field="price"),
         limit=10,
     )
     assert len(results) == 1
@@ -640,7 +655,7 @@ async def test_search_matching_nodes(vector_graph_store):
 
     # AND filter: electronics AND price < 100
     filter_expr = FilterAnd(
-        left=FilterComparison(field="category", op="==", value="electronics"),
+        left=FilterComparison(field="category", op="=", value="electronics"),
         right=FilterComparison(field="price", op="<", value=100),
     )
     results = await vector_graph_store.search_matching_nodes(
@@ -807,10 +822,10 @@ async def test_complex_filters(vector_graph_store):
     # Complex filter: (category == electronics AND price < 100) OR (category == furniture)
     filter_expr = FilterOr(
         left=FilterAnd(
-            left=FilterComparison(field="category", op="==", value="electronics"),
+            left=FilterComparison(field="category", op="=", value="electronics"),
             right=FilterComparison(field="price", op="<", value=100),
         ),
-        right=FilterComparison(field="category", op="==", value="furniture"),
+        right=FilterComparison(field="category", op="=", value="furniture"),
     )
 
     results = await vector_graph_store.search_matching_nodes(
@@ -841,17 +856,43 @@ def test_similarity_metric_mappings():
     | MANHATTAN | None (no index)              | raises ValueError            | no            |
     """
     # _similarity_metric_to_nebula
-    assert NebulaGraphVectorGraphStore._similarity_metric_to_nebula(SimilarityMetric.EUCLIDEAN) == "L2"
-    assert NebulaGraphVectorGraphStore._similarity_metric_to_nebula(SimilarityMetric.DOT) == "IP"
-    assert NebulaGraphVectorGraphStore._similarity_metric_to_nebula(SimilarityMetric.COSINE) is None
-    assert NebulaGraphVectorGraphStore._similarity_metric_to_nebula(SimilarityMetric.MANHATTAN) is None
+    assert (
+        NebulaGraphVectorGraphStore._similarity_metric_to_nebula(
+            SimilarityMetric.EUCLIDEAN
+        )
+        == "L2"
+    )
+    assert (
+        NebulaGraphVectorGraphStore._similarity_metric_to_nebula(SimilarityMetric.DOT)
+        == "IP"
+    )
+    assert (
+        NebulaGraphVectorGraphStore._similarity_metric_to_nebula(
+            SimilarityMetric.COSINE
+        )
+        is None
+    )
+    assert (
+        NebulaGraphVectorGraphStore._similarity_metric_to_nebula(
+            SimilarityMetric.MANHATTAN
+        )
+        is None
+    )
 
     # _get_distance_func_and_order
-    assert NebulaGraphVectorGraphStore._get_distance_func_and_order(SimilarityMetric.EUCLIDEAN) == ("euclidean", "ASC")
-    assert NebulaGraphVectorGraphStore._get_distance_func_and_order(SimilarityMetric.DOT) == ("inner_product", "DESC")
-    assert NebulaGraphVectorGraphStore._get_distance_func_and_order(SimilarityMetric.COSINE) == ("cosine", "DESC")
+    assert NebulaGraphVectorGraphStore._get_distance_func_and_order(
+        SimilarityMetric.EUCLIDEAN
+    ) == ("euclidean", "ASC")
+    assert NebulaGraphVectorGraphStore._get_distance_func_and_order(
+        SimilarityMetric.DOT
+    ) == ("inner_product", "DESC")
+    assert NebulaGraphVectorGraphStore._get_distance_func_and_order(
+        SimilarityMetric.COSINE
+    ) == ("cosine", "DESC")
     with pytest.raises(ValueError, match="manhattan"):
-        NebulaGraphVectorGraphStore._get_distance_func_and_order(SimilarityMetric.MANHATTAN)
+        NebulaGraphVectorGraphStore._get_distance_func_and_order(
+            SimilarityMetric.MANHATTAN
+        )
 
 
 @pytest.mark.asyncio
@@ -972,7 +1013,7 @@ async def test_search_directional_nodes_multiple_by_properties(vector_graph_stor
     now = datetime.now(UTC)
     delta = timedelta(hours=1)
 
-    # Two timestamps × two sequence values = 4 nodes
+    # Two timestamps x two sequence values = 4 nodes
     nodes = [
         Node(
             uid=str(uuid4()),
@@ -1218,14 +1259,14 @@ def test_sanitize_name_extended():
     """Comprehensive sanitize/desanitize round-trip for edge-case inputs."""
     names = [
         "normal_name",
-        "123",                  # starts with digits
-        ")(*&^%$#@!",          # all special chars
-        "my-collection",        # hyphen
-        "my.field",             # dot
-        "my collection",        # space
-        "age!with$pecialchars", # mixed special
-        "😀",                   # emoji (multi-byte)
-        "",                     # empty string
+        "123",  # starts with digits
+        ")(*&^%$#@!",  # all special chars
+        "my-collection",  # hyphen
+        "my.field",  # dot
+        "my collection",  # space
+        "age!with$pecialchars",  # mixed special
+        "😀",  # emoji (multi-byte)
+        "",  # empty string
     ]
 
     for name in names:
@@ -1233,10 +1274,12 @@ def test_sanitize_name_extended():
 
         # Sanitized name must be a non-empty valid identifier
         assert len(sanitized) > 0
-        assert sanitized[0].isalpha(), f"First char not alpha for input {name!r}: {sanitized!r}"
-        assert all(
-            c.isalnum() or c == "_" for c in sanitized
-        ), f"Invalid chars in sanitized name for input {name!r}: {sanitized!r}"
+        assert sanitized[0].isalpha(), (
+            f"First char not alpha for input {name!r}: {sanitized!r}"
+        )
+        assert all(c.isalnum() or c == "_" for c in sanitized), (
+            f"Invalid chars in sanitized name for input {name!r}: {sanitized!r}"
+        )
 
         # Round-trip must be lossless
         assert NebulaGraphVectorGraphStore._desanitize_name(sanitized) == name, (
@@ -1245,7 +1288,10 @@ def test_sanitize_name_extended():
 
     # All sanitized forms must be distinct (no collision between inputs)
     sanitized_names = [NebulaGraphVectorGraphStore._sanitize_name(n) for n in names]
-    assert len(sanitized_names) == len(set(sanitized_names)), "Sanitized names are not unique"
+    assert len(sanitized_names) == len(set(sanitized_names)), (
+        "Sanitized names are not unique"
+    )
+
 
 @pytest.mark.asyncio
 async def test_property_names_with_special_characters(vector_graph_store):
@@ -1282,7 +1328,7 @@ async def test_property_names_with_special_characters(vector_graph_store):
     # Filtering by special-char property names works
     filtered = await vector_graph_store.search_matching_nodes(
         collection=collection,
-        property_filter=FilterComparison(field="my-field", op="==", value="hyphen"),
+        property_filter=FilterComparison(field="my-field", op="=", value="hyphen"),
         limit=10,
     )
     assert len(filtered) == 1
@@ -1290,7 +1336,9 @@ async def test_property_names_with_special_characters(vector_graph_store):
 
 
 @pytest.mark.asyncio
-async def test_index_creation_with_special_character_names(nebula_client, nebula_connection_info):
+async def test_index_creation_with_special_character_names(
+    nebula_client, nebula_connection_info
+):
     """Vector and range indexes are created successfully with special character property/embedding names."""
     # Create store with immediate index creation (threshold=0)
     store = NebulaGraphVectorGraphStore(
@@ -1302,7 +1350,9 @@ async def test_index_creation_with_special_character_names(nebula_client, nebula
             force_exact_similarity_search=False,
             range_index_creation_threshold=0,  # Create range index immediately
             vector_index_creation_threshold=0,  # Create vector index immediately
-            range_index_hierarchies=[[["user-id", "time.stamp"]]],  # Special chars in property names
+            range_index_hierarchies=[
+                ["user-id", "time.stamp"]
+            ],  # Special chars in property names
         ),
     )
 
@@ -1317,7 +1367,10 @@ async def test_index_creation_with_special_character_names(nebula_client, nebula
             "display name": "Test User",  # space
         },
         embeddings={
-            "content-vector": ([1.0, 0.0, 0.0], SimilarityMetric.EUCLIDEAN),  # hyphen in embedding name
+            "content-vector": (
+                [1.0, 0.0, 0.0],
+                SimilarityMetric.EUCLIDEAN,
+            ),  # hyphen in embedding name
         },
     )
 
@@ -1382,12 +1435,12 @@ def test_sanitize_name_no_false_decode():
 
     # Test round-trip for various edge cases
     edge_cases = [
-        "field_u_test",       # Underscores with letter u
-        "field_uGG_test",     # Invalid hex pattern
-        "field_u2d",          # Looks like incomplete encoding
-        "_u2dfield",          # Starts with pattern
-        "normal_field",       # Simple underscore
-        "a_b_c_d",            # Multiple underscores
+        "field_u_test",  # Underscores with letter u
+        "field_uGG_test",  # Invalid hex pattern
+        "field_u2d",  # Looks like incomplete encoding
+        "_u2dfield",  # Starts with pattern
+        "normal_field",  # Simple underscore
+        "a_b_c_d",  # Multiple underscores
     ]
     for name in edge_cases:
         sanitized = NebulaGraphVectorGraphStore._sanitize_name(name)
