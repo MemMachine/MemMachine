@@ -13,6 +13,7 @@ if True:
     test_dir = os.path.abspath(os.path.join(my_dir, ".."))
     top_dir = os.path.abspath(os.path.join(test_dir, ".."))
     utils_dir = os.path.join(top_dir, "utils")
+    sys.path.insert(1, my_dir)
     sys.path.insert(1, test_dir)
     sys.path.insert(1, top_dir)
     from memmachine_helper_restapiv1 import MemmachineHelperRestapiv1

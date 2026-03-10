@@ -1,7 +1,9 @@
 # utility for interacting with MemMachine
-# There are 2 copies of this file, please keep them both the same
-# 1. memmachine-test/benchmark/mem0_locomo/tests/memmachine
-# 2. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
+# There are multiple copies of this file, please keep all of them the same
+# 1. memmachine-test/benchmark/amemgym/utils
+# 2. memmachine-test/benchmark/longmemeval/utils
+# 3. memmachine-test/benchmark/mem0_locomo/tests/memmachine
+# 4. memmachine-test/benchmark/mem0_locomo/tests/mods/MemMachine/evaluation/locomo/utils
 # ruff: noqa: PTH118, SIM108, G004, C901, SIM105, SIM102
 
 import copy
@@ -25,6 +27,8 @@ if True:
 class MemmachineHelperRestapiv1(MemmachineHelperBase):
     """MemMachine REST API v1
     Please use factory method to create this object
+    Specification is in MemMachine repo:
+        cd MemMachine/src/memmachine/server/api.py
     """
 
     def __init__(self, log=None, url=None):
@@ -87,6 +91,9 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             headers["Referer"] = f"{origin}/"
         return origin
 
+    #################################################################
+    # rest api functions
+    #################################################################
     def get_health(self, headers=None, timeout=None):
         """Get memmachine health"""
         return {}
@@ -110,7 +117,7 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         data = resp.json()
         return data
 
-    def get_metrics(self, headers=None, timeout=None):
+    def get_metrics(self, headers=None, timeout=None, quiet=False):
         """Get memmachine metrics"""
         if not timeout:
             timeout = 30
@@ -119,11 +126,13 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
             def_headers.update(headers)
         headers = def_headers
         url = self.metric_url
-        self.log.debug(f"GET url={url}")
+        if not quiet:
+            self.log.debug(f"GET url={url}")
         resp = requests.get(url, headers=headers, cookies=self.cookies, timeout=timeout)
         self.cookies = resp.cookies
-        self.log.debug(f"status={resp.status_code} reason={resp.reason}")
-        self.log.debug(f"text={resp.text}")
+        if not quiet:
+            self.log.debug(f"status={resp.status_code} reason={resp.reason}")
+            self.log.debug(f"text={resp.text}")
         if resp.status_code < 200 or resp.status_code > 299:
             raise AssertionError(
                 f"ERROR: status_code={resp.status_code} reason={resp.reason}"
@@ -163,7 +172,7 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
         keys = list(metrics.keys())
         for key in keys:
             v = metrics[key]
-            if not key.endswith("_created"):
+            if not key.endswith("_created") and not quiet:
                 self.log.debug(f"key={key} value={v} type={type(v)}")
         if not self.metrics_before:
             self.metrics_before = metrics
@@ -390,3 +399,137 @@ class MemmachineHelperRestapiv1(MemmachineHelperBase):
 
         data = resp.json()
         return data
+
+    #################################################################
+    # rest api parsers
+    #################################################################
+    def build_ltm_ctx(self, data, use_xml=None, do_json_str=None):
+        if use_xml is None:
+            use_xml = True
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        ltm_ctx = ""
+        if len(em) < 1:
+            return ""
+        ltm_episodes = em[0]
+        for episode in ltm_episodes:
+            metadata = episode.get("user_metadata", {})
+            if "source_timestamp" in metadata:
+                ts = metadata["source_timestamp"]
+            else:
+                ts = episode.get("timestamp", "")
+            ts = self.locomo_timestamp_format(ts)
+            if "source_speaker" in metadata:
+                user = metadata["source_speaker"]
+            else:
+                user = episode.get("producer_id", "")
+            content = episode.get("content")
+            if not content:
+                continue
+            if do_json_str:
+                content = self.quote_by_json_str(content)
+            ctx = f"[{ts}] {user}: {content}"
+            ltm_ctx += f"{ctx}\n"
+        if ltm_ctx and use_xml:
+            ltm_ctx = (
+                f"<LONG TERM MEMORY EPISODES>\n{ltm_ctx}\n</LONG TERM MEMORY EPISODES>"
+            )
+        return ltm_ctx
+
+    def build_stm_ctx(self, data, use_xml=None, do_json_str=None):
+        if use_xml is None:
+            use_xml = True
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        stm_ctx = ""
+        if len(em) < 2:
+            return ""
+        stm_episodes = em[1]
+        for episode in stm_episodes:
+            metadata = episode.get("user_metadata", {})
+            if "source_timestamp" in metadata:
+                ts = metadata["source_timestamp"]
+            else:
+                ts = episode.get("timestamp", "")
+            ts = self.locomo_timestamp_format(ts)
+            if "source_speaker" in metadata:
+                user = metadata["source_speaker"]
+            else:
+                user = episode.get("producer_id", "")
+            content = episode.get("content")
+            if not content:
+                continue
+            if do_json_str:
+                content = self.quote_by_json_str(content)
+            ctx = f"[{ts}] {user}: {content}"
+            stm_ctx += f"{ctx}\n"
+        if stm_ctx and use_xml:
+            stm_ctx = (
+                f"<WORKING MEMORY EPISODES>\n{stm_ctx}\n</WORKING MEMORY EPISODES>"
+            )
+        return stm_ctx
+
+    def build_stm_sum_ctx(self, data, use_xml=None, do_json_str=None):
+        if use_xml is None:
+            use_xml = True
+        if "content" not in data or "episodic_memory" not in data["content"]:
+            return ""
+        em = data["content"]["episodic_memory"]
+        stm_sum_ctx = ""
+        if len(em) < 3:
+            return ""
+        stm_summaries = em[2]
+        for stm_summary in stm_summaries:
+            if not stm_summary:
+                continue
+            if do_json_str:
+                stm_summary = self.quote_by_json_str(stm_summary)
+            stm_sum_ctx += f"{stm_summary}\n"
+        if stm_sum_ctx and use_xml:
+            stm_sum_ctx = (
+                f"<WORKING MEMORY SUMMARY>\n{stm_sum_ctx}\n</WORKING MEMORY SUMMARY>"
+            )
+        return stm_sum_ctx
+
+    def build_sm_ctx(self, data, use_xml=None, do_json_str=None):
+        if use_xml is None:
+            use_xml = True
+        if "content" not in data or "profile_memory" not in data["content"]:
+            return ""
+        sm_list = data["content"]["profile_memory"]
+        sm_ctx = ""
+        print(f"ERROR: @@@@@ not implemented yet sm_list={sm_list}")
+        return sm_ctx
+
+    def split_data(self, data):
+        """split data returned by search memory into its components
+
+        Inputs:
+            data (dict): data returned by search memories
+        Outputs:
+            le = long term memory episodes
+            se = short term memory episodes
+            ss = short term memory summaries
+            sm = semantic memory facts
+        """
+        le = []  # long term memory episodes
+        se = []  # short term memory episodes
+        ss = []  # short term memory summaries
+        sm = []  # semantic memory facts
+        try:
+            content = data.get("content", {})
+            em = content.get("episodic_memory", [])
+            sm = content.get("profile_memory", [])
+            if len(em) > 0:
+                le = em[0]
+            if len(em) > 1:
+                se = em[1]
+            if len(em) > 2:
+                ss = em[2]
+            if ss == [""]:
+                ss = []
+        except Exception:
+            pass
+        return le, se, ss, sm
