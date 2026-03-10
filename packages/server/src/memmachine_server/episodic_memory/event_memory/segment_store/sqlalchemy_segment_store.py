@@ -270,7 +270,7 @@ def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
             "<=": lambda c, v: c <= v,
         }
         cond = and_(cond, op_map[expr.op](col, expr.value))
-        return select(func.count()).select_from(sp.__table__).where(cond).exists()
+        return select(1).select_from(sp.__table__).where(cond).exists()
 
     if isinstance(expr, In):
         # Determine column by first value type
@@ -284,13 +284,13 @@ def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
             sp.key == expr.field,
             col.in_(expr.values),
         )
-        return select(func.count()).select_from(sp.__table__).where(cond).exists()
+        return select(1).select_from(sp.__table__).where(cond).exists()
 
     if isinstance(expr, IsNull):
         # Property is null = no property row exists for this key
         sp = SegmentPropertyRow
         cond = and_(sp.segment_uuid == SegmentRow.uuid, sp.key == expr.field)
-        return ~select(func.count()).select_from(sp.__table__).where(cond).exists()
+        return ~select(1).select_from(sp.__table__).where(cond).exists()
 
     if isinstance(expr, And):
         return and_(
