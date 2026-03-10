@@ -49,8 +49,8 @@ class ExtraMemoryParams(BaseModel):
     Parameters for ExtraMemory.
 
     Attributes:
-        session_key (str):
-            Session key.
+        partition_key (str):
+            Partition key.
         collection (Collection):
             Collection instance in a vector store.
         segment_linker (SegmentLinker):
@@ -67,9 +67,9 @@ class ExtraMemoryParams(BaseModel):
             Threshold for consolidating derivatives (default: 0.0, range: 0.0 to 1.0).
     """
 
-    session_key: str = Field(
+    partition_key: str = Field(
         ...,
-        description="Session key",
+        description="Partition key",
     )
     collection: InstanceOf[Collection] = Field(
         ...,
@@ -113,7 +113,7 @@ class ExtraMemory:
                 Parameters for the ExtraMemory.
 
         """
-        self._session_key = params.session_key
+        self._partition_key = params.partition_key
         self._collection = params.collection
         self._segment_linker = params.segment_linker
 
@@ -206,7 +206,7 @@ class ExtraMemory:
 
         if self._derivative_consolidation_threshold is None:
             await self._segment_linker.register_segments(
-                session_key=self._session_key,
+                partition_key=self._partition_key,
                 links={
                     segment: [derivative.uuid for derivative in segment_derivatives]
                     for segment, segment_derivatives in zip(
@@ -259,7 +259,7 @@ class ExtraMemory:
 
                 try:
                     await self._segment_linker.register_segments(
-                        session_key=self._session_key,
+                        partition_key=self._partition_key,
                         links=links,
                         active=active_uuids,
                     )
@@ -579,7 +579,7 @@ class ExtraMemory:
 
         segments_by_derivatives = (
             await self._segment_linker.get_segments_by_derivatives(
-                session_key=self._session_key,
+                partition_key=self._partition_key,
                 derivative_uuids=matched_derivative_uuids,
                 property_filter=property_filter,
             )
@@ -599,7 +599,7 @@ class ExtraMemory:
             list(context)
             for context in (
                 await self._segment_linker.get_segment_contexts(
-                    session_key=self._session_key,
+                    partition_key=self._partition_key,
                     seed_segment_uuids=[segment.uuid for segment in seed_segments],
                     max_backward_segments=max_backward_segments,
                     max_forward_segments=max_forward_segments,
@@ -723,15 +723,15 @@ class ExtraMemory:
     async def forget_episodes(self, episode_uuids: Iterable[UUID]) -> None:
         """Forget episodes by their UUIDs."""
         await self._segment_linker.delete_segments_by_episodes(
-            session_key=self._session_key,
+            partition_key=self._partition_key,
             episode_uuids=episode_uuids,
         )
         # TODO: Add background job to delete records from collection based on reference counting. May belong to class instead of instance.
 
     async def forget_all_episodes(self) -> None:
-        """Forget all episodes in this session."""
+        """Forget all episodes in this partition."""
         await self._segment_linker.delete_all_segments(
-            session_key=self._session_key,
+            partition_key=self._partition_key,
         )
         # TODO: Add background job to delete records from collection based on reference counting. May belong to class instead of instance.
 

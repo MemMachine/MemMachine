@@ -44,7 +44,7 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def register_segments(
         self,
-        session_key: str,
+        partition_key: str,
         links: Mapping[Segment, Iterable[UUID]],
         *,
         active: Iterable[UUID] | None = None,
@@ -55,8 +55,8 @@ class SegmentLinker(ABC):
         All UUIDs in `links` that are not in `active` will be registered in 'active' state.
 
         Args:
-            session_key (str):
-                The key of the session to which the segments belong.
+            partition_key (str):
+                The key of the partition to which the segments belong.
             links (Mapping[Segment, Iterable[UUID]]):
                 Mapping from each segment to the UUIDs of its derivatives.
             active (Iterable[UUID] | None):
@@ -72,7 +72,7 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def get_segments_by_derivatives(
         self,
-        session_key: str,
+        partition_key: str,
         derivative_uuids: Iterable[UUID],
         *,
         limit_per_derivative: int | None = None,
@@ -82,8 +82,8 @@ class SegmentLinker(ABC):
         Get segments associated with the derivatives given by their UUIDs.
 
         Args:
-            session_key (str):
-                The key of the session to which the segments belong.
+            partition_key (str):
+                The key of the partition to which the segments belong.
             derivative_uuids (Iterable[UUID]):
                 The UUIDs of the derivatives for which to retrieve linked segments.
             limit_per_derivative (int | None):
@@ -103,7 +103,7 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def get_segment_contexts(
         self,
-        session_key: str,
+        partition_key: str,
         seed_segment_uuids: Iterable[UUID],
         *,
         max_backward_segments: int = 0,
@@ -114,8 +114,8 @@ class SegmentLinker(ABC):
         Get a window of segments around each of the seed segments.
 
         Args:
-            session_key (str):
-                The key of the session to which the segments belong.
+            partition_key (str):
+                The key of the partition to which the segments belong.
             seed_segment_uuids (Iterable[UUID]):
                 The UUIDs of the seed segments for which to retrieve contexts.
             max_backward_segments (int):
@@ -135,15 +135,15 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def delete_segments_by_episodes(
         self,
-        session_key: str,
+        partition_key: str,
         episode_uuids: Iterable[UUID],
     ) -> None:
         """
         Delete all segments associated with the episodes given by their UUIDs.
 
         Args:
-            session_key (str):
-                The key of the session to which the segments belong.
+            partition_key (str):
+                The key of the partition to which the segments belong.
             episode_uuids (Iterable[UUID]):
                 The UUIDs of the episodes for which to delete segments.
 
@@ -153,14 +153,14 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def delete_all_segments(
         self,
-        session_key: str,
+        partition_key: str,
     ) -> None:
         """
-        Delete all segments for a session.
+        Delete all segments for a partition.
 
         Args:
-            session_key (str):
-                The key of the session for which to delete all segments.
+            partition_key (str):
+                The key of the partition for which to delete all segments.
 
         """
         raise NotImplementedError
