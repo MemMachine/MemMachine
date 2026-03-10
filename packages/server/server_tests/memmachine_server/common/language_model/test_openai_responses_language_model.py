@@ -73,7 +73,6 @@ def full_config(mock_async_openai, mock_metrics_factory):
         model="test-model",
         max_retry_interval_seconds=60,
         metrics_factory=mock_metrics_factory,
-        user_metrics_labels={"user": "test-user"},
     )
 
 
@@ -152,20 +151,6 @@ def test_init_invalid_metrics_factory_type(minimal_config):
         )
 
 
-def test_init_invalid_user_metrics_labels_type(minimal_config, mock_metrics_factory):
-    """Test initialization fails with invalid user_metrics_labels type."""
-    with pytest.raises(ValidationError):
-        OpenAIResponsesLanguageModelParams(
-            **(
-                minimal_config.model_dump()
-                | {
-                    "metrics_factory": mock_metrics_factory,
-                    "user_metrics_labels": "not-a-dict",
-                }
-            ),
-        )
-
-
 @pytest.mark.asyncio
 async def test_generate_response_invalid_max_attempts(minimal_config):
     """Test generate_response fails with non-positive max_attempts."""
@@ -224,7 +209,7 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
         user_prompt="User prompt",
     )
 
-    assert content is None
+    assert content == ""
     assert tool_calls == [
         {
             "call_id": "call_123",
@@ -419,17 +404,15 @@ async def test_metrics_collection(mock_async_openai, full_config):
     await lm.generate_response()
 
     metrics_factory = full_config.metrics_factory
-    labels = full_config.user_metrics_labels
 
     input_counter = metrics_factory.get_counter("test", "test")
     output_counter = metrics_factory.get_counter("test", "test")
     total_counter = metrics_factory.get_counter("test", "test")
-    latency_summary = metrics_factory.get_summary("test", "test")
+    latency_histogram = metrics_factory.get_histogram("test", "test")
 
     # Note: Since get_counter returns the same mock, we check the calls on that mock.
-    input_counter.increment.assert_any_call(value=100, labels=labels)
-    output_counter.increment.assert_any_call(value=50, labels=labels)
-    total_counter.increment.assert_any_call(value=150, labels=labels)
+    input_counter.increment.assert_any_call(value=100)
+    output_counter.increment.assert_any_call(value=50)
+    total_counter.increment.assert_any_call(value=150)
 
-    latency_summary.observe.assert_called_once()
-    assert latency_summary.observe.call_args.kwargs["labels"] == labels
+    latency_histogram.observe.assert_called_once()

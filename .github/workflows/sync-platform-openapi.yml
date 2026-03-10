@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Download platform OpenAPI spec
         run: curl -sSf https://api.memmachine.ai/openapi.json -o docs/platform.openapi.json.tmp
@@ -58,6 +60,7 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          base: main
           branch: automated/sync-platform-openapi
           commit-message: "docs: sync platform openapi.json from api.memmachine.ai"
           title: "docs: sync platform openapi.json"

@@ -52,11 +52,6 @@ class MetricsFactoryIdMixin(WithMetricsFactory, BaseModel):
         description="Metrics factory ID for monitoring and metrics collection.",
     )
 
-    user_metrics_labels: dict[str, str] = Field(
-        default_factory=dict,
-        description="User-defined labels for metrics.",
-    )
-
 
 class WithValueFromEnv:
     """Mixin that adds support for resolving environment variable references."""

@@ -18,11 +18,11 @@ To run the entire test suite, ensure you are in the root of the MemMachine proje
 pytest
 ```
 
-By default, this will discover and run all tests under the `tests/` directory.
+By default, this will discover and run all tests under all packages.
 You can also explicitly specify the directory, which may make it clearer where tests are coming from:
 
 ```bash
-pytest /test
+pytest packages/server/server_tests/
 ```
 
 ### Verbose Output
@@ -30,7 +30,7 @@ pytest /test
 For more detailed output, which can be helpful for debugging, use the `-v` flag:
 
 ```bash
-pytest -v tests/
+pytest -v packages/server/server_tests/
 ```
 
 ### Displaying Print Statements
@@ -38,7 +38,7 @@ pytest -v tests/
 By default, `pytest` captures output from `print()` statements. To display them in the console, which is useful for debugging, use the `-s` flag:
 
 ```bash
-pytest -s tests/
+pytest -s packages/server/server_tests/
 ```
 
 ### Running a Specific Test File
@@ -46,7 +46,7 @@ pytest -s tests/
 To run all the tests in a single file, provide the path to that file:
 
 ```bash
-pytest tests/memmachine/server/test-rest-memories.py
+pytest packages/server/server_tests/memmachine_server/common/test_utils.py
 ```
 
 ### Running a Single Test Function
@@ -54,7 +54,7 @@ pytest tests/memmachine/server/test-rest-memories.py
 To run a specific test function within a file, use the `::` syntax:
 
 ```bash
-pytest tests/memmachine/server/test-rest-memories.py::test_create_memory_sync
+pytest packages/server/server_tests/memmachine_server/common/test_utils.py::test_chunk_text
 ```
 
 ### Running Tests with a Keyword

@@ -5,6 +5,12 @@ name: Publish OpenClaw plugin Package to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (for example: 0.3.0)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,10 +20,33 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./integration/openclaw-plugin/
+        working-directory: ./integrations/openclaw/
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.version) || github.event.release.tag_name }}
+
+      - name: Apply version to package and dependency
+        env:
+          VERSION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_INPUT}"
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must be numeric semver-like without a 'v' prefix (for example: 0.3.0). Got: ${VERSION}"
+            exit 1
+          fi
+
+          PKG_VERSION="${VERSION}" MM_CLIENT_VERSION="${VERSION}" node -e '
+            const fs = require("node:fs");
+            const path = "package.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            pkg.version = process.env.PKG_VERSION;
+            pkg.dependencies = pkg.dependencies || {};
+            pkg.dependencies["@memmachine/client"] = process.env.MM_CLIENT_VERSION;
+            fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          '
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

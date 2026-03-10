@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import time
 from typing import Any, TypeVar, cast
 from uuid import uuid4
 
@@ -15,7 +14,7 @@ from openai.types.chat import (
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 
 from .language_model import LanguageModel
 
@@ -41,10 +40,6 @@ class OpenAIChatCompletionsLanguageModelParams(BaseModel):
             An instance of MetricsFactory
             for collecting usage metrics
             (default: None).
-        user_metrics_labels (dict[str, str]):
-            Labels to attach to the collected metrics
-            (default: {}).
-
     """
 
     client: InstanceOf[openai.AsyncOpenAI] = Field(
@@ -63,10 +58,6 @@ class OpenAIChatCompletionsLanguageModelParams(BaseModel):
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
-    )
-    user_metrics_labels: dict[str, str] = Field(
-        default_factory=dict,
-        description="Labels to attach to the collected metrics",
     )
 
 
@@ -92,31 +83,25 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
 
         metrics_factory = params.metrics_factory
 
+        self._tracker = OperationTracker(
+            metrics_factory, prefix="language_model_openai_chat_completions"
+        )
+
         self._should_collect_metrics = False
         if metrics_factory is not None:
             self._should_collect_metrics = True
-            self._user_metrics_labels = params.user_metrics_labels
-            label_names = self._user_metrics_labels.keys()
 
             self._input_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_input_tokens",
+                "language_model_openai_chat_completions_usage_input_tokens",
                 "Number of input tokens used for OpenAI language model",
-                label_names=label_names,
             )
             self._output_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_output_tokens",
+                "language_model_openai_chat_completions_usage_output_tokens",
                 "Number of output tokens used for OpenAI language model",
-                label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
-                "language_model_openai_usage_total_tokens",
+                "language_model_openai_chat_completions_usage_total_tokens",
                 "Number of tokens used for OpenAI language model",
-                label_names=label_names,
-            )
-            self._latency_summary = metrics_factory.get_summary(
-                "language_model_openai_latency_seconds",
-                "Latency in seconds for OpenAI language model requests",
-                label_names=label_names,
             )
 
     async def generate_parsed_response(
@@ -127,51 +112,44 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         max_attempts: int = 1,
     ) -> T | None:
         """Generate a structured response parsed into the given model."""
-        if max_attempts <= 0:
-            raise ValueError("max_attempts must be a positive integer")
+        async with self._tracker("generate_parsed_response"):
+            if max_attempts <= 0:
+                raise ValueError("max_attempts must be a positive integer")
 
-        input_prompts = cast(
-            Any,
-            [
-                {"role": "system", "content": system_prompt or ""},
-                {"role": "user", "content": user_prompt or ""},
-            ],
-        )
-
-        generate_response_call_uuid = uuid4()
-
-        start_time = time.monotonic()
-
-        try:
-            response = await self._client.with_options(
-                max_retries=max_attempts,
-            ).chat.completions.parse(
-                model=self._model,
-                messages=input_prompts,
-                response_format=output_format,
+            input_prompts = cast(
+                Any,
+                [
+                    {"role": "system", "content": system_prompt or ""},
+                    {"role": "user", "content": user_prompt or ""},
+                ],
             )
-        except openai.OpenAIError as e:
-            error_message = (
-                f"[call uuid: {generate_response_call_uuid}] "
-                "Giving up generating response "
-                f"due to non-retryable {type(e).__name__}"
+
+            generate_response_call_uuid = uuid4()
+
+            try:
+                response = await self._client.with_options(
+                    max_retries=max_attempts,
+                ).chat.completions.parse(
+                    model=self._model,
+                    messages=input_prompts,
+                    response_format=output_format,
+                )
+            except openai.OpenAIError as e:
+                error_message = (
+                    f"[call uuid: {generate_response_call_uuid}] "
+                    "Giving up generating response "
+                    f"due to non-retryable {type(e).__name__}"
+                )
+                logger.exception(error_message)
+                raise ExternalServiceAPIError(error_message) from e
+
+            self._collect_usage_metrics(response)
+
+            return TypeAdapter(output_format).validate_python(
+                response.choices[0].message.parsed
             )
-            logger.exception(error_message)
-            raise ExternalServiceAPIError(error_message) from e
 
-        end_time = time.monotonic()
-
-        self._collect_metrics(
-            response,
-            start_time,
-            end_time,
-        )
-
-        return TypeAdapter(output_format).validate_python(
-            response.choices[0].message.parsed
-        )
-
-    async def generate_response(  # noqa: C901
+    async def generate_response(
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
@@ -179,138 +157,162 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
-        """Generate a chat completion response (and optional tool call)."""
-        if max_attempts <= 0:
-            raise ValueError("max_attempts must be a positive integer")
-
-        input_prompts = cast(
-            Any,
-            [
-                {"role": "system", "content": system_prompt or ""},
-                {"role": "user", "content": user_prompt or ""},
-            ],
+        output, function_calls_arguments, _, _ = await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
         )
-        generate_response_call_uuid = uuid4()
+        return output, function_calls_arguments
 
-        start_time = time.monotonic()
-        sleep_seconds = 1
-        for attempt in range(1, max_attempts + 1):
-            try:
-                args: dict = {
-                    "model": self._model,
-                    "messages": input_prompts,
-                }
-                if tools:
-                    args["tools"] = tools
-                    args["tool_choice"] = (
-                        tool_choice if tool_choice is not None else "auto"
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, Any, int, int]:
+        return await self._generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+
+    async def _generate_response(  # noqa: C901
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, list[dict[str, Any]], int, int]:
+        """Generate a chat completion response (and optional tool call)."""
+        async with self._tracker("generate_response"):
+            if max_attempts <= 0:
+                raise ValueError("max_attempts must be a positive integer")
+
+            input_prompts = cast(
+                Any,
+                [
+                    {"role": "system", "content": system_prompt or ""},
+                    {"role": "user", "content": user_prompt or ""},
+                ],
+            )
+            generate_response_call_uuid = uuid4()
+
+            sleep_seconds = 1
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    args: dict = {
+                        "model": self._model,
+                        "messages": input_prompts,
+                    }
+                    if tools:
+                        args["tools"] = tools
+                        args["tool_choice"] = (
+                            tool_choice if tool_choice is not None else "auto"
+                        )
+                    response = await self._client.chat.completions.create(**args)
+                    break
+                except (
+                    openai.RateLimitError,
+                    openai.APITimeoutError,
+                    openai.APIConnectionError,
+                ) as e:
+                    # Exception may be retried.
+                    if attempt >= max_attempts:
+                        error_message = (
+                            f"[call uuid: {generate_response_call_uuid}] "
+                            "Giving up generating response "
+                            f"after failed attempt {attempt} "
+                            f"due to retryable {type(e).__name__}: "
+                            f"max attempts {max_attempts} reached"
+                        )
+                        logger.exception(error_message)
+                        raise ExternalServiceAPIError(error_message) from e
+
+                    logger.info(
+                        "[call uuid: %s] "
+                        "Retrying generating response in %d seconds "
+                        "after failed attempt %d due to retryable %s...",
+                        generate_response_call_uuid,
+                        sleep_seconds,
+                        attempt,
+                        type(e).__name__,
                     )
-                response = await self._client.chat.completions.create(**args)
-                break
-            except (
-                openai.RateLimitError,
-                openai.APITimeoutError,
-                openai.APIConnectionError,
-            ) as e:
-                # Exception may be retried.
-                if attempt >= max_attempts:
+                    await asyncio.sleep(sleep_seconds)
+                    sleep_seconds *= 2
+                    sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
+                    continue
+                except openai.OpenAIError as e:
                     error_message = (
                         f"[call uuid: {generate_response_call_uuid}] "
                         "Giving up generating response "
                         f"after failed attempt {attempt} "
-                        f"due to retryable {type(e).__name__}: "
-                        f"max attempts {max_attempts} reached"
+                        f"due to non-retryable {type(e).__name__}"
                     )
                     logger.exception(error_message)
                     raise ExternalServiceAPIError(error_message) from e
 
-                logger.info(
-                    "[call uuid: %s] "
-                    "Retrying generating response in %d seconds "
-                    "after failed attempt %d due to retryable %s...",
-                    generate_response_call_uuid,
-                    sleep_seconds,
-                    attempt,
-                    type(e).__name__,
-                )
-                await asyncio.sleep(sleep_seconds)
-                sleep_seconds *= 2
-                sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
-                continue
-            except openai.OpenAIError as e:
-                error_message = (
-                    f"[call uuid: {generate_response_call_uuid}] "
-                    "Giving up generating response "
-                    f"after failed attempt {attempt} "
-                    f"due to non-retryable {type(e).__name__}"
-                )
-                logger.exception(error_message)
-                raise ExternalServiceAPIError(error_message) from e
+            self._collect_usage_metrics(response)
 
-        end_time = time.monotonic()
-
-        self._collect_metrics(
-            response,
-            start_time,
-            end_time,
-        )
-
-        function_calls_arguments = []
-        try:
-            if response.choices[0].message.tool_calls:
-                for tool_call in response.choices[0].message.tool_calls:
-                    if isinstance(
-                        tool_call,
-                        ChatCompletionMessageFunctionToolCall,
-                    ):
-                        function_calls_arguments.append(
-                            {
-                                "call_id": tool_call.id,
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": json_repair.loads(
-                                        tool_call.function.arguments,
-                                    ),
+            function_calls_arguments = []
+            try:
+                if response.choices[0].message.tool_calls:
+                    for tool_call in response.choices[0].message.tool_calls:
+                        if isinstance(
+                            tool_call,
+                            ChatCompletionMessageFunctionToolCall,
+                        ):
+                            function_calls_arguments.append(
+                                {
+                                    "call_id": tool_call.id,
+                                    "function": {
+                                        "name": tool_call.function.name,
+                                        "arguments": json_repair.loads(
+                                            tool_call.function.arguments,
+                                        ),
+                                    },
                                 },
-                            },
-                        )
-                    else:
-                        logger.info(
-                            "Unsupported tool call type: %s",
-                            type(tool_call).__name__,
-                        )
-        except (TypeError, ValueError) as e:
-            raise ValueError(
-                "Failed to repair or parse JSON from function call arguments"
-            ) from e
+                            )
+                        else:
+                            logger.info(
+                                "Unsupported tool call type: %s",
+                                type(tool_call).__name__,
+                            )
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    "Failed to repair or parse JSON from function call arguments"
+                ) from e
 
-        return (
-            response.choices[0].message.content or "",
-            function_calls_arguments,
-        )
-
-    def _collect_metrics(
-        self,
-        response: ChatCompletion,
-        start_time: float,
-        end_time: float,
-    ) -> None:
-        if self._should_collect_metrics:
-            if response.usage is not None:
-                self._input_tokens_usage_counter.increment(
-                    value=response.usage.prompt_tokens,
-                    labels=self._user_metrics_labels,
-                )
-                self._output_tokens_usage_counter.increment(
-                    value=response.usage.completion_tokens,
-                    labels=self._user_metrics_labels,
-                )
-                self._total_tokens_usage_counter.increment(
-                    value=response.usage.total_tokens,
-                    labels=self._user_metrics_labels,
-                )
-
-            self._latency_summary.observe(
-                value=end_time - start_time,
-                labels=self._user_metrics_labels,
+            return (
+                response.choices[0].message.content or "",
+                function_calls_arguments,
+                response.usage.prompt_tokens if response.usage else 0,
+                response.usage.completion_tokens if response.usage else 0,
             )
+
+    def _collect_usage_metrics(self, response: ChatCompletion) -> None:
+        if not self._should_collect_metrics:
+            return
+
+        if response.usage is None:
+            logger.debug("No usage information found in response")
+            return
+
+        try:
+            self._input_tokens_usage_counter.increment(
+                value=response.usage.prompt_tokens,
+            )
+            self._output_tokens_usage_counter.increment(
+                value=response.usage.completion_tokens,
+            )
+            self._total_tokens_usage_counter.increment(
+                value=response.usage.total_tokens,
+            )
+        except Exception:
+            logger.exception("Failed to collect usage metrics")

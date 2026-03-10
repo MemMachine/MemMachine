@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import time
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -14,7 +13,7 @@ from memmachine_server.common.data_types import (
     ExternalServiceAPIError,
     SimilarityMetric,
 )
-from memmachine_server.common.metrics_factory.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.utils import (
     chunk_text_balanced,
     cluster_texts,
@@ -61,10 +60,6 @@ class OpenAIEmbedderParams(BaseModel):
         default=None,
         description="An instance of MetricsFactory for collecting usage metrics.",
     )
-    user_metrics_labels: dict[str, str] = Field(
-        default_factory=dict,
-        description="Labels to attach to the collected metrics.",
-    )
 
 
 class OpenAIEmbedder(Embedder):
@@ -94,26 +89,19 @@ class OpenAIEmbedder(Embedder):
 
         metrics_factory = params.metrics_factory
 
-        self._collect_metrics = False
+        self._tracker = OperationTracker(metrics_factory, prefix="embedder_openai")
+
+        self._should_collect_metrics = False
         if metrics_factory is not None:
-            self._collect_metrics = True
-            self._user_metrics_labels = params.user_metrics_labels
-            label_names = self._user_metrics_labels.keys()
+            self._should_collect_metrics = True
 
             self._prompt_tokens_usage_counter = metrics_factory.get_counter(
                 "embedder_openai_usage_prompt_tokens",
                 "Number of tokens used by prompts to OpenAI embedder",
-                label_names=label_names,
             )
             self._total_tokens_usage_counter = metrics_factory.get_counter(
                 "embedder_openai_usage_total_tokens",
                 "Number of tokens used by requests to OpenAI embedder",
-                label_names=label_names,
-            )
-            self._latency_summary = metrics_factory.get_summary(
-                "embedder_openai_latency_seconds",
-                "Latency in seconds for OpenAI embedder requests",
-                label_names=label_names,
             )
 
     async def ingest_embed(
@@ -122,7 +110,8 @@ class OpenAIEmbedder(Embedder):
         max_attempts: int = 1,
     ) -> list[list[float]]:
         """Embed the provided inputs with retries."""
-        return await self._embed(inputs, max_attempts)
+        async with self._tracker("ingest_embed"):
+            return await self._embed(inputs, max_attempts)
 
     async def search_embed(
         self,
@@ -130,7 +119,8 @@ class OpenAIEmbedder(Embedder):
         max_attempts: int = 1,
     ) -> list[list[float]]:
         """Embed search queries with retries."""
-        return await self._embed(queries, max_attempts)
+        async with self._tracker("search_embed"):
+            return await self._embed(queries, max_attempts)
 
     async def _embed(
         self,
@@ -161,7 +151,6 @@ class OpenAIEmbedder(Embedder):
 
         embed_call_uuid = uuid4()
 
-        start_time = time.monotonic()
         logger.debug(
             "[call uuid: %s] "
             "Attempting to create embeddings using %s OpenAI model: "
@@ -184,18 +173,6 @@ class OpenAIEmbedder(Embedder):
         clusters_chunk_embeddings = await asyncio.gather(
             *clusters_chunk_embeddings_awaitables
         )
-        end_time = time.monotonic()
-        logger.debug(
-            "[call uuid: %s] Embeddings created in %.3f seconds",
-            embed_call_uuid,
-            end_time - start_time,
-        )
-
-        if self._collect_metrics:
-            self._latency_summary.observe(
-                value=end_time - start_time,
-                labels=self._user_metrics_labels,
-            )
 
         chunk_embeddings = [
             chunk_embedding
@@ -306,14 +283,12 @@ class OpenAIEmbedder(Embedder):
                 logger.exception(error_message)
                 raise ExternalServiceAPIError(error_message) from err
 
-        if self._collect_metrics:
+        if self._should_collect_metrics:
             self._prompt_tokens_usage_counter.increment(
                 value=response.usage.prompt_tokens,
-                labels=self._user_metrics_labels,
             )
             self._total_tokens_usage_counter.increment(
                 value=response.usage.total_tokens,
-                labels=self._user_metrics_labels,
             )
 
         if len(response.data[0].embedding) != self._dimensions:

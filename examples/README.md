@@ -51,12 +51,12 @@ These example agents all use the REST API from MemMachine's `app.py`, but you ca
 ## Available Agents
 
 ### When running it via Docker or python directly, it will default to using the profile_prompt.py. To use agents other than the default agent, make sure to change the prompt in the configuration file under the prompt/profile section.
-If using Docker, make sure to use a local build image rather than the MemMachine Dockerhub image since that one uses the default profile_prompt.py. 
+If using Docker, make sure to use a local build image rather than the MemMachine Dockerhub image since that one uses the default profile_prompt.py.
 
 ### 1. Default Agent (`example_server.py`)
 - **Purpose**: General-purpose AI assistant for any chatbot or conversational interface
 - **Port**: 8000 (configurable via `EXAMPLE_SERVER_PORT`)
-- **Features**: 
+- **Features**:
   - Basic memory storage and retrieval
   - Conversation context management
   - User profile integration
@@ -65,7 +65,7 @@ If using Docker, make sure to use a local build image rather than the MemMachine
 ### 2. CRM Agent (`crm/`)
 - **Purpose**: Customer Relationship Management
 - **Port**: 8000 (configurable via `CRM_PORT`)
-- **Features**: 
+- **Features**:
   - Customer data management
   - Sales pipeline tracking
   - Slack integration for real-time communication
@@ -139,11 +139,11 @@ If using Docker, make sure to use a local build image rather than the MemMachine
    ```bash
    # Default agent
    python example_server.py
-   
+
    # CRM agent
    cd crm
    python crm_server.py
-   
+
    # Financial analyst agent
    cd financial_analyst
    python financial_server.py
@@ -155,7 +155,7 @@ If using Docker, make sure to use a local build image rather than the MemMachine
    # Writing assistant agent
    cd writing_assistant
    python writing_assistant_server.py
-   
+
    # Streamlit frontend (in separate terminal)
    cd frontend
    streamlit run app.py
@@ -214,13 +214,13 @@ The Streamlit frontend provides an interactive web interface for testing all age
 1. **Start Services**:
    ```bash
    # Terminal 1: Start MemMachine backend
-   cd memmachine/src
+   cd memmachine/packages/server/src/memmachine_server
    python -m server.app
-   
+
    # Terminal 2: Start an agent (e.g., CRM)
    cd agents/crm
    python crm_server.py
-   
+
    # Terminal 3: Start the frontend
    cd examples/frontend
    streamlit run app.py
@@ -351,7 +351,7 @@ The CRM agent includes Slack integration for real-time communication:
 2. **Implement query constructor**:
    ```python
    from base_query_constructor import BaseQueryConstructor
-   
+
    class NewAgentQueryConstructor(BaseQueryConstructor):
        def create_query(self, **kwargs) -> str:
            # Implement domain-specific logic
@@ -362,10 +362,10 @@ The CRM agent includes Slack integration for real-time communication:
    ```python
    from fastapi import FastAPI
    from query_constructor import NewAgentQueryConstructor
-   
+
    app = FastAPI(title="New Agent Server")
    constructor = NewAgentQueryConstructor()
-   
+
    # Implement endpoints
    ```
 
@@ -416,4 +416,3 @@ When adding new agents or features:
 5. **Test with MemMachine backend integration**: Ensure memory storage and retrieval work correctly
 6. **Add unit tests**: Create tests for your query constructor and API endpoints
 7. **Update documentation**: Keep this README and any agent-specific documentation current
-

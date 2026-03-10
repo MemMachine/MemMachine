@@ -14,6 +14,10 @@ episodic_memory:
     llm_model: openai_model
     message_capacity: 500
 
+retrieval_agent:
+  llm_model: openai_model
+  reranker: my_reranker_id
+
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder

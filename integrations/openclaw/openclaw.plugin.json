@@ -1,6 +1,7 @@
 {
   "id": "openclaw-memmachine",
   "kind": "memory",
+  "main": "./dist/index.mjs",
   "uiHints": {
     "apiKey": {
       "label": "MemMachine API Key",

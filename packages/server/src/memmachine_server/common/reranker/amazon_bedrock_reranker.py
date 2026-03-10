@@ -2,14 +2,13 @@
 
 import asyncio
 import logging
-import time
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 
 from .reranker import Reranker
 
@@ -47,10 +46,6 @@ class AmazonBedrockRerankerParams(BaseModel):
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
     )
-    user_metrics_labels: dict[str, str] = Field(
-        default_factory=dict,
-        description="Labels to attach to the collected metrics",
-    )
 
 
 class AmazonBedrockReranker(Reranker):
@@ -83,140 +78,110 @@ class AmazonBedrockReranker(Reranker):
             "modelArn": model_arn,
         }
 
-        metrics_factory = params.metrics_factory
-
-        self._score_call_counter = None
-        self._score_latency_summary = None
-
-        self._should_collect_metrics = False
-        if metrics_factory is not None:
-            self._should_collect_metrics = True
-            self._user_metrics_labels = params.user_metrics_labels
-            label_names = self._user_metrics_labels.keys()
-
-            self._score_call_counter = metrics_factory.get_counter(
-                name="amazon_bedrock_reranker_score_calls",
-                description="Number of calls to score in AmazonBedrockReranker",
-                label_names=label_names,
-            )
-            self._score_latency_summary = metrics_factory.get_summary(
-                name="amazon_bedrock_reranker_score_latency_seconds",
-                description="Latency in seconds for score in AmazonBedrockReranker",
-            )
+        self._tracker = OperationTracker(
+            params.metrics_factory, prefix="reranker_amazon_bedrock"
+        )
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
-        """Score candidates for a query using the Bedrock reranker."""
-        rerank_kwargs = {
-            "queries": [
-                {
-                    "textQuery": {"text": AmazonBedrockReranker._sanitize_query(query)},
-                    "type": "TEXT",
-                },
-            ],
-            "rerankingConfiguration": {
-                "bedrockRerankingConfiguration": {
-                    "modelConfiguration": self._model_configuration,
-                    "numberOfResults": len(candidates),
-                },
-                "type": "BEDROCK_RERANKING_MODEL",
-            },
-            "sources": [
-                {
-                    "inlineDocumentSource": {
-                        "textDocument": {
-                            "text": AmazonBedrockReranker._sanitize_document(candidate)
+        async with self._tracker("score"):
+            """Score candidates for a query using the Bedrock reranker."""
+            rerank_kwargs = {
+                "queries": [
+                    {
+                        "textQuery": {
+                            "text": AmazonBedrockReranker._sanitize_query(query)
                         },
                         "type": "TEXT",
                     },
-                    "type": "INLINE",
-                }
-                for candidate in candidates
-            ],
-        }
+                ],
+                "rerankingConfiguration": {
+                    "bedrockRerankingConfiguration": {
+                        "modelConfiguration": self._model_configuration,
+                        "numberOfResults": len(candidates),
+                    },
+                    "type": "BEDROCK_RERANKING_MODEL",
+                },
+                "sources": [
+                    {
+                        "inlineDocumentSource": {
+                            "textDocument": {
+                                "text": AmazonBedrockReranker._sanitize_document(
+                                    candidate
+                                )
+                            },
+                            "type": "TEXT",
+                        },
+                        "type": "INLINE",
+                    }
+                    for candidate in candidates
+                ],
+            }
 
-        score_call_uuid = uuid4()
+            score_call_uuid = uuid4()
 
-        start_time = time.monotonic()
-
-        results: list = []
-        next_token = ""
-        while len(results) < len(candidates) and next_token is not None:
-            if len(results) == 0:
-                logger.debug(
-                    "[call uuid: %s] "
-                    "Scoring %d candidates for query using %s Amazon Bedrock model",
-                    score_call_uuid,
-                    len(candidates),
-                    self._model_id,
-                )
-            else:
-                logger.debug(
-                    "[call uuid: %s] Retrieving next batch of scoring results",
-                    score_call_uuid,
-                )
-
-            try:
-                response = await asyncio.to_thread(
-                    self._client.rerank,
-                    **rerank_kwargs,
-                )
-            except Exception as e:
+            results: list = []
+            next_token = ""
+            while len(results) < len(candidates) and next_token is not None:
                 if len(results) == 0:
-                    error_message = (
-                        f"[call uuid: {score_call_uuid}] "
-                        "Failed to score candidates "
-                        f"due to {type(e).__name__}"
+                    logger.debug(
+                        "[call uuid: %s] "
+                        "Scoring %d candidates for query using %s Amazon Bedrock model",
+                        score_call_uuid,
+                        len(candidates),
+                        self._model_id,
                     )
                 else:
-                    error_message = (
-                        f"[call uuid: {score_call_uuid}] "
-                        "Failed to retrieve next batch of scoring results "
-                        f"due to {type(e).__name__}"
+                    logger.debug(
+                        "[call uuid: %s] Retrieving next batch of scoring results",
+                        score_call_uuid,
                     )
+
+                try:
+                    response = await asyncio.to_thread(
+                        self._client.rerank,
+                        **rerank_kwargs,
+                    )
+                except Exception as e:
+                    if len(results) == 0:
+                        error_message = (
+                            f"[call uuid: {score_call_uuid}] "
+                            "Failed to score candidates "
+                            f"due to {type(e).__name__}"
+                        )
+                    else:
+                        error_message = (
+                            f"[call uuid: {score_call_uuid}] "
+                            "Failed to retrieve next batch of scoring results "
+                            f"due to {type(e).__name__}"
+                        )
+                    logger.exception(error_message)
+                    raise ExternalServiceAPIError(error_message) from e
+
+                next_token = response.get("nextToken")
+                rerank_kwargs["nextToken"] = next_token
+
+                batch_results = response["results"]
+                logger.debug(
+                    "[call uuid: %s] Received %d %s scores in batch",
+                    score_call_uuid,
+                    len(batch_results),
+                    "initial" if len(results) == 0 else "additional",
+                )
+
+                results += batch_results
+
+            if len(results) != len(candidates):
+                error_message = (
+                    f"Expected {len(candidates)} total scores, but got {len(results)}"
+                )
                 logger.exception(error_message)
-                raise ExternalServiceAPIError(error_message) from e
+                raise ExternalServiceAPIError(error_message)
 
-            next_token = response.get("nextToken")
-            rerank_kwargs["nextToken"] = next_token
+            scores = [0.0] * len(candidates)
+            for result in results:
+                scores[result["index"]] = result["relevanceScore"]
 
-            batch_results = response["results"]
-            logger.debug(
-                "[call uuid: %s] Received %d %s scores in batch",
-                score_call_uuid,
-                len(batch_results),
-                "initial" if len(results) == 0 else "additional",
-            )
-
-            results += batch_results
-
-        if len(results) != len(candidates):
-            error_message = (
-                f"Expected {len(candidates)} total scores, but got {len(results)}"
-            )
-            logger.exception(error_message)
-            raise ExternalServiceAPIError(error_message)
-
-        end_time = time.monotonic()
-
-        logger.debug(
-            "[call uuid: %s] Scoring completed in %.3f seconds",
-            score_call_uuid,
-            end_time - start_time,
-        )
-
-        scores = [0.0] * len(candidates)
-        for result in results:
-            scores[result["index"]] = result["relevanceScore"]
-
-        if self._should_collect_metrics:
-            cast(MetricsFactory.Counter, self._score_call_counter).increment(
-                labels=self._user_metrics_labels
-            )
-            cast(MetricsFactory.Summary, self._score_latency_summary).observe(
-                end_time - start_time, labels=self._user_metrics_labels
-            )
-
-        return scores
+            return scores
 
     @staticmethod
     def _sanitize_query(query: str) -> str:

@@ -69,6 +69,9 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.yml", "*.yaml", "*.sql"]
+
 [tool.setuptools_scm]
 root = "../.."
 
@@ -77,6 +80,10 @@ package = true
 
 [tool.ty.environment]
 python-version = "3.12"
+extra-paths = ["../common/src", "../client/src"]
+
+[tool.ty.src]
+exclude = ["build/**"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"
