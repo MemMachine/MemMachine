@@ -123,8 +123,7 @@ async def test_register_multiple_segments_same_derivative(
     result = await linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
     segments = list(result[deriv])
     assert len(segments) == 2
-    assert segments[0].uuid == s1.uuid
-    assert segments[1].uuid == s2.uuid
+    assert {s.uuid for s in segments} == {s1.uuid, s2.uuid}
 
 
 @pytest.mark.asyncio
@@ -205,7 +204,7 @@ async def test_get_by_derivatives_empty(linker: SQLAlchemySegmentLinker) -> None
 @pytest.mark.asyncio
 async def test_get_by_derivatives_unknown_uuid(linker: SQLAlchemySegmentLinker) -> None:
     result = await linker.get_segments_by_derivatives(PARTITION_KEY, [uuid4()])
-    assert list(result.values()) == [[]]
+    assert len(result) == 0
 
 
 @pytest.mark.asyncio
@@ -248,7 +247,7 @@ async def test_get_by_derivatives_session_isolation(
     await linker.register_segments("session-a", {seg: [deriv]})
 
     result = await linker.get_segments_by_derivatives("session-b", [deriv])
-    assert list(result[deriv]) == []
+    assert deriv not in result
 
 
 # ===================================================================
@@ -499,7 +498,7 @@ async def test_delete_by_episodes(linker: SQLAlchemySegmentLinker) -> None:
     await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
 
     result = await linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
-    assert list(result[deriv]) == []
+    assert deriv not in result
 
 
 @pytest.mark.asyncio
@@ -540,7 +539,7 @@ async def test_delete_all(linker: SQLAlchemySegmentLinker) -> None:
     await linker.delete_all_segments(PARTITION_KEY)
 
     result = await linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
-    assert list(result[deriv]) == []
+    assert deriv not in result
 
 
 # ===================================================================
