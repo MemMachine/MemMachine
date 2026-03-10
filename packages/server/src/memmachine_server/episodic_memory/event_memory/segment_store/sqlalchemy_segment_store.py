@@ -71,7 +71,7 @@ class SegmentRow(BaseSegmentLinker):
 
     __tablename__ = "segment_linker_segments"
 
-    session_key = mapped_column(String, nullable=False)
+    partition_key = mapped_column(String, nullable=False)
 
     uuid = mapped_column(Uuid, primary_key=True)
     episode_uuid = mapped_column(Uuid, nullable=False)
@@ -82,13 +82,13 @@ class SegmentRow(BaseSegmentLinker):
 
     __table_args__ = (
         Index(
-            "segment_linker_segments__sk_ep",
-            "session_key",
+            "segment_linker_segments__pk_ep",
+            "partition_key",
             "episode_uuid",
         ),
         Index(
-            "segment_linker_segments__sk_ts_ep_bk_ix",
-            "session_key",
+            "segment_linker_segments__pk_ts_ep_bk_ix",
+            "partition_key",
             "timestamp",
             "episode_uuid",
             "block",
@@ -178,169 +178,10 @@ class DerivativeRow(BaseSegmentLinker):
     )
 
 
-# Helpers
-
-
-def _property_value_column(value: PropertyValue) -> str:
-    """Return the column name for a given property value type."""
-    if isinstance(value, bool):
-        return "value_bool"
-    if isinstance(value, int):
-        return "value_int"
-    if isinstance(value, float):
-        return "value_float"
-    if isinstance(value, datetime):
-        return "value_datetime"
-    return "value_str"
-
-
-def _property_row(segment_uuid: UUID, key: str, value: PropertyValue) -> dict:
-    col = _property_value_column(value)
-    return {"segment_uuid": segment_uuid, "key": key, col: value}
-
-
-def _coalesce_property_value(row: SegmentPropertyRow) -> PropertyValue:
-    """Read back whichever value_* column is non-null."""
-    if row.value_bool is not None:
-        return row.value_bool
-    if row.value_int is not None:
-        return row.value_int
-    if row.value_float is not None:
-        return row.value_float
-    if row.value_datetime is not None:
-        return row.value_datetime
-    if row.value_str is not None:
-        return row.value_str
-    raise ValueError(f"Property row for key={row.key!r} has no value set")
-
-
-def _row_to_segment(
-    row: SegmentRow, properties: dict[str, PropertyValue] | None
-) -> Segment:
-    content = _ContentAdapter.validate_python(row.content)
-    return Segment(
-        uuid=row.uuid,
-        episode_uuid=row.episode_uuid,
-        block=row.block,
-        index=row.index,
-        timestamp=row.timestamp,
-        content=content,
-        properties=properties or None,
-    )
-
-
-def _segment_to_values(session_key: str, segment: Segment) -> dict:
-    return {
-        "uuid": segment.uuid,
-        "session_key": session_key,
-        "episode_uuid": segment.episode_uuid,
-        "block": segment.block,
-        "index": segment.index,
-        "timestamp": segment.timestamp,
-        "content": segment.content.model_dump(),
-    }
-
-
-def _value_column_element(value: PropertyValue) -> InstrumentedAttribute[PropertyValue]:
-    """Return the ORM column element for a property value's type."""
-    if isinstance(value, bool):
-        return SegmentPropertyRow.value_bool
-    if isinstance(value, int):
-        return SegmentPropertyRow.value_int
-    if isinstance(value, float):
-        return SegmentPropertyRow.value_float
-    if isinstance(value, datetime):
-        return SegmentPropertyRow.value_datetime
-    return SegmentPropertyRow.value_str
-
-
-def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
-    """Compile a FilterExpr into EXISTS subqueries against the properties table."""
-    if isinstance(expr, Comparison):
-        col = _value_column_element(expr.value)
-        sp = SegmentPropertyRow
-        cond = sp.segment_uuid == SegmentRow.uuid
-        cond = and_(cond, sp.key == expr.field)
-        op_map = {
-            "=": lambda c, v: c == v,
-            "!=": lambda c, v: c != v,
-            ">": lambda c, v: c > v,
-            "<": lambda c, v: c < v,
-            ">=": lambda c, v: c >= v,
-            "<=": lambda c, v: c <= v,
-        }
-        cond = and_(cond, op_map[expr.op](col, expr.value))
-        return select(1).select_from(sp.__table__).where(cond).exists()
-
-    if isinstance(expr, In):
-        # Determine column by first value type
-        if expr.values and isinstance(expr.values[0], int):
-            col = SegmentPropertyRow.value_int
-        else:
-            col = SegmentPropertyRow.value_str
-        sp = SegmentPropertyRow
-        cond = and_(
-            sp.segment_uuid == SegmentRow.uuid,
-            sp.key == expr.field,
-            col.in_(expr.values),
-        )
-        return select(1).select_from(sp.__table__).where(cond).exists()
-
-    if isinstance(expr, IsNull):
-        # Property is null = no property row exists for this key
-        sp = SegmentPropertyRow
-        cond = and_(sp.segment_uuid == SegmentRow.uuid, sp.key == expr.field)
-        return ~select(1).select_from(sp.__table__).where(cond).exists()
-
-    if isinstance(expr, And):
-        return and_(
-            _compile_property_filter(expr.left),
-            _compile_property_filter(expr.right),
-        )
-
-    if isinstance(expr, Or):
-        return or_(
-            _compile_property_filter(expr.left),
-            _compile_property_filter(expr.right),
-        )
-
-    if isinstance(expr, Not):
-        return ~_compile_property_filter(expr.expr)
-
-    raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
-
-def _validate_derivatives(
-    active_set: set[UUID] | None,
-    link_count: dict[UUID, int],
-    locked_map: dict[UUID, DerivativeRow],
-) -> None:
-    """Validate that active derivatives exist and no linked derivatives are purging."""
-    if active_set is not None:
-        not_active: list[UUID] = []
-        for u in active_set:
-            row = locked_map.get(u)
-            if row is None or row.state == "P":
-                not_active.append(u)
-        if not_active:
-            raise DerivativeNotActiveError(not_active)
-
-    for u in link_count:
-        row = locked_map.get(u)
-        if row is not None and row.state == "P":
-            raise DerivativeNotActiveError([u])
-
-
-# Params
-
-
 class SQLAlchemySegmentLinkerParams(BaseModel):
     """Parameters for constructing a SQLAlchemySegmentLinker."""
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
-
-
-# Implementation
 
 
 class SQLAlchemySegmentLinker(SegmentLinker):
@@ -349,12 +190,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     def __init__(self, params: SQLAlchemySegmentLinkerParams) -> None:
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
-        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+        self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
 
-    def _create_session(self) -> AsyncSession:
-        return self._session_factory()
-
-    # -- lifecycle -----------------------------------------------------------
+    # Lifecycle
 
     async def startup(self) -> None:
         async with self._engine.begin() as conn:
@@ -363,51 +201,104 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def shutdown(self) -> None:
         pass
 
-    # -- register ------------------------------------------------------------
+    # Registration
 
     async def register_segments(
         self,
-        session_key: str,
+        partition_key: str,
         links: Mapping[Segment, Iterable[UUID]],
         *,
         active: Iterable[UUID] | None = None,
     ) -> None:
-        # Materialise inputs
-        link_map: dict[Segment, list[UUID]] = {
-            seg: list(derivs) for seg, derivs in links.items()
+        links_dict = {
+            segment: list(derivative_uuids) for segment, derivative_uuids in links.items()
         }
         active_set = set(active) if active is not None else None
 
         # Collect all unique derivative UUIDs and per-derivative link counts
-        link_count: dict[UUID, int] = defaultdict(int)
-        for derivs in link_map.values():
-            for d in derivs:
-                link_count[d] += 1
+        link_counts: dict[UUID, int] = defaultdict(int)
+        for derivative_uuids in links_dict.values():
+            for derivative_uuid in derivative_uuids:
+                link_counts[derivative_uuid] += 1
 
-        all_deriv_uuids = set(link_count.keys())
+        all_derivative_uuids = set(link_counts.keys())
         if active_set is not None:
-            all_deriv_uuids |= active_set
-
-        if not link_map:
-            return
-
-        sorted_deriv_uuids = sorted(all_deriv_uuids)
+            all_derivative_uuids |= active_set
 
         async with self._create_session() as session, session.begin():
-            locked_rows = await self._lock_derivatives(session, sorted_deriv_uuids)
+            locked_rows = await self._lock_derivatives(session, sorted(all_derivative_uuids))
             locked_map: dict[UUID, DerivativeRow] = {r.uuid: r for r in locked_rows}
 
-            _validate_derivatives(active_set, link_count, locked_map)
+            SQLAlchemySegmentLinker._validate_derivatives(active_set, link_counts, locked_map)
 
             await self._insert_registration_data(
-                session, session_key, link_map, link_count, all_deriv_uuids, locked_map
+                session, partition_key, links_dict, link_counts, all_derivative_uuids, locked_map
+            )
+
+    async def _insert_registration_data(
+        self,
+        session: AsyncSession,
+        partition_key: str,
+        link_map: dict[Segment, list[UUID]],
+        link_count: dict[UUID, int],
+        all_deriv_uuids: set[UUID],
+        locked_map: dict[UUID, DerivativeRow],
+    ) -> None:
+        """Insert derivative, segment, property, and link rows, then update refcounts."""
+        # Insert new derivative rows
+        new_derivs = [
+            {"uuid": u, "state": "A", "refcount": 0}
+            for u in all_deriv_uuids
+            if u not in locked_map
+        ]
+        if new_derivs:
+            await session.execute(insert(DerivativeRow), new_derivs)
+
+        # Insert segments
+        seg_values = [_segment_row_values_from_segment(partition_key, seg) for seg in link_map]
+        if seg_values:
+            await session.execute(insert(SegmentRow), seg_values)
+
+        # Insert properties
+        prop_rows: list[dict[str, PropertyValue | UUID]] = []
+        for seg in link_map:
+            if seg.properties:
+                for k, v in seg.properties.items():
+                    prop_rows.append(
+                        {
+                            "segment_uuid": seg.uuid,
+                            "key": k,
+                            _property_type_column_name(type(v)): v,
+                        }
+                    )
+        if prop_rows:
+            await session.execute(insert(SegmentPropertyRow), prop_rows)
+
+        # Insert links
+        link_rows = [
+            {
+                "segment_uuid": seg.uuid,
+                "derivative_uuid": d,
+            }
+            for seg, derivs in link_map.items()
+            for d in derivs
+        ]
+        if link_rows:
+            await session.execute(insert(LinkRow), link_rows)
+
+        # Update refcounts
+        for u, count in link_count.items():
+            await session.execute(
+                update(DerivativeRow)
+                .where(DerivativeRow.uuid == u)
+                .values(refcount=DerivativeRow.refcount + count)
             )
 
     # -- query ---------------------------------------------------------------
 
     async def get_segments_by_derivatives(
         self,
-        session_key: str,
+        partition_key: str,
         derivative_uuids: Iterable[UUID],
         *,
         limit_per_derivative: int | None = None,
@@ -421,7 +312,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             select(SegmentRow, LinkRow.derivative_uuid)
             .join(LinkRow, LinkRow.segment_uuid == SegmentRow.uuid)
             .where(
-                SegmentRow.session_key == session_key,
+                SegmentRow.partition_key == partition_key,
                 LinkRow.derivative_uuid.in_(deriv_list),
             )
             .order_by(
@@ -447,7 +338,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         grouped: dict[UUID, list[Segment]] = {u: [] for u in deriv_list}
         for seg_row, deriv_uuid in rows:
             if deriv_uuid in grouped:
-                segment = _row_to_segment(seg_row, props_map.get(seg_row.uuid))
+                segment = _segment_from_segment_row(
+                    seg_row, props_map.get(seg_row.uuid)
+                )
                 grouped[deriv_uuid].append(segment)
 
         # Deduplicate within each derivative list (a segment may appear multiple times
@@ -461,7 +354,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     async def get_segment_contexts(
         self,
-        session_key: str,
+        partition_key: str,
         seed_segment_uuids: Iterable[UUID],
         *,
         max_backward_segments: int = 0,
@@ -477,7 +370,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             seed_result = await session.execute(
                 select(SegmentRow).where(
                     SegmentRow.uuid.in_(seed_list),
-                    SegmentRow.session_key == session_key,
+                    SegmentRow.partition_key == partition_key,
                 )
             )
             seed_rows: dict[UUID, SegmentRow] = {
@@ -490,7 +383,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             if max_backward_segments == 0 and max_forward_segments == 0:
                 props = await self._load_properties(session, list(seed_rows.keys()))
                 return {
-                    u: [_row_to_segment(r, props.get(u))] for u, r in seed_rows.items()
+                    u: [_segment_from_segment_row(r, props.get(u))]
+                    for u, r in seed_rows.items()
                 }
 
             # Step 2: Fetch context rows
@@ -500,7 +394,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             if use_lateral:
                 ctx = await self._get_contexts_lateral(
                     session,
-                    session_key,
+                    partition_key,
                     seed_rows,
                     max_backward_segments,
                     max_forward_segments,
@@ -509,7 +403,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             else:
                 ctx = await self._get_contexts_loop(
                     session,
-                    session_key,
+                    partition_key,
                     seed_rows,
                     max_backward_segments,
                     max_forward_segments,
@@ -531,9 +425,12 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             for seed_uuid, seed_row in seed_rows.items():
                 bw, fw = ctx.get(seed_uuid, ([], []))
                 segments = (
-                    [_row_to_segment(r, props.get(r.uuid)) for r in reversed(bw)]
-                    + [_row_to_segment(seed_row, props.get(seed_uuid))]
-                    + [_row_to_segment(r, props.get(r.uuid)) for r in fw]
+                    [
+                        _segment_from_segment_row(r, props.get(r.uuid))
+                        for r in reversed(bw)
+                    ]
+                    + [_segment_from_segment_row(seed_row, props.get(seed_uuid))]
+                    + [_segment_from_segment_row(r, props.get(r.uuid)) for r in fw]
                 )
                 result[seed_uuid] = segments
 
@@ -543,7 +440,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     async def delete_segments_by_episodes(
         self,
-        session_key: str,
+        partition_key: str,
         episode_uuids: Iterable[UUID],
     ) -> None:
         ep_list = list(episode_uuids)
@@ -554,7 +451,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             # Find affected segment UUIDs
             seg_result = await session.execute(
                 select(SegmentRow.uuid).where(
-                    SegmentRow.session_key == session_key,
+                    SegmentRow.partition_key == partition_key,
                     SegmentRow.episode_uuid.in_(ep_list),
                 )
             )
@@ -569,12 +466,12 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 delete(SegmentRow).where(SegmentRow.uuid.in_(seg_uuids))
             )
 
-    async def delete_all_segments(self, session_key: str) -> None:
+    async def delete_all_segments(self, partition_key: str) -> None:
         async with self._create_session() as session, session.begin():
             # Find affected segment UUIDs
             seg_result = await session.execute(
                 select(SegmentRow.uuid).where(
-                    SegmentRow.session_key == session_key,
+                    SegmentRow.partition_key == partition_key,
                 )
             )
             seg_uuids = [r[0] for r in seg_result.all()]
@@ -649,7 +546,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def _get_contexts_lateral(
         self,
         session: AsyncSession,
-        session_key: str,
+        partition_key: str,
         seed_rows: dict[UUID, SegmentRow],
         max_backward: int,
         max_forward: int,
@@ -716,7 +613,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
             inner = (
                 select(SegmentRow)
-                .where(SegmentRow.session_key == session_key, cmp)
+                .where(SegmentRow.partition_key == partition_key, cmp)
                 .order_by(*ordering)
                 .limit(max_count)
                 .correlate(seeds_sq)
@@ -741,7 +638,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 seed_uuid = row[0]
                 seg = SegmentRow(
                     uuid=row[1],
-                    session_key=session_key,
+                    partition_key=partition_key,
                     episode_uuid=row[2],
                     block=row[3],
                     index=row[4],
@@ -756,7 +653,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def _get_contexts_loop(
         self,
         session: AsyncSession,
-        session_key: str,
+        partition_key: str,
         seed_rows: dict[UUID, SegmentRow],
         max_backward: int,
         max_forward: int,
@@ -785,7 +682,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 bw_stmt = (
                     select(SegmentRow)
                     .where(
-                        SegmentRow.session_key == session_key,
+                        SegmentRow.partition_key == partition_key,
                         seg_key < seed_val,
                     )
                     .order_by(
@@ -806,7 +703,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 fw_stmt = (
                     select(SegmentRow)
                     .where(
-                        SegmentRow.session_key == session_key,
+                        SegmentRow.partition_key == partition_key,
                         seg_key > seed_val,
                     )
                     .order_by(
@@ -918,55 +815,154 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             props_map[row.segment_uuid][row.key] = _coalesce_property_value(row)
         return dict(props_map)
 
-    async def _insert_registration_data(
-        self,
-        session: AsyncSession,
-        session_key: str,
-        link_map: dict[Segment, list[UUID]],
+#######################################
+
+    @staticmethod
+    def _validate_derivatives(
+        active_set: set[UUID] | None,
         link_count: dict[UUID, int],
-        all_deriv_uuids: set[UUID],
         locked_map: dict[UUID, DerivativeRow],
     ) -> None:
-        """Insert derivative, segment, property, and link rows, then update refcounts."""
-        # Insert new derivative rows
-        new_derivs = [
-            {"uuid": u, "state": "A", "refcount": 0}
-            for u in all_deriv_uuids
-            if u not in locked_map
-        ]
-        if new_derivs:
-            await session.execute(insert(DerivativeRow), new_derivs)
+        """Validate that active derivatives exist and no linked derivatives are purging."""
+        if active_set is not None:
+            not_active: list[UUID] = []
+            for u in active_set:
+                row = locked_map.get(u)
+                if row is None or row.state == "P":
+                    not_active.append(u)
+            if not_active:
+                raise DerivativeNotActiveError(not_active)
 
-        # Insert segments
-        seg_values = [_segment_to_values(session_key, seg) for seg in link_map]
-        if seg_values:
-            await session.execute(insert(SegmentRow), seg_values)
+        for u in link_count:
+            row = locked_map.get(u)
+            if row is not None and row.state == "P":
+                raise DerivativeNotActiveError([u])
 
-        # Insert properties
-        prop_rows: list[dict[str, PropertyValue | UUID]] = []
-        for seg in link_map:
-            if seg.properties:
-                for k, v in seg.properties.items():
-                    prop_rows.append(_property_row(seg.uuid, k, v))
-        if prop_rows:
-            await session.execute(insert(SegmentPropertyRow), prop_rows)
+##########################################
 
-        # Insert links
-        link_rows = [
-            {
-                "segment_uuid": seg.uuid,
-                "derivative_uuid": d,
-            }
-            for seg, derivs in link_map.items()
-            for d in derivs
-        ]
-        if link_rows:
-            await session.execute(insert(LinkRow), link_rows)
+def _segment_from_segment_row(
+    row: SegmentRow, properties: Mapping[str, PropertyValue] | None
+) -> Segment:
+    """Convert a SegmentRow and its properties into a Segment."""
+    content = _ContentAdapter.validate_python(row.content)
+    return Segment(
+        uuid=row.uuid,
+        episode_uuid=row.episode_uuid,
+        block=row.block,
+        index=row.index,
+        timestamp=row.timestamp,
+        content=content,
+        properties=properties,
+    )
 
-        # Update refcounts
-        for u, count in link_count.items():
-            await session.execute(
-                update(DerivativeRow)
-                .where(DerivativeRow.uuid == u)
-                .values(refcount=DerivativeRow.refcount + count)
-            )
+
+def _segment_row_values_from_segment(partition_key: str, segment: Segment) -> dict:
+    """Convert a Segment into a dict of column values for insertion."""
+    return {
+        "uuid": segment.uuid,
+        "partition_key": partition_key,
+        "episode_uuid": segment.episode_uuid,
+        "block": segment.block,
+        "index": segment.index,
+        "timestamp": segment.timestamp,
+        "content": segment.content.model_dump(),
+    }
+
+def _property_type_column_name(property_type: type[PropertyValue]) -> str:
+    """Return the column name for the type of a given property value."""
+    if property_type is bool:
+        return "value_bool"
+    if property_type is int:
+        return "value_int"
+    if property_type is float:
+        return "value_float"
+    if property_type is str:
+        return "value_str"
+    if property_type is datetime:
+        return "value_datetime"
+    raise ValueError(f"Unsupported property value type: {property_type!r}")
+
+
+def _coalesce_property_value(row: SegmentPropertyRow) -> PropertyValue:
+    """Read back whichever value_* column is non-null."""
+    if row.value_bool is not None:
+        return row.value_bool
+    if row.value_int is not None:
+        return row.value_int
+    if row.value_float is not None:
+        return row.value_float
+    if row.value_str is not None:
+        return row.value_str
+    if row.value_datetime is not None:
+        return row.value_datetime
+    raise ValueError(f"Property row for key={row.key!r} has no value set")
+
+
+
+def _value_column_element(value: PropertyValue) -> InstrumentedAttribute[PropertyValue]:
+    """Return the ORM column element for a property value's type."""
+    if isinstance(value, bool):
+        return SegmentPropertyRow.value_bool
+    if isinstance(value, int):
+        return SegmentPropertyRow.value_int
+    if isinstance(value, float):
+        return SegmentPropertyRow.value_float
+    if isinstance(value, datetime):
+        return SegmentPropertyRow.value_datetime
+    return SegmentPropertyRow.value_str
+
+
+def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
+    """Compile a FilterExpr into EXISTS subqueries against the properties table."""
+    if isinstance(expr, Comparison):
+        col = _value_column_element(expr.value)
+        sp = SegmentPropertyRow
+        cond = sp.segment_uuid == SegmentRow.uuid
+        cond = and_(cond, sp.key == expr.field)
+        op_map = {
+            "=": lambda c, v: c == v,
+            "!=": lambda c, v: c != v,
+            ">": lambda c, v: c > v,
+            "<": lambda c, v: c < v,
+            ">=": lambda c, v: c >= v,
+            "<=": lambda c, v: c <= v,
+        }
+        cond = and_(cond, op_map[expr.op](col, expr.value))
+        return select(1).select_from(sp.__table__).where(cond).exists()
+
+    if isinstance(expr, In):
+        # Determine column by first value type
+        if expr.values and isinstance(expr.values[0], int):
+            col = SegmentPropertyRow.value_int
+        else:
+            col = SegmentPropertyRow.value_str
+        sp = SegmentPropertyRow
+        cond = and_(
+            sp.segment_uuid == SegmentRow.uuid,
+            sp.key == expr.field,
+            col.in_(expr.values),
+        )
+        return select(1).select_from(sp.__table__).where(cond).exists()
+
+    if isinstance(expr, IsNull):
+        # Property is null = no property row exists for this key
+        sp = SegmentPropertyRow
+        cond = and_(sp.segment_uuid == SegmentRow.uuid, sp.key == expr.field)
+        return ~select(1).select_from(sp.__table__).where(cond).exists()
+
+    if isinstance(expr, And):
+        return and_(
+            _compile_property_filter(expr.left),
+            _compile_property_filter(expr.right),
+        )
+
+    if isinstance(expr, Or):
+        return or_(
+            _compile_property_filter(expr.left),
+            _compile_property_filter(expr.right),
+        )
+
+    if isinstance(expr, Not):
+        return ~_compile_property_filter(expr.expr)
+
+    raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
