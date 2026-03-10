@@ -45,8 +45,8 @@ class Episode(BaseModel):
     uuid: UUID
     timestamp: datetime
     content: list[Content]
-    properties: dict[str, PropertyValue] | None = None
-    metadata: dict[str, JsonValue] | None = None
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     def __hash__(self) -> int:
         """Hash an episode by its UUID."""
@@ -62,7 +62,7 @@ class Segment(BaseModel):
     index: int
     timestamp: datetime
     content: MessageContent | TextContent | ImageContent
-    properties: dict[str, PropertyValue] | None = None
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
     def __hash__(self) -> int:
         """Hash a segment by its UUID."""
