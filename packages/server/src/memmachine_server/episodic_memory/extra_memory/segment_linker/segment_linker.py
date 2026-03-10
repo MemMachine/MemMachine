@@ -81,6 +81,15 @@ class SegmentLinker(ABC):
         """
         Get segments associated with the derivatives given by their UUIDs.
 
+        Segments are ordered chronologically by
+        (timestamp, episode_uuid, block, index).
+
+        Only derivatives that have at least one linked segment in the
+        partition are included in the result; unknown or unlinked
+        derivative UUIDs are silently omitted.
+
+        Segments are deduplicated per derivative.
+
         Args:
             partition_key (str):
                 The key of the partition to which the segments belong.
@@ -88,8 +97,9 @@ class SegmentLinker(ABC):
                 The UUIDs of the derivatives for which to retrieve linked segments.
             limit_per_derivative (int | None):
                 The maximum number of segments to return per derivative.
-                If None, return as many linked segments as possible
-                (default: None).
+                The limit is distributed evenly between the oldest and newest
+                segments, favoring the most recent when the limit is odd.
+                If None, return all linked segments (default: None).
             property_filter (FilterExpr | None):
                 An optional filter expression to apply to the segments (default: None).
 
