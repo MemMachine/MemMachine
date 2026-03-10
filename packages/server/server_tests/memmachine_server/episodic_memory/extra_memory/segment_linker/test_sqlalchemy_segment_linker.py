@@ -49,7 +49,7 @@ def _seg(
         index=index,
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
         content=TextContent(text=text),
-        properties=properties,
+        properties=properties or {},
     )
 
 
@@ -159,6 +159,36 @@ async def test_register_empty_links_still_validates_active(
     unknown = uuid4()
     with pytest.raises(DerivativeNotActiveError):
         await linker.register_segments(PARTITION_KEY, {}, active=[unknown])
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_existing_derivative_not_declared_active(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Linking to an existing derivative without declaring it active is an error."""
+    seg1 = _seg(ts_offset_seconds=0)
+    deriv = uuid4()
+    await linker.register_segments(PARTITION_KEY, {seg1: [deriv]})
+
+    seg2 = _seg(ts_offset_seconds=1)
+    with pytest.raises(DerivativeNotActiveError):
+        await linker.register_segments(PARTITION_KEY, {seg2: [deriv]})
+
+
+@pytest.mark.asyncio
+async def test_register_allows_existing_derivative_declared_active(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Linking to an existing derivative works when declared active."""
+    seg1 = _seg(ts_offset_seconds=0)
+    deriv = uuid4()
+    await linker.register_segments(PARTITION_KEY, {seg1: [deriv]})
+
+    seg2 = _seg(ts_offset_seconds=1)
+    await linker.register_segments(PARTITION_KEY, {seg2: [deriv]}, active=[deriv])
+
+    result = await linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
+    assert len(list(result[deriv])) == 2
 
 
 # ===================================================================
@@ -369,7 +399,9 @@ async def test_contexts_with_properties(linker: SQLAlchemySegmentLinker) -> None
     s1 = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1, properties={"k": "v1"})
     s2 = _seg(episode_uuid=ep, index=2, ts_offset_seconds=2, properties={"k": "v2"})
     deriv = uuid4()
-    await linker.register_segments(PARTITION_KEY, {s0: [deriv], s1: [deriv], s2: [deriv]})
+    await linker.register_segments(
+        PARTITION_KEY, {s0: [deriv], s1: [deriv], s2: [deriv]}
+    )
 
     result = await linker.get_segment_contexts(
         PARTITION_KEY, [s1.uuid], max_backward_segments=1, max_forward_segments=1
@@ -417,7 +449,9 @@ async def test_contexts_session_isolation(linker: SQLAlchemySegmentLinker) -> No
     s_after = _seg(episode_uuid=ep, index=2, ts_offset_seconds=2)
     deriv = uuid4()
     await linker.register_segments("other-session", {s_other: [deriv]})
-    await linker.register_segments(PARTITION_KEY, {s_seed: [deriv], s_after: [deriv]})
+    await linker.register_segments(
+        PARTITION_KEY, {s_seed: [deriv], s_after: [deriv]}, active=[deriv]
+    )
 
     result = await linker.get_segment_contexts(
         PARTITION_KEY,
@@ -469,7 +503,7 @@ async def test_delete_by_episodes(linker: SQLAlchemySegmentLinker) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_by_episodes_decrements_refcount(
+async def test_delete_by_episodes_decrements_ref_count(
     linker: SQLAlchemySegmentLinker,
 ) -> None:
     ep = uuid4()
