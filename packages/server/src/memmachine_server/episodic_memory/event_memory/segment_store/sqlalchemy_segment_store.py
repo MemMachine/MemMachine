@@ -213,11 +213,13 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseSegmentLinker.metadata.create_all)
 
+    @override
     async def shutdown(self) -> None:
         pass
 
     # Registration
 
+    @override
     async def register_segments(
         self,
         partition_key: str,
@@ -331,6 +333,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     # Retrieval
 
+    @override
     async def get_segments_by_derivatives(
         self,
         partition_key: str,
@@ -395,6 +398,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
         return dict(segments_by_derivatives)
 
+    @override
     async def get_segment_contexts(
         self,
         partition_key: str,
@@ -498,6 +502,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     # Deletion
 
+    @override
     async def delete_segments_by_episodes(
         self,
         partition_key: str,
@@ -522,6 +527,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
             await self._delete_segments(session, segment_uuids)
 
+    @override
     async def delete_all_segments(self, partition_key: str) -> None:
         get_segment_uuids_statement = select(SegmentRow.uuid).where(
             SegmentRow.partition_key == partition_key
@@ -554,14 +560,18 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             await self._lock_derivatives(session, derivative_uuids)
 
             # Get ref count deltas by derivatives.
-            delta_statement = (
-                select(LinkRow.derivative_uuid, -func.count())
+            extra_ref_counts_statement = (
+                select(LinkRow.derivative_uuid, func.count())
                 .where(LinkRow.segment_uuid.in_(segment_uuids))
                 .group_by(LinkRow.derivative_uuid)
             )
-
-            delta_rows = (await session.execute(delta_statement)).all()
-            deltas_by_derivatives = {derivative_uuid: delta for derivative_uuid, delta in delta_rows}
+            extra_ref_counts_rows = (
+                await session.execute(extra_ref_counts_statement)
+            ).all()
+            deltas_by_derivatives = {
+                derivative_uuid: -extra_ref_count
+                for derivative_uuid, extra_ref_count in extra_ref_counts_rows
+            }
 
             # Delete links.
             await session.execute(
@@ -583,6 +593,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     # Garbage collection
 
+    @override
     async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
         get_orphans_statement = (
             select(DerivativeRow.uuid)
@@ -596,6 +607,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             orphan_rows = (await session.execute(get_orphans_statement)).all()
             return [orphan for (orphan,) in orphan_rows]
 
+    @override
     async def mark_orphaned_derivatives_for_purging(
         self, potential_orphan_uuids: Iterable[UUID]
     ) -> Iterable[UUID]:
@@ -627,6 +639,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
             return confirmed
 
+    @override
     async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
         derivative_uuids = list(derivative_uuids)
         if not derivative_uuids:
