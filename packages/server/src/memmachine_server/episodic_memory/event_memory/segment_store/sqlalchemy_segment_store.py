@@ -905,30 +905,32 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     @staticmethod
     def _validate_derivatives(
-        active_set: set[UUID],
-        link_count: dict[UUID, int],
-        locked_map: dict[UUID, DerivativeRow],
+        active: Iterable[UUID],
+        link_counts: Mapping[UUID, int],
+        locked_map: Mapping[UUID, DerivativeRow],
     ) -> None:
-        """Validate derivative states.
-
-        - Every UUID in ``active_set`` must exist and be active.
-        - Every UUID in ``link_count`` that already exists in the DB must
-          appear in ``active_set`` (caller must acknowledge existing derivatives).
         """
-        safe_active: set[UUID] = active_set if active_set is not None else set()
+        Validate derivative states.
+
+        - Every UUID in `active` must exist and be active.
+        - Every UUID in `link_count` that already exists in the DB must
+          appear in `active_set` (caller must acknowledge existing derivatives).
+        """
+        active = set(active)
 
         not_active: list[UUID] = []
-        for u in safe_active:
-            row = locked_map.get(u)
-            if row is None or row.state == DerivativeState.PURGING:
-                not_active.append(u)
+        for derivative_uuid in active:
+            derivative_row = locked_map.get(derivative_uuid)
+            if derivative_row is None or derivative_row.state == DerivativeState.PURGING:
+                not_active.append(derivative_uuid)
+
         if not_active:
             raise DerivativeNotActiveError(not_active)
 
-        for u in link_count:
-            row = locked_map.get(u)
-            if row is not None and u not in safe_active:
-                raise DerivativeNotActiveError([u])
+        for derivative_uuid in link_counts:
+            derivative_row = locked_map.get(derivative_uuid)
+            if derivative_row is not None and derivative_uuid not in active:
+                raise DerivativeNotActiveError([derivative_uuid])
 
     @staticmethod
     def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
