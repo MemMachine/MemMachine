@@ -243,15 +243,14 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             for derivative_uuid in derivative_uuids:
                 link_counts[derivative_uuid] += 1
 
-        all_derivative_uuids = set(link_counts.keys()) | active
+        new_derivative_uuids = set(link_counts.keys()) - active
 
         async with self._create_session() as session, session.begin():
-            locked_rows = await self._lock_derivatives(session, all_derivative_uuids)
-            locked_map = {row.uuid: row for row in locked_rows}
+            # Only lock/fetch derivatives declared as active — skip new ones.
+            if active:
+                locked_rows = await self._lock_derivatives(session, active)
+                self._validate_active_derivatives(active, locked_rows)
 
-            self._validate_derivatives(active, link_counts, locked_map)
-
-            new_derivative_uuids = set(link_counts.keys()) - active
             await self._insert_links(
                 session,
                 partition_key,
@@ -904,33 +903,21 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         return props_map
 
     @staticmethod
-    def _validate_derivatives(
+    def _validate_active_derivatives(
         active: Iterable[UUID],
-        link_counts: Mapping[UUID, int],
-        locked_map: Mapping[UUID, DerivativeRow],
+        existing: Iterable[DerivativeRow],
     ) -> None:
-        """
-        Validate derivative states.
-
-        - Every UUID in `active` must exist and be active.
-        - Every UUID in `link_count` that already exists in the DB must
-          appear in `active_set` (caller must acknowledge existing derivatives).
-        """
+        """Validate that every UUID in `active` exists and is in ACTIVE state based on existing."""
         active = set(active)
-
-        not_active: list[UUID] = []
-        for derivative_uuid in active:
-            derivative_row = locked_map.get(derivative_uuid)
-            if derivative_row is None or derivative_row.state == DerivativeState.PURGING:
-                not_active.append(derivative_uuid)
-
+        existing_map = {row.uuid: row for row in existing}
+        not_active = {
+            derivative_uuid
+            for derivative_uuid in active
+            if (row := existing_map.get(derivative_uuid)) is None
+            or row.state == DerivativeState.PURGING
+        }
         if not_active:
             raise DerivativeNotActiveError(not_active)
-
-        for derivative_uuid in link_counts:
-            derivative_row = locked_map.get(derivative_uuid)
-            if derivative_row is not None and derivative_uuid not in active:
-                raise DerivativeNotActiveError([derivative_uuid])
 
     @staticmethod
     def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:

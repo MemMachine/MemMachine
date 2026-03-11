@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.filter.filter_parser import Comparison
@@ -170,7 +171,7 @@ async def test_register_rejects_existing_derivative_not_declared_active(
     await linker.register_segments(PARTITION_KEY, {seg1: [deriv]})
 
     seg2 = _seg(ts_offset_seconds=1)
-    with pytest.raises(DerivativeNotActiveError):
+    with pytest.raises(IntegrityError):
         await linker.register_segments(PARTITION_KEY, {seg2: [deriv]})
 
 
