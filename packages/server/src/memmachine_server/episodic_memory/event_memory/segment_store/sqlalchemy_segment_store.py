@@ -23,6 +23,7 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    literal,
     or_,
     select,
     tuple_,
@@ -87,12 +88,14 @@ class SegmentRow(BaseSegmentLinker):
 
     partition_key = mapped_column(String, nullable=False)
 
-    uuid = mapped_column(Uuid, primary_key=True)
-    episode_uuid = mapped_column(Uuid, nullable=False)
-    block = mapped_column(Integer, nullable=False)
-    index = mapped_column(Integer, nullable=False)
-    timestamp = mapped_column(DateTime(timezone=True), nullable=False)
-    content = mapped_column(_JSON_AUTO, nullable=False)
+    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    episode_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
+    block: MappedColumn[int] = mapped_column(Integer, nullable=False)
+    index: MappedColumn[int] = mapped_column(Integer, nullable=False)
+    timestamp: MappedColumn[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    content: MappedColumn[Content] = mapped_column(_JSON_AUTO, nullable=False)
 
     __table_args__ = (
         Index(
@@ -121,12 +124,14 @@ class SegmentPropertyRow(BaseSegmentLinker):
         ForeignKey("segment_linker_segments.uuid", ondelete="CASCADE"),
         primary_key=True,
     )
-    key = mapped_column(String, primary_key=True)
-    value_bool = mapped_column(Boolean, nullable=True)
-    value_int = mapped_column(Integer, nullable=True)
-    value_float = mapped_column(Float, nullable=True)
-    value_str = mapped_column(String, nullable=True)
-    value_datetime = mapped_column(DateTime(timezone=True), nullable=True)
+    key: MappedColumn[str] = mapped_column(String, primary_key=True)
+    value_bool: MappedColumn[bool] = mapped_column(Boolean, nullable=True)
+    value_int: MappedColumn[int] = mapped_column(Integer, nullable=True)
+    value_float: MappedColumn[float] = mapped_column(Float, nullable=True)
+    value_str: MappedColumn[str] = mapped_column(String, nullable=True)
+    value_datetime: MappedColumn[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index(
@@ -183,9 +188,9 @@ class DerivativeRow(BaseSegmentLinker):
 
     __tablename__ = "segment_linker_derivatives"
 
-    uuid = mapped_column(Uuid, primary_key=True)
-    state = mapped_column(String(1), nullable=False)
-    ref_count = mapped_column(Integer, nullable=False, default=0)
+    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    state: MappedColumn[str] = mapped_column(String(1), nullable=False)
+    ref_count: MappedColumn[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         Index("segment_linker_derivatives__state_ref_count", "state", "ref_count"),
@@ -242,7 +247,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
         async with self._create_session() as session, session.begin():
             locked_rows = await self._lock_derivatives(session, all_derivative_uuids)
-            locked_map = {r.uuid: r for r in locked_rows}
+            locked_map = {row.uuid: row for row in locked_rows}
 
             self._validate_derivatives(active, link_counts, locked_map)
 
@@ -372,7 +377,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             segment_rows = (
                 await session.execute(get_segments_by_derivatives_statement)
             ).all()
-            segment_uuids = {segment_row.uuid for _, segment_row in segment_rows}
+            segment_uuids: set[UUID] = {
+                segment_row.uuid for _, segment_row in segment_rows
+            }
             properties_by_segments = await self._load_properties_by_segments(
                 session, segment_uuids
             )
@@ -521,7 +528,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             segment_uuid_rows = (
                 await session.execute(get_segment_uuids_statement)
             ).all()
-            segment_uuids = [segment_uuid for (segment_uuid,) in segment_uuid_rows]
+            segment_uuids: list[UUID] = [
+                segment_uuid for (segment_uuid,) in segment_uuid_rows
+            ]
             if not segment_uuids:
                 return
 
@@ -537,7 +546,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             segment_uuid_rows = (
                 await session.execute(get_segment_uuids_statement)
             ).all()
-            segment_uuids = [segment_uuid for (segment_uuid,) in segment_uuid_rows]
+            segment_uuids: list[UUID] = [
+                segment_uuid for (segment_uuid,) in segment_uuid_rows
+            ]
             if not segment_uuids:
                 return
 
@@ -554,7 +565,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 .distinct()
             )
         ).all()
-        derivative_uuids = [derivative_uuid for (derivative_uuid,) in derivative_rows]
+        derivative_uuids: list[UUID] = [
+            derivative_uuid for (derivative_uuid,) in derivative_rows
+        ]
 
         if derivative_uuids:
             await self._lock_derivatives(session, derivative_uuids)
@@ -568,7 +581,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             extra_ref_counts_rows = (
                 await session.execute(extra_ref_counts_statement)
             ).all()
-            deltas_by_derivatives = {
+            deltas_by_derivatives: dict[UUID, int] = {
                 derivative_uuid: -extra_ref_count
                 for derivative_uuid, extra_ref_count in extra_ref_counts_rows
             }
@@ -611,37 +624,37 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def mark_orphaned_derivatives_for_purging(
         self, potential_orphan_uuids: Iterable[UUID]
     ) -> Iterable[UUID]:
-        uuid_list = sorted(potential_orphan_uuids)
-        if not uuid_list:
+        potential_orphan_uuids = sorted(set(potential_orphan_uuids))
+        if not potential_orphan_uuids:
             return []
 
         async with self._create_session() as session, session.begin():
-            # Lock candidates that are still orphaned
-            stmt = (
+            # Lock candidates that are still orphaned.
+            lock_statement = (
                 select(DerivativeRow.uuid)
                 .where(
-                    DerivativeRow.uuid.in_(uuid_list),
+                    DerivativeRow.uuid.in_(potential_orphan_uuids),
                     DerivativeRow.state == DerivativeState.ACTIVE,
                     DerivativeRow.ref_count == 0,
                 )
                 .order_by(DerivativeRow.uuid)
                 .with_for_update()
             )
-            result = await session.execute(stmt)
-            confirmed = [r[0] for r in result.all()]
+            locked_rows = (await session.execute(lock_statement)).all()
+            orphan_uuids = [derivative_uuid for (derivative_uuid,) in locked_rows]
 
-            if confirmed:
+            if orphan_uuids:
                 await session.execute(
                     update(DerivativeRow)
-                    .where(DerivativeRow.uuid.in_(confirmed))
+                    .where(DerivativeRow.uuid.in_(orphan_uuids))
                     .values(state=DerivativeState.PURGING)
                 )
 
-            return confirmed
+            return orphan_uuids
 
     @override
     async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
-        derivative_uuids = list(derivative_uuids)
+        derivative_uuids = set(derivative_uuids)
         if not derivative_uuids:
             return
 
@@ -785,10 +798,10 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
         for seed_uuid, seed in seed_rows.items():
             seed_val = tuple_(
-                seed.timestamp,
-                seed.episode_uuid,
-                seed.block,
-                seed.index,
+                literal(seed.timestamp),
+                literal(seed.episode_uuid),
+                literal(seed.block),
+                literal(seed.index),
             )
 
             backward: list[SegmentRow] = []
