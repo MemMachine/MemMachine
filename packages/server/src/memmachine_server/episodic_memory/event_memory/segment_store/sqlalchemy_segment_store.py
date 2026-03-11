@@ -239,9 +239,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         all_derivative_uuids = set(link_counts.keys()) | active
 
         async with self._create_session() as session, session.begin():
-            locked_rows = await self._lock_derivatives(
-                session, sorted(all_derivative_uuids)
-            )
+            locked_rows = await self._lock_derivatives(session, all_derivative_uuids)
             locked_map = {r.uuid: r for r in locked_rows}
 
             self._validate_derivatives(active, link_counts, locked_map)
@@ -310,7 +308,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             {
                 "segment_uuid": segment.uuid,
                 "key": property_key,
-                _property_type_column_name(type(property_value)): property_value,
+                SQLAlchemySegmentLinker._property_type_column_name(
+                    type(property_value)
+                ): property_value,
             }
             for segment in links
             for property_key, property_value in segment.properties.items()
@@ -343,7 +343,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if not derivative_uuids:
             return {}
 
-        statement = (
+        get_segments_by_derivatives_statement = (
             select(LinkRow.derivative_uuid, SegmentRow)
             .join(LinkRow, LinkRow.segment_uuid == SegmentRow.uuid)
             .where(
@@ -359,22 +359,25 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         )
 
         if property_filter is not None:
-            statement = statement.where(
-                SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+            get_segments_by_derivatives_statement = (
+                get_segments_by_derivatives_statement.where(
+                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+                )
             )
 
         async with self._create_session() as session:
-            result = await session.execute(statement)
-            rows = result.all()
-            segment_uuids = {segment_row.uuid for _, segment_row in rows}
+            segment_rows = (
+                await session.execute(get_segments_by_derivatives_statement)
+            ).all()
+            segment_uuids = {segment_row.uuid for _, segment_row in segment_rows}
             properties_by_segments = await self._load_properties_by_segments(
                 session, segment_uuids
             )
 
         # Rows arrive sorted from DB; PK (segment_uuid, derivative_uuid) guarantees no duplicates.
         segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
-        for derivative_uuid, segment_row in rows:
-            segment = _segment_from_segment_row(
+        for derivative_uuid, segment_row in segment_rows:
+            segment = SQLAlchemySegmentLinker._segment_from_segment_row(
                 segment_row, properties_by_segments[segment_row.uuid]
             )
             segments_by_derivatives[derivative_uuid].append(segment)
@@ -425,7 +428,11 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                     session, list(seed_rows.keys())
                 )
                 return {
-                    u: [_segment_from_segment_row(r, props.get(u, {}))]
+                    u: [
+                        SQLAlchemySegmentLinker._segment_from_segment_row(
+                            r, props.get(u, {})
+                        )
+                    ]
                     for u, r in seed_rows.items()
                 }
 
@@ -468,17 +475,28 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 bw, fw = ctx.get(seed_uuid, ([], []))
                 segments = (
                     [
-                        _segment_from_segment_row(r, props.get(r.uuid, {}))
+                        SQLAlchemySegmentLinker._segment_from_segment_row(
+                            r, props.get(r.uuid, {})
+                        )
                         for r in reversed(bw)
                     ]
-                    + [_segment_from_segment_row(seed_row, props.get(seed_uuid, {}))]
-                    + [_segment_from_segment_row(r, props.get(r.uuid, {})) for r in fw]
+                    + [
+                        SQLAlchemySegmentLinker._segment_from_segment_row(
+                            seed_row, props.get(seed_uuid, {})
+                        )
+                    ]
+                    + [
+                        SQLAlchemySegmentLinker._segment_from_segment_row(
+                            r, props.get(r.uuid, {})
+                        )
+                        for r in fw
+                    ]
                 )
                 result[seed_uuid] = segments
 
             return result
 
-    # -- delete --------------------------------------------------------------
+    # Deletion
 
     async def delete_segments_by_episodes(
         self,
@@ -489,48 +507,84 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if not episode_uuids:
             return
 
+        get_segment_uuids_statement = select(SegmentRow.uuid).where(
+            SegmentRow.partition_key == partition_key,
+            SegmentRow.episode_uuid.in_(episode_uuids),
+        )
+
         async with self._create_session() as session, session.begin():
-            # Find affected segment UUIDs
-            seg_result = await session.execute(
-                select(SegmentRow.uuid).where(
-                    SegmentRow.partition_key == partition_key,
-                    SegmentRow.episode_uuid.in_(episode_uuids),
-                )
-            )
-            seg_uuids = [r[0] for r in seg_result.all()]
-            if not seg_uuids:
+            segment_uuid_rows = (
+                await session.execute(get_segment_uuids_statement)
+            ).all()
+            segment_uuids = [segment_uuid for (segment_uuid,) in segment_uuid_rows]
+            if not segment_uuids:
                 return
 
-            await self._delete_segments_and_update_ref_counts(session, seg_uuids)
-
-            # Delete segments (cascades to properties via FK)
-            await session.execute(
-                delete(SegmentRow).where(SegmentRow.uuid.in_(seg_uuids))
-            )
+            await self._delete_segments(session, segment_uuids)
 
     async def delete_all_segments(self, partition_key: str) -> None:
+        get_segment_uuids_statement = select(SegmentRow.uuid).where(
+            SegmentRow.partition_key == partition_key
+        )
+
         async with self._create_session() as session, session.begin():
-            # Find affected segment UUIDs
-            seg_result = await session.execute(
-                select(SegmentRow.uuid).where(
-                    SegmentRow.partition_key == partition_key,
-                )
-            )
-            seg_uuids = [r[0] for r in seg_result.all()]
-            if not seg_uuids:
+            segment_uuid_rows = (
+                await session.execute(get_segment_uuids_statement)
+            ).all()
+            segment_uuids = [segment_uuid for (segment_uuid,) in segment_uuid_rows]
+            if not segment_uuids:
                 return
 
-            await self._delete_segments_and_update_ref_counts(session, seg_uuids)
+            await self._delete_segments(session, segment_uuids)
 
-            # Delete segments
+    async def _delete_segments(
+        self, session: AsyncSession, segment_uuids: Iterable[UUID]
+    ) -> None:
+        """Delete segments."""
+        derivative_rows = (
             await session.execute(
-                delete(SegmentRow).where(SegmentRow.uuid.in_(seg_uuids))
+                select(LinkRow.derivative_uuid)
+                .where(LinkRow.segment_uuid.in_(segment_uuids))
+                .distinct()
+            )
+        ).all()
+        derivative_uuids = [derivative_uuid for (derivative_uuid,) in derivative_rows]
+
+        if derivative_uuids:
+            await self._lock_derivatives(session, derivative_uuids)
+
+            # Get ref count deltas by derivatives.
+            delta_statement = (
+                select(LinkRow.derivative_uuid, -func.count())
+                .where(LinkRow.segment_uuid.in_(segment_uuids))
+                .group_by(LinkRow.derivative_uuid)
             )
 
-    # -- orphan management ---------------------------------------------------
+            delta_rows = (await session.execute(delta_statement)).all()
+            deltas_by_derivatives = {derivative_uuid: delta for derivative_uuid, delta in delta_rows}
+
+            # Delete links.
+            await session.execute(
+                delete(LinkRow).where(LinkRow.segment_uuid.in_(segment_uuids))
+            )
+
+            # Decrement ref_counts.
+            for derivative_uuid, delta in deltas_by_derivatives.items():
+                await session.execute(
+                    update(DerivativeRow)
+                    .where(DerivativeRow.uuid == derivative_uuid)
+                    .values(ref_count=DerivativeRow.ref_count + delta)
+                )
+
+        # Delete segments (properties cascade via FK ondelete="CASCADE").
+        await session.execute(
+            delete(SegmentRow).where(SegmentRow.uuid.in_(segment_uuids))
+        )
+
+    # Garbage collection
 
     async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
-        stmt = (
+        get_orphans_statement = (
             select(DerivativeRow.uuid)
             .where(
                 DerivativeRow.state == DerivativeState.ACTIVE,
@@ -539,8 +593,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             .limit(limit)
         )
         async with self._create_session() as session:
-            result = await session.execute(stmt)
-            return [r[0] for r in result.all()]
+            orphan_rows = (await session.execute(get_orphans_statement)).all()
+            return [orphan for (orphan,) in orphan_rows]
 
     async def mark_orphaned_derivatives_for_purging(
         self, potential_orphan_uuids: Iterable[UUID]
@@ -781,79 +835,47 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     # -- internal helpers ----------------------------------------------------
 
     async def _lock_derivatives(
-        self, session: AsyncSession, sorted_uuids: list[UUID]
+        self, session: AsyncSession, derivative_uuids: Iterable[UUID]
     ) -> list[DerivativeRow]:
         """Lock derivative rows in sorted UUID order. Falls back to plain SELECT on SQLite."""
+        sorted_uuids = sorted(set(derivative_uuids))
         if not sorted_uuids:
             return []
 
-        stmt = (
+        lock_statement = (
             select(DerivativeRow)
             .where(DerivativeRow.uuid.in_(sorted_uuids))
             .order_by(DerivativeRow.uuid)
         )
 
         # SQLite doesn't support FOR UPDATE
-        bind = session.bind
-        dialect = bind.dialect.name if bind is not None else ""
+        dialect = session.bind.dialect.name
         if dialect != "sqlite":
-            stmt = stmt.with_for_update()
+            lock_statement = lock_statement.with_for_update()
 
-        result = await session.execute(stmt)
+        result = await session.execute(lock_statement)
         return list(result.scalars().all())
 
-    async def _delete_segments_and_update_ref_counts(
-        self, session: AsyncSession, seg_uuids: list[UUID]
-    ) -> None:
-        """Find affected derivatives, lock them, decrement ref_counts, and delete links."""
-        # Find affected derivative UUIDs
-        deriv_result = await session.execute(
-            select(LinkRow.derivative_uuid)
-            .where(LinkRow.segment_uuid.in_(seg_uuids))
-            .distinct()
-        )
-        deriv_uuids = [r[0] for r in deriv_result.all()]
-        if not deriv_uuids:
-            # No links — just delete properties
-            await session.execute(
-                delete(SegmentPropertyRow).where(
-                    SegmentPropertyRow.segment_uuid.in_(seg_uuids)
-                )
-            )
-            return
+    async def _load_properties_by_segments(
+        self,
+        session: AsyncSession,
+        segment_uuids: Iterable[UUID],
+    ) -> dict[UUID, dict[str, PropertyValue]]:
+        """Load properties for a batch of segment UUIDs."""
+        segment_uuids = list(segment_uuids)
 
-        # Lock derivatives in sorted order
-        await self._lock_derivatives(session, sorted(deriv_uuids))
+        if not segment_uuids:
+            return {}
 
-        # Count links per derivative that will be removed
-        count_result = await session.execute(
-            select(LinkRow.derivative_uuid, func.count())
-            .where(LinkRow.segment_uuid.in_(seg_uuids))
-            .group_by(LinkRow.derivative_uuid)
-        )
-        counts = {r[0]: r[1] for r in count_result.all()}
-
-        # Delete links
-        await session.execute(
-            delete(LinkRow).where(LinkRow.segment_uuid.in_(seg_uuids))
-        )
-
-        # Delete properties
-        await session.execute(
-            delete(SegmentPropertyRow).where(
-                SegmentPropertyRow.segment_uuid.in_(seg_uuids)
+        result = await session.execute(
+            select(SegmentPropertyRow).where(
+                SegmentPropertyRow.segment_uuid.in_(segment_uuids)
             )
         )
-
-        # Decrement ref_counts
-        for deriv_uuid, count in counts.items():
-            await session.execute(
-                update(DerivativeRow)
-                .where(DerivativeRow.uuid == deriv_uuid)
-                .values(ref_count=DerivativeRow.ref_count - count)
-            )
-
-    #######################################
+        props_map: dict[UUID, dict[str, PropertyValue]] = {u: {} for u in segment_uuids}
+        for row in result.scalars().all():
+            props_map[row.segment_uuid][row.key] = _coalesce_property_value(row)
+        return props_map
 
     @staticmethod
     def _validate_derivatives(
@@ -938,61 +960,40 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
-    async def _load_properties_by_segments(
-        self,
-        session: AsyncSession,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, dict[str, PropertyValue]]:
-        """Load properties for a batch of segment UUIDs."""
-        segment_uuids = list(segment_uuids)
+    @staticmethod
+    def _property_type_column_name(property_type: type[PropertyValue]) -> str:
+        """Return the column name for the type of a given property value."""
+        if property_type is bool:
+            return "value_bool"
+        if property_type is int:
+            return "value_int"
+        if property_type is float:
+            return "value_float"
+        if property_type is str:
+            return "value_str"
+        if property_type is datetime:
+            return "value_datetime"
+        raise ValueError(f"Unsupported property value type: {property_type!r}")
 
-        if not segment_uuids:
-            return {}
-
-        result = await session.execute(
-            select(SegmentPropertyRow).where(
-                SegmentPropertyRow.segment_uuid.in_(segment_uuids)
-            )
+    @staticmethod
+    def _segment_from_segment_row(
+        row: SegmentRow,
+        properties: dict[str, PropertyValue],
+    ) -> Segment:
+        """Convert a SegmentRow and its properties into a Segment."""
+        content = _ContentAdapter.validate_python(row.content)
+        return Segment(
+            uuid=row.uuid,
+            episode_uuid=row.episode_uuid,
+            block=row.block,
+            index=row.index,
+            timestamp=row.timestamp,
+            content=content,
+            properties=properties,
         )
-        props_map: dict[UUID, dict[str, PropertyValue]] = {u: {} for u in segment_uuids}
-        for row in result.scalars().all():
-            props_map[row.segment_uuid][row.key] = _coalesce_property_value(row)
-        return props_map
 
 
 ##########################################
-
-
-def _segment_from_segment_row(
-    row: SegmentRow,
-    properties: dict[str, PropertyValue],
-) -> Segment:
-    """Convert a SegmentRow and its properties into a Segment."""
-    content = _ContentAdapter.validate_python(row.content)
-    return Segment(
-        uuid=row.uuid,
-        episode_uuid=row.episode_uuid,
-        block=row.block,
-        index=row.index,
-        timestamp=row.timestamp,
-        content=content,
-        properties=properties,
-    )
-
-
-def _property_type_column_name(property_type: type[PropertyValue]) -> str:
-    """Return the column name for the type of a given property value."""
-    if property_type is bool:
-        return "value_bool"
-    if property_type is int:
-        return "value_int"
-    if property_type is float:
-        return "value_float"
-    if property_type is str:
-        return "value_str"
-    if property_type is datetime:
-        return "value_datetime"
-    raise ValueError(f"Unsupported property value type: {property_type!r}")
 
 
 def _coalesce_property_value(row: SegmentPropertyRow) -> PropertyValue:
