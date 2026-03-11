@@ -1,3 +1,4 @@
+# ruff: noqa: C901
 """
 NebulaGraph Enterprise implementation of VectorGraphStore interface.
 
