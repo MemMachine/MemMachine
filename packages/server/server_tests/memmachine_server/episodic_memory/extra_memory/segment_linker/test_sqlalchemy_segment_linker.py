@@ -449,10 +449,11 @@ async def test_contexts_session_isolation(linker: SQLAlchemySegmentLinker) -> No
     s_other = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0)
     s_seed = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1)
     s_after = _seg(episode_uuid=ep, index=2, ts_offset_seconds=2)
+    deriv_other = uuid4()
     deriv = uuid4()
-    await linker.register_segments("other-session", {s_other: [deriv]})
+    await linker.register_segments("other-session", {s_other: [deriv_other]})
     await linker.register_segments(
-        PARTITION_KEY, {s_seed: [deriv], s_after: [deriv]}, active=[deriv]
+        PARTITION_KEY, {s_seed: [deriv], s_after: [deriv]}
     )
 
     result = await linker.get_segment_contexts(
@@ -516,7 +517,7 @@ async def test_delete_by_episodes_decrements_ref_count(
 
     await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
 
-    orphans = list(await linker.get_orphaned_derivatives())
+    orphans = list(await linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
 
@@ -559,22 +560,24 @@ async def test_orphan_lifecycle(linker: SQLAlchemySegmentLinker) -> None:
     await linker.register_segments(PARTITION_KEY, {seg: [deriv]})
 
     # No orphans yet
-    assert list(await linker.get_orphaned_derivatives()) == []
+    assert list(await linker.get_orphaned_derivatives(PARTITION_KEY)) == []
 
     # Delete segment -> derivative becomes orphaned
     await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
-    orphans = list(await linker.get_orphaned_derivatives())
+    orphans = list(await linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
     # Mark for purging
-    marked = list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+    marked = list(
+        await linker.mark_orphaned_derivatives_for_purging(PARTITION_KEY, [deriv])
+    )
     assert deriv in marked
 
     # No longer shows as orphaned (state=P)
-    assert list(await linker.get_orphaned_derivatives()) == []
+    assert list(await linker.get_orphaned_derivatives(PARTITION_KEY)) == []
 
     # Purge
-    await linker.purge_derivatives([deriv])
+    await linker.purge_derivatives(PARTITION_KEY, [deriv])
 
     # Registering against purged derivative should fail (with active check)
     seg2 = _seg()
@@ -590,13 +593,15 @@ async def test_mark_orphaned_ignores_non_orphans(
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {seg: [deriv]})
 
-    marked = list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+    marked = list(
+        await linker.mark_orphaned_derivatives_for_purging(PARTITION_KEY, [deriv])
+    )
     assert marked == []
 
 
 @pytest.mark.asyncio
 async def test_purge_empty(linker: SQLAlchemySegmentLinker) -> None:
-    await linker.purge_derivatives([])
+    await linker.purge_derivatives(PARTITION_KEY, [])
 
 
 # ===================================================================
@@ -784,7 +789,7 @@ async def test_concurrent_orphan_mark_does_not_crash(
     await linker.register_segments(PARTITION_KEY, {seg: [deriv]})
     await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
 
-    orphans = list(await linker.get_orphaned_derivatives())
+    orphans = list(await linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
     errors: list[Exception] = []
@@ -792,7 +797,11 @@ async def test_concurrent_orphan_mark_does_not_crash(
     async def mark() -> list[UUID]:
         try:
             linker = await _make_linker(engine)
-            return list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+            return list(
+                await linker.mark_orphaned_derivatives_for_purging(
+                    PARTITION_KEY, [deriv]
+                )
+            )
         except Exception as e:
             errors.append(e)
             return []
@@ -828,7 +837,7 @@ async def test_concurrent_delete_overlapping_episodes_shared_derivative(
     await asyncio.gather(delete_ep(ep1), delete_ep(ep2))
 
     # Derivative should be orphaned (ref_count=0).
-    orphans = list(await linker.get_orphaned_derivatives())
+    orphans = list(await linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
 
@@ -851,12 +860,14 @@ async def test_pg_concurrent_orphan_mark_exactly_once(
     await pg_linker.register_segments(PARTITION_KEY, {seg: [deriv]})
     await pg_linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
 
-    orphans = list(await pg_linker.get_orphaned_derivatives())
+    orphans = list(await pg_linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
     async def mark() -> list[UUID]:
         linker = await _make_linker(engine)
-        return list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+        return list(
+            await linker.mark_orphaned_derivatives_for_purging(PARTITION_KEY, [deriv])
+        )
 
     results = await asyncio.gather(mark(), mark())
     all_marked = [uuid for result in results for uuid in result]
@@ -959,7 +970,7 @@ async def test_pg_orphan_relink_race(
 
     # Orphan it.
     await pg_linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
-    orphans = list(await pg_linker.get_orphaned_derivatives())
+    orphans = list(await pg_linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
     # Now, concurrently re-link and try to mark for purging.
@@ -977,7 +988,9 @@ async def test_pg_orphan_relink_race(
         # Wait a tiny bit to let relinker likely win, but it's a race so either outcome is valid.
         await asyncio.sleep(0.01)
         linker = await _make_linker(engine)
-        return list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+        return list(
+            await linker.mark_orphaned_derivatives_for_purging(PARTITION_KEY, [deriv])
+        )
 
     _, marked = await asyncio.gather(relinker(), marker())
 
@@ -1024,7 +1037,7 @@ async def test_pg_concurrent_mass_deletes(
     result = await pg_linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
     assert deriv not in result
 
-    orphans = list(await pg_linker.get_orphaned_derivatives())
+    orphans = list(await pg_linker.get_orphaned_derivatives(PARTITION_KEY))
     assert deriv in orphans
 
 
@@ -1044,7 +1057,11 @@ async def test_pg_concurrent_purge_and_register_new_derivative(
     old_deriv = uuid4()
     await pg_linker.register_segments(PARTITION_KEY, {seg: [old_deriv]})
     await pg_linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
-    marked = list(await pg_linker.mark_orphaned_derivatives_for_purging([old_deriv]))
+    marked = list(
+        await pg_linker.mark_orphaned_derivatives_for_purging(
+            PARTITION_KEY, [old_deriv]
+        )
+    )
     assert old_deriv in marked
 
     errors: list[Exception] = []
@@ -1052,7 +1069,7 @@ async def test_pg_concurrent_purge_and_register_new_derivative(
     async def purger() -> None:
         try:
             linker = await _make_linker(engine)
-            await linker.purge_derivatives([old_deriv])
+            await linker.purge_derivatives(PARTITION_KEY, [old_deriv])
         except Exception as e:
             errors.append(e)
 

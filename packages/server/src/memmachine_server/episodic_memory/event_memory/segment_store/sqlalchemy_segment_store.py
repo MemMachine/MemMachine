@@ -158,12 +158,19 @@ class DerivativeRow(BaseSegmentLinker):
 
     __tablename__ = "segment_linker_derivatives"
 
+    partition_key: MappedColumn[str] = mapped_column(String, nullable=False)
+
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     state: MappedColumn[str] = mapped_column(String(1), nullable=False)
     ref_count: MappedColumn[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
-        Index("segment_linker_derivatives__state_ref_count", "state", "ref_count"),
+        Index(
+            "segment_linker_derivatives__pk_state_ref_count",
+            "partition_key",
+            "state",
+            "ref_count",
+        ),
     )
 
 
@@ -219,7 +226,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             # Only lock/fetch derivatives declared as active — skip new ones.
             if active:
                 locked_rows = await self._lock_derivatives(session, active)
-                self._validate_active_derivatives(active, locked_rows)
+                self._validate_active_derivatives(partition_key, active, locked_rows)
 
             await self._insert_links(
                 session,
@@ -245,6 +252,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 [
                     {
                         "uuid": derivative_uuid,
+                        "partition_key": partition_key,
                         "state": DerivativeState.ACTIVE,
                         "ref_count": link_counts[derivative_uuid],
                     }
@@ -768,10 +776,13 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     # Garbage collection
 
     @override
-    async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
+    async def get_orphaned_derivatives(
+        self, partition_key: str, limit: int = 1000
+    ) -> Iterable[UUID]:
         get_orphans_statement = (
             select(DerivativeRow.uuid)
             .where(
+                DerivativeRow.partition_key == partition_key,
                 DerivativeRow.state == DerivativeState.ACTIVE,
                 DerivativeRow.ref_count == 0,
             )
@@ -782,7 +793,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     @override
     async def mark_orphaned_derivatives_for_purging(
-        self, potential_orphan_uuids: Iterable[UUID]
+        self, partition_key: str, potential_orphan_uuids: Iterable[UUID]
     ) -> Iterable[UUID]:
         potential_orphan_uuids = sorted(set(potential_orphan_uuids))
         if not potential_orphan_uuids:
@@ -793,6 +804,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             lock_statement = (
                 select(DerivativeRow.uuid)
                 .where(
+                    DerivativeRow.partition_key == partition_key,
                     DerivativeRow.uuid.in_(potential_orphan_uuids),
                     DerivativeRow.state == DerivativeState.ACTIVE,
                     DerivativeRow.ref_count == 0,
@@ -812,7 +824,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             return orphan_uuids
 
     @override
-    async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
+    async def purge_derivatives(
+        self, partition_key: str, derivative_uuids: Iterable[UUID]
+    ) -> None:
         derivative_uuids = set(derivative_uuids)
         if not derivative_uuids:
             return
@@ -820,6 +834,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         async with self._create_session() as session, session.begin():
             await session.execute(
                 delete(DerivativeRow).where(
+                    DerivativeRow.partition_key == partition_key,
                     DerivativeRow.uuid.in_(derivative_uuids),
                     DerivativeRow.state == DerivativeState.PURGING,
                 )
@@ -881,10 +896,11 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     @staticmethod
     def _validate_active_derivatives(
+        partition_key: str,
         active: Iterable[UUID],
         existing: Iterable[DerivativeRow],
     ) -> None:
-        """Validate that every UUID in `active` exists and is in ACTIVE state based on existing."""
+        """Validate that every UUID in `active` exists, is in ACTIVE state, and belongs to the partition."""
         active = set(active)
         existing_map = {row.uuid: row for row in existing}
         not_active = {
@@ -892,6 +908,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             for derivative_uuid in active
             if (row := existing_map.get(derivative_uuid)) is None
             or row.state == DerivativeState.PURGING
+            or row.partition_key != partition_key
         }
         if not_active:
             raise DerivativeNotActiveError(not_active)
