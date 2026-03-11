@@ -2,10 +2,10 @@
 
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from enum import StrEnum
-from typing import override
+from typing import ClassVar, override
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
@@ -131,34 +131,6 @@ class SegmentPropertyRow(BaseSegmentLinker):
     value_str: MappedColumn[str] = mapped_column(String, nullable=True)
     value_datetime: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
-    )
-
-    __table_args__ = (
-        Index(
-            "segment_linker_segment_properties__key_bool",
-            "key",
-            "value_bool",
-        ),
-        Index(
-            "segment_linker_segment_properties__key_int",
-            "key",
-            "value_int",
-        ),
-        Index(
-            "segment_linker_segment_properties__key_float",
-            "key",
-            "value_float",
-        ),
-        Index(
-            "segment_linker_segment_properties__key_str",
-            "key",
-            "value_str",
-        ),
-        Index(
-            "segment_linker_segment_properties__key_datetime",
-            "key",
-            "value_datetime",
-        ),
     )
 
 
@@ -616,8 +588,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             .limit(limit)
         )
         async with self._create_session() as session:
-            orphan_rows = (await session.execute(get_orphans_statement)).all()
-            return [orphan for (orphan,) in orphan_rows]
+            return list((await session.execute(get_orphans_statement)).scalars().all())
 
     @override
     async def mark_orphaned_derivatives_for_purging(
@@ -639,8 +610,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 .order_by(DerivativeRow.uuid)
                 .with_for_update()
             )
-            locked_rows = (await session.execute(lock_statement)).all()
-            orphan_uuids = [derivative_uuid for (derivative_uuid,) in locked_rows]
+            orphan_uuids = list((await session.execute(lock_statement)).scalars().all())
 
             if orphan_uuids:
                 await session.execute(
@@ -857,7 +827,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
         return result
 
-    # -- internal helpers ----------------------------------------------------
+    # Helpers
 
     async def _lock_derivatives(
         self, session: AsyncSession, derivative_uuids: Iterable[UUID]
@@ -887,20 +857,24 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         segment_uuids: Iterable[UUID],
     ) -> dict[UUID, dict[str, PropertyValue]]:
         """Load properties for a batch of segment UUIDs."""
-        segment_uuids = list(segment_uuids)
+        segment_uuids = set(segment_uuids)
 
         if not segment_uuids:
             return {}
 
-        result = await session.execute(
+        segment_property_results = await session.execute(
             select(SegmentPropertyRow).where(
                 SegmentPropertyRow.segment_uuid.in_(segment_uuids)
             )
         )
-        props_map: dict[UUID, dict[str, PropertyValue]] = {u: {} for u in segment_uuids}
-        for row in result.scalars().all():
-            props_map[row.segment_uuid][row.key] = _coalesce_property_value(row)
-        return props_map
+        properties_by_segments: dict[UUID, dict[str, PropertyValue]] = {
+            segment_uuid: {} for segment_uuid in segment_uuids
+        }
+        for segment_property_row in segment_property_results.scalars().all():
+            properties_by_segments[segment_property_row.segment_uuid][
+                segment_property_row.key
+            ] = SQLAlchemySegmentLinker._coalesce_property_value(segment_property_row)
+        return properties_by_segments
 
     @staticmethod
     def _validate_active_derivatives(
@@ -919,44 +893,73 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if not_active:
             raise DerivativeNotActiveError(not_active)
 
+    _COMPARISON_OPERATORS: ClassVar[
+        dict[
+            str,
+            Callable[
+                [InstrumentedAttribute[PropertyValue], PropertyValue],
+                ColumnElement[bool],
+            ],
+        ]
+    ] = {
+        "=": lambda column, value: column == value,
+        "!=": lambda column, value: column != value,
+        ">": lambda column, value: column > value,
+        "<": lambda column, value: column < value,
+        ">=": lambda column, value: column >= value,
+        "<=": lambda column, value: column <= value,
+    }
+
     @staticmethod
     def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
-        """Compile a FilterExpr into EXISTS subqueries against the properties table."""
+        """Compile a FilterExpr into a SQLAlchemy boolean expression."""
         if isinstance(expr, Comparison):
-            col = _value_column_element(expr.value)
-            sp = SegmentPropertyRow
-            cond = sp.segment_uuid == SegmentRow.uuid
-            cond = and_(cond, sp.key == expr.field)
-            op_map = {
-                "=": lambda c, v: c == v,
-                "!=": lambda c, v: c != v,
-                ">": lambda c, v: c > v,
-                "<": lambda c, v: c < v,
-                ">=": lambda c, v: c >= v,
-                "<=": lambda c, v: c <= v,
-            }
-            cond = and_(cond, op_map[expr.op](col, expr.value))
-            return select(1).select_from(sp.__table__).where(cond).exists()
+            value_column = SQLAlchemySegmentLinker._property_type_column_attribute(
+                type(expr.value)
+            )
+            comparison_op = SQLAlchemySegmentLinker._COMPARISON_OPERATORS[expr.op]
+            return (
+                select(1)
+                .select_from(SegmentPropertyRow)
+                .where(
+                    SegmentPropertyRow.segment_uuid == SegmentRow.uuid,
+                    SegmentPropertyRow.key == expr.field,
+                    comparison_op(value_column, expr.value),
+                )
+                .exists()
+            )
 
         if isinstance(expr, In):
-            # Determine column by first value type
-            if expr.values and isinstance(expr.values[0], int):
-                col = SegmentPropertyRow.value_int
-            else:
-                col = SegmentPropertyRow.value_str
-            sp = SegmentPropertyRow
-            cond = and_(
-                sp.segment_uuid == SegmentRow.uuid,
-                sp.key == expr.field,
-                col.in_(expr.values),
+            first_value = expr.values[0] if expr.values else None
+            value_column = (
+                SegmentPropertyRow.value_int
+                if isinstance(first_value, int)
+                else SegmentPropertyRow.value_str
             )
-            return select(1).select_from(sp.__table__).where(cond).exists()
+            return (
+                select(1)
+                .select_from(SegmentPropertyRow)
+                .where(
+                    SegmentPropertyRow.segment_uuid == SegmentRow.uuid,
+                    SegmentPropertyRow.key == expr.field,
+                    value_column.in_(expr.values),
+                )
+                .exists()
+            )
 
         if isinstance(expr, IsNull):
-            # Property is null = no property row exists for this key
-            sp = SegmentPropertyRow
-            cond = and_(sp.segment_uuid == SegmentRow.uuid, sp.key == expr.field)
-            return ~select(1).select_from(sp.__table__).where(cond).exists()
+            return ~(
+                select(1)
+                .select_from(SegmentPropertyRow)
+                .where(
+                    SegmentPropertyRow.segment_uuid == SegmentRow.uuid,
+                    SegmentPropertyRow.key == expr.field,
+                )
+                .exists()
+            )
+
+        if isinstance(expr, Not):
+            return ~SQLAlchemySegmentLinker._compile_property_filter(expr.expr)
 
         if isinstance(expr, And):
             return and_(
@@ -970,14 +973,28 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 SQLAlchemySegmentLinker._compile_property_filter(expr.right),
             )
 
-        if isinstance(expr, Not):
-            return ~SQLAlchemySegmentLinker._compile_property_filter(expr.expr)
-
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
     @staticmethod
+    def _property_type_column_attribute(
+        property_type: type[PropertyValue],
+    ) -> InstrumentedAttribute[PropertyValue]:
+        """Return the SQLAlchemy column attribute for a given property type."""
+        if property_type is bool:
+            return SegmentPropertyRow.value_bool
+        if property_type is int:
+            return SegmentPropertyRow.value_int
+        if property_type is float:
+            return SegmentPropertyRow.value_float
+        if property_type is str:
+            return SegmentPropertyRow.value_str
+        if property_type is datetime:
+            return SegmentPropertyRow.value_datetime
+        raise ValueError(f"Unsupported property value type: {property_type!r}")
+
+    @staticmethod
     def _property_type_column_name(property_type: type[PropertyValue]) -> str:
-        """Return the column name for the type of a given property value."""
+        """Return the column name for a given property type."""
         if property_type is bool:
             return "value_bool"
         if property_type is int:
@@ -989,6 +1006,21 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if property_type is datetime:
             return "value_datetime"
         raise ValueError(f"Unsupported property value type: {property_type!r}")
+
+    @staticmethod
+    def _coalesce_property_value(row: SegmentPropertyRow) -> PropertyValue:
+        """Read back whichever value_* column is non-null."""
+        if row.value_bool is not None:
+            return row.value_bool
+        if row.value_int is not None:
+            return row.value_int
+        if row.value_float is not None:
+            return row.value_float
+        if row.value_str is not None:
+            return row.value_str
+        if row.value_datetime is not None:
+            return row.value_datetime
+        raise ValueError(f"Property row for key={row.key!r} has no value set")
 
     @staticmethod
     def _segment_from_segment_row(
@@ -1006,34 +1038,3 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             content=content,
             properties=properties,
         )
-
-
-##########################################
-
-
-def _coalesce_property_value(row: SegmentPropertyRow) -> PropertyValue:
-    """Read back whichever value_* column is non-null."""
-    if row.value_bool is not None:
-        return row.value_bool
-    if row.value_int is not None:
-        return row.value_int
-    if row.value_float is not None:
-        return row.value_float
-    if row.value_str is not None:
-        return row.value_str
-    if row.value_datetime is not None:
-        return row.value_datetime
-    raise ValueError(f"Property row for key={row.key!r} has no value set")
-
-
-def _value_column_element(value: PropertyValue) -> InstrumentedAttribute[PropertyValue]:
-    """Return the ORM column element for a property value's type."""
-    if isinstance(value, bool):
-        return SegmentPropertyRow.value_bool
-    if isinstance(value, int):
-        return SegmentPropertyRow.value_int
-    if isinstance(value, float):
-        return SegmentPropertyRow.value_float
-    if isinstance(value, datetime):
-        return SegmentPropertyRow.value_datetime
-    return SegmentPropertyRow.value_str
