@@ -176,11 +176,15 @@ class SegmentLinker(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
+    async def get_orphaned_derivatives(
+        self, partition_key: str, limit: int = 1000
+    ) -> Iterable[UUID]:
         """
         Identify derivatives that are orphaned.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the derivatives belong.
             limit (int):
                 The maximum number of orphaned derivatives to return (default: 1000).
 
@@ -193,12 +197,14 @@ class SegmentLinker(ABC):
 
     @abstractmethod
     async def mark_orphaned_derivatives_for_purging(
-        self, potential_orphan_uuids: Iterable[UUID]
+        self, partition_key: str, potential_orphan_uuids: Iterable[UUID]
     ) -> Iterable[UUID]:
         """
         Transition derivatives from 'active' to 'purging' state if they are orphaned.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the derivatives belong.
             potential_orphan_uuids (Iterable[UUID]):
                 The UUIDs of potentially orphaned derivatives.
 
@@ -210,13 +216,17 @@ class SegmentLinker(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
+    async def purge_derivatives(
+        self, partition_key: str, derivative_uuids: Iterable[UUID]
+    ) -> None:
         """
         Physically remove derivatives from the segment linker.
 
         Should be called after the derivatives have been deleted from external systems.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the derivatives belong.
             derivative_uuids (Iterable[UUID]):
                 The UUIDs of the derivatives to purge.
 

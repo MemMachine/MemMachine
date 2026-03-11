@@ -65,6 +65,8 @@ class ExtraMemoryParams(BaseModel):
             Max code-point length for text chunking in segment creation (default: 2000).
         derivative_consolidation_threshold (float):
             Threshold for consolidating derivatives (default: 0.0, range: 0.0 to 1.0).
+        purge_interval (float | None):
+            Seconds between purge cycles. None disables periodic purging (default: None).
     """
 
     partition_key: str = Field(
@@ -99,6 +101,10 @@ class ExtraMemoryParams(BaseModel):
         None,
         description="Threshold for consolidating derivatives",
     )
+    purge_interval: float | None = Field(
+        None,
+        description="Seconds between purge cycles. None disables periodic purging.",
+    )
 
 
 class ExtraMemory:
@@ -124,6 +130,10 @@ class ExtraMemory:
         self._derivative_consolidation_threshold = (
             params.derivative_consolidation_threshold
         )
+
+        self._purge_interval = params.purge_interval
+        self._purge_task: asyncio.Task[None] | None = None
+        self._shutdown_event = asyncio.Event()
 
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=params.max_text_chunk_length,
@@ -162,6 +172,57 @@ class ExtraMemory:
             ],
             keep_separator="end",
         )
+
+    async def startup(self) -> None:
+        """Start the periodic purge loop if purge_interval is configured."""
+        if self._purge_interval is not None:
+            self._shutdown_event.clear()
+            self._purge_task = asyncio.create_task(self._purge_loop())
+
+    async def shutdown(self) -> None:
+        """Stop the periodic purge loop."""
+        if self._purge_task is not None:
+            self._shutdown_event.set()
+            await self._purge_task
+            self._purge_task = None
+
+    async def _purge_loop(self) -> None:
+        """Periodically purge orphaned derivatives."""
+        assert self._purge_interval is not None
+        while True:
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(), timeout=self._purge_interval
+                )
+            except TimeoutError:
+                pass
+            else:
+                # Shutdown event was set, so exit the loop.
+                return
+
+            try:
+                await self._purge_orphaned_derivatives()
+            except Exception:
+                logger.exception("Error during derivative purge cycle")
+
+    async def _purge_orphaned_derivatives(self) -> None:
+        """Run a single purge cycle: identify, mark, delete from collection, then remove."""
+        orphan_uuids = list(
+            await self._segment_linker.get_orphaned_derivatives(self._partition_key)
+        )
+        if not orphan_uuids:
+            return
+
+        marked_uuids = list(
+            await self._segment_linker.mark_orphaned_derivatives_for_purging(
+                self._partition_key, orphan_uuids
+            )
+        )
+        if not marked_uuids:
+            return
+
+        await self._collection.delete(record_uuids=marked_uuids)
+        await self._segment_linker.purge_derivatives(self._partition_key, marked_uuids)
 
     async def encode_episodes(
         self,
@@ -726,14 +787,12 @@ class ExtraMemory:
             partition_key=self._partition_key,
             episode_uuids=episode_uuids,
         )
-        # TODO: Add background job to delete records from collection based on reference counting. May belong to class instead of instance.
 
     async def forget_all_episodes(self) -> None:
         """Forget all episodes in this partition."""
         await self._segment_linker.delete_all_segments(
             partition_key=self._partition_key,
         )
-        # TODO: Add background job to delete records from collection based on reference counting. May belong to class instead of instance.
 
     @staticmethod
     def _unify_anchored_segment_contexts(
