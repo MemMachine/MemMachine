@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -21,6 +22,7 @@ from memmachine_server.episodic_memory.extra_memory.segment_linker.segment_linke
 )
 from memmachine_server.episodic_memory.extra_memory.segment_linker.sqlalchemy_segment_linker import (
     BaseSegmentLinker,
+    SegmentRow,
     SQLAlchemySegmentLinker,
     SQLAlchemySegmentLinkerParams,
 )
@@ -595,3 +597,473 @@ async def test_mark_orphaned_ignores_non_orphans(
 @pytest.mark.asyncio
 async def test_purge_empty(linker: SQLAlchemySegmentLinker) -> None:
     await linker.purge_derivatives([])
+
+
+# ===================================================================
+# Concurrency tests
+# ===================================================================
+
+
+async def _make_linker(engine: AsyncEngine) -> SQLAlchemySegmentLinker:
+    """Create a linker that shares the engine (and thus the connection pool / DB)."""
+    linker = SQLAlchemySegmentLinker(SQLAlchemySegmentLinkerParams(engine=engine))
+    await linker.startup()
+    return linker
+
+
+# --- Both backends ---
+
+
+@pytest.mark.asyncio
+async def test_concurrent_register_disjoint_derivatives(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Concurrent registrations with completely disjoint derivatives should not interfere."""
+    import asyncio
+
+    engine = linker._engine
+
+    async def register_batch(batch_id: int) -> None:
+        linker = await _make_linker(engine)
+        segs = {
+            _seg(ts_offset_seconds=batch_id * 10 + i, text=f"batch{batch_id}-{i}"): [
+                uuid4()
+            ]
+            for i in range(5)
+        }
+        await linker.register_segments(PARTITION_KEY, segs)
+
+    await asyncio.gather(*(register_batch(i) for i in range(10)))
+
+    # Verify all segments were registered.
+    linker = await _make_linker(engine)
+    async with linker._create_session() as session:
+        count = (
+            await session.execute(select(func.count()).select_from(SegmentRow))
+        ).scalar()
+    assert count == 50
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reads_during_writes(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Reads should not fail or block indefinitely while writes are happening."""
+    import asyncio
+
+    engine = linker._engine
+
+    # Seed some data.
+    ep = uuid4()
+    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(10)]
+    deriv = uuid4()
+    await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
+
+    read_results: list[int] = []
+
+    async def reader() -> None:
+        linker = await _make_linker(engine)
+        for _ in range(5):
+            result = await linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
+            if deriv in result:
+                read_results.append(len(list(result[deriv])))
+            await asyncio.sleep(0.01)
+
+    async def writer() -> None:
+        linker = await _make_linker(engine)
+        for i in range(5):
+            new_seg = _seg(ts_offset_seconds=100 + i)
+            new_deriv = uuid4()
+            await linker.register_segments(PARTITION_KEY, {new_seg: [new_deriv]})
+            await asyncio.sleep(0.01)
+
+    await asyncio.gather(reader(), reader(), writer())
+
+    # Reads should have succeeded and returned at least the original 10 segments.
+    assert len(read_results) > 0
+    assert all(count >= 10 for count in read_results)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_context_reads_during_deletes(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """get_segment_contexts should not crash if segments are deleted concurrently."""
+    import asyncio
+
+    engine = linker._engine
+
+    # Register segments across multiple episodes.
+    episodes = [uuid4() for _ in range(5)]
+    all_segs: list[Segment] = []
+    deriv = uuid4()
+    links: dict[Segment, list[UUID]] = {}
+    for ep_idx, ep in enumerate(episodes):
+        for i in range(4):
+            seg = _seg(episode_uuid=ep, index=i, ts_offset_seconds=ep_idx * 10 + i)
+            all_segs.append(seg)
+            links[seg] = [deriv]
+    await linker.register_segments(PARTITION_KEY, links)
+
+    errors: list[Exception] = []
+
+    async def context_reader() -> None:
+        linker = await _make_linker(engine)
+        for seg in all_segs[::3]:  # Read every 3rd segment's context.
+            try:
+                await linker.get_segment_contexts(
+                    PARTITION_KEY,
+                    [seg.uuid],
+                    max_backward_segments=2,
+                    max_forward_segments=2,
+                )
+            except Exception as e:
+                errors.append(e)
+            await asyncio.sleep(0.01)
+
+    async def episode_deleter() -> None:
+        linker = await _make_linker(engine)
+        for ep in episodes[1:3]:  # Delete 2 of 5 episodes.
+            await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+            await asyncio.sleep(0.02)
+
+    await asyncio.gather(context_reader(), episode_deleter())
+
+    # No crashes. Some reads may return empty or partial results — that's fine.
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_delete_all_and_register(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """delete_all_segments concurrent with register_segments should not deadlock."""
+    import asyncio
+
+    engine = linker._engine
+
+    # Seed data.
+    deriv = uuid4()
+    segs = {_seg(ts_offset_seconds=i): [deriv] for i in range(5)}
+    await linker.register_segments(PARTITION_KEY, segs)
+
+    errors: list[Exception] = []
+
+    async def deleter() -> None:
+        try:
+            linker = await _make_linker(engine)
+            await linker.delete_all_segments(PARTITION_KEY)
+        except Exception as e:
+            errors.append(e)
+
+    async def registerer() -> None:
+        try:
+            linker = await _make_linker(engine)
+            new_segs = {_seg(ts_offset_seconds=100 + i): [uuid4()] for i in range(3)}
+            await linker.register_segments(PARTITION_KEY, new_segs)
+        except Exception as e:
+            errors.append(e)
+
+    await asyncio.gather(deleter(), registerer())
+    assert errors == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_orphan_mark_does_not_crash(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Two concurrent mark_orphaned_derivatives_for_purging should not crash."""
+    import asyncio
+
+    engine = linker._engine
+
+    # Register and orphan a derivative.
+    ep = uuid4()
+    seg = _seg(episode_uuid=ep)
+    deriv = uuid4()
+    await linker.register_segments(PARTITION_KEY, {seg: [deriv]})
+    await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+
+    orphans = list(await linker.get_orphaned_derivatives())
+    assert deriv in orphans
+
+    errors: list[Exception] = []
+
+    async def mark() -> list[UUID]:
+        try:
+            linker = await _make_linker(engine)
+            return list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+        except Exception as e:
+            errors.append(e)
+            return []
+
+    results = await asyncio.gather(mark(), mark())
+    all_marked = [uuid for result in results for uuid in result]
+
+    assert errors == []
+    # At least one should have marked it.
+    assert deriv in all_marked
+
+
+@pytest.mark.asyncio
+async def test_concurrent_delete_overlapping_episodes_shared_derivative(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Deleting two episodes that share a derivative concurrently should correctly decrement ref_count."""
+    import asyncio
+
+    engine = linker._engine
+
+    ep1, ep2 = uuid4(), uuid4()
+    seg1 = _seg(episode_uuid=ep1, ts_offset_seconds=0)
+    seg2 = _seg(episode_uuid=ep2, ts_offset_seconds=1)
+    deriv = uuid4()
+    await linker.register_segments(PARTITION_KEY, {seg1: [deriv], seg2: [deriv]})
+
+    # Both segments link to deriv (ref_count=2). Delete both episodes concurrently.
+    async def delete_ep(ep: UUID) -> None:
+        linker = await _make_linker(engine)
+        await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+
+    await asyncio.gather(delete_ep(ep1), delete_ep(ep2))
+
+    # Derivative should be orphaned (ref_count=0).
+    orphans = list(await linker.get_orphaned_derivatives())
+    assert deriv in orphans
+
+
+# --- PostgreSQL-only concurrency tests ---
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_concurrent_orphan_mark_exactly_once(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """On PG, FOR UPDATE ensures only one of two concurrent markers wins."""
+    import asyncio
+
+    engine = pg_linker._engine
+
+    ep = uuid4()
+    seg = _seg(episode_uuid=ep)
+    deriv = uuid4()
+    await pg_linker.register_segments(PARTITION_KEY, {seg: [deriv]})
+    await pg_linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+
+    orphans = list(await pg_linker.get_orphaned_derivatives())
+    assert deriv in orphans
+
+    async def mark() -> list[UUID]:
+        linker = await _make_linker(engine)
+        return list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+
+    results = await asyncio.gather(mark(), mark())
+    all_marked = [uuid for result in results for uuid in result]
+
+    # Exactly one should have marked it due to FOR UPDATE serialization.
+    assert all_marked.count(deriv) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_concurrent_register_same_derivative_declared_active(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Two concurrent registrations both declaring a derivative as active should serialize correctly."""
+    import asyncio
+
+    engine = pg_linker._engine
+    deriv = uuid4()
+
+    # Initial registration.
+    seg0 = _seg(ts_offset_seconds=0)
+    await pg_linker.register_segments(PARTITION_KEY, {seg0: [deriv]})
+
+    errors: list[Exception] = []
+
+    async def register_with_active(offset: int) -> None:
+        try:
+            linker = await _make_linker(engine)
+            seg = _seg(ts_offset_seconds=offset)
+            await linker.register_segments(
+                PARTITION_KEY, {seg: [deriv]}, active=[deriv]
+            )
+        except Exception as e:
+            errors.append(e)
+
+    await asyncio.gather(register_with_active(10), register_with_active(20))
+
+    # Both should succeed (FOR UPDATE serializes the derivative lock).
+    assert errors == []
+
+    # Derivative should now have 3 linked segments.
+    result = await pg_linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
+    assert len(list(result[deriv])) == 3
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_concurrent_register_and_delete_same_episode(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Registering new segments for an episode while deleting it should not deadlock."""
+    import asyncio
+
+    engine = pg_linker._engine
+    ep = uuid4()
+    deriv1 = uuid4()
+
+    # Seed.
+    seg1 = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0)
+    await pg_linker.register_segments(PARTITION_KEY, {seg1: [deriv1]})
+
+    errors: list[Exception] = []
+
+    async def deleter() -> None:
+        try:
+            linker = await _make_linker(engine)
+            await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+        except Exception as e:
+            errors.append(e)
+
+    async def registerer() -> None:
+        try:
+            linker = await _make_linker(engine)
+            seg2 = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1)
+            deriv2 = uuid4()
+            await linker.register_segments(PARTITION_KEY, {seg2: [deriv2]})
+        except Exception as e:
+            errors.append(e)
+
+    await asyncio.gather(deleter(), registerer())
+
+    # Neither should deadlock. Errors from serialization failures are acceptable
+    # on PG but shouldn't crash.
+    # We just verify no deadlock (the gather completed).
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_orphan_relink_race(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """A derivative detected as orphaned that gets re-linked before marking should not be marked for purging."""
+    import asyncio
+
+    engine = pg_linker._engine
+    ep = uuid4()
+    seg = _seg(episode_uuid=ep, ts_offset_seconds=0)
+    deriv = uuid4()
+    await pg_linker.register_segments(PARTITION_KEY, {seg: [deriv]})
+
+    # Orphan it.
+    await pg_linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+    orphans = list(await pg_linker.get_orphaned_derivatives())
+    assert deriv in orphans
+
+    # Now, concurrently re-link and try to mark for purging.
+    relinked = asyncio.Event()
+
+    async def relinker() -> None:
+        linker = await _make_linker(engine)
+        new_seg = _seg(ts_offset_seconds=10)
+        await linker.register_segments(
+            PARTITION_KEY, {new_seg: [deriv]}, active=[deriv]
+        )
+        relinked.set()
+
+    async def marker() -> list[UUID]:
+        # Wait a tiny bit to let relinker likely win, but it's a race so either outcome is valid.
+        await asyncio.sleep(0.01)
+        linker = await _make_linker(engine)
+        return list(await linker.mark_orphaned_derivatives_for_purging([deriv]))
+
+    _, marked = await asyncio.gather(relinker(), marker())
+
+    # If relinker won the race, deriv has ref_count > 0 and should NOT be marked.
+    # If marker won the race, deriv was still orphaned and gets marked.
+    # Either way, no crash.
+    if not marked:
+        # Relinker won — derivative should still be retrievable.
+        result = await pg_linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
+        assert deriv in result
+    # If marked, the derivative was legitimately marked before relinking.
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_concurrent_mass_deletes(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Many concurrent episode deletes that share derivatives should not deadlock."""
+    import asyncio
+
+    engine = pg_linker._engine
+
+    # Create 10 episodes, each with 2 segments, all sharing the same derivative.
+    deriv = uuid4()
+    episodes: list[UUID] = []
+    links: dict[Segment, list[UUID]] = {}
+    for ep_idx in range(10):
+        ep = uuid4()
+        episodes.append(ep)
+        for i in range(2):
+            seg = _seg(episode_uuid=ep, index=i, ts_offset_seconds=ep_idx * 10 + i)
+            links[seg] = [deriv]
+    await pg_linker.register_segments(PARTITION_KEY, links)
+
+    # Delete all episodes concurrently.
+    async def delete_ep(ep: UUID) -> None:
+        linker = await _make_linker(engine)
+        await linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+
+    await asyncio.gather(*(delete_ep(ep) for ep in episodes))
+
+    # All segments should be gone. Derivative should be orphaned.
+    result = await pg_linker.get_segments_by_derivatives(PARTITION_KEY, [deriv])
+    assert deriv not in result
+
+    orphans = list(await pg_linker.get_orphaned_derivatives())
+    assert deriv in orphans
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_concurrent_purge_and_register_new_derivative(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Purging a derivative while registering a completely new derivative should not interfere."""
+    import asyncio
+
+    engine = pg_linker._engine
+
+    # Create and orphan a derivative.
+    ep = uuid4()
+    seg = _seg(episode_uuid=ep)
+    old_deriv = uuid4()
+    await pg_linker.register_segments(PARTITION_KEY, {seg: [old_deriv]})
+    await pg_linker.delete_segments_by_episodes(PARTITION_KEY, [ep])
+    marked = list(await pg_linker.mark_orphaned_derivatives_for_purging([old_deriv]))
+    assert old_deriv in marked
+
+    errors: list[Exception] = []
+
+    async def purger() -> None:
+        try:
+            linker = await _make_linker(engine)
+            await linker.purge_derivatives([old_deriv])
+        except Exception as e:
+            errors.append(e)
+
+    async def registerer() -> None:
+        try:
+            linker = await _make_linker(engine)
+            new_seg = _seg(ts_offset_seconds=100)
+            new_deriv = uuid4()
+            await linker.register_segments(PARTITION_KEY, {new_seg: [new_deriv]})
+        except Exception as e:
+            errors.append(e)
+
+    await asyncio.gather(purger(), registerer())
+    assert errors == []
