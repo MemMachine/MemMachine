@@ -26,11 +26,9 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    true,
     tuple_,
     update,
-)
-from sqlalchemy import (
-    true as sa_true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -391,92 +389,284 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             return {}
 
         async with self._create_session() as session:
-            # Step 1: Fetch seed rows
-            seed_result = await session.execute(
-                select(SegmentRow).where(
-                    SegmentRow.uuid.in_(seed_segment_uuids),
-                    SegmentRow.partition_key == partition_key,
-                )
+            seed_statement = select(SegmentRow).where(
+                SegmentRow.uuid.in_(seed_segment_uuids),
+                SegmentRow.partition_key == partition_key,
             )
-            seed_rows: dict[UUID, SegmentRow] = {
-                r.uuid: r for r in seed_result.scalars().all()
+            if property_filter is not None:
+                seed_statement = seed_statement.where(
+                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+                )
+            seed_segment_rows = (await session.execute(seed_statement)).scalars().all()
+
+            seed_segment_rows_by_uuid: dict[UUID, SegmentRow] = {
+                row.uuid: row for row in seed_segment_rows
             }
-            if not seed_rows:
+            if not seed_segment_rows_by_uuid:
                 return {}
 
-            # Short-circuit: no context needed
+            # Short-circuit: no context needed.
             if max_backward_segments == 0 and max_forward_segments == 0:
-                props = await self._load_properties_by_segments(
-                    session, list(seed_rows.keys())
+                properties_by_segments = await self._load_properties_by_segments(
+                    session, list(seed_segment_rows_by_uuid.keys())
                 )
                 return {
-                    u: [
+                    seed_segment_uuid: [
                         SQLAlchemySegmentLinker._segment_from_segment_row(
-                            r, props.get(u, {})
+                            seed_segment_row, properties_by_segments[seed_segment_uuid]
                         )
                     ]
-                    for u, r in seed_rows.items()
+                    for seed_segment_uuid, seed_segment_row in seed_segment_rows_by_uuid.items()
                 }
 
-            # Step 2: Fetch context rows
-            bind = session.bind
-            use_lateral = bind is not None and bind.dialect.name != "sqlite"
-
-            if use_lateral:
-                ctx = await self._get_contexts_lateral(
+            # Fetch backward/forward context rows.
+            if session.bind.dialect.name != "sqlite":
+                context_rows_by_seed = await self._get_context_rows_lateral(
                     session,
                     partition_key,
-                    seed_rows,
+                    seed_segment_rows_by_uuid,
                     max_backward_segments,
                     max_forward_segments,
                     property_filter,
                 )
             else:
-                ctx = await self._get_contexts_loop(
+                context_rows_by_seed = await self._get_context_rows_loop(
                     session,
                     partition_key,
-                    seed_rows,
+                    seed_segment_rows_by_uuid,
                     max_backward_segments,
                     max_forward_segments,
                     property_filter,
                 )
 
-            # Step 3: Load properties for all segments
-            all_uuids: set[UUID] = set(seed_rows.keys())
-            for bw, fw in ctx.values():
-                for r in bw:
-                    all_uuids.add(r.uuid)
-                for r in fw:
-                    all_uuids.add(r.uuid)
+            # Load properties for all segments (seeds + context).
+            all_segment_uuids = set(seed_segment_rows_by_uuid.keys())
+            for backward_rows, forward_rows in context_rows_by_seed.values():
+                for row in backward_rows:
+                    all_segment_uuids.add(row.uuid)
+                for row in forward_rows:
+                    all_segment_uuids.add(row.uuid)
 
-            props = await self._load_properties_by_segments(session, list(all_uuids))
+            properties_by_segments = await self._load_properties_by_segments(
+                session, all_segment_uuids
+            )
 
-            # Step 4: Assemble results
-            result: dict[UUID, list[Segment]] = {}
-            for seed_uuid, seed_row in seed_rows.items():
-                bw, fw = ctx.get(seed_uuid, ([], []))
-                segments = (
-                    [
-                        SQLAlchemySegmentLinker._segment_from_segment_row(
-                            r, props.get(r.uuid, {})
-                        )
-                        for r in reversed(bw)
-                    ]
-                    + [
-                        SQLAlchemySegmentLinker._segment_from_segment_row(
-                            seed_row, props.get(seed_uuid, {})
-                        )
-                    ]
-                    + [
-                        SQLAlchemySegmentLinker._segment_from_segment_row(
-                            r, props.get(r.uuid, {})
-                        )
-                        for r in fw
-                    ]
+            # Assemble results: [backward (reversed) + seed + forward].
+            segments_by_seed: dict[UUID, list[Segment]] = {}
+            for seed_uuid, seed_row in seed_segment_rows_by_uuid.items():
+                backward_rows, forward_rows = context_rows_by_seed.get(
+                    seed_uuid, ([], [])
                 )
-                result[seed_uuid] = segments
+                segments_by_seed[seed_uuid] = [
+                    SQLAlchemySegmentLinker._segment_from_segment_row(
+                        row, properties_by_segments.get(row.uuid, {})
+                    )
+                    for row in [*reversed(backward_rows), seed_row, *forward_rows]
+                ]
 
-            return result
+            return segments_by_seed
+
+    async def _get_context_rows_lateral(
+        self,
+        session: AsyncSession,
+        partition_key: str,
+        seed_rows_by_uuid: Mapping[UUID, SegmentRow],
+        max_backward_segments: int,
+        max_forward_segments: int,
+        property_filter: FilterExpr | None,
+    ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
+        """Fetch backward/forward context using LATERAL joins (non-SQLite)."""
+        seeds_subquery = (
+            select(
+                SegmentRow.uuid.label("seed_uuid"),
+                SegmentRow.timestamp.label("seed_timestamp"),
+                SegmentRow.episode_uuid.label("seed_episode_uuid"),
+                SegmentRow.block.label("seed_block"),
+                SegmentRow.index.label("seed_index"),
+            )
+            .where(SegmentRow.uuid.in_(seed_rows_by_uuid.keys()))
+            .subquery("seeds")
+        )
+
+        segment_ordering_columns = tuple_(
+            SegmentRow.timestamp,
+            SegmentRow.episode_uuid,
+            SegmentRow.block,
+            SegmentRow.index,
+        )
+        seed_ordering_columns = tuple_(
+            seeds_subquery.c.seed_timestamp,
+            seeds_subquery.c.seed_episode_uuid,
+            seeds_subquery.c.seed_block,
+            seeds_subquery.c.seed_index,
+        )
+
+        async def _lateral_query(
+            range_condition: ColumnElement[bool],
+            ordering: Iterable[ColumnElement | InstrumentedAttribute],
+            limit: int,
+        ) -> dict[UUID, list[SegmentRow]]:
+            lateral_inner = (
+                select(SegmentRow)
+                .where(SegmentRow.partition_key == partition_key, range_condition)
+                .order_by(*ordering)
+                .limit(limit)
+                .correlate(seeds_subquery)
+            )
+            if property_filter is not None:
+                lateral_inner = lateral_inner.where(
+                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+                )
+
+            lateral_subquery = lateral_inner.subquery().lateral("context")
+
+            lateral_statement = select(
+                seeds_subquery.c.seed_uuid,
+                lateral_subquery.c.uuid,
+                lateral_subquery.c.episode_uuid,
+                lateral_subquery.c.block,
+                lateral_subquery.c.index,
+                lateral_subquery.c.timestamp,
+                lateral_subquery.c.content,
+            ).select_from(seeds_subquery.join(lateral_subquery, true()))
+
+            rows_by_seed: dict[UUID, list[SegmentRow]] = {
+                seed_uuid: [] for seed_uuid in seed_rows_by_uuid
+            }
+            for row in (await session.execute(lateral_statement)).all():
+                rows_by_seed[row.seed_uuid].append(
+                    SegmentRow(
+                        uuid=row.uuid,
+                        partition_key=partition_key,
+                        episode_uuid=row.episode_uuid,
+                        block=row.block,
+                        index=row.index,
+                        timestamp=row.timestamp,
+                        content=row.content,
+                    )
+                )
+            return rows_by_seed
+
+        chronological_order = [
+            SegmentRow.timestamp,
+            SegmentRow.episode_uuid,
+            SegmentRow.block,
+            SegmentRow.index,
+        ]
+        reverse_chronological_order = [col.desc() for col in chronological_order]
+
+        backward_rows_by_seed = (
+            await _lateral_query(
+                segment_ordering_columns < seed_ordering_columns,
+                reverse_chronological_order,
+                max_backward_segments,
+            )
+            if max_backward_segments > 0
+            else {seed_uuid: [] for seed_uuid in seed_rows_by_uuid}
+        )
+
+        forward_rows_by_seed = (
+            await _lateral_query(
+                segment_ordering_columns > seed_ordering_columns,
+                chronological_order,
+                max_forward_segments,
+            )
+            if max_forward_segments > 0
+            else {seed_uuid: [] for seed_uuid in seed_rows_by_uuid}
+        )
+
+        return {
+            seed_uuid: (
+                backward_rows_by_seed[seed_uuid],
+                forward_rows_by_seed[seed_uuid],
+            )
+            for seed_uuid in seed_rows_by_uuid
+        }
+
+    async def _get_context_rows_loop(
+        self,
+        session: AsyncSession,
+        partition_key: str,
+        seed_rows_by_uuid: Mapping[UUID, SegmentRow],
+        max_backward_segments: int,
+        max_forward_segments: int,
+        property_filter: FilterExpr | None,
+    ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
+        """Fetch backward/forward context per seed (SQLite fallback)."""
+        context_rows_by_seed: dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]] = {}
+
+        segment_ordering_columns = tuple_(
+            SegmentRow.timestamp,
+            SegmentRow.episode_uuid,
+            SegmentRow.block,
+            SegmentRow.index,
+        )
+
+        compiled_property_filter = (
+            SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+            if property_filter is not None
+            else None
+        )
+
+        for seed_uuid, seed_row in seed_rows_by_uuid.items():
+            seed_ordering_values = tuple_(
+                literal(seed_row.timestamp),
+                literal(seed_row.episode_uuid),
+                literal(seed_row.block),
+                literal(seed_row.index),
+            )
+
+            backward_rows: list[SegmentRow] = []
+            if max_backward_segments > 0:
+                backward_statement = (
+                    select(SegmentRow)
+                    .where(
+                        SegmentRow.partition_key == partition_key,
+                        segment_ordering_columns < seed_ordering_values,
+                    )
+                    .order_by(
+                        SegmentRow.timestamp.desc(),
+                        SegmentRow.episode_uuid.desc(),
+                        SegmentRow.block.desc(),
+                        SegmentRow.index.desc(),
+                    )
+                    .limit(max_backward_segments)
+                )
+                if compiled_property_filter is not None:
+                    backward_statement = backward_statement.where(
+                        compiled_property_filter
+                    )
+                backward_rows = list(
+                    (await session.execute(backward_statement)).scalars().all()
+                )
+
+            forward_rows: list[SegmentRow] = []
+            if max_forward_segments > 0:
+                forward_statement = (
+                    select(SegmentRow)
+                    .where(
+                        SegmentRow.partition_key == partition_key,
+                        segment_ordering_columns > seed_ordering_values,
+                    )
+                    .order_by(
+                        SegmentRow.timestamp,
+                        SegmentRow.episode_uuid,
+                        SegmentRow.block,
+                        SegmentRow.index,
+                    )
+                    .limit(max_forward_segments)
+                )
+                if compiled_property_filter is not None:
+                    forward_statement = forward_statement.where(
+                        compiled_property_filter
+                    )
+                forward_rows = list(
+                    (await session.execute(forward_statement)).scalars().all()
+                )
+
+            context_rows_by_seed[seed_uuid] = (backward_rows, forward_rows)
+
+        return context_rows_by_seed
 
     # Deletion
 
@@ -635,198 +825,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 )
             )
 
-    # -- context helpers -----------------------------------------------------
-
-    async def _get_contexts_lateral(
-        self,
-        session: AsyncSession,
-        partition_key: str,
-        seed_rows: dict[UUID, SegmentRow],
-        max_backward: int,
-        max_forward: int,
-        property_filter: FilterExpr | None,
-    ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
-        """Fetch backward/forward context using LATERAL joins (non-SQLite)."""
-        seeds_sq = (
-            select(
-                SegmentRow.uuid.label("seed_uuid"),
-                SegmentRow.timestamp.label("seed_ts"),
-                SegmentRow.episode_uuid.label("seed_ep"),
-                SegmentRow.block.label("seed_block"),
-                SegmentRow.index.label("seed_index"),
-            )
-            .where(SegmentRow.uuid.in_(list(seed_rows.keys())))
-            .subquery("seeds")
-        )
-
-        result: dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]] = {
-            u: ([], []) for u in seed_rows
-        }
-
-        seg_cols = tuple_(
-            SegmentRow.timestamp,
-            SegmentRow.episode_uuid,
-            SegmentRow.block,
-            SegmentRow.index,
-        )
-        seed_cols = tuple_(
-            seeds_sq.c.seed_ts,
-            seeds_sq.c.seed_ep,
-            seeds_sq.c.seed_block,
-            seeds_sq.c.seed_index,
-        )
-
-        directions: list[tuple[str, int, ColumnElement[bool], list]] = [
-            (
-                "B",
-                max_backward,
-                seg_cols < seed_cols,
-                [
-                    SegmentRow.timestamp.desc(),
-                    SegmentRow.episode_uuid.desc(),
-                    SegmentRow.block.desc(),
-                    SegmentRow.index.desc(),
-                ],
-            ),
-            (
-                "F",
-                max_forward,
-                seg_cols > seed_cols,
-                [
-                    SegmentRow.timestamp,
-                    SegmentRow.episode_uuid,
-                    SegmentRow.block,
-                    SegmentRow.index,
-                ],
-            ),
-        ]
-
-        for direction, max_count, cmp, ordering in directions:
-            if max_count == 0:
-                continue
-
-            inner = (
-                select(SegmentRow)
-                .where(SegmentRow.partition_key == partition_key, cmp)
-                .order_by(*ordering)
-                .limit(max_count)
-                .correlate(seeds_sq)
-            )
-            if property_filter is not None:
-                inner = inner.where(
-                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
-                )
-
-            lat = inner.subquery().lateral("ctx")
-
-            stmt = select(
-                seeds_sq.c.seed_uuid,
-                lat.c.uuid,
-                lat.c.episode_uuid,
-                lat.c.block,
-                lat.c.index,
-                lat.c.timestamp,
-                lat.c.content,
-            ).select_from(seeds_sq.join(lat, sa_true()))
-
-            rows = (await session.execute(stmt)).all()
-            for row in rows:
-                seed_uuid = row[0]
-                seg = SegmentRow(
-                    uuid=row[1],
-                    partition_key=partition_key,
-                    episode_uuid=row[2],
-                    block=row[3],
-                    index=row[4],
-                    timestamp=row[5],
-                    content=row[6],
-                )
-                idx = 0 if direction == "B" else 1
-                result[seed_uuid][idx].append(seg)
-
-        return result
-
-    async def _get_contexts_loop(
-        self,
-        session: AsyncSession,
-        partition_key: str,
-        seed_rows: dict[UUID, SegmentRow],
-        max_backward: int,
-        max_forward: int,
-        property_filter: FilterExpr | None,
-    ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
-        """Fetch backward/forward context per seed (SQLite fallback)."""
-        result: dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]] = {}
-
-        seg_key = tuple_(
-            SegmentRow.timestamp,
-            SegmentRow.episode_uuid,
-            SegmentRow.block,
-            SegmentRow.index,
-        )
-
-        for seed_uuid, seed in seed_rows.items():
-            seed_val = tuple_(
-                literal(seed.timestamp),
-                literal(seed.episode_uuid),
-                literal(seed.block),
-                literal(seed.index),
-            )
-
-            backward: list[SegmentRow] = []
-            if max_backward > 0:
-                bw_stmt = (
-                    select(SegmentRow)
-                    .where(
-                        SegmentRow.partition_key == partition_key,
-                        seg_key < seed_val,
-                    )
-                    .order_by(
-                        SegmentRow.timestamp.desc(),
-                        SegmentRow.episode_uuid.desc(),
-                        SegmentRow.block.desc(),
-                        SegmentRow.index.desc(),
-                    )
-                    .limit(max_backward)
-                )
-                if property_filter is not None:
-                    bw_stmt = bw_stmt.where(
-                        SQLAlchemySegmentLinker._compile_property_filter(
-                            property_filter
-                        )
-                    )
-                bw_result = await session.execute(bw_stmt)
-                backward = list(bw_result.scalars().all())
-
-            forward: list[SegmentRow] = []
-            if max_forward > 0:
-                fw_stmt = (
-                    select(SegmentRow)
-                    .where(
-                        SegmentRow.partition_key == partition_key,
-                        seg_key > seed_val,
-                    )
-                    .order_by(
-                        SegmentRow.timestamp,
-                        SegmentRow.episode_uuid,
-                        SegmentRow.block,
-                        SegmentRow.index,
-                    )
-                    .limit(max_forward)
-                )
-                if property_filter is not None:
-                    fw_stmt = fw_stmt.where(
-                        SQLAlchemySegmentLinker._compile_property_filter(
-                            property_filter
-                        )
-                    )
-                fw_result = await session.execute(fw_stmt)
-                forward = list(fw_result.scalars().all())
-
-            result[seed_uuid] = (backward, forward)
-
-        return result
-
     # Helpers
 
     async def _lock_derivatives(
@@ -848,8 +846,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if dialect != "sqlite":
             lock_statement = lock_statement.with_for_update()
 
-        result = await session.execute(lock_statement)
-        return list(result.scalars().all())
+        return list((await session.execute(lock_statement)).scalars().all())
 
     async def _load_properties_by_segments(
         self,
@@ -862,15 +859,21 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if not segment_uuids:
             return {}
 
-        segment_property_results = await session.execute(
-            select(SegmentPropertyRow).where(
-                SegmentPropertyRow.segment_uuid.in_(segment_uuids)
+        segment_property_rows = (
+            (
+                await session.execute(
+                    select(SegmentPropertyRow).where(
+                        SegmentPropertyRow.segment_uuid.in_(segment_uuids)
+                    )
+                )
             )
+            .scalars()
+            .all()
         )
         properties_by_segments: dict[UUID, dict[str, PropertyValue]] = {
             segment_uuid: {} for segment_uuid in segment_uuids
         }
-        for segment_property_row in segment_property_results.scalars().all():
+        for segment_property_row in segment_property_rows:
             properties_by_segments[segment_property_row.segment_uuid][
                 segment_property_row.key
             ] = SQLAlchemySegmentLinker._coalesce_property_value(segment_property_row)
