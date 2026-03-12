@@ -31,13 +31,18 @@ from memmachine_server.common.vector_store.data_types import (
 )
 
 from .data_types import (
+    Block,
+    CitationContext,
+    Content,
+    Context,
     Derivative,
     Episode,
-    ImageContent,
-    MessageContent,
+    FileRef,
+    MessageContext,
     QueryResult,
+    ReadFile,
     Segment,
-    TextContent,
+    Text,
 )
 from .segment_linker import DerivativeNotActiveError, SegmentLinker
 
@@ -262,7 +267,7 @@ class ExtraMemory:
         derivative_uuids_set = {d.uuid for d in derivatives}
 
         derivative_embeddings = await self._embedder.ingest_embed(
-            [derivative.content for derivative in derivatives],
+            [derivative.text for derivative in derivatives],
         )
 
         if self._derivative_consolidation_threshold is None:
@@ -479,51 +484,67 @@ class ExtraMemory:
             list[Segment]: A list of created segments.
 
         """
+        match episode.body:
+            case Content(context=context, items=primitives):
+                return self._segment_episode_content_items(
+                    episode=episode,
+                    items=primitives,
+                    context=context,
+                )
+            case ReadFile(file=file_ref):
+                return [
+                    Segment(
+                        uuid=uuid4(),
+                        episode_uuid=episode.uuid,
+                        index=0,
+                        offset=0,
+                        timestamp=episode.timestamp,
+                        block=file_ref,
+                        properties=episode.properties,
+                    )
+                ]
+            case _:
+                logger.warning("Unsupported body type: %s", type(episode.body))
+                return []
+
+    def _segment_episode_content_items(
+        self,
+        episode: Episode,
+        items: Iterable[Block],
+        context: Context | None,
+    ) -> list[Segment]:
+        """Split content items into single-block segments, propagating context."""
         segments: list[Segment] = []
-        for block, content in enumerate(episode.content):
-            match content:
-                case MessageContent(source=source, text=text):
+        for index, item in enumerate(items):
+            match item:
+                case Text(text=text):
                     chunks = self._text_splitter.split_text(text)
                     segments.extend(
                         Segment(
                             uuid=uuid4(),
                             episode_uuid=episode.uuid,
-                            block=block,
                             index=index,
+                            offset=offset,
                             timestamp=episode.timestamp,
-                            content=MessageContent(source=source, text=chunk),
+                            block=Text(text=chunk),
+                            context=context,
                             properties=episode.properties,
                         )
-                        for index, chunk in enumerate(chunks)
+                        for offset, chunk in enumerate(chunks)
                     )
-                case TextContent(text=text):
-                    chunks = self._text_splitter.split_text(text)
-                    segments.extend(
-                        Segment(
-                            uuid=uuid4(),
-                            episode_uuid=episode.uuid,
-                            block=block,
-                            index=index,
-                            timestamp=episode.timestamp,
-                            content=TextContent(text=chunk),
-                            properties=episode.properties,
-                        )
-                        for index, chunk in enumerate(chunks)
-                    )
-                case ImageContent():
+                case _:
                     segments.append(
                         Segment(
                             uuid=uuid4(),
                             episode_uuid=episode.uuid,
-                            block=block,
-                            index=0,
+                            index=index,
+                            offset=0,
                             timestamp=episode.timestamp,
-                            content=content,
+                            block=item,
+                            context=context,
                             properties=episode.properties,
                         )
                     )
-                case _:
-                    logger.warning("Unsupported content type: %s", type(content))
         return segments
 
     async def _derive_derivatives(
@@ -541,49 +562,41 @@ class ExtraMemory:
             list[Derivative]: A list of derived derivatives.
 
         """
-        match segment.content:
-            case MessageContent(source=source, text=text):
-                if not self._derive_sentences:
-                    return [
-                        Derivative(
-                            uuid=uuid4(),
-                            content=f"{source}: {text}",
-                        ),
-                    ]
-                sentences = extract_sentences(text)
-                return [
-                    Derivative(
-                        uuid=uuid4(),
-                        content=f"{source}: {sentence}",
-                    )
-                    for sentence in sentences
-                ]
-            case TextContent(text=text):
-                if not self._derive_sentences:
-                    return [
-                        Derivative(
-                            uuid=uuid4(),
-                            content=text,
-                        ),
-                    ]
-                sentences = extract_sentences(text)
-                return [
-                    Derivative(
-                        uuid=uuid4(),
-                        content=sentence,
-                    )
-                    for sentence in sentences
-                ]
-            case ImageContent():
-                # TODO: Generate image description.
-                logger.warning("Image content derivatives are not yet supported")
+        match segment.block:
+            case Text(text=text):
+                return self._derive_from_text(text, segment.context)
+            case FileRef():
                 return []
             case _:
-                logger.warning(
-                    "Unsupported content type for derivatives: %s",
-                    type(segment.content),
-                )
+                logger.warning("Non-text primitive derivatives are not yet supported")
                 return []
+
+    @staticmethod
+    def _format_with_context(text: str, context: Context | None) -> str:
+        """Format text within its context."""
+        match context:
+            case MessageContext(source=source):
+                return f"{source}: {text}"
+            case CitationContext(source=source):
+                return f"From '{source}': {text}"
+            case _:
+                return text
+
+    def _derive_from_text(self, text: str, context: Context | None) -> list[Derivative]:
+        """Derive derivatives from a text string."""
+        if not self._derive_sentences:
+            return [
+                Derivative(
+                    uuid=uuid4(), text=ExtraMemory._format_with_context(text, context)
+                )
+            ]
+        sentences = extract_sentences(text)
+        return [
+            Derivative(
+                uuid=uuid4(), text=ExtraMemory._format_with_context(sentence, context)
+            )
+            for sentence in sentences
+        ]
 
     async def query(
         self,
@@ -724,52 +737,58 @@ class ExtraMemory:
         context_string = ""
         last_segment: Segment | None = None
         accumulated_text = ""
+        first = True
 
         for segment in segment_context:
             is_continuation = (
                 last_segment is not None
                 and segment.episode_uuid == last_segment.episode_uuid
-                and segment.block == last_segment.block
+                and segment.index == last_segment.index
             )
 
-            if is_continuation:
-                match segment.content:
-                    case MessageContent(text=text) | TextContent(text=text):
-                        accumulated_text += text
-                continue
+            if not is_continuation:
+                if not first:
+                    context_string += json.dumps(accumulated_text) + "\n"
+                first = False
+                accumulated_text = ""
 
-            context_date = ExtraMemory._format_date(
-                segment.timestamp.date(),
-            )
-            context_time = ExtraMemory._format_time(
-                segment.timestamp.time(),
-            )
+                context_date = ExtraMemory._format_date(
+                    segment.timestamp.date(),
+                )
+                context_time = ExtraMemory._format_time(
+                    segment.timestamp.time(),
+                )
+                timestamp = f"[{context_date} at {context_time}]"
 
-            match segment.content:
-                case MessageContent(source=source, text=text):
-                    if accumulated_text:
-                        context_string += json.dumps(accumulated_text) + "\n"
-                    context_string += f"[{context_date} at {context_time}] {source}: "
-                    accumulated_text = text
-                case TextContent(text=text):
-                    if accumulated_text:
-                        context_string += json.dumps(accumulated_text) + "\n"
-                    context_string += f"[{context_date} at {context_time}] "
-                    accumulated_text = text
-                case _:
-                    if accumulated_text:
-                        context_string += json.dumps(accumulated_text) + "\n"
-                    context_string += (
-                        f"[{context_date} at {context_time}] [{segment.content.type}]\n"
-                    )
-                    accumulated_text = ""
+                match segment.context:
+                    case MessageContext(source=source):
+                        context_string += f"{timestamp} {source}: "
+                    case CitationContext(source=source):
+                        context_string += f"{timestamp} From '{source}': "
+                    case _:
+                        context_string += f"{timestamp} "
+
+            text = ExtraMemory._extract_text(segment.block)
+            if text is not None:
+                accumulated_text += text
+            elif not is_continuation:
+                context_string += f"[{segment.block.type}]\n"
 
             last_segment = segment
 
-        if accumulated_text:
+        if not first:
             context_string += json.dumps(accumulated_text) + "\n"
 
         return context_string.strip()
+
+    @staticmethod
+    def _extract_text(block: Block) -> str | None:
+        """Extract text from a block, if it contains text."""
+        match block:
+            case Text(text=text):
+                return text
+            case _:
+                return None
 
     @staticmethod
     def _format_date(date: datetime.date) -> str:
@@ -838,8 +857,8 @@ class ExtraMemory:
             key=lambda segment: (
                 segment.timestamp,
                 segment.episode_uuid,
-                segment.block,
                 segment.index,
+                segment.offset,
             ),
         )
 

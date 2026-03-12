@@ -8,35 +8,96 @@ from pydantic import BaseModel, Field, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
 
-
-class MessageContent(BaseModel):
-    """A text message from a source."""
-
-    type: Literal["message"] = "message"
-    source: str
-    text: str
+# Block: leaf content type
 
 
-class TextContent(BaseModel):
-    """A plain text block."""
+class Text(BaseModel):
+    """Plain text."""
 
     type: Literal["text"] = "text"
     text: str
 
 
-class ImageContent(BaseModel):
+class Image(BaseModel):
     """An image."""
 
     type: Literal["image"] = "image"
-    url: str | None = None
-    data: str | None = None  # base64
-    mime_type: str | None = None
 
 
-Content = Annotated[
-    MessageContent | TextContent | ImageContent,
+class Audio(BaseModel):
+    """Audio content."""
+
+    type: Literal["audio"] = "audio"
+
+
+class Video(BaseModel):
+    """Video content."""
+
+    type: Literal["video"] = "video"
+
+
+class FileRef(BaseModel):
+    """Reference to a file."""
+
+    type: Literal["file_ref"] = "file_ref"
+
+
+Block = Annotated[
+    Text | Image | Audio | Video | FileRef,
     Field(discriminator="type"),
 ]
+
+
+# Context: contextual information about the content
+
+
+class MessageContext(BaseModel):
+    """The content is communicated by a source."""
+
+    type: Literal["message"] = "message"
+    source: str
+
+
+class CitationContext(BaseModel):
+    """The content is cited from a source."""
+
+    type: Literal["citation"] = "citation"
+    source: str
+    source_type: str | None = None
+    location: str | None = None
+
+
+Context = Annotated[
+    MessageContext | CitationContext,
+    Field(discriminator="type"),
+]
+
+
+# Body: top-level episode payload
+
+
+class Content(BaseModel):
+    """A list of item blocks with optional context."""
+
+    type: Literal["content"] = "content"
+    context: Context | None = None
+    items: list[Block]
+
+
+class ReadFile(BaseModel):
+    """Request the system to read a file."""
+
+    type: Literal["read_file"] = "read_file"
+    file: FileRef
+
+
+Body = Annotated[
+    Content | ReadFile,
+    Field(discriminator="type"),
+]
+
+
+# Episode, Segment, Derivative: core data models for ExtraMemory
 
 
 class Episode(BaseModel):
@@ -44,7 +105,7 @@ class Episode(BaseModel):
 
     uuid: UUID
     timestamp: datetime
-    content: list[Content]
+    body: Body
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
@@ -58,10 +119,11 @@ class Segment(BaseModel):
 
     uuid: UUID
     episode_uuid: UUID
-    block: int
     index: int
+    offset: int
     timestamp: datetime
-    content: MessageContent | TextContent | ImageContent
+    context: Context | None = None
+    block: Block
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
     def __hash__(self) -> int:
@@ -73,11 +135,14 @@ class Derivative(BaseModel):
     """Information derived from a segment."""
 
     uuid: UUID
-    content: str
+    text: str
 
     def __hash__(self) -> int:
         """Hash a derivative by its UUID."""
         return hash(self.uuid)
+
+
+# QueryResult: the result of a memory query, containing relevant segments and their context-ready string representation.
 
 
 class QueryResult(BaseModel):
