@@ -1003,7 +1003,23 @@ async def configure_long_term_memory(
         ) from e
 
 
-@router.get("/metrics", description=RouterDoc.METRICS_PROMETHEUS, tags=["System"])
+@router.get(
+    "/metrics",
+    description=RouterDoc.METRICS_PROMETHEUS,
+    tags=["System"],
+    responses={
+        200: {
+            "content": {
+                "text/plain": {
+                    "schema": {
+                        "type": "string",
+                        "description": "Prometheus metrics in text format",
+                    }
+                }
+            }
+        }
+    },
+)
 async def metrics() -> Response:
     """Expose Prometheus metrics endpoint."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

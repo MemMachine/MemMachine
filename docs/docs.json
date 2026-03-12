@@ -54,6 +54,7 @@
             "group": "Integrations",
             "icon": "puzzle-piece",
             "pages": [
+              "install_guide/integrate/openclaw",
               "install_guide/integrate/GPTStore",
               "install_guide/integrate/claude_code_mcp",
               "install_guide/integrate/LangGraph",
