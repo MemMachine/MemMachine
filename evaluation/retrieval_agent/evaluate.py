@@ -9,19 +9,16 @@ import threading
 from collections import defaultdict
 from pathlib import Path
 
-from dotenv import load_dotenv
 from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.retrieval_agent.llm_judge import evaluate_llm_judge  # noqa: E402
-
-load_dotenv()
+from evaluation.retrieval_agent.llm_judge import create_judge_fn, evaluate_llm_judge  # noqa: E402
 
 
-def process_sample(group_key: str, item: dict):
+def process_sample(group_key: str, item: dict, call_fn):
     question = str(item["question"])
     locomo_answer = str(item["golden_answer"])
     response = str(item["model_answer"])
@@ -31,7 +28,7 @@ def process_sample(group_key: str, item: dict):
     if category == "5":
         return group_key, None
 
-    llm_score = evaluate_llm_judge(question, locomo_answer, response)
+    llm_score = evaluate_llm_judge(question, locomo_answer, response, call_fn)
 
     res = {
         "question": question,
@@ -48,7 +45,6 @@ def process_sample(group_key: str, item: dict):
             "category",
         ]:
             if type(val) is float:
-                # Round to 3 decimal places
                 val = round(val, 3)
             res[key] = val
 
@@ -75,8 +71,16 @@ def main():
         default=30,
         help="Maximum number of worker threads",
     )
+    parser.add_argument(
+        "--config-path",
+        type=str,
+        required=True,
+        help="Path to configuration.yml (used to select the judge LLM)",
+    )
 
     args = parser.parse_args()
+
+    call_fn = create_judge_fn(args.config_path)
 
     with open(args.data_path, "r") as f:
         data = json.load(f)
@@ -87,12 +91,11 @@ def main():
         (group_key, item) for group_key, items in data.items() for item in items
     ]
 
-    # Use ThreadPoolExecutor with specified workers
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=args.max_workers
     ) as executor:
         futures = [
-            executor.submit(process_sample, group_key, item)
+            executor.submit(process_sample, group_key, item, call_fn)
             for group_key, item in sample_tasks
         ]
 
@@ -105,7 +108,6 @@ def main():
             with results_lock:
                 results[group_key].append(sample_result)
 
-            # Save results to JSON file
             with open(args.target_path, "w") as f:
                 json.dump(results, f, indent=4)
 

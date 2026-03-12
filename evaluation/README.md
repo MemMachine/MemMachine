@@ -33,6 +33,13 @@ The retrieval-agent benchmarks support three test targets:
 
 ## Run Retrieval-Agent Benchmarks (Recommended)
 
+> **Configuration**: All retrieval-agent benchmarks require a
+> `configuration.yml` file placed in `evaluation/retrieval_agent/`. This file
+> controls the language model, embedder, reranker, and database for every run —
+> enabling non-OpenAI and local models. See
+> [evaluation/retrieval_agent/README.md](retrieval_agent/README.md) for full
+> details and ready-to-use configuration samples.
+
 Run from `evaluation/retrieval_agent/`:
 
 ```sh

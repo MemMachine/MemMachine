@@ -4,14 +4,10 @@
 import argparse
 import json
 from collections import defaultdict
+from typing import Callable
 
 import json_repair
 import numpy as np
-from dotenv import load_dotenv
-from openai import OpenAI
-
-load_dotenv()
-client = OpenAI()
 
 ACCURACY_PROMPT = """
 Your task is to label an answer to a question as 'CORRECT' or 'WRONG'. You will be given the following data:
@@ -40,23 +36,125 @@ Just return the label CORRECT or WRONG in a json format with the key as "label".
 """
 
 
-def evaluate_llm_judge(question, gold_answer, generated_answer):
-    """Evaluate the generated answer against the gold answer using an LLM judge."""
-    response = client.chat.completions.create(
-        model="gpt-5-mini",
-        messages=[
-            {
-                "role": "user",
-                "content": ACCURACY_PROMPT.format(
-                    question=question,
-                    gold_answer=gold_answer,
-                    generated_answer=generated_answer,
-                ),
-            }
-        ],
-        response_format={"type": "json_object"},
+def create_judge_fn(config_path: str) -> Callable[[str], str]:
+    """Build a synchronous callable that sends a prompt to the configured LLM.
+
+    Supports providers: ``openai-responses``, ``openai-chat-completions``,
+    and ``amazon-bedrock``.
+
+    Args:
+        config_path: Path to configuration.yml.
+
+    Returns:
+        A callable ``fn(prompt: str) -> str`` that returns the raw text reply.
+    """
+    from memmachine_server.common.configuration import Configuration
+
+    config = Configuration.load_yml_file(config_path)
+    lms = config.resources.language_models
+    llm_id = config.retrieval_agent.llm_model
+    if not llm_id:
+        raise ValueError("retrieval_agent.llm_model is not set in configuration.yml")
+
+    if llm_id in lms.openai_responses_language_model_confs:
+        from openai import OpenAI
+
+        conf = lms.openai_responses_language_model_confs[llm_id]
+        client = OpenAI(
+            api_key=conf.api_key.get_secret_value(),
+            base_url=conf.base_url,
+        )
+        model_name = conf.model
+
+        def _call_responses(prompt: str) -> str:
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            return resp.choices[0].message.content
+
+        return _call_responses
+
+    if llm_id in lms.openai_chat_completions_language_model_confs:
+        from openai import OpenAI
+
+        conf = lms.openai_chat_completions_language_model_confs[llm_id]
+        client = OpenAI(
+            api_key=conf.api_key.get_secret_value(),
+            base_url=conf.base_url,
+        )
+        model_name = conf.model
+
+        def _call_chat(prompt: str) -> str:
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            return resp.choices[0].message.content
+
+        return _call_chat
+
+    if llm_id in lms.amazon_bedrock_language_model_confs:
+        import boto3
+
+        conf = lms.amazon_bedrock_language_model_confs[llm_id]
+        bedrock_client = boto3.client(
+            "bedrock-runtime",
+            region_name=conf.region,
+            aws_access_key_id=(
+                conf.aws_access_key_id.get_secret_value()
+                if conf.aws_access_key_id
+                else None
+            ),
+            aws_secret_access_key=(
+                conf.aws_secret_access_key.get_secret_value()
+                if conf.aws_secret_access_key
+                else None
+            ),
+        )
+        model_id = conf.model_id
+
+        def _call_bedrock(prompt: str) -> str:
+            resp = bedrock_client.converse(
+                modelId=model_id,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+            )
+            return resp["output"]["message"]["content"][0]["text"]
+
+        return _call_bedrock
+
+    raise ValueError(
+        f"Language model '{llm_id}' not found in configuration.yml under "
+        "resources.language_models. Check that the ID matches one of the defined models."
     )
-    label = json_repair.loads(response.choices[0].message.content)["label"]
+
+
+def evaluate_llm_judge(
+    question: str,
+    gold_answer: str,
+    generated_answer: str,
+    call_fn: Callable[[str], str],
+) -> int:
+    """Evaluate a generated answer against the gold answer using an LLM judge.
+
+    Args:
+        question: The question being evaluated.
+        gold_answer: The ground-truth answer.
+        generated_answer: The model-produced answer.
+        call_fn: A synchronous callable returned by :func:`create_judge_fn`.
+
+    Returns:
+        1 if the answer is CORRECT, 0 if WRONG.
+    """
+    prompt = ACCURACY_PROMPT.format(
+        question=question,
+        gold_answer=gold_answer,
+        generated_answer=generated_answer,
+    )
+    raw = call_fn(prompt)
+    label = json_repair.loads(raw)["label"]
     return 1 if label == "CORRECT" else 0
 
 
@@ -69,9 +167,16 @@ def main():
         default="results/default_run_v4_k30_new_graph.json",
         help="Path to the input dataset file",
     )
+    parser.add_argument(
+        "--config-path",
+        type=str,
+        required=True,
+        help="Path to configuration.yml",
+    )
 
     args = parser.parse_args()
 
+    call_fn = create_judge_fn(args.config_path)
     dataset_path = args.input_file
     output_path = f"results/llm_judge_{dataset_path.split('/')[-1]}"
 
@@ -89,15 +194,12 @@ def main():
             generated_answer = x["response"]
             category = x["category"]
 
-            # Skip category 5
             if int(category) == 5:
                 continue
 
-            # Evaluate the answer
-            label = evaluate_llm_judge(question, gold_answer, generated_answer)
+            label = evaluate_llm_judge(question, gold_answer, generated_answer, call_fn)
             LLM_JUDGE[category].append(label)
 
-            # Store the results
             RESULTS[index].append(
                 {
                     "question": question,
@@ -108,14 +210,12 @@ def main():
                 }
             )
 
-            # Save intermediate results
             with open(output_path, "w") as f:
                 json.dump(RESULTS, f, indent=4)
 
-            # Print current accuracy for all categories
             print("All categories accuracy:")
             for cat, results in LLM_JUDGE.items():
-                if results:  # Only print if there are results for this category
+                if results:
                     print(
                         f"  Category {cat}: {np.mean(results):.4f} "
                         f"({sum(results)}/{len(results)})"
@@ -123,11 +223,9 @@ def main():
             print("------------------------------------------")
         index += 1
 
-    # Save final results
     with open(output_path, "w") as f:
         json.dump(RESULTS, f, indent=4)
 
-    # Print final summary
     print("PATH: ", dataset_path)
     print("------------------------------------------")
     for k, v in LLM_JUDGE.items():

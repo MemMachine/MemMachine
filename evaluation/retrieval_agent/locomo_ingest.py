@@ -27,6 +27,11 @@ async def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data-path", required=True, help="Path to the data file")
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
 
     args = parser.parse_args()
 
@@ -35,9 +40,7 @@ async def main():
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+    resource_manager = agent_utils.load_eval_config(args.config_path)
 
     async def process_conversation(idx, item):
         if "conversation" not in item:
@@ -54,7 +57,7 @@ async def main():
         group_id = f"group_{idx}"
 
         memory, _, _ = await agent_utils.init_memmachine_params(
-            vector_graph_store=vector_graph_store,
+            resource_manager=resource_manager,
             session_id=group_id,
         )
 
