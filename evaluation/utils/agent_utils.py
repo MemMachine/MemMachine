@@ -1,31 +1,14 @@
-import os
 import re
 import time
+from pathlib import Path
 from typing import Any
 
-import boto3
-import neo4j
-import openai
-from memmachine_server.common.embedder.openai_embedder import (
-    OpenAIEmbedder,
-    OpenAIEmbedderParams,
-)
+from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model.language_model import LanguageModel
-from memmachine_server.common.language_model.openai_responses_language_model import (
-    OpenAIResponsesLanguageModel,
-    OpenAIResponsesLanguageModelParams,
-)
 from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
-from memmachine_server.common.reranker.amazon_bedrock_reranker import (
-    AmazonBedrockReranker,
-    AmazonBedrockRerankerParams,
-)
+from memmachine_server.common.resource_manager.resource_manager import ResourceManagerImpl
 from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
-    Neo4jVectorGraphStore,
-    Neo4jVectorGraphStoreParams,
-)
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemoryParams,
@@ -48,25 +31,44 @@ from memmachine_server.retrieval_agent.common.agent_api import (
 )
 
 
+def load_eval_config(config_path: str) -> ResourceManagerImpl:
+    """Load configuration.yml and return an initialized ResourceManagerImpl.
+
+    Args:
+        config_path: Path to the configuration YAML file.
+
+    Raises:
+        FileNotFoundError: If the config file is missing.
+    """
+    config_file = Path(config_path)
+    if not config_file.exists():
+        raise FileNotFoundError(
+            f"configuration.yml not found at '{config_path}'.\n"
+            "Please place a configuration.yml in the retrieval_agent directory "
+            "before running benchmarks. See evaluation/retrieval_agent/README.md "
+            "for details."
+        )
+    config = Configuration.load_yml_file(str(config_file))
+    return ResourceManagerImpl(config)
+
+
 async def process_question(
     answer_prompt: str,
     query_agent: AgentToolBase,
     memory: EpisodicMemory,
-    model: openai.AsyncOpenAI,
+    answer_model: LanguageModel,
     question: str,
     answer: str,
     category: int | str,
     supporting_facts: list[str],
     adversarial_answer: str = "",
     search_limit: int = 20,
-    model_name: str = "gpt-5-mini",
     full_content: str | None = None,
     extra_attributes: dict[str, Any] | None = None,
 ):
     perf_metrics: dict[str, Any] = {}
     memory_start = 0
     memory_end = 0
-    prompt = ""
     formatted_context = ""
     chunks = []
 
@@ -92,12 +94,7 @@ async def process_question(
     prompt = answer_prompt.format(memories=formatted_context, question=question)
 
     rsp_start = time.time()
-    rsp = await model.responses.create(
-        model=model_name,
-        max_output_tokens=4096,
-        top_p=1,
-        input=[{"role": "user", "content": prompt}],
-    )
+    rsp_text, _ = await answer_model.generate_response(user_prompt=prompt)
     rsp_end = time.time()
 
     mem_retrieval_time = perf_metrics.get("memory_retrieval_time", 0)
@@ -113,7 +110,6 @@ async def process_question(
         f"LLM answering time: {rsp_end - rsp_start:.2f} seconds\n"
     )
 
-    rsp_text = rsp.output_text
     res = {
         "question": question,
         "golden_answer": answer,
@@ -382,70 +378,42 @@ async def init_agent(
     return select_agent
 
 
-def init_vector_graph_store(
-    neo4j_uri: str = "bolt://localhost:7687",
-    neo4j_user: str = "neo4j",
-    neo4j_password: str = "neo4j_password",
-) -> Neo4jVectorGraphStore:
-    neo4j_driver = neo4j.AsyncGraphDatabase.driver(
-        uri=neo4j_uri,
-        auth=(
-            neo4j_user,
-            neo4j_password,
-        ),
-        # Default is 1 hour.
-        max_connection_lifetime=7200,
-        max_connection_pool_size=100,
-        connection_acquisition_timeout=60.0,
-        max_transaction_retry_time=15.0,
-    )
-
-    vector_graph_store = Neo4jVectorGraphStore(
-        Neo4jVectorGraphStoreParams(
-            driver=neo4j_driver,
-            max_concurrent_transactions=1000,
-            range_index_hierarchies=[["uid"], ["timestamp", "uid"]],
-            range_index_creation_threshold=100,
-            vector_index_creation_threshold=100,
-        )
-    )
-    return vector_graph_store
-
-
 async def init_memmachine_params(
-    vector_graph_store: Neo4jVectorGraphStore,
-    model_name: str = "gpt-5-mini",
+    resource_manager: ResourceManagerImpl,
     session_id: str = "",
     agent_name: str = "ToolSelectAgent",
     message_sentence_chunking: bool = False,
-) -> tuple[EpisodicMemory, openai.AsyncOpenAI, AgentToolBase]:
-    openai_client = openai.AsyncOpenAI(
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+) -> tuple[EpisodicMemory, LanguageModel, AgentToolBase]:
+    """Initialize MemMachine components from a ResourceManagerImpl.
 
-    embedder = OpenAIEmbedder(
-        OpenAIEmbedderParams(
-            client=openai_client,
-            model="text-embedding-3-small",
-            dimensions=1536,
+    Components are resolved from the loaded configuration:
+
+    - Embedder:           ``episodic_memory.long_term_memory.embedder``
+    - Reranker:           ``retrieval_agent.reranker`` (fallback:
+                          ``episodic_memory.long_term_memory.reranker``)
+    - Vector graph store: ``episodic_memory.long_term_memory.vector_graph_store``
+    - Agent + answer LM: ``retrieval_agent.llm_model``
+    """
+    conf = resource_manager.config
+    ltm_conf = conf.episodic_memory.long_term_memory
+    if ltm_conf is None:
+        raise ValueError(
+            "episodic_memory.long_term_memory is not configured in configuration.yml"
         )
+
+    embedder = await resource_manager.get_embedder(ltm_conf.embedder)
+
+    reranker_id = conf.retrieval_agent.reranker or ltm_conf.reranker
+    reranker = await resource_manager.get_reranker(reranker_id)
+
+    vector_graph_store = await resource_manager.get_vector_graph_store(
+        ltm_conf.vector_graph_store
     )
 
-    region = "us-west-2"
-    aws_client = boto3.client(
-        "bedrock-agent-runtime",
-        region_name=region,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    )
-
-    reranker = AmazonBedrockReranker(
-        AmazonBedrockRerankerParams(
-            client=aws_client,
-            region=region,
-            model_id="amazon.rerank-v1:0",
-        )
-    )
+    agent_model_id = conf.retrieval_agent.llm_model
+    if not agent_model_id:
+        raise ValueError("retrieval_agent.llm_model is not set in configuration.yml")
+    agent_model = await resource_manager.get_language_model(agent_model_id)
 
     normalized_session_id = session_id or "evaluation_session"
 
@@ -468,21 +436,9 @@ async def init_memmachine_params(
         ),
     )
 
-    agent_model: LanguageModel = OpenAIResponsesLanguageModel(
-        OpenAIResponsesLanguageModelParams(
-            client=openai.AsyncOpenAI(
-                api_key=os.getenv("OPENAI_API_KEY"),
-                base_url="https://api.openai.com/v1",
-            ),
-            model=model_name,
-            # Default medium for gpt-5-mini
-            # reasoning_effort="minimal",
-        ),
-    )
     query_agent = await init_agent(agent_model, reranker, agent_name)
 
-    answer_model = openai.AsyncOpenAI(
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    # Resolve again so each caller gets an independent reference (the manager caches internally)
+    answer_model = await resource_manager.get_language_model(agent_model_id)
 
     return memory, answer_model, query_agent

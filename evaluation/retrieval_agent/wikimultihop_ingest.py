@@ -94,26 +94,26 @@ async def main():
     parser.add_argument(
         "--length", type=int, default=500, help="Number of records to ingest"
     )
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
 
     args = parser.parse_args()
 
-    data_path = args.data_path
-
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+    resource_manager = agent_utils.load_eval_config(args.config_path)
     memory, _, _ = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
+        resource_manager=resource_manager,
         session_id="group1",  # Wikimultihop dataset does not have session concept
     )
 
     contexts, _, _, _, _ = load_data(
-        data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
+        data_path=args.data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
     )
     print("Loaded", len(contexts), "contexts, start ingestion...")
 
     num_batch = 1000
-    episodes = []
     added_contexts = set()
     t1 = datetime.now(UTC)
     episodes = []
