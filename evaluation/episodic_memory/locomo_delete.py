@@ -53,7 +53,7 @@ async def main() -> None:
             ),
         )
 
-        await memory.delete_data()
+        await memory.delete_session_episodes()
         await memory.close()
 
     tasks = [
