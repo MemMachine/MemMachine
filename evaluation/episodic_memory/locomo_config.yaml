@@ -1,31 +1,46 @@
-long_term_memory:
-  embedder: my_embedder_id
-  reranker: my_reranker_id
-  vector_graph_store: my_storage_id
+logging:
+  level: info
+  path: ""
 
-sessiondb:
-  uri: sqlitetest.db
+episode_store:
+  database: db_sqlite
 
-vector_graph_store:
-  my_storage_id:
-    provider: neo4j
-    config:
-      uri: 'bolt://localhost:7687'
-      username: neo4j
-      password: <NEO4J_PASSWORD>
+episodic_memory:
+  long_term_memory:
+    embedder: my_embedder_id
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id
 
-embedder:
-  my_embedder_id:
-    provider: "openai"
-    config:
-      model: "text-embedding-3-small"
-      api_key: <OPENAI_API_KEY>
+semantic_memory:
+  enabled: false
 
-reranker:
-  my_reranker_id:
-    provider: "amazon-bedrock"
-    config:
-      region: "us-west-2"
-      aws_access_key_id: <AWS_ACCESS_KEY_ID>
-      aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
-      model_id: "cohere.rerank-v3-5:0"
+session_manager:
+  database: db_sqlite
+
+resources:
+  databases:
+    db_sqlite:
+      provider: sqlite
+      config:
+        path: sqlitetest.db
+    my_storage_id:
+      provider: neo4j
+      config:
+        uri: 'bolt://localhost:7687'
+        username: neo4j
+        password: <NEO4J_PASSWORD>
+  embedders:
+    my_embedder_id:
+      provider: openai
+      config:
+        model: text-embedding-3-small
+        api_key: <OPENAI_API_KEY>
+  rerankers:
+    my_reranker_id:
+      provider: amazon-bedrock
+      config:
+        region: us-west-2
+        aws_access_key_id: <AWS_ACCESS_KEY_ID>
+        aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
+        model_id: cohere.rerank-v3-5:0
+  language_models: {}
