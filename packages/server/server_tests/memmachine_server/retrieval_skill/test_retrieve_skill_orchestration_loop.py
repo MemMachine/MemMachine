@@ -147,7 +147,7 @@ def query_policy() -> QueryPolicy:
 
 
 @pytest.mark.asyncio
-async def test_tool_protocol_direct_memory_and_return_final(
+async def test_memmachine_search_collects_episodes_and_final_response_metrics(
     query_policy: QueryPolicy,
 ) -> None:
     episode = _build_episode("ep-direct", "direct")
@@ -155,26 +155,17 @@ async def test_tool_protocol_direct_memory_and_return_final(
     model = ScriptedLanguageModel(
         [
             (
-                "policy text",
+                "finalized",
                 [
                     {
                         "function": {
-                            "name": "direct_memory_search",
+                            "name": "memmachine_search",
                             "arguments": {
                                 "query": "hello",
                                 "rationale": "fetch evidence",
                             },
                         }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "finalized",
-                                "rationale": "evidence sufficient",
-                            },
-                        }
-                    },
+                    }
                 ],
             )
         ]
@@ -189,179 +180,27 @@ async def test_tool_protocol_direct_memory_and_return_final(
     assert [item.uid for item in episodes] == ["ep-direct"]
     assert metrics["route"] == "RetrieveSkill"
     assert metrics["orchestrator_completed"] is True
-    assert metrics["orchestrator_tool_call_count"] == 2
+    assert metrics["orchestrator_tool_call_count"] == 1
     assert metrics["orchestrator_sub_skill_count"] == 0
     assert metrics["orchestrator_final_response"] == "finalized"
-    assert metrics["top_level_session_invocation_count"] == 1
-    assert metrics["top_level_session_turn_count"] == 1
-    trace = metrics["orchestrator_trace"]
-    assert isinstance(trace, dict)
-    direct_call = trace["tool_calls"][0]
-    assert direct_call["tool_name"] == "direct_memory_search"
-    assert direct_call["raw_result"]["episodes_returned"] == 1
-    assert direct_call["raw_result"]["query"] == "hello"
-    assert isinstance(direct_call["raw_result"]["wall_time_seconds"], float)
-    assert isinstance(direct_call["raw_result"]["memory_search_latency_seconds"], list)
-    assert "episodes_human_readable" not in direct_call["raw_result"]
-
-
-@pytest.mark.asyncio
-async def test_direct_memory_search_and_state_tracking(
-    query_policy: QueryPolicy,
-) -> None:
-    sub_episode = _build_episode("ep-sub", "sub evidence")
-    top_episode = _build_episode("ep-top", "top evidence")
-    memory = FakeEpisodicMemory({"branch query": [sub_episode], "hello": [top_episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch query",
-                                "rationale": "branch retrieval",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {"query": "hello"},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "combined"},
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["ep-sub", "ep-top"]
-    assert metrics["orchestrator_sub_skill_count"] == 0
-    sub_skill_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_skill_runs, list)
-    assert sub_skill_runs == []
-    trace = metrics["orchestrator_trace"]
-    assert isinstance(trace, dict)
-    calls = trace["tool_calls"]
-    assert calls[0]["tool_name"] == "direct_memory_search"
-    assert calls[0]["arguments"]["query"] == "branch query"
-    assert calls[1]["tool_name"] == "direct_memory_search"
-    assert calls[1]["arguments"]["query"] == "hello"
-    assert metrics["memory_search_called"] == 2
-    assert float(metrics["memory_retrieval_time"]) > 0.0
-    assert metrics["top_level_session_invocation_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_return_final_captures_top_level_sufficiency_fields(
-    query_policy: QueryPolicy,
-) -> None:
-    episode = _build_episode("ep-suff", "suff evidence")
-    memory = FakeEpisodicMemory({"hello": [episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "policy text",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {"query": "hello"},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "finalized",
-                                "is_sufficient": True,
-                                "confidence_score": 0.91,
-                                "reason_code": "sufficient_cumulative_evidence",
-                                "reason_note": "supporting evidence found",
-                                "related_episode_indices": [0],
-                                "selected_episode_indices": [0],
-                            },
-                        }
-                    },
-                ],
-            )
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["ep-suff"]
-    assert metrics["top_level_sufficiency_signal_seen"] is True
     assert metrics["top_level_is_sufficient"] is True
-    assert metrics["top_level_confidence_score"] == pytest.approx(0.91)
-    assert metrics["top_level_reason_code"] == "sufficient_cumulative_evidence"
-    assert metrics["top_level_reason_note"] == "supporting evidence found"
-    assert metrics["top_level_related_episode_indices"] == [0]
-    assert metrics["top_level_selected_episode_indices"] == [0]
     assert metrics["answer_candidate"] == "finalized"
-    assert metrics["latest_answer_candidate"] == "finalized"
+    trace = metrics["orchestrator_trace"]
+    assert isinstance(trace, dict)
+    search_call = trace["tool_calls"][0]
+    assert search_call["tool_name"] == "memmachine_search"
+    assert search_call["raw_result"]["episodes_returned"] == 1
+    assert search_call["raw_result"]["query"] == "hello"
+    assert "episodes_human_readable" not in search_call["raw_result"]
 
 
 @pytest.mark.asyncio
-async def test_return_final_can_emit_stage_result_memory_payload(
+async def test_missing_tool_call_defaults_to_direct_search(
     query_policy: QueryPolicy,
 ) -> None:
-    episode = _build_episode("ep-stage-raw", "raw retrieval evidence")
+    episode = _build_episode("ep-fallback-search", "fallback")
     memory = FakeEpisodicMemory({"hello": [episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "policy text",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {"query": "hello"},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "finalized",
-                                "is_sufficient": True,
-                                "confidence_score": 0.92,
-                                "stage_results": [
-                                    {
-                                        "query": "Who discovered penicillin?",
-                                        "stage_result": "Alexander Fleming",
-                                        "confidence_score": 0.92,
-                                    }
-                                ],
-                                "sub_queries": [
-                                    "Who discovered penicillin?",
-                                    "What prize did he receive?",
-                                ],
-                            },
-                        }
-                    },
-                ],
-            )
-        ]
-    )
+    model = ScriptedLanguageModel([("plain response without tool call", [])])
     retrieve_skill = _build_skill(model)
 
     episodes, metrics = await retrieve_skill.do_query(
@@ -369,68 +208,47 @@ async def test_return_final_can_emit_stage_result_memory_payload(
         QueryParam(query="hello", limit=5, memory=memory),
     )
 
-    assert len(episodes) == 3
-    assert all(item.producer_id == "retrieve-skill-stage-result" for item in episodes)
-    assert "StageResult" in episodes[0].content
-    assert "SubQuery 1" in episodes[1].content
-    assert "SubQuery 2" in episodes[2].content
-    assert metrics["stage_result_memory_returned"] is True
-    assert metrics["returned_stage_result_count"] == 1
-    assert metrics["returned_sub_query_count"] == 2
+    assert [item.uid for item in episodes] == ["ep-fallback-search"]
+    assert metrics["orchestrator_tool_call_count"] == 1
+    trace = metrics["orchestrator_trace"]
+    assert trace["tool_calls"][0]["tool_name"] == "memmachine_search"
+    assert trace["events"][-1]["event_type"] == "orchestration_completed"
 
 
 @pytest.mark.asyncio
-async def test_stage_result_memory_payload_requires_confidence_threshold(
+async def test_inconclusive_plain_text_response_does_not_mark_sufficient(
     query_policy: QueryPolicy,
 ) -> None:
-    episode = _build_episode("ep-stage-low-confidence", "raw retrieval evidence")
+    episode = _build_episode("ep-unclear", "unclear evidence")
     memory = FakeEpisodicMemory({"hello": [episode]})
     model = ScriptedLanguageModel(
         [
             (
-                "policy text",
+                "I don't know based on the retrieved evidence.",
                 [
                     {
                         "function": {
-                            "name": "direct_memory_search",
+                            "name": "memmachine_search",
                             "arguments": {"query": "hello"},
                         }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "finalized",
-                                "is_sufficient": True,
-                                "confidence_score": 0.72,
-                                "stage_results": [
-                                    {
-                                        "query": "Who discovered penicillin?",
-                                        "stage_result": "Alexander Fleming",
-                                        "confidence_score": 0.72,
-                                    }
-                                ],
-                                "sub_queries": ["Who discovered penicillin?"],
-                            },
-                        }
-                    },
+                    }
                 ],
             )
         ]
     )
     retrieve_skill = _build_skill(model)
 
-    episodes, metrics = await retrieve_skill.do_query(
+    _, metrics = await retrieve_skill.do_query(
         query_policy,
         QueryParam(query="hello", limit=5, memory=memory),
     )
 
-    assert [item.uid for item in episodes] == ["ep-stage-low-confidence"]
-    assert metrics["stage_result_memory_returned"] is False
+    assert metrics["top_level_is_sufficient"] is False
+    assert "answer_candidate" not in metrics
 
 
 @pytest.mark.asyncio
-async def test_tool_protocol_invalid_action_triggers_fallback(
+async def test_legacy_tool_name_triggers_fallback(
     query_policy: QueryPolicy,
 ) -> None:
     fallback_episode = _build_episode("ep-fallback", "fallback")
@@ -442,8 +260,8 @@ async def test_tool_protocol_invalid_action_triggers_fallback(
                 [
                     {
                         "function": {
-                            "name": "unknown_tool",
-                            "arguments": {},
+                            "name": "spawn_sub_skill",
+                            "arguments": {"skill_name": "coq", "query": "hello"},
                         }
                     }
                 ],
@@ -459,705 +277,6 @@ async def test_tool_protocol_invalid_action_triggers_fallback(
 
     assert [item.uid for item in episodes] == ["ep-fallback"]
     assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
-    assert metrics["skill_contract_error_code"] == "SKILL_CONTRACT_INVALID_OUTPUT"
-    assert metrics["top_level_session_invocation_count"] == 1
-
-
-@pytest.mark.asyncio
-async def test_legacy_direct_memory_sub_skill_name_is_rejected(
-    query_policy: QueryPolicy,
-) -> None:
-    fallback_episode = _build_episode("ep-direct-memory-legacy", "fallback")
-    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "legacy tool payload",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "direct_memory",
-                                "query": "hello",
-                            },
-                        }
-                    }
-                ],
-            )
-        ]
+    assert metrics["orchestrator_trace"]["tool_calls"][0]["tool_name"] == (
+        "memmachine_search"
     )
-    retrieve_skill = _build_skill(model)
-
-    episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["ep-direct-memory-legacy"]
-    assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
-    assert metrics["skill_contract_error_code"] == "SKILL_CONTRACT_INVALID_OUTPUT"
-
-
-@pytest.mark.asyncio
-async def test_top_level_internal_split_branching_and_applies_final_rerank(
-    query_policy: QueryPolicy,
-) -> None:
-    branch_a = _build_episode("branch-a", "branch evidence a")
-    branch_b = _build_episode("branch-b", "branch evidence b")
-    branch_c = _build_episode("branch-c", "branch evidence c")
-    memory = FakeEpisodicMemory(
-        {
-            "branch direct": [branch_a, branch_b],
-            "branch coq then detail": [branch_c],
-        }
-    )
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch direct",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": "branch coq then detail",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "done",
-                                "sub_queries": [
-                                    "branch direct",
-                                    "branch coq then detail",
-                                ],
-                            },
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq branch",
-                [
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {"query": "branch coq then detail"},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "summary": (
-                                    '{"is_sufficient":true,'
-                                    '"confidence_score":0.93,'
-                                    '"final_query":"branch coq then detail"}'
-                                )
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=1, memory=memory),
-    )
-
-    assert len(episodes) == 1
-    assert metrics["branch_total"] == 0
-    assert metrics["branch_success_count"] == 0
-    assert metrics["branch_failure_count"] == 0
-    assert metrics["rerank_applied"] is True
-    sub_skill_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_skill_runs, list)
-    assert [run["skill_name"] for run in sub_skill_runs] == ["coq"]
-    assert metrics.get("top_level_sub_queries") == [
-        "branch direct",
-        "branch coq then detail",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_top_level_internal_split_executes_multiple_direct_branches(
-    query_policy: QueryPolicy,
-) -> None:
-    branch_a_query = "When did Fleetwood Sheppard die?"
-    branch_b_query = "When did George William Whitaker die?"
-    branch_a = _build_episode("branch-v1-a", "Fleetwood branch evidence")
-    branch_b = _build_episode("branch-v1-b", "Whitaker branch evidence")
-    memory = FakeEpisodicMemory(
-        {
-            branch_a_query: [branch_a],
-            branch_b_query: [branch_b],
-        }
-    )
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": branch_a_query,
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": branch_b_query,
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "done",
-                                "sub_queries": [branch_a_query, branch_b_query],
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    _episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert metrics["branch_total"] == 0
-    assert metrics["branch_success_count"] == 0
-    assert branch_a_query in memory.queries
-    assert branch_b_query in memory.queries
-    sub_skill_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_skill_runs, list)
-    assert sub_skill_runs == []
-    assert metrics.get("top_level_sub_queries") == [branch_a_query, branch_b_query]
-
-
-@pytest.mark.asyncio
-async def test_top_level_sub_queries_do_not_drive_stage_result_aggregation(
-    query_policy: QueryPolicy,
-) -> None:
-    branch_episode = _build_episode("branch-only", "branch evidence")
-    memory = FakeEpisodicMemory({"branch one": [branch_episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch one",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "done",
-                                "is_sufficient": True,
-                                "confidence_score": 0.95,
-                                "sub_queries": ["branch one", "branch two"],
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="compare", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["branch-only"]
-    assert metrics["stage_result_memory_returned"] is False
-    assert metrics.get("top_level_stage_results") in (None, [])
-    assert metrics.get("top_level_sub_queries") == ["branch one", "branch two"]
-
-
-@pytest.mark.asyncio
-async def test_top_level_can_issue_follow_up_internal_branch(
-    query_policy: QueryPolicy,
-) -> None:
-    branch_initial = _build_episode("branch-rerun-initial", "initial branch evidence")
-    branch_rerun = _build_episode("branch-rerun-second", "rerun branch evidence")
-    memory = FakeEpisodicMemory(
-        {
-            "branch one": [branch_initial],
-            "branch rerun": [branch_rerun],
-        }
-    )
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch one",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch rerun",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "done",
-                                "sub_queries": ["branch one", "branch rerun"],
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    _episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert "branch one" in memory.queries
-    assert "branch rerun" in memory.queries
-    assert metrics["branch_total"] == 0
-    assert metrics["branch_success_count"] == 0
-    sub_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_runs, list)
-    assert sub_runs == []
-    assert metrics.get("top_level_sub_queries") == ["branch one", "branch rerun"]
-
-
-@pytest.mark.asyncio
-async def test_coq_sub_skill_reuses_cached_results_for_near_duplicate_queries(
-    query_policy: QueryPolicy,
-) -> None:
-    q1 = "Who performed the song 'Sunday Papers' 'Sunday Papers' song performer"
-    q2 = 'Who performed the song "Sunday Papers" performer artist "Sunday Papers" song'
-    sub_episode = _build_episode(
-        "coq-sub",
-        'Sunday Papers: "Sunday Papers" is a song written and performed by British new wave musician Joe Jackson.',
-    )
-    memory = FakeEpisodicMemory({q1: [sub_episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": "Find performer then award",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "done"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq",
-                [
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {"query": q1},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {"query": q2},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "summary": (
-                                    '{"is_sufficient":true,'
-                                    '"evidence_indices":[0],'
-                                    '"new_query":"Find performer then award",'
-                                    '"confidence_score":0.91,'
-                                    '"reason_code":"sufficient_explicit_fact"}'
-                                )
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    _episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    # Only the first near-duplicate query should hit memory.
-    assert memory.queries == [q1]
-    sub_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_runs, list)
-    coq_run = sub_runs[0]
-    memmachine_calls = [
-        call
-        for call in coq_run["tool_calls"]
-        if call["tool_name"] == "memmachine_search"
-    ]
-    assert len(memmachine_calls) == 2
-    assert memmachine_calls[0]["raw_result"]["cached"] is False
-    assert memmachine_calls[1]["raw_result"]["cached"] is True
-    assert memmachine_calls[1]["raw_result"]["cached_from_query"] == q1
-    assert metrics["memory_search_called"] == 1
-    assert float(metrics["memory_retrieval_time"]) > 0.0
-
-
-@pytest.mark.asyncio
-async def test_coq_first_query_rewrites_to_earliest_blocking_hop(
-    query_policy: QueryPolicy,
-) -> None:
-    original_query = "When did Jean Martin (Singer)'s husband die?"
-    model_query = "Jean Martin (Singer) husband died"
-    rewritten_query = "Jean Martin (Singer) husband"
-    episode = _build_episode("coq-first-hop", "Jean Martin spouse is William Black.")
-    memory = FakeEpisodicMemory({rewritten_query: [episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": original_query,
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "done"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq",
-                [
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {"query": model_query},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "is_sufficient": False,
-                                "confidence_score": 0.52,
-                                "reason_code": "missing_final_attribute",
-                                "new_query": original_query,
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    _episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query=original_query, limit=5, memory=memory),
-    )
-
-    assert memory.queries == [rewritten_query]
-    sub_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_runs, list)
-    memmachine_calls = [
-        call
-        for call in sub_runs[0]["tool_calls"]
-        if call["tool_name"] == "memmachine_search"
-    ]
-    assert len(memmachine_calls) == 1
-    assert memmachine_calls[0]["arguments"]["query"] == rewritten_query
-    assert memmachine_calls[0]["raw_result"]["rewritten_from_query"] == model_query
-
-
-@pytest.mark.asyncio
-async def test_coq_artifact_query_falls_back_to_original_query(
-    query_policy: QueryPolicy,
-) -> None:
-    original_query = (
-        "Are Doboy Railway Station and Adamstown Railway Station, New South Wales "
-        "located in the same country?"
-    )
-    artifact_query = "coq-d9c2d46bbe0cdece SKILL.md"
-    episode = _build_episode("coq-artifact", "Both stations are in Australia.")
-    memory = FakeEpisodicMemory({original_query: [episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": original_query,
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "done"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq",
-                [
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {"query": artifact_query},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "is_sufficient": False,
-                                "confidence_score": 0.41,
-                                "reason_code": "artifact_query_rewritten",
-                                "new_query": original_query,
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    _episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query=original_query, limit=5, memory=memory),
-    )
-
-    assert memory.queries == [original_query]
-    sub_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_runs, list)
-    memmachine_calls = [
-        call
-        for call in sub_runs[0]["tool_calls"]
-        if call["tool_name"] == "memmachine_search"
-    ]
-    assert len(memmachine_calls) == 1
-    assert memmachine_calls[0]["arguments"]["query"] == original_query
-    assert memmachine_calls[0]["raw_result"]["rewritten_from_query"] == artifact_query
-
-
-@pytest.mark.asyncio
-async def test_top_level_coq_spawn_preserves_explicit_query_override(
-    query_policy: QueryPolicy,
-) -> None:
-    original_query = (
-        "Where did Prince Gustav of Thurn and Taxis (1848-1914)'s mother die?"
-    )
-    rewritten_query = (
-        "Decompose: 1) Identify the mother of Prince Gustav of Thurn and Taxis "
-        "(1848-1914). 2) Find where she died."
-    )
-    original_episode = _build_episode(
-        "coq-original",
-        "Princess Mathilde Sophie ... died in Obermais, Meran.",
-    )
-    rewritten_episode = _build_episode(
-        "coq-rewritten",
-        "This should not be returned if coq query override works.",
-    )
-    memory = FakeEpisodicMemory(
-        {
-            original_query: [original_episode],
-            rewritten_query: [rewritten_episode],
-        }
-    )
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": rewritten_query,
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "done"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq",
-                [
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {},
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "summary": (
-                                    '{"is_sufficient":true,'
-                                    '"evidence_indices":[0],'
-                                    '"new_query":"Where did Prince Gustav of Thurn and '
-                                    "Taxis (1848-1914)'s mother die?\","
-                                    '"confidence_score":0.95,'
-                                    '"reason_code":"sufficient_cumulative_evidence",'
-                                    '"reason_note":"mother and death place found"}'
-                                )
-                            },
-                        }
-                    },
-                ],
-            ),
-        ]
-    )
-    retrieve_skill = _build_skill(model)
-
-    episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query=original_query, limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["coq-rewritten"]
-    assert memory.queries == [rewritten_query]
-    sub_runs = metrics["orchestrator_sub_skill_runs"]
-    assert isinstance(sub_runs, list)
-    assert sub_runs[0]["skill_name"] == "coq"
-    assert sub_runs[0]["query"] == rewritten_query
-
-
-@pytest.mark.asyncio
-async def test_llm_time_accumulates_top_level_and_sub_skill_sessions(
-    query_policy: QueryPolicy,
-) -> None:
-    sub_episode = _build_episode("llm-time-sub", "sub evidence")
-    memory = FakeEpisodicMemory({"branch query": [sub_episode]})
-    model = ScriptedLanguageModel(
-        [
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": "branch query",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "done"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "sub-skill",
-                [
-                    {
-                        "function": {
-                            "name": "memmachine_search",
-                            "arguments": {"query": "branch query"},
-                        }
-                    }
-                ],
-            ),
-        ]
-    )
-    model.session_llm_times = [0.14, 0.31]
-    model.session_llm_input_tokens = [7, 11]
-    model.session_llm_output_tokens = [3, 5]
-    retrieve_skill = _build_skill(model)
-
-    _episodes, metrics = await retrieve_skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert metrics["llm_time"] == pytest.approx(0.45)
-    assert metrics["llm_call_count"] == 2
-    assert metrics["input_token"] == 18
-    assert metrics["output_token"] == 8
-    assert metrics["top_level_llm_call_count"] == 1
-    assert metrics["top_level_input_token"] == 7
-    assert metrics["top_level_output_token"] == 3

@@ -6,7 +6,7 @@ usage_locomo() {
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
-    echo "  TEST_TARGET       [memmachine | retrieval_skill | llm]"
+    echo "  TEST_TARGET       [retrieval_skill | llm]"
     exit 1
 }
 
@@ -16,7 +16,7 @@ usage_wiki() {
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
-    echo "  TEST_TARGET       [memmachine | retrieval_skill | llm]"
+    echo "  TEST_TARGET       [retrieval_skill | llm]"
     echo "  LENGTH            Number of examples to run [1 - 12576]"
     exit 1
 }
@@ -30,7 +30,7 @@ usage_hotpotqa() {
     echo "  SPLIT_NAME        Dataset split name [train | validation]. Train set contains 19.9%"
     echo "                      easy, 62.8% medium, 17.3% hard questions. Validation set contains"
     echo "                      hard questions only."
-    echo "  TEST_TARGET       [memmachine | retrieval_skill | llm]"
+    echo "  TEST_TARGET       [retrieval_skill | llm]"
     echo "  LENGTH            Number of examples to run [train set 1 - 90447 | validation set 1 - 7405]"
     exit 1
 }
@@ -42,7 +42,7 @@ usage_longmemeval() {
     echo "  RESULT_POSTFIX    Custom postfix for output files"
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
     echo "  SPLIT_NAME        Dataset split name, e.g. longmemeval_s_cleaned"
-    echo "  TEST_TARGET       [memmachine | retrieval_skill | llm]"
+    echo "  TEST_TARGET       [retrieval_skill | llm]"
     echo "  LENGTH            Number of examples to run [1 - split size]"
     exit 1
 }

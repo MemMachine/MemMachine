@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy the 'hooks' section below into your ~/.claude/settings.json. Replace $HOME/path/to/memmachine-repo with the actual absolute path to your MemMachine repository clone. Ensure 'memmachine' is on your $PATH before Claude Code sessions start (e.g. add to ~/.bashrc or ~/.zshrc). Both hook scripts require jq on $PATH as well.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/path/to/memmachine-repo/integrations/claude-code/hooks/on_user_prompt.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/path/to/memmachine-repo/integrations/claude-code/hooks/on_session_end.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

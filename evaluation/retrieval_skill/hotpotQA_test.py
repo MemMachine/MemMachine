@@ -72,6 +72,7 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
     memory, _, _ = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         session_id="hotpotqa_group",
+        build_runner=False,
     )
 
     all_content = []
@@ -115,11 +116,27 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
 
 
 async def hotpotqa_search(
-    dataset: list[dict[str, any]],
+    dataset: list[dict[str, any]] | None = None,
     eval_result_path: str | None = None,
-    skill_name: str = "RetrieveSkill",
     pure_llm: bool = False,
+    result_path: Path | str | None = None,
+    length: int | None = None,
+    runner_kwargs: dict | None = None,
 ):
+    if dataset is None:
+        _length = length or 100
+        _split = "validation"
+        dataset = load_hotpotqa_dataset(_length, _split)
+
+    if result_path is not None:
+        eval_result_path = str(result_path)
+    effective_runner_kwargs = dict(runner_kwargs or {})
+    if not pure_llm:
+        effective_runner_kwargs.setdefault("stage_result_mode", True)
+        effective_runner_kwargs.setdefault(
+            "omit_episode_text_on_confident_stage_result", True
+        )
+
     tasks = []
     attribute_matrix = skill_utils.init_attribute_matrix()
     responses: list[tuple[int, dict[str, any]]] = []
@@ -127,12 +144,15 @@ async def hotpotqa_search(
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
-    memory, model, query_skill = await skill_utils.init_memmachine_params(
+    _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         model_name="gpt-5-mini",
         session_id="hotpotqa_group",
-        skill_name=skill_name,
+        runner_config=effective_runner_kwargs,
+        build_runner=not pure_llm,
     )
+    if not pure_llm and query_skill is None:
+        raise RuntimeError("HotPotQA benchmark requires an initialized SkillRunner.")
 
     for data in dataset:
         context = data["context"]
@@ -152,16 +172,14 @@ async def hotpotqa_search(
         full_content_str = "\n".join(full_content)
 
         tasks.append(
-            skill_utils.process_question(
+            skill_utils.process_question_with_runner(
                 answer_prompt=ANSWER_PROMPT,
-                query_skill=query_skill,
-                memory=memory,
+                runner=query_skill,
                 model=model,
                 question=data["question"],
                 answer=data["answer"],
                 category=(data["type"]),
                 supporting_facts=supporting_facts,
-                search_limit=20,
                 model_name="gpt-5-mini",
                 full_content=full_content_str if pure_llm else None,
                 extra_attributes={"level": data["level"]},
@@ -229,8 +247,8 @@ async def main():
     parser.add_argument(
         "--test-target",
         required=True,
-        help="Testing with memmachine(direct memory), retrieval_skill, or pure llm",
-        choices=["memmachine", "retrieval_skill", "llm"],
+        help="Testing with retrieval_skill or pure llm",
+        choices=["retrieval_skill", "llm"],
     )
     args = parser.parse_args()
 
@@ -245,11 +263,10 @@ async def main():
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
 
-        skill_name = (
-            "MemMachineSkill" if args.test_target == "memmachine" else "RetrieveSkill"
-        )
         await hotpotqa_search(
-            dataset, args.eval_result_path, skill_name, args.test_target == "llm"
+            dataset,
+            args.eval_result_path,
+            args.test_target == "llm",
         )
     else:
         raise ValueError(

@@ -56,6 +56,7 @@ async def main():
         memory, _, _ = await skill_utils.init_memmachine_params(
             vector_graph_store=vector_graph_store,
             session_id=group_id,
+            build_runner=False,
         )
 
         session_idx = 0

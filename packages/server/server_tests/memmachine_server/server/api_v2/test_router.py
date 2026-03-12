@@ -287,7 +287,7 @@ def test_search_memories(client, mock_memmachine):
         "org_id": "test_org",
         "project_id": "test_proj",
         "query": "hello",
-        "skill_mode": True,
+        "agent_mode": True,
     }
 
     with patch(
@@ -330,7 +330,7 @@ def test_search_memories(client, mock_memmachine):
         assert await_args is not None
         search_call = cast(dict[str, Any], await_args.kwargs)
         assert search_call["spec"].query == "hello"
-        assert search_call["spec"].skill_mode is True
+        assert search_call["spec"].agent_mode is True
 
         # Invalid argument
         mock_search.reset_mock()
@@ -386,11 +386,11 @@ def test_search_memories_returns_retrieval_trace(client, mock_memmachine):
         "org_id": "test_org",
         "project_id": "test_proj",
         "query": "hello",
-        "skill_mode": True,
+        "agent_mode": True,
     }
 
     with patch(
-        "memmachine.server.api_v2.router._search_target_memories"
+        "memmachine_server.server.api_v2.router._search_target_memories"
     ) as mock_search:
         mock_search.return_value = SearchResult.model_validate(
             {

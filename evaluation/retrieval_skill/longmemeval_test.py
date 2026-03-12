@@ -128,6 +128,7 @@ async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
     memory, _, _ = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         session_id=session_id,
+        build_runner=False,
     )
     _set_safe_embedder_request_limits(memory)
 
@@ -170,7 +171,6 @@ async def longmemeval_search(
     dataset: list[dict[str, Any]],
     session_id: str,
     eval_result_path: str | None = None,
-    skill_name: str = "RetrieveSkill",
     pure_llm: bool = False,
 ):
     tasks = []
@@ -185,8 +185,12 @@ async def longmemeval_search(
         vector_graph_store=vector_graph_store,
         model_name="gpt-5-mini",
         session_id=session_id,
-        skill_name=skill_name,
+        build_runner=not pure_llm,
     )
+    if not pure_llm and query_skill is None:
+        raise RuntimeError(
+            "LongMemEval benchmark requires an initialized SkillRunner."
+        )
     _set_safe_embedder_request_limits(memory)
 
     for sample in dataset:
@@ -200,16 +204,14 @@ async def longmemeval_search(
         full_content = "\n".join(all_content)
 
         tasks.append(
-            skill_utils.process_question(
+            skill_utils.process_question_with_runner(
                 answer_prompt=ANSWER_PROMPT,
-                query_skill=query_skill,
-                memory=memory,
+                runner=query_skill,
                 model=model,
                 question=question,
                 answer=answer,
                 category=str(sample.get("question_type", "unknown")),
                 supporting_facts=supporting_facts,
-                search_limit=20,
                 model_name="gpt-5-mini",
                 full_content=full_content if pure_llm else None,
                 extra_attributes={
@@ -317,8 +319,8 @@ async def main():
     parser.add_argument(
         "--test-target",
         required=True,
-        help="Testing with memmachine(direct memory), retrieval_skill, or pure llm",
-        choices=["memmachine", "retrieval_skill", "llm"],
+        help="Testing with retrieval_skill or pure llm",
+        choices=["retrieval_skill", "llm"],
     )
     parser.add_argument(
         "--session-id",
@@ -339,14 +341,10 @@ async def main():
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
 
-        skill_name = (
-            "MemMachineSkill" if args.test_target == "memmachine" else "RetrieveSkill"
-        )
         await longmemeval_search(
             dataset,
             args.session_id,
             args.eval_result_path,
-            skill_name,
             args.test_target == "llm",
         )
     else:

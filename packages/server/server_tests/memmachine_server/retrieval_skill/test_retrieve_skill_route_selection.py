@@ -149,177 +149,64 @@ def _build_episode(uid: str) -> Episode:
 
 
 @pytest.mark.asyncio
-async def test_coq_sub_skill_summary_sets_sufficiency_metrics(
+async def test_selected_skill_defaults_to_direct_memory_label(
     query_policy: QueryPolicy,
 ) -> None:
-    episode = _build_episode("route-coq")
+    episode = _build_episode("route-direct")
     memory = FakeEpisodicMemory({"hello": [episode]})
     model = ScriptedLanguageModel(
         outputs=[
             (
-                "top-level",
+                "final answer",
                 [
                     {
                         "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": "hello",
-                                "rationale": "dependent multi-hop",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "ok"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq",
-                [
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "summary": (
-                                    '{"is_sufficient":true,'
-                                    '"confidence_score":0.91,'
-                                    '"reason_code":"coq_sufficient",'
-                                    '"answer_candidate":"alice"}'
-                                )
-                            },
+                            "name": "memmachine_search",
+                            "arguments": {"query": "hello"},
                         }
                     }
                 ],
-            ),
+            )
         ]
     )
 
     skill = _build_skill(model)
-    episodes, metrics = await skill.do_query(
+    _, metrics = await skill.do_query(
         query_policy,
         QueryParam(query="hello", limit=5, memory=memory),
     )
 
-    assert [item.uid for item in episodes] == ["route-coq"]
-    assert metrics["latest_sufficiency_signal_skill"] == "coq"
-    assert metrics["evidence_sufficient"] is True
-    assert metrics["top_level_is_sufficient"] is True
-    assert metrics["selected_skill"] == "coq"
-    assert metrics["selected_skill_name"] == "ChainOfQuerySkill"
+    assert metrics["selected_skill"] == "direct_memory"
+    assert metrics["selected_skill_name"] == "MemMachineSkill"
+    assert metrics["orchestrator_sub_skill_runs"] == []
 
 
 @pytest.mark.asyncio
-async def test_coq_sub_skill_structured_return_fields_set_metrics(
+async def test_plain_text_completion_keeps_raw_memory_episodes(
     query_policy: QueryPolicy,
 ) -> None:
-    episode = _build_episode("route-coq-structured")
-    memory = FakeEpisodicMemory({"hello": [episode]})
-    model = ScriptedLanguageModel(
-        outputs=[
-            (
-                "top-level",
-                [
-                    {
-                        "function": {
-                            "name": "spawn_sub_skill",
-                            "arguments": {
-                                "skill_name": "coq",
-                                "query": "hello",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {"final_response": "ok"},
-                        }
-                    },
-                ],
-            ),
-            (
-                "coq",
-                [
-                    {
-                        "function": {
-                            "name": "return_sub_skill_result",
-                            "arguments": {
-                                "is_sufficient": True,
-                                "confidence_score": 0.93,
-                                "reason_code": "structured_summary",
-                                "answer_candidate": "alice",
-                                "new_query": "hello",
-                                "generated_sub_queries": [
-                                    "Who is the target person?",
-                                    "What is their attribute?",
-                                ],
-                            },
-                        }
-                    }
-                ],
-            ),
-        ]
-    )
-
-    skill = _build_skill(model)
-    episodes, metrics = await skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["route-coq-structured"]
-    assert metrics["latest_sufficiency_signal_skill"] == "coq"
-    assert metrics["evidence_sufficient"] is True
-    assert metrics["top_level_is_sufficient"] is True
-    assert metrics["latest_answer_candidate"] == "alice"
-    assert metrics["selected_skill"] == "coq"
-    assert metrics["selected_skill_name"] == "ChainOfQuerySkill"
-
-
-@pytest.mark.asyncio
-async def test_internal_split_via_top_level_actions_uses_direct_memory_skill_name(
-    query_policy: QueryPolicy,
-) -> None:
-    episode_a = _build_episode("route-split-a")
-    episode_b = _build_episode("route-split-b")
+    episode_a = _build_episode("route-a")
+    episode_b = _build_episode("route-b")
     memory = FakeEpisodicMemory({"branch a": [episode_a], "branch b": [episode_b]})
     model = ScriptedLanguageModel(
         outputs=[
             (
-                "top-level",
+                "combined answer",
                 [
                     {
                         "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch a",
-                            },
+                            "name": "memmachine_search",
+                            "arguments": {"query": "branch a"},
                         }
                     },
                     {
                         "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {
-                                "query": "branch b",
-                            },
-                        }
-                    },
-                    {
-                        "function": {
-                            "name": "return_final",
-                            "arguments": {
-                                "final_response": "ok",
-                                "is_sufficient": True,
-                                "confidence_score": 0.93,
-                                "sub_queries": ["branch a", "branch b"],
-                            },
+                            "name": "memmachine_search",
+                            "arguments": {"query": "branch b"},
                         }
                     },
                 ],
-            ),
+            )
         ]
     )
 
@@ -329,7 +216,6 @@ async def test_internal_split_via_top_level_actions_uses_direct_memory_skill_nam
         QueryParam(query="hello", limit=5, memory=memory),
     )
 
-    assert [item.uid for item in episodes] == ["route-split-a", "route-split-b"]
-    assert metrics["selected_skill"] == "direct_memory"
-    assert metrics["selected_skill_name"] == "MemMachineSkill"
-    assert metrics.get("top_level_sub_queries") == ["branch a", "branch b"]
+    assert [item.uid for item in episodes] == ["route-a", "route-b"]
+    assert metrics["stage_result_memory_returned"] is False
+    assert metrics["memory_search_called"] == 2

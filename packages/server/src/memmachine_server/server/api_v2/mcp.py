@@ -219,7 +219,7 @@ class Params(BaseModel):
         *,
         expand_context: int = 0,
         score_threshold: float | None = None,
-        skill_mode: bool = False,
+        agent_mode: bool = False,
     ) -> SearchMemoriesSpec:
         """Convert to SearchMemoriesParam."""
         return SearchMemoriesSpec(
@@ -232,7 +232,7 @@ class Params(BaseModel):
             filter="",
             set_metadata=None,
             types=ALL_MEMORY_TYPES,
-            skill_mode=skill_mode,
+            agent_mode=agent_mode,
         )
 
     def to_delete_memories_spec(

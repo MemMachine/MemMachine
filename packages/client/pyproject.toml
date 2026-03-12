@@ -30,9 +30,16 @@ classifiers = [
 ]
 license = "Apache-2.0"
 
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.84.0"]
+openai = ["openai>=2.21.0"]
+
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[project.scripts]
+memmachine = "memmachine_client.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

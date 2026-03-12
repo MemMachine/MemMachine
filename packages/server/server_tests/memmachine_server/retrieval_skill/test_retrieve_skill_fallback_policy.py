@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,10 +28,8 @@ class PolicyLanguageModel(LanguageModel):
         self,
         *,
         outputs: list[tuple[str, list[dict[str, Any]] | None]],
-        sub_skill_delay_seconds: float = 0.0,
     ) -> None:
         self._outputs = outputs
-        self._sub_skill_delay_seconds = sub_skill_delay_seconds
 
     async def generate_parsed_response(
         self,
@@ -52,16 +49,7 @@ class PolicyLanguageModel(LanguageModel):
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
-        _ = system_prompt, user_prompt, tool_choice, max_attempts
-        tool_names = {
-            str(item.get("function", {}).get("name", ""))
-            for item in (tools or [])
-            if isinstance(item, dict)
-        }
-        if "memmachine_search" in tool_names and self._sub_skill_delay_seconds > 0:
-            await asyncio.sleep(self._sub_skill_delay_seconds)
-            return "", []
-
+        _ = system_prompt, user_prompt, tools, tool_choice, max_attempts
         if not self._outputs:
             return "", []
         return self._outputs.pop(0)
@@ -162,60 +150,8 @@ def _build_skill(model: LanguageModel, **extra_params: object) -> RetrieveSkill:
     )
 
 
-def _spawn_coq_call(query: str = "hello") -> dict[str, Any]:
-    return {
-        "function": {
-            "name": "spawn_sub_skill",
-            "arguments": {
-                "skill_name": "coq",
-                "query": query,
-                "rationale": "branch",
-            },
-        }
-    }
-
-
-def _return_final_call() -> dict[str, Any]:
-    return {
-        "function": {
-            "name": "return_final",
-            "arguments": {"final_response": "done"},
-        }
-    }
-
-
 @pytest.mark.asyncio
-async def test_sub_skill_timeout_retries_once_then_fallback(
-    query_policy: QueryPolicy,
-) -> None:
-    fallback_episode = _build_episode("fb-timeout", "fallback-timeout")
-    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
-    model = PolicyLanguageModel(
-        outputs=[
-            ("attempt-1", [_spawn_coq_call("hello"), _return_final_call()]),
-            ("attempt-2", [_spawn_coq_call("hello"), _return_final_call()]),
-        ],
-        sub_skill_delay_seconds=0.01,
-    )
-
-    skill = _build_skill(model, sub_skill_timeout_seconds=0)
-    episodes, metrics = await skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["fb-timeout"]
-    assert metrics["fallback_trigger_reason"] == "sub_skill_timeout"
-    trace = metrics["orchestrator_trace"]
-    assert isinstance(trace, dict)
-    assert any(
-        event.get("event_type") == "guardrail_retry"
-        for event in trace.get("events", [])
-    )
-
-
-@pytest.mark.asyncio
-async def test_max_steps_exceeded_retries_once_then_fallback(
+async def test_max_steps_exceeded_retries_to_fallback(
     query_policy: QueryPolicy,
 ) -> None:
     fallback_episode = _build_episode("fb-steps", "fallback-steps")
@@ -223,15 +159,13 @@ async def test_max_steps_exceeded_retries_once_then_fallback(
     too_many_calls = [
         {
             "function": {
-                "name": "direct_memory_search",
+                "name": "memmachine_search",
                 "arguments": {"query": "hello"},
             }
         }
         for _ in range(9)
     ]
-    model = PolicyLanguageModel(
-        outputs=[("attempt-1", too_many_calls), ("attempt-2", too_many_calls)],
-    )
+    model = PolicyLanguageModel(outputs=[("attempt-1", too_many_calls)])
 
     skill = _build_skill(model)
     episodes, metrics = await skill.do_query(
@@ -241,77 +175,6 @@ async def test_max_steps_exceeded_retries_once_then_fallback(
 
     assert [item.uid for item in episodes] == ["fb-steps"]
     assert metrics["fallback_trigger_reason"] == "max_steps_exceeded"
-
-
-@pytest.mark.asyncio
-async def test_fallback_preserves_partial_evidence_before_timeout(
-    query_policy: QueryPolicy,
-) -> None:
-    partial_episode = _build_episode("partial", "partial-evidence")
-    fallback_episode = _build_episode("final", "fallback-evidence")
-    memory = FakeEpisodicMemory({"hello": [partial_episode, fallback_episode]})
-    model = PolicyLanguageModel(
-        outputs=[
-            (
-                "attempt-1",
-                [
-                    {
-                        "function": {
-                            "name": "direct_memory_search",
-                            "arguments": {"query": "hello"},
-                        }
-                    },
-                    _spawn_coq_call("hello"),
-                    _return_final_call(),
-                ],
-            ),
-            ("attempt-2", [_spawn_coq_call("hello"), _return_final_call()]),
-        ],
-        sub_skill_delay_seconds=0.01,
-    )
-
-    skill = _build_skill(model, sub_skill_timeout_seconds=0)
-    episodes, metrics = await skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert metrics["fallback_trigger_reason"] == "sub_skill_timeout"
-    uids = [item.uid for item in episodes]
-    assert "partial" in uids
-    assert "final" in uids
-
-
-@pytest.mark.asyncio
-async def test_coq_invalid_sub_skill_output_triggers_fallback(
-    query_policy: QueryPolicy,
-) -> None:
-    fallback_episode = _build_episode("coq-fallback", "coq-fallback")
-    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
-    model = PolicyLanguageModel(
-        outputs=[
-            (
-                "top-level",
-                [
-                    _spawn_coq_call("branch then detail"),
-                    _return_final_call(),
-                ],
-            ),
-            (
-                "coq-attempt-1",
-                [{"function": {"name": "unknown_tool", "arguments": {}}}],
-            ),
-        ],
-    )
-
-    skill = _build_skill(model)
-    episodes, metrics = await skill.do_query(
-        query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert [item.uid for item in episodes] == ["coq-fallback"]
-    assert metrics["fallback_trigger_reason"] == "sub_skill_exception"
 
 
 @pytest.mark.asyncio
@@ -325,10 +188,20 @@ async def test_combined_call_budget_exceeded_triggers_fallback(
             (
                 "top-level",
                 [
-                    _spawn_coq_call("hello"),
-                    _return_final_call(),
+                    {
+                        "function": {
+                            "name": "memmachine_search",
+                            "arguments": {"query": "hello"},
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "memmachine_search",
+                            "arguments": {"query": "hello again"},
+                        }
+                    },
                 ],
-            ),
+            )
         ],
     )
 
@@ -341,3 +214,38 @@ async def test_combined_call_budget_exceeded_triggers_fallback(
     assert [item.uid for item in episodes] == ["budget-fallback"]
     assert metrics["fallback_trigger_reason"] == "session_call_budget_exceeded"
     assert metrics["session_call_budget_limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_name_falls_back_with_raw_error_details(
+    query_policy: QueryPolicy,
+) -> None:
+    fallback_episode = _build_episode("fb-invalid", "fallback-invalid")
+    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
+    model = PolicyLanguageModel(
+        outputs=[
+            (
+                "bad tool",
+                [
+                    {
+                        "function": {
+                            "name": "return_final",
+                            "arguments": {"final_response": "done"},
+                        }
+                    }
+                ],
+            )
+        ]
+    )
+
+    skill = _build_skill(model)
+    episodes, metrics = await skill.do_query(
+        query_policy,
+        QueryParam(query="hello", limit=5, memory=memory),
+    )
+
+    assert [item.uid for item in episodes] == ["fb-invalid"]
+    assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
+    error_diagnostics = metrics.get("error_diagnostics")
+    assert isinstance(error_diagnostics, dict)
+    assert error_diagnostics.get("context") == "top_level_tool_not_found"

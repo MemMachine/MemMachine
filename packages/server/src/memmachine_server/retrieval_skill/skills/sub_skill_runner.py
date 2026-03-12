@@ -556,36 +556,6 @@ class SubSkillRunner:
                     )
                 )
                 continue
-            if action.action == "return_sub_skill_result":
-                return_arguments: dict[str, object] = {"summary": action.summary}
-                for key in (
-                    "is_sufficient",
-                    "evidence_indices",
-                    "new_query",
-                    "confidence_score",
-                    "reason_code",
-                    "reason_note",
-                    "answer_candidate",
-                    "stage_results",
-                    "generated_sub_queries",
-                    "sub_queries",
-                    "related_episode_indices",
-                    "selected_episode_indices",
-                ):
-                    value = getattr(action, key, None)
-                    if value is not None:
-                        return_arguments[key] = value
-                records.append(
-                    SkillToolCallRecord(
-                        step=step_index,
-                        tool_name=action.action,
-                        arguments=return_arguments,
-                        status="success",
-                        result_summary="summary recorded",
-                        raw_result=self._sanitize_raw_tool_result(execution.output),
-                    )
-                )
-                continue
             records.append(
                 SkillToolCallRecord(
                     step=step_index,
@@ -617,7 +587,6 @@ class SubSkillRunner:
         collected_episodes: list[Episode] = []
         memmachine_call_details: list[dict[str, object]] = []
         cached_query_results: list[dict[str, object]] = []
-        summary_from_tool: str = ""
         memory_search_called = 0
         memory_retrieval_time = 0.0
 
@@ -738,29 +707,6 @@ class SubSkillRunner:
                 response["cached_from_query"] = cached_from_query
             return response
 
-        async def _tool_return_sub_skill_result(
-            arguments: dict[str, object],
-        ) -> dict[str, object]:
-            nonlocal summary_from_tool
-            observed_sub_queries = [
-                str(detail.get("query") or "").strip()
-                for detail in memmachine_call_details
-                if isinstance(detail, dict) and str(detail.get("query") or "").strip()
-            ]
-            structured_payload = self._structured_summary_payload(
-                arguments=arguments,
-                original_query=query.query,
-                observed_sub_queries=observed_sub_queries,
-            )
-            if structured_payload is not None:
-                summary_from_tool = json.dumps(
-                    structured_payload,
-                    separators=(",", ":"),
-                )
-            else:
-                summary_from_tool = str(arguments.get("summary") or "").strip()
-            return {"summary_recorded": bool(summary_from_tool)}
-
         try:
             live_result = await self._session_model.run_live_session(
                 system_prompt=(
@@ -771,7 +717,6 @@ class SubSkillRunner:
                 tools=sub_skill_tool_schemas(spec.allowed_tools),
                 tool_registry={
                     "memmachine_search": _tool_memmachine_search,
-                    "return_sub_skill_result": _tool_return_sub_skill_result,
                 },
                 max_turns=bounded_max_steps,
                 timeout_seconds=float(spec.timeout_seconds),
@@ -834,7 +779,7 @@ class SubSkillRunner:
         result.llm_output_tokens = int(live_result.llm_output_tokens)
         result.memory_search_called = memory_search_called
         result.memory_retrieval_time = memory_retrieval_time
-        result.summary = summary_from_tool or live_result.final_response.strip()
+        result.summary = live_result.final_response.strip()
         result.episodes = self._dedupe_episodes(result.episodes)
         result.normalization_warnings = list(live_result.normalization_warnings)
         result.status = "success"

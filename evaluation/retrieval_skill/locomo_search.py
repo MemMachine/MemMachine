@@ -61,8 +61,8 @@ async def run_locomo(  # noqa: C901
     parser.add_argument(
         "--test-target",
         required=True,
-        help="Testing with memmachine(direct memory), retrieval_skill, or pure llm",
-        choices=["memmachine", "retrieval_skill", "llm"],
+        help="Testing with retrieval_skill or pure llm",
+        choices=["retrieval_skill", "llm"],
     )
 
     args = parser.parse_args()
@@ -132,14 +132,14 @@ async def run_locomo(  # noqa: C901
                 speaker = message["speaker"]
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
-        memory, model, query_skill = await skill_utils.init_memmachine_params(
+        _, model, query_skill = await skill_utils.init_memmachine_params(
             vector_graph_store=vector_graph_store,
             session_id=group_id,
             model_name="gpt-5-mini",
-            skill_name="RetrieveSkill"
-            if args.test_target in {"retrieval_skill"}
-            else "MemMachineSkill",
+            build_runner=args.test_target == "retrieval_skill",
         )
+        if args.test_target == "retrieval_skill" and query_skill is None:
+            raise RuntimeError("LoCoMo benchmark requires an initialized SkillRunner.")
 
         async def respond_question(qa, full_content):
             question = qa["question"]
@@ -167,19 +167,17 @@ async def run_locomo(  # noqa: C901
 
             full_content_str = "\n".join(full_content)
 
-            question_response = await skill_utils.process_question(
-                ANSWER_PROMPT,
-                query_skill,
-                memory,
-                model,
-                question,
-                answer,
-                category,
-                stringified_evidence,
-                adversarial_answer,
-                20,
-                "gpt-5-mini",
-                full_content_str if args.test_target == "llm" else None,
+            question_response = await skill_utils.process_question_with_runner(
+                answer_prompt=ANSWER_PROMPT,
+                runner=query_skill,
+                model=model,
+                question=question,
+                answer=answer,
+                category=category,
+                supporting_facts=stringified_evidence,
+                adversarial_answer=adversarial_answer,
+                model_name="gpt-5-mini",
+                full_content=full_content_str if args.test_target == "llm" else None,
             )
             return question_response
 

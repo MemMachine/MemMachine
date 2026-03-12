@@ -340,7 +340,7 @@ async def test_query_search_runs_targeted_memory_tasks(
 
 
 @pytest.mark.asyncio
-async def test_query_search_uses_retrieval_skill_when_skill_mode_enabled(
+async def test_query_search_uses_retrieval_skill_when_agent_mode_enabled(
     minimal_conf, patched_resource_manager, monkeypatch
 ):
     dummy_session = DummySessionData("s1")
@@ -366,7 +366,7 @@ async def test_query_search_uses_retrieval_skill_when_skill_mode_enabled(
         dummy_session,
         target_memories=[MemoryType.Episodic],
         query="hello world",
-        skill_mode=True,
+        agent_mode=True,
     )
 
     get_retrieval_skill.assert_awaited_once()
@@ -376,7 +376,7 @@ async def test_query_search_uses_retrieval_skill_when_skill_mode_enabled(
 
 
 @pytest.mark.asyncio
-async def test_query_search_includes_retrieval_trace_when_skill_mode_enabled(
+async def test_query_search_includes_retrieval_trace_when_agent_mode_enabled(
     minimal_conf, patched_resource_manager, monkeypatch
 ):
     dummy_session = DummySessionData("s1")
@@ -414,7 +414,7 @@ async def test_query_search_includes_retrieval_trace_when_skill_mode_enabled(
         dummy_session,
         target_memories=[MemoryType.Episodic],
         query="hello world",
-        skill_mode=True,
+        agent_mode=True,
     )
 
     assert result.retrieval_trace == {

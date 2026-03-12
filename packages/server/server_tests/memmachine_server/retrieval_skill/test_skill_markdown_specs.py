@@ -31,10 +31,10 @@ def test_load_markdown_top_level_spec_file() -> None:
 
     assert spec.name == "retrieve-skill"
     assert spec.kind == "top-level"
-    assert "spawn_sub_skill" in spec.allowed_actions
-    assert spec.policy_markdown is not None
-    assert "## Actions" in spec.policy_markdown
-    assert "direct_memory" in spec.policy_markdown
+    assert spec.allowed_tools == ["memmachine_search"]
+    assert "spawn_sub_skill" not in spec.policy_markdown
+    assert "return_final" not in spec.policy_markdown
+    assert "answer directly in plain text" in spec.policy_markdown
 
 
 def test_load_markdown_coq_sub_skill_spec_file() -> None:
@@ -43,12 +43,12 @@ def test_load_markdown_coq_sub_skill_spec_file() -> None:
 
     assert spec.name == "coq"
     assert spec.kind == "sub-skill"
-    assert "memmachine_search" in spec.allowed_tools
-    assert "return_sub_skill_result" in spec.allowed_tools
+    assert spec.allowed_tools == ["memmachine_search"]
     assert spec.policy_markdown is not None
     assert "## Examples" in spec.policy_markdown
     assert "## Failure Modes" in spec.policy_markdown
-    assert "evidence_indices" in spec.policy_markdown
+    assert "plain text" in spec.policy_markdown
+    assert "return_sub_skill_result" not in spec.policy_markdown
 
 
 def test_sub_skill_markdown_specs_do_not_use_placeholder_language() -> None:
@@ -71,7 +71,7 @@ route_name: retrieve-skill
 required_sections:
   - Intent
   - Rules
-  - Actions
+  - Tools
   - Completion
 ---
 

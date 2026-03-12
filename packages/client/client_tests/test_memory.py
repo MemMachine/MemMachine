@@ -370,7 +370,7 @@ class TestMemory:
         assert json_data["project_id"] == "test_project"
         assert json_data["query"] == "test query"
         assert json_data["top_k"] == 10
-        assert json_data["skill_mode"] is False
+        assert json_data["agent_mode"] is False
         assert "episodic" in json_data["types"]
         assert "semantic" in json_data["types"]
 
@@ -416,8 +416,8 @@ class TestMemory:
         json_data = call_args[1]["json"]
         assert json_data["score_threshold"] == 0.5
 
-    def test_search_with_skill_mode(self, mock_client):
-        """Test search forwards the top-level skill mode flag."""
+    def test_search_with_agent_mode(self, mock_client):
+        """Test search forwards the top-level agent mode flag."""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"status": 0, "content": {}}
@@ -431,11 +431,11 @@ class TestMemory:
             metadata={"agent_id": "agent1", "user_id": "user1"},
         )
 
-        memory.search("query", skill_mode=True)
+        memory.search("query", agent_mode=True)
 
         call_args = mock_client.request.call_args
         json_data = call_args[1]["json"]
-        assert json_data["skill_mode"] is True
+        assert json_data["agent_mode"] is True
 
     def test_search_positional_args_backward_compatible(self, mock_client):
         """Test legacy positional argument order remains compatible."""
@@ -459,7 +459,7 @@ class TestMemory:
         assert json_data["top_k"] == 20
         assert json_data["expand_context"] == 1
         assert json_data["score_threshold"] == 0.4
-        assert json_data["skill_mode"] is False
+        assert json_data["agent_mode"] is False
         assert "category='work'" in json_data["filter"]
         assert call_args[1]["timeout"] == 15
 

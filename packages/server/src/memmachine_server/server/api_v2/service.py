@@ -111,7 +111,7 @@ async def _search_target_memories(
         score_threshold=spec.score_threshold
         if spec.score_threshold is not None
         else -float("inf"),
-        skill_mode=spec.skill_mode,
+        agent_mode=spec.agent_mode,
     )
     content = SearchResultContent(
         episodic_memory=None,

@@ -156,7 +156,7 @@ class SpecDoc:
     SEARCH_SEMANTIC_MEMORY = "Semantic memory search results."
 
     SEARCH_RETRIEVAL_TRACE = """
-    Optional retrieval-skill trace metadata emitted when `skill_mode` is true.
+    Optional retrieval-agent trace metadata emitted when `agent_mode` is true.
     Includes route decisions and orchestration execution details.
     """
 
@@ -242,8 +242,8 @@ class SpecDoc:
     If empty, all available types are searched.
     """
 
-    SKILL_MODE = """
-    Whether to enable top-level retrieval-skill orchestration for episodic search.
+    AGENT_MODE = """
+    Whether to enable top-level retrieval-agent orchestration for episodic search.
     When false, episodic search uses direct memory retrieval.
     """
 
@@ -616,7 +616,7 @@ class Examples:
         "metadata.user_id=123 AND metadata.session_id=abc",
     ]
     MEMORY_TYPES: ClassVar[list[list[str]]] = [["episodic", "semantic"]]
-    SKILL_MODE: ClassVar[list[bool]] = [False, True]
+    AGENT_MODE: ClassVar[list[bool]] = [False, True]
     MEMORY_TYPE_SINGLE: ClassVar[list[str]] = ["episodic", "semantic"]
     PAGE_SIZE: ClassVar[list[int]] = [50, 100]
     PAGE_NUM: ClassVar[list[int]] = [0, 1, 5, 10]

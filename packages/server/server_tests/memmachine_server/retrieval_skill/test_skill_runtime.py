@@ -9,6 +9,8 @@ from memmachine_server.common.episode_store import Episode
 from memmachine_server.retrieval_skill.skills.runtime import validate_skill_result
 from memmachine_server.retrieval_skill.skills.spec_loader import load_skill_spec
 from memmachine_server.retrieval_skill.skills.tool_protocol import (
+    parse_sub_skill_tool_call,
+    parse_top_level_tool_call,
     sub_skill_tool_schemas,
     top_level_tool_schemas,
 )
@@ -133,22 +135,37 @@ def test_invalid_result_without_normalizer_raises_error_code() -> None:
     assert exc_info.value.payload.fallback_trigger_reason == "invalid_skill_output"
 
 
-def test_top_level_spawn_sub_skill_schema_uses_enum_constraints() -> None:
-    schemas = top_level_tool_schemas(["spawn_sub_skill"], ["coq"])
+def test_top_level_schema_exposes_only_memmachine_search() -> None:
+    schemas = top_level_tool_schemas(["memmachine_search"], ["coq"])
     assert len(schemas) == 1
-    spawn_schema = schemas[0]
-    properties = spawn_schema["parameters"]["properties"]
-    skill_name_schema = properties["skill_name"]
-    assert skill_name_schema["enum"] == ["coq"]
+    search_schema = schemas[0]
+    assert search_schema["name"] == "memmachine_search"
+    properties = search_schema["parameters"]["properties"]
+    assert "query" in properties
+    assert "rationale" in properties
 
 
-def test_sub_skill_return_schema_supports_structured_fields() -> None:
-    schemas = sub_skill_tool_schemas(["return_sub_skill_result"])
+def test_sub_skill_schema_exposes_only_memmachine_search() -> None:
+    schemas = sub_skill_tool_schemas(["memmachine_search"])
     assert len(schemas) == 1
-    return_schema = schemas[0]
-    properties = return_schema["parameters"]["properties"]
-    assert "summary" in properties
-    assert "is_sufficient" in properties
-    assert "new_query" in properties
-    assert "answer_candidate" in properties
-    assert "generated_sub_queries" in properties
+    assert schemas[0]["name"] == "memmachine_search"
+
+
+def test_legacy_top_level_tool_names_are_rejected() -> None:
+    with pytest.raises(SkillContractError) as exc_info:
+        parse_top_level_tool_call(
+            tool_name="spawn_sub_skill",
+            arguments={"query": "hello"},
+        )
+
+    assert exc_info.value.payload.fallback_trigger_reason == "invalid_tool_call"
+
+
+def test_legacy_sub_skill_tool_names_are_rejected() -> None:
+    with pytest.raises(SkillContractError) as exc_info:
+        parse_sub_skill_tool_call(
+            tool_name="return_sub_skill_result",
+            arguments={"summary": "hello"},
+        )
+
+    assert exc_info.value.payload.fallback_trigger_reason == "invalid_tool_call"

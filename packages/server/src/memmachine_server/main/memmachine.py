@@ -4,7 +4,7 @@ import asyncio
 import logging
 from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 
 from memmachine_common.api import MemoryType
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -949,7 +949,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
-        skill_mode: bool = False,
+        agent_mode: bool = False,
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -963,7 +963,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
-            skill_mode: Whether to enable top-level retrieval-skill orchestration.
+            agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
         Returns:
             Aggregated search results across memory types.
@@ -975,7 +975,7 @@ class MemMachine:
 
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
-            retrieval_skill = await self._get_retrieval_skill() if skill_mode else None
+            retrieval_skill = await self._get_retrieval_skill() if agent_mode else None
             retrieval_trace_out: dict[str, JsonValue] | None = None
             if retrieval_skill is not None:
                 retrieval_trace_out = {}

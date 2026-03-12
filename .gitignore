@@ -3,6 +3,7 @@ configuration.yml
 config.yml
 cfg.yml
 sqlitetest.db
+.memmachine_skill_cache.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

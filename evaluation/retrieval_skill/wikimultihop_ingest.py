@@ -105,6 +105,7 @@ async def main():
     memory, _, _ = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         session_id="group1",  # Wikimultihop dataset does not have session concept
+        build_runner=False,
     )
 
     contexts, _, _, _, _ = load_data(

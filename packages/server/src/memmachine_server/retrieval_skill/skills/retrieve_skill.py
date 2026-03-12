@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -30,10 +29,6 @@ from memmachine_server.retrieval_skill.common.skill_api import (
     SkillToolBase,
     SkillToolBaseParam,
 )
-from memmachine_server.retrieval_skill.skills.fallback_policy import (
-    FallbackTrigger,
-    decide_fallback_action,
-)
 from memmachine_server.retrieval_skill.skills.runtime import (
     build_skill_request,
     fallback_for_downstream_error,
@@ -42,10 +37,6 @@ from memmachine_server.retrieval_skill.skills.session_state import (
     TopLevelSkillSessionState,
 )
 from memmachine_server.retrieval_skill.skills.spec_loader import load_skill_spec
-from memmachine_server.retrieval_skill.skills.sub_skill_runner import (
-    SubSkillExecutionResult,
-    SubSkillRunner,
-)
 from memmachine_server.retrieval_skill.skills.tool_protocol import (
     CANONICAL_SUB_SKILL_NAMES,
     TOP_LEVEL_TOOL_NAMES,
@@ -156,14 +147,6 @@ class RetrieveSkill(SkillToolBase):
                 "run_live_session(...)."
             )
 
-        self._sub_skill_runner = SubSkillRunner(
-            model=self._model,
-            memory_tool=self._memory_tool,
-            session_model=self._session_model,
-            spec_root=self._sub_skill_spec_root,
-            native_skill_bundle_root=self._native_skill_bundle_root,
-        )
-
     @property
     def skill_name(self) -> str:
         return "RetrieveSkill"
@@ -209,7 +192,7 @@ class RetrieveSkill(SkillToolBase):
         ]
 
         # Attach top-level and all decomposition bundles in one session.
-        for sub_skill_name in CANONICAL_SUB_SKILL_NAMES:
+        for sub_skill_name in self._available_sub_skills:
             sub_skill_spec = load_skill_spec(
                 self._sub_skill_spec_root / f"{sub_skill_name}.md"
             )
@@ -329,8 +312,8 @@ class RetrieveSkill(SkillToolBase):
                 what_failed="Top-level tool-call contract validation failed",
                 why=why,
                 how_to_fix=(
-                    "Emit only allowed tool calls with valid arguments and "
-                    "finish with return_final."
+                    "Emit only allowed memmachine_search calls with valid "
+                    "arguments, then finish with plain assistant text."
                 ),
                 where="skills.retrieve_skill.do_query",
                 fallback_trigger_reason=fallback_reason,
@@ -768,6 +751,27 @@ class RetrieveSkill(SkillToolBase):
             return "ChainOfQuerySkill"
         return "MemMachineSkill"
 
+    @staticmethod
+    def _response_looks_inconclusive(response: str) -> bool:
+        normalized = response.strip().lower()
+        if not normalized:
+            return True
+        return any(
+            marker in normalized
+            for marker in (
+                "i don't know",
+                "i don't know",
+                "i do not know",
+                "unknown",
+                "unclear",
+                "insufficient",
+                "not enough information",
+                "cannot determine",
+                "can't determine",
+                "not mentioned",
+            )
+        )
+
     def _build_stage_result_memory_episodes(
         self,
         *,
@@ -883,7 +887,7 @@ class RetrieveSkill(SkillToolBase):
             if isinstance(raw_error, dict):
                 fallback_raw_result["error_diagnostics"] = raw_error
         session.record_tool_call(
-            tool_name="direct_memory_search",
+            tool_name="memmachine_search",
             arguments=fallback_arguments,
             status="success",
             result_summary=f"episodes={len(fallback_episodes)}",
@@ -936,9 +940,6 @@ class RetrieveSkill(SkillToolBase):
         route_name = self._spec.route_name
         session = self._new_session_state(query)
         aggregated_metrics: dict[str, Any] = {}
-        guardrail_retry_count = 0
-        hop_count = 0
-        branch_count = 0
         combined_call_count = 0
         global_started = time.monotonic()
         aggregated_metrics["session_call_budget_limit"] = self._max_combined_calls
@@ -968,261 +969,24 @@ class RetrieveSkill(SkillToolBase):
         try:
             _ = build_skill_request(query, route_name=route_name)
             allowed_tools = set(self._spec.allowed_tools or TOP_LEVEL_TOOL_NAMES)
-
-            async def _execute_spawn_sub_skill(  # noqa: C901
-                arguments: dict[str, object],
-            ) -> dict[str, object]:
-                nonlocal hop_count, branch_count, guardrail_retry_count
-                session.next_step()
-                if _global_timeout_exceeded():
-                    self._raise_contract_error(
-                        why="Global timeout exceeded during sub-skill spawn.",
-                        fallback_reason="global_timeout",
-                    )
-
-                action = parse_top_level_tool_call(
-                    tool_name="spawn_sub_skill",
-                    arguments=arguments,
-                )
-                if action.action not in allowed_tools:
-                    self._raise_contract_error(
-                        why=(
-                            f"Tool '{action.action}' not allowed by top-level "
-                            "markdown policy."
-                        ),
-                        fallback_reason="invalid_tool_call",
-                    )
-                if not action.skill_name:
-                    self._raise_contract_error(
-                        why="spawn_sub_skill requires skill_name.",
-                        fallback_reason="invalid_tool_call",
-                    )
-                if action.skill_name not in self._available_sub_skills:
-                    self._raise_contract_error(
-                        why=(
-                            "spawn_sub_skill skill_name not allowed: "
-                            f"{action.skill_name}. Allowed: {self._available_sub_skills}"
-                        ),
-                        fallback_reason="invalid_tool_call",
-                    )
-
-                _consume_call_budget(delta=1, source="spawn_sub_skill")
-                hop_count += 1
-                branch_count += 1
-                if hop_count > self._max_hops:
-                    self._raise_contract_error(
-                        why=f"Max hops exceeded: hops={hop_count} > {self._max_hops}.",
-                        fallback_reason="max_hops_exceeded",
-                    )
-                if branch_count > self._max_branches:
-                    self._raise_contract_error(
-                        why=(
-                            "Max branches exceeded: "
-                            f"branches={branch_count} > {self._max_branches}."
-                        ),
-                        fallback_reason="max_branches_exceeded",
-                    )
-
-                sub_query = action.query or query.query
-                remaining_sub_skill_tool_budget = (
-                    self._max_combined_calls - combined_call_count
-                )
-                if remaining_sub_skill_tool_budget <= 0:
-                    self._raise_contract_error(
-                        why=(
-                            "Combined sub-skill/tool call budget exhausted "
-                            "before sub-skill execution."
-                        ),
-                        fallback_reason="session_call_budget_exceeded",
-                    )
-
-                async def _run_sub_skill_once() -> SubSkillExecutionResult:
-                    nonlocal guardrail_retry_count
-                    timeout_retry_count = 0
-                    while True:
-                        try:
-                            return await asyncio.wait_for(
-                                self._sub_skill_runner.run(
-                                    skill_name=action.skill_name,
-                                    policy=policy,
-                                    query=self._query_with_override(query, sub_query),
-                                    max_tool_calls=remaining_sub_skill_tool_budget,
-                                ),
-                                timeout=float(self._sub_skill_timeout_seconds),
-                            )
-                        except TimeoutError:
-                            decision = decide_fallback_action(
-                                trigger=FallbackTrigger.SUB_SKILL_TIMEOUT,
-                                retry_count=timeout_retry_count,
-                                max_retries=self._max_guardrail_retries,
-                            )
-                            if decision.action == "retry":
-                                timeout_retry_count += 1
-                                guardrail_retry_count += 1
-                                session.record_event(
-                                    actor="top-level",
-                                    event_type="guardrail_retry",
-                                    detail=(
-                                        f"trigger={FallbackTrigger.SUB_SKILL_TIMEOUT.value}; "
-                                        f"retry_count={guardrail_retry_count}; "
-                                        f"skill={action.skill_name}"
-                                    ),
-                                )
-                                continue
-                            self._raise_contract_error(
-                                why=(
-                                    "Sub-skill timeout exceeded: "
-                                    f"timeout={self._sub_skill_timeout_seconds}s; "
-                                    f"skill={action.skill_name}"
-                                ),
-                                fallback_reason=decision.fallback_trigger_reason,
-                            )
-                        except Exception as err:
-                            decision = decide_fallback_action(
-                                trigger=FallbackTrigger.SUB_SKILL_EXCEPTION,
-                                retry_count=guardrail_retry_count,
-                                max_retries=self._max_guardrail_retries,
-                            )
-                            self._raise_contract_error(
-                                why=(
-                                    "Sub-skill execution raised exception: "
-                                    f"{action.skill_name}: {err}"
-                                ),
-                                fallback_reason=decision.fallback_trigger_reason,
-                            )
-
-                sub_result = await _run_sub_skill_once()
-                aggregated_metrics["llm_time"] = float(
-                    aggregated_metrics.get("llm_time", 0.0)
-                ) + float(sub_result.llm_time)
-                self._update_perf_metrics(
-                    {
-                        "llm_call_count": sub_result.llm_call_count,
-                        "input_token": sub_result.llm_input_tokens,
-                        "output_token": sub_result.llm_output_tokens,
-                        "memory_search_called": sub_result.memory_search_called,
-                        "memory_retrieval_time": sub_result.memory_retrieval_time,
-                    },
-                    aggregated_metrics,
-                )
-                session.merge_episodes(sub_result.episodes)
-                _consume_call_budget(
-                    delta=len(sub_result.tool_calls),
-                    source=f"sub_skill:{sub_result.skill_name}",
-                )
-
-                if sub_result.branch_total > 0:
-                    self._record_branch_metrics(
-                        aggregated_metrics=aggregated_metrics,
-                        branch_total=sub_result.branch_total,
-                        branch_success_count=sub_result.branch_success_count,
-                        branch_failure_count=sub_result.branch_failure_count,
-                        branch_retry_count=sub_result.branch_retry_count,
-                    )
-
-                if sub_result.status != "success":
-                    self._raise_contract_error(
-                        why=(
-                            f"Sub-skill {sub_result.skill_name} returned status="
-                            f"{sub_result.status}."
-                        ),
-                        fallback_reason=(
-                            sub_result.fallback_trigger_reason
-                            or FallbackTrigger.SUB_SKILL_EXCEPTION.value
-                        ),
-                    )
-
-                summary_payload = self._record_sub_skill_summary_metrics(
-                    session=session,
-                    aggregated_metrics=aggregated_metrics,
-                    skill_name=sub_result.skill_name,
-                    summary=sub_result.summary,
-                )
-
-                session.record_sub_skill_run(
-                    skill_name=sub_result.skill_name,
-                    query=sub_result.query,
-                    status=sub_result.status,
-                    fallback_trigger_reason=sub_result.fallback_trigger_reason,
-                    tool_calls=sub_result.tool_calls,
-                    llm_call_count=sub_result.llm_call_count,
-                    llm_input_tokens=sub_result.llm_input_tokens,
-                    llm_output_tokens=sub_result.llm_output_tokens,
-                    llm_time=sub_result.llm_time,
-                    episodes_returned=len(sub_result.episodes),
-                    branch_total=sub_result.branch_total,
-                    branch_success_count=sub_result.branch_success_count,
-                    branch_failure_count=sub_result.branch_failure_count,
-                    branch_retry_count=sub_result.branch_retry_count,
-                    normalization_warnings=sub_result.normalization_warnings,
-                )
-                episode_lines = [
-                    line
-                    for line in episodes_to_string(sub_result.episodes).splitlines()
-                    if line.strip()
-                ][: self._sub_skill_episode_line_cap]
-                spawn_arguments: dict[str, object] = {
-                    "skill_name": sub_result.skill_name,
-                    "query": sub_query,
-                    "rationale": action.rationale,
-                }
-                if sub_result.summary.strip():
-                    spawn_arguments["summary"] = sub_result.summary
-                if summary_payload is not None:
-                    spawn_arguments["summary_payload"] = summary_payload
-                response_payload: dict[str, object] = {
-                    "skill_name": sub_result.skill_name,
-                    "episodes_returned": len(sub_result.episodes),
-                    "status": sub_result.status,
-                    "branch_total": sub_result.branch_total,
-                    "tool_call_count": len(sub_result.tool_calls),
-                    "episodes_human_readable": episode_lines,
-                }
-                if sub_result.summary.strip():
-                    response_payload["summary"] = sub_result.summary
-                if summary_payload is not None:
-                    response_payload["summary_payload"] = summary_payload
-                session.record_tool_call(
-                    tool_name="spawn_sub_skill",
-                    arguments=spawn_arguments,
-                    status=sub_result.status,
-                    result_summary=(
-                        f"sub_skill={sub_result.skill_name}; "
-                        f"episodes={len(sub_result.episodes)}"
-                    ),
-                    raw_result=self._sanitize_tool_raw_result(response_payload),
-                )
-                session.record_event(
-                    actor="top-level",
-                    event_type="sub_skill_completed",
-                    detail=(
-                        f"step={session.current_step}; "
-                        f"skill={sub_result.skill_name}; "
-                        f"episodes={len(sub_result.episodes)}; "
-                        f"branches={sub_result.branch_total}; "
-                        f"branch_failures={sub_result.branch_failure_count}"
-                    ),
-                )
-                return response_payload
-
-            async def _execute_direct_memory_search(
+            async def _execute_memmachine_search(
                 arguments: dict[str, object],
             ) -> dict[str, object]:
                 session.next_step()
                 if _global_timeout_exceeded():
                     self._raise_contract_error(
-                        why="Global timeout exceeded during direct memory search.",
+                        why="Global timeout exceeded during memmachine_search.",
                         fallback_reason="global_timeout",
                     )
                 action = parse_top_level_tool_call(
-                    tool_name="direct_memory_search",
+                    tool_name="memmachine_search",
                     arguments=arguments,
                 )
-                _consume_call_budget(delta=1, source="direct_memory_search")
+                _consume_call_budget(delta=1, source="memmachine_search")
                 if action.action not in allowed_tools:
                     self._raise_contract_error(
                         why=(
-                            f"Tool '{action.action}' not allowed by top-level "
+                            "Tool 'memmachine_search' not allowed by top-level "
                             "markdown policy."
                         ),
                         fallback_reason="invalid_tool_call",
@@ -1272,7 +1036,7 @@ class RetrieveSkill(SkillToolBase):
                         if isinstance(item, int | float) and not isinstance(item, bool)
                     ]
                 session.record_tool_call(
-                    tool_name="direct_memory_search",
+                    tool_name="memmachine_search",
                     arguments=direct_arguments,
                     status="success",
                     result_summary=f"episodes={len(episodes)}",
@@ -1280,219 +1044,13 @@ class RetrieveSkill(SkillToolBase):
                 )
                 session.record_event(
                     actor="top-level",
-                    event_type="direct_memory_completed",
+                    event_type="memmachine_search_completed",
                     detail=f"step={session.current_step}; episodes={len(episodes)}",
                 )
                 return response_payload
-
-            async def _execute_return_final(  # noqa: C901
-                arguments: dict[str, object],
-            ) -> dict[str, object]:
-                session.next_step()
-                action = parse_top_level_tool_call(
-                    tool_name="return_final",
-                    arguments=arguments,
-                )
-                _consume_call_budget(delta=1, source="return_final")
-                if action.action not in allowed_tools:
-                    self._raise_contract_error(
-                        why=(
-                            f"Tool '{action.action}' not allowed by top-level "
-                            "markdown policy."
-                        ),
-                        fallback_reason="invalid_tool_call",
-                    )
-                retrieval_actions_seen = any(
-                    call.tool_name in {"direct_memory_search", "spawn_sub_skill"}
-                    for call in session.tool_calls
-                )
-                if not retrieval_actions_seen and not session.merged_episodes:
-                    self._raise_contract_error(
-                        why=(
-                            "return_final emitted before any retrieval action. "
-                            "Run direct_memory_search or spawn_sub_skill first."
-                        ),
-                        fallback_reason="invalid_tool_call",
-                    )
-
-                final_response = (
-                    action.final_response.strip()
-                    if action.final_response
-                    else "Top-level retrieval complete."
-                )
-                top_level_is_sufficient: bool
-                top_level_signal_source = "explicit"
-                if isinstance(action.is_sufficient, bool):
-                    top_level_is_sufficient = action.is_sufficient
-                else:
-                    inferred_sufficiency = aggregated_metrics.get("evidence_sufficient")
-                    if isinstance(inferred_sufficiency, bool):
-                        top_level_is_sufficient = inferred_sufficiency
-                        top_level_signal_source = "inferred_from_sub_skills"
-                    else:
-                        top_level_is_sufficient = False
-                        top_level_signal_source = "default_false"
-
-                confidence_score = action.confidence_score
-                normalized_confidence: float | None = None
-                if isinstance(confidence_score, int | float) and not isinstance(
-                    confidence_score, bool
-                ):
-                    normalized_confidence = float(confidence_score)
-
-                related_episode_indices = self._normalize_episode_indices(
-                    action.related_episode_indices
-                )
-                selected_episode_indices = self._normalize_episode_indices(
-                    action.selected_episode_indices
-                )
-                provided_stage_results = self._normalize_stage_results(
-                    action.stage_results
-                )
-                provided_sub_queries = self._normalize_string_list(action.sub_queries)
-                if provided_stage_results:
-                    aggregated_metrics["top_level_stage_results"] = (
-                        provided_stage_results
-                    )
-                if provided_sub_queries:
-                    aggregated_metrics["top_level_sub_queries"] = provided_sub_queries
-                gate_passes = self._stage_result_gate_passes(
-                    is_sufficient=top_level_is_sufficient,
-                    confidence_score=normalized_confidence,
-                )
-                if gate_passes and not provided_stage_results:
-                    inferred_stage_results = aggregated_metrics.get("stage_results")
-                    if isinstance(inferred_stage_results, list):
-                        normalized_inferred = self._normalize_stage_results(
-                            inferred_stage_results
-                        )
-                        if normalized_inferred:
-                            provided_stage_results = normalized_inferred
-                            aggregated_metrics["top_level_stage_results"] = (
-                                normalized_inferred
-                            )
-                if gate_passes and not provided_sub_queries:
-                    inferred_sub_queries = aggregated_metrics.get("stage_sub_queries")
-                    if isinstance(inferred_sub_queries, list):
-                        normalized_inferred_sub_queries = self._normalize_string_list(
-                            inferred_sub_queries
-                        )
-                        if normalized_inferred_sub_queries:
-                            provided_sub_queries = normalized_inferred_sub_queries
-                            aggregated_metrics["top_level_sub_queries"] = (
-                                normalized_inferred_sub_queries
-                            )
-                if (
-                    top_level_is_sufficient
-                    and normalized_confidence is not None
-                    and normalized_confidence >= self._stage_result_confidence_threshold
-                    and not selected_episode_indices
-                ):
-                    # Keep backward-compatible return-all behavior when no
-                    # explicit evidence selection is emitted.
-                    pass
-                aggregated_metrics["top_level_sufficiency_signal_seen"] = True
-                aggregated_metrics["top_level_is_sufficient"] = top_level_is_sufficient
-                aggregated_metrics["top_level_sufficiency_signal_source"] = (
-                    top_level_signal_source
-                )
-                if normalized_confidence is not None:
-                    aggregated_metrics["top_level_confidence_score"] = (
-                        normalized_confidence
-                    )
-                if isinstance(action.reason_code, str) and action.reason_code.strip():
-                    aggregated_metrics["top_level_reason_code"] = action.reason_code
-                if isinstance(action.reason_note, str) and action.reason_note.strip():
-                    aggregated_metrics["top_level_reason_note"] = action.reason_note
-                if (
-                    top_level_is_sufficient
-                    and isinstance(final_response, str)
-                    and final_response.strip()
-                    and not (
-                        isinstance(aggregated_metrics.get("answer_candidate"), str)
-                        and str(aggregated_metrics.get("answer_candidate")).strip()
-                    )
-                ):
-                    candidate = final_response.strip()
-                    aggregated_metrics["answer_candidate"] = candidate
-                    aggregated_metrics["latest_answer_candidate"] = candidate
-                if related_episode_indices:
-                    aggregated_metrics["top_level_related_episode_indices"] = (
-                        related_episode_indices
-                    )
-                if selected_episode_indices:
-                    aggregated_metrics["top_level_selected_episode_indices"] = (
-                        selected_episode_indices
-                    )
-                if provided_stage_results:
-                    aggregated_metrics["top_level_stage_results"] = (
-                        provided_stage_results
-                    )
-                if provided_sub_queries:
-                    aggregated_metrics["top_level_sub_queries"] = provided_sub_queries
-                aggregated_metrics["stage_result_confidence_threshold"] = (
-                    self._stage_result_confidence_threshold
-                )
-
-                return_arguments: dict[str, object] = {
-                    "final_response": final_response,
-                    "rationale": action.rationale,
-                    "is_sufficient": top_level_is_sufficient,
-                }
-                if normalized_confidence is not None:
-                    return_arguments["confidence_score"] = normalized_confidence
-                if isinstance(action.reason_code, str) and action.reason_code.strip():
-                    return_arguments["reason_code"] = action.reason_code
-                if isinstance(action.reason_note, str) and action.reason_note.strip():
-                    return_arguments["reason_note"] = action.reason_note
-                if related_episode_indices:
-                    return_arguments["related_episode_indices"] = (
-                        related_episode_indices
-                    )
-                if selected_episode_indices:
-                    return_arguments["selected_episode_indices"] = (
-                        selected_episode_indices
-                    )
-                if provided_stage_results:
-                    return_arguments["stage_results"] = provided_stage_results
-                if provided_sub_queries:
-                    return_arguments["sub_queries"] = provided_sub_queries
-                session.record_tool_call(
-                    tool_name="return_final",
-                    arguments=return_arguments,
-                    status="success",
-                    result_summary="orchestration finalized",
-                    raw_result={
-                        "final_response": final_response,
-                        "is_sufficient": top_level_is_sufficient,
-                        "confidence_score": normalized_confidence,
-                        "reason_code": action.reason_code,
-                        "reason_note": action.reason_note,
-                        "related_episode_indices": related_episode_indices,
-                        "selected_episode_indices": selected_episode_indices,
-                        "stage_results": provided_stage_results,
-                        "sub_queries": provided_sub_queries,
-                    },
-                )
-                session.record_event(
-                    actor="top-level",
-                    event_type="orchestration_completed",
-                    detail=(
-                        f"step={session.current_step}; finalized by top-level policy; "
-                        f"is_sufficient={top_level_is_sufficient}; "
-                        f"confidence={normalized_confidence if normalized_confidence is not None else 'n/a'}"
-                    ),
-                )
-                session.finalize(response=final_response)
-                return {"final_response": final_response}
-
             tool_registry: dict[str, Any] = {}
-            if "spawn_sub_skill" in allowed_tools:
-                tool_registry["spawn_sub_skill"] = _execute_spawn_sub_skill
-            if "direct_memory_search" in allowed_tools:
-                tool_registry["direct_memory_search"] = _execute_direct_memory_search
-            if "return_final" in allowed_tools:
-                tool_registry["return_final"] = _execute_return_final
+            if "memmachine_search" in allowed_tools:
+                tool_registry["memmachine_search"] = _execute_memmachine_search
 
             session_result = await self._session_model.run_live_session(
                 system_prompt=(
@@ -1501,9 +1059,9 @@ class RetrieveSkill(SkillToolBase):
                 ),
                 user_prompt=(
                     f"query: {query.query}\n"
-                    f"available_sub_skills: {', '.join(self._available_sub_skills)}\n"
                     f"state: {session.prompt_snapshot()}\n"
-                    "choose tool calls to complete retrieval"
+                    "use memmachine_search for retrieval and answer in plain text "
+                    "when finished"
                 ),
                 tools=top_level_tool_schemas(
                     self._spec.allowed_tools,
@@ -1546,11 +1104,12 @@ class RetrieveSkill(SkillToolBase):
                     )
                     session.merge_episodes(episodes)
                     session.record_tool_call(
-                        tool_name="direct_memory_search",
+                        tool_name="memmachine_search",
                         arguments={"query": query.query},
                         status="success",
                         result_summary=(
-                            "No top-level tool call emitted; direct search executed. "
+                            "No memmachine_search call emitted; direct search "
+                            "executed. "
                             f"episodes={len(episodes)}"
                         ),
                         raw_result={
@@ -1560,13 +1119,35 @@ class RetrieveSkill(SkillToolBase):
                     )
                     session.record_event(
                         actor="top-level",
-                        event_type="default_direct_memory_search",
-                        detail="No function calls returned; performed direct memory search.",
+                        event_type="default_memmachine_search",
+                        detail=(
+                            "No function calls returned; performed direct memory "
+                            "search."
+                        ),
                     )
-                final_response = (
-                    session.final_response
-                    or session_result.final_response.strip()
-                    or "Top-level retrieval complete."
+                raw_final_response = session_result.final_response.strip()
+                final_response = raw_final_response or "Top-level retrieval complete."
+                top_level_is_sufficient = bool(raw_final_response) and not (
+                    self._response_looks_inconclusive(raw_final_response)
+                )
+                aggregated_metrics["top_level_sufficiency_signal_seen"] = bool(
+                    raw_final_response
+                )
+                aggregated_metrics["top_level_is_sufficient"] = top_level_is_sufficient
+                aggregated_metrics["latest_sufficiency_signal"] = (
+                    top_level_is_sufficient
+                )
+                aggregated_metrics["latest_sufficiency_signal_skill"] = "retrieve-skill"
+                if top_level_is_sufficient:
+                    aggregated_metrics["answer_candidate"] = raw_final_response
+                    aggregated_metrics["latest_answer_candidate"] = raw_final_response
+                session.record_event(
+                    actor="top-level",
+                    event_type="orchestration_completed",
+                    detail=(
+                        f"step={session.current_step}; "
+                        f"is_sufficient={top_level_is_sufficient}"
+                    ),
                 )
                 session.finalize(response=final_response)
 
@@ -1584,65 +1165,19 @@ class RetrieveSkill(SkillToolBase):
             metrics.setdefault("branch_failure_count", 0)
             metrics.setdefault("branch_retry_count", 0)
             metrics.setdefault("top_level_sufficiency_signal_seen", False)
-            metrics.setdefault(
-                "top_level_is_sufficient",
-                bool(metrics.get("evidence_sufficient", False)),
-            )
-            if "top_level_confidence_score" not in metrics:
-                latest_conf = metrics.get("latest_sufficiency_confidence_score")
-                if isinstance(latest_conf, int | float) and not isinstance(
-                    latest_conf, bool
-                ):
-                    metrics["top_level_confidence_score"] = float(latest_conf)
+            metrics.setdefault("top_level_is_sufficient", False)
             selected_skill = metrics.get("selected_skill")
             if not isinstance(selected_skill, str) or not selected_skill.strip():
-                if session.sub_skill_runs:
-                    selected_skill = session.sub_skill_runs[0].skill_name
-                else:
-                    selected_skill = "direct_memory"
+                selected_skill = "direct_memory"
                 metrics["selected_skill"] = selected_skill
             metrics["selected_skill_name"] = self._selected_skill_name_for_skill(
                 selected_skill
             )
-            top_level_confidence_raw = metrics.get("top_level_confidence_score")
-            top_level_confidence: float | None = None
-            if isinstance(top_level_confidence_raw, int | float) and not isinstance(
-                top_level_confidence_raw, bool
-            ):
-                top_level_confidence = float(top_level_confidence_raw)
-
-            top_level_stage_results = self._normalize_stage_results(
-                metrics.get("top_level_stage_results") or metrics.get("stage_results")
+            final_episodes, rerank_applied = await self._finalize_episodes(
+                query=query,
+                episodes=session.merged_episodes,
             )
-            top_level_sub_queries = self._normalize_string_list(
-                metrics.get("top_level_sub_queries") or metrics.get("stage_sub_queries")
-            )
-            stage_result_memory_episodes: list[Episode] = []
-            if (
-                self._stage_result_gate_passes(
-                    is_sufficient=bool(metrics.get("top_level_is_sufficient", False)),
-                    confidence_score=top_level_confidence,
-                )
-                and top_level_stage_results
-            ):
-                stage_result_memory_episodes = self._build_stage_result_memory_episodes(
-                    query=query,
-                    stage_results=top_level_stage_results,
-                    sub_queries=top_level_sub_queries,
-                )
-
-            if stage_result_memory_episodes:
-                final_episodes = stage_result_memory_episodes
-                rerank_applied = False
-                metrics["stage_result_memory_returned"] = True
-                metrics["returned_stage_result_count"] = len(top_level_stage_results)
-                metrics["returned_sub_query_count"] = len(top_level_sub_queries)
-            else:
-                final_episodes, rerank_applied = await self._finalize_episodes(
-                    query=query,
-                    episodes=session.merged_episodes,
-                )
-                metrics["stage_result_memory_returned"] = False
+            metrics["stage_result_memory_returned"] = False
             metrics["rerank_applied"] = rerank_applied
             metrics["final_episode_count"] = len(final_episodes)
             metrics = self._augment_metrics_with_session_state(

@@ -73,58 +73,73 @@ Question: {question}
 async def run_wiki(
     dpath: str | None = None,
     epath: str | None = None,
+    data_path: str | None = None,
+    eval_result_path: str | None = None,
+    length: int | None = None,
+    model_name: str = "gpt-5.2",
+    runner_kwargs: dict | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    parser = argparse.ArgumentParser()
+    if data_path is not None:
+        _data_path = data_path
+        _eval_result_path = eval_result_path
+        _length = length or 100
+        _test_target = "retrieval_skill"
+    else:
+        parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--data-path", required=True, help="Path to the source data file"
-    )
-    parser.add_argument(
-        "--eval-result-path",
-        required=True,
-        help="Path to save evaluation results",
-        default=None,
-    )
-    parser.add_argument(
-        "--length", type=int, default=500, help="Number of questions to search"
-    )
-    parser.add_argument(
-        "--test-target",
-        required=True,
-        help="Testing with memmachine(direct memory), retrieval_skill, or pure llm",
-        choices=["memmachine", "retrieval_skill", "llm"],
-    )
+        parser.add_argument(
+            "--data-path", required=True, help="Path to the source data file"
+        )
+        parser.add_argument(
+            "--eval-result-path",
+            required=True,
+            help="Path to save evaluation results",
+            default=None,
+        )
+        parser.add_argument(
+            "--length", type=int, default=500, help="Number of questions to search"
+        )
+        parser.add_argument(
+            "--test-target",
+            required=True,
+            help="Testing with retrieval_skill or pure llm",
+            choices=["retrieval_skill", "llm"],
+        )
 
-    args = parser.parse_args()
+        args = parser.parse_args()
+        _data_path = dpath or args.data_path
+        _eval_result_path = epath or args.eval_result_path
+        _length = args.length
+        _test_target = args.test_target
 
     print("Starting WikiMultiHop test...")
-    print(f"Data path: {args.data_path}")
-    print(f"Evaluation result path: {args.eval_result_path}")
-    print(f"Length: {args.length}")
-    print(f"Test target: {args.test_target}")
-
-    data_path = args.data_path
-    eval_result_path = args.eval_result_path
-
-    if dpath:
-        data_path = dpath
-    if epath:
-        eval_result_path = epath
+    print(f"Data path: {_data_path}")
+    print(f"Evaluation result path: {_eval_result_path}")
+    print(f"Length: {_length}")
+    print(f"Test target: {_test_target}")
+    effective_runner_kwargs = dict(runner_kwargs or {})
+    if _test_target == "retrieval_skill":
+        effective_runner_kwargs.setdefault("stage_result_mode", True)
+        effective_runner_kwargs.setdefault(
+            "omit_episode_text_on_confident_stage_result", True
+        )
+        effective_runner_kwargs.setdefault("use_answer_prompt_template", True)
 
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
-    memory, model, query_skill = await skill_utils.init_memmachine_params(
+    _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         session_id="group1",  # Wikimultihop dataset does not have session concept
-        model_name="gpt-5.2",
-        skill_name="RetrieveSkill"
-        if args.test_target == "retrieval_skill"
-        else "MemMachineSkill",
+        model_name=model_name,
+        runner_config=effective_runner_kwargs,
+        build_runner=_test_target == "retrieval_skill",
     )
+    if _test_target == "retrieval_skill" and query_skill is None:
+        raise RuntimeError("WikiMultiHop benchmark requires an initialized SkillRunner.")
 
     contexts, questions, answers, types, supporting_facts = load_data(
-        data_path=data_path, start_line=1, end_line=args.length, randomize="NONE"
+        data_path=_data_path, start_line=1, end_line=_length, randomize="NONE"
     )
     print(f"Loaded {len(questions)} questions, start querying...")
 
@@ -137,17 +152,17 @@ async def run_wiki(
         questions, answers, types, supporting_facts, strict=True
     ):
         tasks.append(
-            skill_utils.process_question(
-                ANSWER_PROMPT,
-                query_skill,
-                memory,
-                model,
-                q,
-                a,
-                t,
-                f_list,
-                "",
-                full_content=full_content if args.test_target == "llm" else None,
+            skill_utils.process_question_with_runner(
+                answer_prompt=ANSWER_PROMPT,
+                runner=query_skill,
+                model=model,
+                question=q,
+                answer=a,
+                category=t,
+                supporting_facts=f_list,
+                adversarial_answer="",
+                model_name=model_name,
+                full_content=full_content if _test_target == "llm" else None,
             )
         )
 
@@ -163,7 +178,7 @@ async def run_wiki(
         attribute_matrix,
         results,
     )
-    return eval_result_path, results
+    return _eval_result_path, results
 
 
 async def main():
