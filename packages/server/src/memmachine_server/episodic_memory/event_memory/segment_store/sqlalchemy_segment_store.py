@@ -51,7 +51,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.episodic_memory.extra_memory.data_types import (
-    Content,
+    Block,
     Segment,
 )
 from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store import (
@@ -62,7 +62,7 @@ from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store 
 logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
-_ContentAdapter = TypeAdapter(Content)
+_BlockAdapter = TypeAdapter(Block)
 
 
 class DerivativeState(StrEnum):
@@ -88,12 +88,12 @@ class SegmentRow(BaseSegmentLinker):
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     episode_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
-    block: MappedColumn[int] = mapped_column(Integer, nullable=False)
     index: MappedColumn[int] = mapped_column(Integer, nullable=False)
+    offset: MappedColumn[int] = mapped_column(Integer, nullable=False)
     timestamp: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    content: MappedColumn[Content] = mapped_column(_JSON_AUTO, nullable=False)
+    block: MappedColumn[Block] = mapped_column(_JSON_AUTO, nullable=False)
 
     __table_args__ = (
         Index(
@@ -106,8 +106,8 @@ class SegmentRow(BaseSegmentLinker):
             "partition_key",
             "timestamp",
             "episode_uuid",
-            "block",
             "index",
+            "offset",
         ),
     )
 
@@ -277,10 +277,10 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 "uuid": segment.uuid,
                 "partition_key": partition_key,
                 "episode_uuid": segment.episode_uuid,
-                "block": segment.block,
                 "index": segment.index,
+                "offset": segment.offset,
                 "timestamp": segment.timestamp,
-                "content": segment.content.model_dump(),
+                "block": segment.block.model_dump(),
             }
             for segment in links
         ]
@@ -338,8 +338,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             .order_by(
                 SegmentRow.timestamp,
                 SegmentRow.episode_uuid,
-                SegmentRow.block,
                 SegmentRow.index,
+                SegmentRow.offset,
             )
         )
 
@@ -489,8 +489,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 SegmentRow.uuid.label("seed_uuid"),
                 SegmentRow.timestamp.label("seed_timestamp"),
                 SegmentRow.episode_uuid.label("seed_episode_uuid"),
-                SegmentRow.block.label("seed_block"),
                 SegmentRow.index.label("seed_index"),
+                SegmentRow.offset.label("seed_offset"),
             )
             .where(SegmentRow.uuid.in_(seed_rows_by_uuid.keys()))
             .subquery("seeds")
@@ -499,14 +499,14 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         segment_ordering_columns = tuple_(
             SegmentRow.timestamp,
             SegmentRow.episode_uuid,
-            SegmentRow.block,
             SegmentRow.index,
+            SegmentRow.offset,
         )
         seed_ordering_columns = tuple_(
             seeds_subquery.c.seed_timestamp,
             seeds_subquery.c.seed_episode_uuid,
-            seeds_subquery.c.seed_block,
             seeds_subquery.c.seed_index,
+            seeds_subquery.c.seed_offset,
         )
 
         async def _lateral_query(
@@ -532,10 +532,10 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 seeds_subquery.c.seed_uuid,
                 lateral_subquery.c.uuid,
                 lateral_subquery.c.episode_uuid,
-                lateral_subquery.c.block,
                 lateral_subquery.c.index,
+                lateral_subquery.c.offset,
                 lateral_subquery.c.timestamp,
-                lateral_subquery.c.content,
+                lateral_subquery.c.block,
             ).select_from(seeds_subquery.join(lateral_subquery, true()))
 
             rows_by_seed: dict[UUID, list[SegmentRow]] = {
@@ -547,10 +547,10 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                         uuid=row.uuid,
                         partition_key=partition_key,
                         episode_uuid=row.episode_uuid,
-                        block=row.block,
                         index=row.index,
+                        offset=row.offset,
                         timestamp=row.timestamp,
-                        content=row.content,
+                        block=row.block,
                     )
                 )
             return rows_by_seed
@@ -558,8 +558,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         chronological_order = [
             SegmentRow.timestamp,
             SegmentRow.episode_uuid,
-            SegmentRow.block,
             SegmentRow.index,
+            SegmentRow.offset,
         ]
         reverse_chronological_order = [col.desc() for col in chronological_order]
 
@@ -606,8 +606,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         segment_ordering_columns = tuple_(
             SegmentRow.timestamp,
             SegmentRow.episode_uuid,
-            SegmentRow.block,
             SegmentRow.index,
+            SegmentRow.offset,
         )
 
         compiled_property_filter = (
@@ -620,8 +620,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             seed_ordering_values = tuple_(
                 literal(seed_row.timestamp),
                 literal(seed_row.episode_uuid),
-                literal(seed_row.block),
                 literal(seed_row.index),
+                literal(seed_row.offset),
             )
 
             backward_rows: list[SegmentRow] = []
@@ -635,8 +635,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                     .order_by(
                         SegmentRow.timestamp.desc(),
                         SegmentRow.episode_uuid.desc(),
-                        SegmentRow.block.desc(),
                         SegmentRow.index.desc(),
+                        SegmentRow.offset.desc(),
                     )
                     .limit(max_backward_segments)
                 )
@@ -659,8 +659,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                     .order_by(
                         SegmentRow.timestamp,
                         SegmentRow.episode_uuid,
-                        SegmentRow.block,
                         SegmentRow.index,
+                        SegmentRow.offset,
                     )
                     .limit(max_forward_segments)
                 )
@@ -1048,13 +1048,13 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         properties: dict[str, PropertyValue],
     ) -> Segment:
         """Convert a SegmentRow and its properties into a Segment."""
-        content = _ContentAdapter.validate_python(row.content)
+        block = _BlockAdapter.validate_python(row.block)
         return Segment(
             uuid=row.uuid,
             episode_uuid=row.episode_uuid,
-            block=row.block,
             index=row.index,
+            offset=row.offset,
             timestamp=row.timestamp,
-            content=content,
+            block=block,
             properties=properties,
         )

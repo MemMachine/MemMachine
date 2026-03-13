@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from memmachine_server.common.filter.filter_parser import Comparison
 from memmachine_server.episodic_memory.extra_memory.data_types import (
     Segment,
-    TextContent,
+    Text,
 )
 from memmachine_server.episodic_memory.extra_memory.segment_linker.segment_linker import (
     DerivativeNotActiveError,
@@ -39,8 +39,8 @@ BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
 def _seg(
     *,
     episode_uuid: UUID | None = None,
-    block: int = 0,
     index: int = 0,
+    offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
     properties: dict | None = None,
@@ -48,10 +48,10 @@ def _seg(
     return Segment(
         uuid=uuid4(),
         episode_uuid=episode_uuid or uuid4(),
-        block=block,
         index=index,
+        offset=offset,
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
-        content=TextContent(text=text),
+        block=Text(text=text),
         properties=properties or {},
     )
 
@@ -118,8 +118,8 @@ async def test_register_multiple_segments_same_derivative(
     linker: SQLAlchemySegmentLinker,
 ) -> None:
     ep = uuid4()
-    s1 = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0)
-    s2 = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1)
+    s1 = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0)
+    s2 = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1)
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s1: [deriv], s2: [deriv]})
 
@@ -213,7 +213,7 @@ async def test_get_by_derivatives_unknown_uuid(linker: SQLAlchemySegmentLinker) 
 @pytest.mark.asyncio
 async def test_get_by_derivatives_limit(linker: SQLAlchemySegmentLinker) -> None:
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(5)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -289,7 +289,7 @@ async def test_contexts_seed_only(linker: SQLAlchemySegmentLinker) -> None:
 @pytest.mark.asyncio
 async def test_contexts_backward(linker: SQLAlchemySegmentLinker) -> None:
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(5)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -307,7 +307,7 @@ async def test_contexts_backward(linker: SQLAlchemySegmentLinker) -> None:
 @pytest.mark.asyncio
 async def test_contexts_forward(linker: SQLAlchemySegmentLinker) -> None:
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(5)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -327,7 +327,7 @@ async def test_contexts_backward_and_forward(
     linker: SQLAlchemySegmentLinker,
 ) -> None:
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(7)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(7)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -353,7 +353,7 @@ async def test_contexts_clamp_at_boundaries(
 ) -> None:
     """Requesting more context than available returns what exists."""
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(3)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(3)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -374,7 +374,7 @@ async def test_contexts_clamp_at_boundaries(
 @pytest.mark.asyncio
 async def test_contexts_multiple_seeds(linker: SQLAlchemySegmentLinker) -> None:
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(10)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(10)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -397,9 +397,9 @@ async def test_contexts_multiple_seeds(linker: SQLAlchemySegmentLinker) -> None:
 async def test_contexts_with_properties(linker: SQLAlchemySegmentLinker) -> None:
     """Properties are loaded for seed and context segments."""
     ep = uuid4()
-    s0 = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0, properties={"k": "v0"})
-    s1 = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1, properties={"k": "v1"})
-    s2 = _seg(episode_uuid=ep, index=2, ts_offset_seconds=2, properties={"k": "v2"})
+    s0 = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0, properties={"k": "v0"})
+    s1 = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1, properties={"k": "v1"})
+    s2 = _seg(episode_uuid=ep, offset=2, ts_offset_seconds=2, properties={"k": "v2"})
     deriv = uuid4()
     await linker.register_segments(
         PARTITION_KEY, {s0: [deriv], s1: [deriv], s2: [deriv]}
@@ -419,10 +419,10 @@ async def test_contexts_with_properties(linker: SQLAlchemySegmentLinker) -> None
 async def test_contexts_property_filter(linker: SQLAlchemySegmentLinker) -> None:
     """Property filter excludes context rows that don't match."""
     ep = uuid4()
-    s0 = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0, properties={"tag": "a"})
-    s1 = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1, properties={"tag": "b"})
-    s2 = _seg(episode_uuid=ep, index=2, ts_offset_seconds=2, properties={"tag": "a"})
-    s3 = _seg(episode_uuid=ep, index=3, ts_offset_seconds=3, properties={"tag": "a"})
+    s0 = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0, properties={"tag": "a"})
+    s1 = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1, properties={"tag": "b"})
+    s2 = _seg(episode_uuid=ep, offset=2, ts_offset_seconds=2, properties={"tag": "a"})
+    s3 = _seg(episode_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
     deriv = uuid4()
     await linker.register_segments(
         PARTITION_KEY, {s0: [deriv], s1: [deriv], s2: [deriv], s3: [deriv]}
@@ -446,15 +446,13 @@ async def test_contexts_property_filter(linker: SQLAlchemySegmentLinker) -> None
 async def test_contexts_session_isolation(linker: SQLAlchemySegmentLinker) -> None:
     """Context only includes segments from the same partition_key."""
     ep = uuid4()
-    s_other = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0)
-    s_seed = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1)
-    s_after = _seg(episode_uuid=ep, index=2, ts_offset_seconds=2)
+    s_other = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0)
+    s_seed = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1)
+    s_after = _seg(episode_uuid=ep, offset=2, ts_offset_seconds=2)
     deriv_other = uuid4()
     deriv = uuid4()
     await linker.register_segments("other-session", {s_other: [deriv_other]})
-    await linker.register_segments(
-        PARTITION_KEY, {s_seed: [deriv], s_after: [deriv]}
-    )
+    await linker.register_segments(PARTITION_KEY, {s_seed: [deriv], s_after: [deriv]})
 
     result = await linker.get_segment_contexts(
         PARTITION_KEY,
@@ -472,7 +470,7 @@ async def test_contexts_session_isolation(linker: SQLAlchemySegmentLinker) -> No
 async def test_contexts_chronological_order(linker: SQLAlchemySegmentLinker) -> None:
     """Context segments are returned in chronological order."""
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(5)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -510,8 +508,8 @@ async def test_delete_by_episodes_decrements_ref_count(
     linker: SQLAlchemySegmentLinker,
 ) -> None:
     ep = uuid4()
-    s1 = _seg(episode_uuid=ep, index=0)
-    s2 = _seg(episode_uuid=ep, index=1)
+    s1 = _seg(episode_uuid=ep, offset=0)
+    s2 = _seg(episode_uuid=ep, offset=1)
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s1: [deriv], s2: [deriv]})
 
@@ -660,7 +658,7 @@ async def test_concurrent_reads_during_writes(
 
     # Seed some data.
     ep = uuid4()
-    segs = [_seg(episode_uuid=ep, index=i, ts_offset_seconds=i) for i in range(10)]
+    segs = [_seg(episode_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(10)]
     deriv = uuid4()
     await linker.register_segments(PARTITION_KEY, {s: [deriv] for s in segs})
 
@@ -705,7 +703,7 @@ async def test_concurrent_context_reads_during_deletes(
     links: dict[Segment, list[UUID]] = {}
     for ep_idx, ep in enumerate(episodes):
         for i in range(4):
-            seg = _seg(episode_uuid=ep, index=i, ts_offset_seconds=ep_idx * 10 + i)
+            seg = _seg(episode_uuid=ep, offset=i, ts_offset_seconds=ep_idx * 10 + i)
             all_segs.append(seg)
             links[seg] = [deriv]
     await linker.register_segments(PARTITION_KEY, links)
@@ -926,7 +924,7 @@ async def test_pg_concurrent_register_and_delete_same_episode(
     deriv1 = uuid4()
 
     # Seed.
-    seg1 = _seg(episode_uuid=ep, index=0, ts_offset_seconds=0)
+    seg1 = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0)
     await pg_linker.register_segments(PARTITION_KEY, {seg1: [deriv1]})
 
     errors: list[Exception] = []
@@ -941,7 +939,7 @@ async def test_pg_concurrent_register_and_delete_same_episode(
     async def registerer() -> None:
         try:
             linker = await _make_linker(engine)
-            seg2 = _seg(episode_uuid=ep, index=1, ts_offset_seconds=1)
+            seg2 = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1)
             deriv2 = uuid4()
             await linker.register_segments(PARTITION_KEY, {seg2: [deriv2]})
         except Exception as e:
@@ -1022,7 +1020,7 @@ async def test_pg_concurrent_mass_deletes(
         ep = uuid4()
         episodes.append(ep)
         for i in range(2):
-            seg = _seg(episode_uuid=ep, index=i, ts_offset_seconds=ep_idx * 10 + i)
+            seg = _seg(episode_uuid=ep, offset=i, ts_offset_seconds=ep_idx * 10 + i)
             links[seg] = [deriv]
     await pg_linker.register_segments(PARTITION_KEY, links)
 
