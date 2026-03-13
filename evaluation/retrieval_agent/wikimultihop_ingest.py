@@ -109,7 +109,10 @@ async def main():
     )
 
     contexts, _, _, _, _ = load_data(
-        data_path=args.data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
+        data_path=args.data_path,
+        start_line=1,
+        end_line=args.length,
+        randomize="SENTENCE",
     )
     print("Loaded", len(contexts), "contexts, start ingestion...")
 
