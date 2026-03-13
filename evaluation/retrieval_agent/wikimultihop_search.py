@@ -141,12 +141,12 @@ async def run_wiki(
                 full_content=full_content if args.test_target == "llm" else None,
             )
 
-    for q, a, t, f_list in zip(
-        questions, answers, types, supporting_facts, strict=True
+    for index, (q, a, t, f_list) in enumerate(
+        zip(questions, answers, types, supporting_facts, strict=True), start=1
     ):
         tasks.append(bounded_process(q, a, t, f_list))
 
-        if len(tasks) % 10 == 0 or (q == questions[-1]):
+        if len(tasks) >= args.concurrency or index == len(questions):
             responses = await asyncio.gather(*tasks)
             tasks = []
             agent_utils.update_results(responses, attribute_matrix, results)
