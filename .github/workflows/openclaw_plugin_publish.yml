@@ -32,7 +32,7 @@ jobs:
           VERSION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          VERSION="${VERSION_INPUT}"
+          VERSION="${VERSION_INPUT#v}"
           if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Version must be numeric semver-like without a 'v' prefix (for example: 0.3.0). Got: ${VERSION}"
             exit 1
