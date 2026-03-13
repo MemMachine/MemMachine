@@ -5,6 +5,7 @@ import os
 import pickle
 from typing import Annotated, Any
 
+from pydantic import JsonValue
 from sqlalchemy import (
     JSON,
     ForeignKeyConstraint,
@@ -181,10 +182,10 @@ class SessionDataManagerSQL(SessionDataManager):
     async def create_new_session(
         self,
         session_key: str,
-        configuration: dict[str, Any],
+        configuration: dict[str, JsonValue],
         param: EpisodicMemoryConf,
         description: str,
-        metadata: dict[str, Any],
+        metadata: dict[str, JsonValue],
     ) -> None:
         """Create a new session entry in the database."""
         if hasattr(param, "model_dump"):

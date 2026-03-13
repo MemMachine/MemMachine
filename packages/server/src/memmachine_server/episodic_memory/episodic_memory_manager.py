@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine_server.common import rw_locks
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
@@ -172,8 +172,8 @@ class EpisodicMemoryManager:
         session_key: str,
         episodic_memory_config: EpisodicMemoryConf,
         description: str,
-        metadata: dict,
-        config: dict | None = None,
+        metadata: dict[str, JsonValue],
+        config: dict[str, JsonValue] | None = None,
     ) -> AsyncIterator[EpisodicMemory]:
         """
         Create a new episodic memory instance and store its configuration.
@@ -218,8 +218,8 @@ class EpisodicMemoryManager:
         session_key: str,
         episodic_memory_config: EpisodicMemoryConf,
         description: str,
-        metadata: dict,
-        config: dict | None = None,
+        metadata: dict[str, JsonValue],
+        config: dict[str, JsonValue] | None = None,
     ) -> AsyncIterator[EpisodicMemory]:
         """
         Create a new episodic memory instance and store its configuration if it doesn't exist. If the session already exists, it will be opened and returned.

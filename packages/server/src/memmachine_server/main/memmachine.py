@@ -4,7 +4,7 @@ import asyncio
 import logging
 from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping
-from typing import Any, Final, Protocol, cast
+from typing import Any, Final, Protocol
 
 from memmachine_common.api import MemoryType
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError

@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
+from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration.episodic_config import (
@@ -102,9 +103,9 @@ async def test_create_new_session(
 ):
     """Test creating a new session successfully."""
     session_key = "session1"
-    config: dict[str, object] = {"key": "value"}
+    config: dict[str, JsonValue] = {"key": "value"}
     description = "A test session"
-    metadata: dict[str, object] = {"user": "tester"}
+    metadata: dict[str, JsonValue] = {"user": "tester"}
 
     await session_manager.create_new_session(
         session_key,

@@ -1,9 +1,8 @@
 """Session data manager abstraction."""
 
 from abc import ABC, abstractmethod
-from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
 from memmachine_server.common.data_types import PropertyValue
@@ -31,10 +30,10 @@ class SessionDataManager(ABC):
     async def create_new_session(
         self,
         session_key: str,
-        configuration: dict[str, Any],
+        configuration: dict[str, JsonValue],
         param: EpisodicMemoryConf,
         description: str,
-        metadata: dict[str, Any],
+        metadata: dict[str, JsonValue],
     ) -> None:
         """Create a new session entry in the database."""
         raise NotImplementedError
@@ -47,9 +46,9 @@ class SessionDataManager(ABC):
     class SessionInfo(BaseModel):
         """Metadata describing a stored session."""
 
-        configuration: dict[str, Any]
+        configuration: dict[str, JsonValue]
         description: str
-        user_metadata: dict[str, Any]
+        user_metadata: dict[str, JsonValue]
         episode_memory_conf: EpisodicMemoryConf
 
     @abstractmethod

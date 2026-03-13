@@ -8,10 +8,12 @@ from typing import Any, TypeVar, cast
 import pytest
 import pytest_asyncio
 from memmachine_common.api import EpisodeType
+from pydantic import JsonValue
 
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
 )
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.episode_store import ContentType, Episode
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.common.language_model import LanguageModel
@@ -78,10 +80,10 @@ class MockShortTermMemoryDataManager(SessionDataManager):
     async def create_new_session(
         self,
         session_key: str,
-        configuration: dict,
+        configuration: dict[str, JsonValue],
         param: EpisodicMemoryConf,
         description: str,
-        metadata: dict,
+        metadata: dict[str, JsonValue],
     ):
         pass
 
@@ -101,7 +103,7 @@ class MockShortTermMemoryDataManager(SessionDataManager):
             ),
         )
 
-    async def get_sessions(self, filters: dict[str, object] | None = None) -> list[str]:
+    async def get_sessions(self, filters: dict[str, PropertyValue | None] | None = None) -> list[str]:
         return []
 
     async def update_session_episodic_config(
