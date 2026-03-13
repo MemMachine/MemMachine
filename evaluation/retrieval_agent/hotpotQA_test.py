@@ -27,7 +27,7 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
 <instructions>
 1. Normalize inputs before deciding anything:
    - Treat `{memories}` as possibly empty.
-   - Normalize entity spellings/case/ordinals/titles and common aliases (e.g., “10Th” → “10th”; honorific variants).
+   - Normalize entity spellings/case/ordinals/titles and common aliases (e.g., "10Th" → "10th"; honorific variants).
    - If `{question}` is malformed, underspecified, or missing key constraints, ask exactly one concise clarifying question instead of answering.
 
 2. Choose the evidence basis using this strict priority:
@@ -36,8 +36,8 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
    (c) **Open-domain fallback**: Use general world knowledge when memories are empty/irrelevant/too vague OR do not fully determine the answer.
 
 3. Uncertainty rule:
-   - Do **not** say “unknown/not mentioned” if open-domain knowledge can reasonably answer.
-   - If neither memories nor general knowledge allow a confident answer, say “I don’t know” (optionally add a brief reason).
+   - Do **not** say "unknown/not mentioned" if open-domain knowledge can reasonably answer.
+   - If neither memories nor general knowledge allow a confident answer, say "I don't know" (optionally add a brief reason).
 
 4. Ambiguity handling:
    - If multiple plausible entities/answers remain after normalization, provide the top candidates and note the ambiguity briefly.
@@ -59,18 +59,16 @@ Question: {question}
 """
 
 
-async def hotpotqa_ingest(dataset: list[dict[str, any]]):
+async def hotpotqa_ingest(dataset: list[dict[str, any]], config_path: str):
     t1 = datetime.now(UTC)
     added_content = 0
     per_batch = 1000
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+    resource_manager = agent_utils.load_eval_config(config_path)
 
     # Notice that the index of items must align between ingestion and search
     memory, _, _ = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
+        resource_manager=resource_manager,
         session_id="hotpotqa_group",
     )
 
@@ -116,6 +114,7 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
 
 async def hotpotqa_search(
     dataset: list[dict[str, any]],
+    config_path: str,
     eval_result_path: str | None = None,
     agent_name: str = "ToolSelectAgent",
     pure_llm: bool = False,
@@ -124,12 +123,10 @@ async def hotpotqa_search(
     attribute_matrix = agent_utils.init_attribute_matrix()
     responses: list[tuple[int, dict[str, any]]] = []
     num_searched = 0
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+
+    resource_manager = agent_utils.load_eval_config(config_path)
     memory, model, query_agent = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
-        model_name="gpt-5-mini",
+        resource_manager=resource_manager,
         session_id="hotpotqa_group",
         agent_name=agent_name,
     )
@@ -156,13 +153,12 @@ async def hotpotqa_search(
                 answer_prompt=ANSWER_PROMPT,
                 query_agent=query_agent,
                 memory=memory,
-                model=model,
+                answer_model=model,
                 question=data["question"],
                 answer=data["answer"],
                 category=(data["type"]),
                 supporting_facts=supporting_facts,
                 search_limit=20,
-                model_name="gpt-5-mini",
                 full_content=full_content_str if pure_llm else None,
                 extra_attributes={"level": data["level"]},
             )
@@ -232,12 +228,17 @@ async def main():
         help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
         choices=["memmachine", "retrieval_agent", "llm"],
     )
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
     args = parser.parse_args()
 
     dataset = load_hotpotqa_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
-        await hotpotqa_ingest(dataset)
+        await hotpotqa_ingest(dataset, args.config_path)
     elif args.run_type == "search":
         print("Starting HotpotQA test...")
         print(f"Evaluation result path: {args.eval_result_path}")
@@ -249,7 +250,11 @@ async def main():
             "MemMachineAgent" if args.test_target == "memmachine" else "ToolSelectAgent"
         )
         await hotpotqa_search(
-            dataset, args.eval_result_path, agent_name, args.test_target == "llm"
+            dataset,
+            args.config_path,
+            args.eval_result_path,
+            agent_name,
+            args.test_target == "llm",
         )
     else:
         raise ValueError(

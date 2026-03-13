@@ -116,17 +116,18 @@ def _set_safe_embedder_request_limits(memory: Any) -> None:
         embedder.max_total_input_length_per_request = 30000
 
 
-async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
+async def longmemeval_ingest(
+    dataset: list[dict[str, Any]],
+    config_path: str,
+    session_id: str,
+):
     t1 = datetime.now(UTC)
     added_content = 0
     per_batch = 1000
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-
+    resource_manager = agent_utils.load_eval_config(config_path)
     memory, _, _ = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
+        resource_manager=resource_manager,
         session_id=session_id,
     )
     _set_safe_embedder_request_limits(memory)
@@ -168,6 +169,7 @@ async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
 
 async def longmemeval_search(
     dataset: list[dict[str, Any]],
+    config_path: str,
     session_id: str,
     eval_result_path: str | None = None,
     agent_name: str = "ToolSelectAgent",
@@ -178,12 +180,9 @@ async def longmemeval_search(
     responses: list[tuple[str, dict[str, Any]]] = []
     num_searched = 0
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-    memory, model, query_agent = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
-        model_name="gpt-5-mini",
+    resource_manager = agent_utils.load_eval_config(config_path)
+    memory, answer_model, query_agent = await agent_utils.init_memmachine_params(
+        resource_manager=resource_manager,
         session_id=session_id,
         agent_name=agent_name,
     )
@@ -204,13 +203,12 @@ async def longmemeval_search(
                 answer_prompt=ANSWER_PROMPT,
                 query_agent=query_agent,
                 memory=memory,
-                model=model,
+                answer_model=answer_model,
                 question=question,
                 answer=answer,
                 category=str(sample.get("question_type", "unknown")),
                 supporting_facts=supporting_facts,
                 search_limit=20,
-                model_name="gpt-5-mini",
                 full_content=full_content if pure_llm else None,
                 extra_attributes={
                     "question_id": sample.get("question_id", ""),
@@ -326,12 +324,17 @@ async def main():
         help="Session id used for both ingestion and retrieval",
         default="longmemeval_group",
     )
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
     args = parser.parse_args()
 
     dataset = load_longmemeval_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
-        await longmemeval_ingest(dataset, args.session_id)
+        await longmemeval_ingest(dataset, args.config_path, args.session_id)
     elif args.run_type == "search":
         print("Starting LongMemEval test...")
         print(f"Evaluation result path: {args.eval_result_path}")
@@ -344,6 +347,7 @@ async def main():
         )
         await longmemeval_search(
             dataset,
+            args.config_path,
             args.session_id,
             args.eval_result_path,
             agent_name,

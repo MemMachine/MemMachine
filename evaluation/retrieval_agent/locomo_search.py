@@ -64,6 +64,11 @@ async def run_locomo(  # noqa: C901
         help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
         choices=["memmachine", "retrieval_agent", "llm"],
     )
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
 
     args = parser.parse_args()
 
@@ -87,9 +92,9 @@ async def run_locomo(  # noqa: C901
     attribute_matrix = agent_utils.init_attribute_matrix()
     start_index = 0
     end_index = 20
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+
+    resource_manager = agent_utils.load_eval_config(args.config_path)
+
     for idx, item in enumerate(locomo_data):
         if idx < start_index:
             continue
@@ -133,9 +138,8 @@ async def run_locomo(  # noqa: C901
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
         memory, model, query_agent = await agent_utils.init_memmachine_params(
-            vector_graph_store=vector_graph_store,
+            resource_manager=resource_manager,
             session_id=group_id,
-            model_name="gpt-5-mini",
             agent_name="ToolSelectAgent"
             if args.test_target == "retrieval_agent"
             else "MemMachineAgent",
@@ -178,7 +182,6 @@ async def run_locomo(  # noqa: C901
                 stringified_evidence,
                 adversarial_answer,
                 20,
-                "gpt-5-mini",
                 full_content_str if args.test_target == "llm" else None,
             )
             return question_response

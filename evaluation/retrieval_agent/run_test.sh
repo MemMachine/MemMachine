@@ -146,6 +146,18 @@ run_test() {
     esac
 
     SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+    CONFIG_FILE="${SCRIPT_DIR}/configuration.yml"
+
+    # Require configuration.yml in the same directory as this script
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Error: configuration.yml not found at '${CONFIG_FILE}'"
+        echo
+        echo "Please create a configuration.yml in the retrieval_agent directory before"
+        echo "running benchmarks. See evaluation/retrieval_agent/README.md for details"
+        echo "and configuration samples."
+        exit 1
+    fi
+
     REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
     export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/packages/common/src:${REPO_ROOT}/packages/server/src:${REPO_ROOT}/packages/client/src${PYTHONPATH:+:${PYTHONPATH}}"
     mkdir -p ${SCRIPT_DIR}/result/final_score
@@ -154,24 +166,24 @@ run_test() {
     FINAL_SCORE_FILE="${SCRIPT_DIR}/result/final_score/${TEST}_${TEST_TARGET}_${RESULT_POSTFIX}.result"
     SESSION_ID="${TEST}_${RESULT_POSTFIX}"
 
-    rm -f "$RESULT_FILE" "$EVAL_FILE" "$FINAL_SCORE_FILE" 
+    rm -f "$RESULT_FILE" "$EVAL_FILE" "$FINAL_SCORE_FILE"
 
     case "$TEST" in
         locomo)
-            INGEST_CMD=(python -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json")
-            SEARCH_CMD=(python -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET")
+            INGEST_CMD=(python -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=(python -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             ;;
         wikimultihop)
-            INGEST_CMD=(python -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH")
-            SEARCH_CMD=(python -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH")
+            INGEST_CMD=(python -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=(python -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH" --config-path "$CONFIG_FILE")
             ;;
         hotpotqa)
-            INGEST_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
-            SEARCH_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET")
+            INGEST_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             ;;
         longmemeval)
-            INGEST_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
-            SEARCH_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID")
+            INGEST_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
             ;;
     esac
 
@@ -179,7 +191,7 @@ run_test() {
         "${INGEST_CMD[@]}"
     elif [[ "$INGEST" = "search" ]]; then
         "${SEARCH_CMD[@]}"
-        python "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE"
+        python "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE"
         python "$SCRIPT_DIR/generate_scores.py" --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
         cat "$FINAL_SCORE_FILE"
     else
