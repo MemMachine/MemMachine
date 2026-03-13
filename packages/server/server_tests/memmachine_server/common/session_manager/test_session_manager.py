@@ -102,9 +102,9 @@ async def test_create_new_session(
 ):
     """Test creating a new session successfully."""
     session_key = "session1"
-    config = {"key": "value"}
+    config: dict[str, object] = {"key": "value"}
     description = "A test session"
-    metadata = {"user": "tester"}
+    metadata: dict[str, object] = {"user": "tester"}
 
     await session_manager.create_new_session(
         session_key,

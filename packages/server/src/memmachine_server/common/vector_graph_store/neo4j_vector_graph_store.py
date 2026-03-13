@@ -1334,7 +1334,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
             param_name = _sanitize(f"filter_expr_param_{uuid4()}")
             condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
-            params = {param_name: expr.values}
+            params: dict[str, FilterValue] = {param_name: expr.values}
             return condition, params
 
         if isinstance(expr, FilterComparison):

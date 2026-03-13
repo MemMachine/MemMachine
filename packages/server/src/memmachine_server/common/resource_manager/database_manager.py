@@ -215,7 +215,7 @@ class DatabaseManager:
             if not conf:
                 raise ValueError(f"SQL config '{name}' not found.")
 
-            engine_kwargs = {
+            engine_kwargs: dict[str, bool | int] = {
                 "echo": False,
                 "future": True,
             }

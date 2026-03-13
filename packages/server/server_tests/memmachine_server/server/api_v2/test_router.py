@@ -216,7 +216,7 @@ def test_delete_project(client, mock_memmachine):
 
 
 def test_add_memories(client, mock_memmachine):
-    payload = {
+    payload: dict[str, Any] = {
         "org_id": "test_org",
         "project_id": "test_proj",
         "messages": [{"role": "user", "content": "hello"}],
