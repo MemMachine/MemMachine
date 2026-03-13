@@ -226,7 +226,9 @@ class ExtraMemory:
         if not marked_uuids:
             return
 
-        await self._collection.delete(record_uuids=marked_uuids)
+        await self._collection.delete(
+            partition_key=self._partition_key, record_uuids=marked_uuids
+        )
         await self._segment_linker.purge_derivatives(self._partition_key, marked_uuids)
 
     async def encode_episodes(
@@ -298,6 +300,7 @@ class ExtraMemory:
 
         else:
             derivative_query_results = await self._collection.query(
+                partition_key=self._partition_key,
                 query_vectors=derivative_embeddings,
                 score_threshold=self._derivative_consolidation_threshold,
                 limit=1,
@@ -348,7 +351,9 @@ class ExtraMemory:
             ]
 
         if derivative_records:
-            await self._collection.upsert(records=derivative_records)
+            await self._collection.upsert(
+                partition_key=self._partition_key, records=derivative_records
+            )
 
     @staticmethod
     def _consolidate_derivatives(
@@ -639,6 +644,7 @@ class ExtraMemory:
         query_matches = next(
             iter(
                 await self._collection.query(
+                    partition_key=self._partition_key,
                     query_vectors=[query_embedding],
                     limit=min(5 * max_num_segments, 200),
                     return_vector=False,
