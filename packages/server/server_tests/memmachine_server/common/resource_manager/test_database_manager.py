@@ -40,6 +40,7 @@ def mock_conf():
         ),
     }
     conf.sqlite_confs = {}
+    conf.nebula_graph_confs = {}
     return conf
 
 
@@ -88,6 +89,7 @@ async def test_build_sqlite(mock_conf):
 async def test_build_and_validate_sqlite():
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
+    conf.nebula_graph_confs = {}
     conf.relational_db_confs = {
         "sqlite1": SqlAlchemyConf(
             dialect="sqlite",
