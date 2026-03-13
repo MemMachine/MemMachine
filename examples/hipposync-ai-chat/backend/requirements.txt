@@ -1,0 +1,65 @@
+# ===================== Core Framework =====================
+fastapi
+uvicorn
+starlette
+python-multipart
+
+# ===================== Pydantic & Validation =====================
+pydantic
+pydantic-settings
+pydantic[email]
+email-validator
+
+# ===================== Database & ORM =====================
+SQLAlchemy
+alembic
+asyncpg
+pgvector
+
+# ===================== Authentication & Security =====================
+python-jose
+passlib[bcrypt]
+PyJWT
+cryptography
+pycryptodome
+bcrypt==4.0.1
+# ===================== Environment Variables =====================
+python-dotenv
+
+# ===================== HTTP & Networking =====================
+httpx
+requests
+aiohttp
+sse-starlette
+
+# ===================== AI Providers =====================
+openai
+anthropic
+google-generativeai
+google-ai-generativelanguage
+langchain-core
+langchain-aws
+langsmith
+
+# ===================== Search / Tools =====================
+tavily-python
+
+# ===================== File Processing =====================
+pdfminer.six
+PyPDF2
+python-docx
+python-pptx
+openpyxl
+pillow
+
+# ===================== Date & Utils =====================
+python-dateutil
+typing_extensions
+chardet
+numpy
+nltk
+
+# ===================== Misc Runtime Dependencies =====================
+orjson
+rich
+tenacity
