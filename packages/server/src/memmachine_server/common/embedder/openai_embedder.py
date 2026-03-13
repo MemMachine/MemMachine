@@ -242,6 +242,7 @@ class OpenAIEmbedder(Embedder):
                 openai.RateLimitError,
                 openai.APITimeoutError,
                 openai.APIConnectionError,
+                openai.InternalServerError,
             ) as err:
                 # Exception may be retried.
                 if attempt >= max_attempts:
