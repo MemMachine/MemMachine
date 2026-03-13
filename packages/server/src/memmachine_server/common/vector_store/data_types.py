@@ -30,8 +30,15 @@ class Record:
 
 
 @dataclass(kw_only=True)
-class QueryResult:
-    """Result of a vector store query."""
+class QueryMatch:
+    """A single vector store query match."""
 
     score: float
     record: Record
+
+
+@dataclass(kw_only=True)
+class QueryResult:
+    """Result of a vector store query."""
+
+    matches: list[QueryMatch]
