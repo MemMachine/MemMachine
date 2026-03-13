@@ -67,12 +67,12 @@ def create_judge_fn(config_path: str) -> Callable[[str], str]:
         model_name = conf.model
 
         def _call_responses(prompt: str) -> str:
-            resp = client.chat.completions.create(
+            resp = client.responses.create(
                 model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
+                input=prompt,
+                text={"format": {"type": "json_object"}},
             )
-            return resp.choices[0].message.content
+            return resp.output_text or ""
 
         return _call_responses
 

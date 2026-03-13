@@ -17,6 +17,11 @@ The file controls every component used during a run:
 `run_test.sh` checks for the file at startup and exits with an error if it is
 missing.
 
+The MemMachine configuration schema also requires a `semantic_memory` section.
+The samples below keep semantic memory disabled because these retrieval-agent
+benchmarks do not use it directly, but `semantic_memory.config_database` must
+still reference a valid SQL database ID.
+
 ---
 
 ## Quick Start
@@ -47,7 +52,6 @@ episodic_memory:
   enabled: true
   long_term_memory:
     embedder: openai_embedder
-    llm_model: openai_model
     reranker: aws_reranker_id
     vector_graph_store: my_storage_id
   long_term_memory_enabled: true
@@ -64,6 +68,10 @@ logging:
 retrieval_agent:
   llm_model: openai_model
   reranker: aws_reranker_id
+
+semantic_memory:
+  enabled: false
+  config_database: profile_storage
 
 resources:
   databases:
@@ -130,7 +138,6 @@ episodic_memory:
   enabled: true
   long_term_memory:
     embedder: ollama_embedder
-    llm_model: ollama_model
     reranker: bm25_reranker
     vector_graph_store: my_storage_id
   long_term_memory_enabled: true
@@ -147,6 +154,10 @@ logging:
 retrieval_agent:
   llm_model: ollama_model
   reranker: bm25_reranker
+
+semantic_memory:
+  enabled: false
+  config_database: sqlite_db
 
 resources:
   databases:
@@ -208,7 +219,6 @@ episodic_memory:
   enabled: true
   long_term_memory:
     embedder: aws_embedder
-    llm_model: aws_model
     reranker: aws_reranker_id
     vector_graph_store: my_storage_id
   long_term_memory_enabled: true
@@ -225,6 +235,10 @@ logging:
 retrieval_agent:
   llm_model: aws_model
   reranker: aws_reranker_id
+
+semantic_memory:
+  enabled: false
+  config_database: profile_storage
 
 resources:
   databases:
@@ -292,7 +306,6 @@ episodic_memory:
   enabled: true
   long_term_memory:
     embedder: custom_embedder
-    llm_model: custom_model
     reranker: bm25_reranker
     vector_graph_store: my_storage_id
   long_term_memory_enabled: true
@@ -309,6 +322,10 @@ logging:
 retrieval_agent:
   llm_model: custom_model
   reranker: bm25_reranker
+
+semantic_memory:
+  enabled: false
+  config_database: sqlite_db
 
 resources:
   databases:

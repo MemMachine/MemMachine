@@ -403,13 +403,29 @@ async def init_memmachine_params(
             "episodic_memory.long_term_memory is not configured in configuration.yml"
         )
 
-    embedder = await resource_manager.get_embedder(ltm_conf.embedder)
+    embedder_id = ltm_conf.embedder
+    if not embedder_id:
+        raise ValueError(
+            "episodic_memory.long_term_memory.embedder is not set in configuration.yml"
+        )
+    embedder = await resource_manager.get_embedder(embedder_id)
 
     reranker_id = conf.retrieval_agent.reranker or ltm_conf.reranker
+    if not reranker_id:
+        raise ValueError(
+            "Neither retrieval_agent.reranker nor "
+            "episodic_memory.long_term_memory.reranker is set in configuration.yml"
+        )
     reranker = await resource_manager.get_reranker(reranker_id)
 
+    vector_graph_store_id = ltm_conf.vector_graph_store
+    if not vector_graph_store_id:
+        raise ValueError(
+            "episodic_memory.long_term_memory.vector_graph_store is not set in "
+            "configuration.yml"
+        )
     vector_graph_store = await resource_manager.get_vector_graph_store(
-        ltm_conf.vector_graph_store
+        vector_graph_store_id
     )
 
     agent_model_id = conf.retrieval_agent.llm_model
