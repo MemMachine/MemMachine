@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common import rw_locks
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.errors import (
     EpisodicMemoryManagerClosedError,
     SessionInUseError,
@@ -305,7 +306,7 @@ class EpisodicMemoryManager:
 
     async def get_episodic_memory_keys(
         self,
-        filters: dict[str, object] | None,
+        filters: dict[str, PropertyValue | None] | None,
     ) -> list[str]:
         """
         Retrieve a list of all available episodic memory session keys.

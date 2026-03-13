@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine_server.common.data_types import PropertyValue
 
 
 class SessionDataManager(ABC):
@@ -30,10 +31,10 @@ class SessionDataManager(ABC):
     async def create_new_session(
         self,
         session_key: str,
-        configuration: dict[str, object],
+        configuration: dict[str, Any],
         param: EpisodicMemoryConf,
         description: str,
-        metadata: dict[str, object],
+        metadata: dict[str, Any],
     ) -> None:
         """Create a new session entry in the database."""
         raise NotImplementedError
@@ -62,7 +63,7 @@ class SessionDataManager(ABC):
     @abstractmethod
     async def get_sessions(
         self,
-        filters: dict[str, object] | None = None,
+        filters: dict[str, PropertyValue | None] | None = None,
     ) -> list[str]:
         """Return a list of all session keys (optionally filtered)."""
         raise NotImplementedError

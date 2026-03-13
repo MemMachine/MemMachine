@@ -30,6 +30,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
@@ -180,10 +181,10 @@ class SessionDataManagerSQL(SessionDataManager):
     async def create_new_session(
         self,
         session_key: str,
-        configuration: dict[str, object],
+        configuration: dict[str, Any],
         param: EpisodicMemoryConf,
         description: str,
-        metadata: dict[str, object],
+        metadata: dict[str, Any],
     ) -> None:
         """Create a new session entry in the database."""
         if hasattr(param, "model_dump"):
@@ -252,7 +253,7 @@ class SessionDataManagerSQL(SessionDataManager):
     def _json_contains(
         self,
         column: ColumnElement[object],
-        filters: dict[str, object],
+        filters: dict[str, PropertyValue | None],
     ) -> ColumnElement[Any]:
         if self._engine.dialect.name == "mysql":
             return func.json_contains(column, func.json_quote(func.json(filters)))
@@ -275,7 +276,7 @@ class SessionDataManagerSQL(SessionDataManager):
 
     async def get_sessions(
         self,
-        filters: dict[str, object] | None = None,
+        filters: dict[str, PropertyValue | None] | None = None,
     ) -> list[str]:
         """Retrieve session keys, optionally filtered by metadata."""
         if filters is None:
