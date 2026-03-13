@@ -54,6 +54,11 @@ class OpenAIResponsesLanguageModelConf(
         description="Maximal retry interval in seconds when retrying API calls",
         gt=0,
     )
+    timeout: int = Field(
+        default=600,
+        description="Timeout in seconds for OpenAI API requests",
+        gt=0,
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -84,6 +89,11 @@ class OpenAIChatCompletionsLanguageModelConf(
     max_retry_interval_seconds: int = Field(
         default=120,
         description="Maximal retry interval in seconds when retrying API calls",
+        gt=0,
+    )
+    timeout: int = Field(
+        default=600,
+        description="Timeout in seconds for OpenAI API requests",
         gt=0,
     )
 
