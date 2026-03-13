@@ -4,7 +4,7 @@
 import argparse
 import json
 from collections import defaultdict
-from typing import Callable
+from collections.abc import Callable
 
 import json_repair
 import numpy as np

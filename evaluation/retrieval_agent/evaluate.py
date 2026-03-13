@@ -15,7 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.retrieval_agent.llm_judge import create_judge_fn, evaluate_llm_judge  # noqa: E402
+from evaluation.retrieval_agent.llm_judge import (  # noqa: E402
+    create_judge_fn,
+    evaluate_llm_judge,
+)
 
 
 def process_sample(group_key: str, item: dict, call_fn):
