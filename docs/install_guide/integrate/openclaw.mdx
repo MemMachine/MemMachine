@@ -1,0 +1,125 @@
+---
+title: "OpenClaw"
+description: "Enable persistent, long-term memory for your OpenClaw agents"
+icon: "terminal"
+---
+
+The MemMachine plugin for [OpenClaw](https://github.com/OpenClaw/OpenClaw) provides a queryable long-term memory layer. By storing interaction history and retrieving high-relevance context at inference time, your agents stay grounded while reducing token waste.
+
+<CardGroup cols={2}>
+  <Card title="Persistent Memory" icon="brain">
+    Maintain context across different agent sessions without ballooning your prompt size.
+  </Card>
+  <Card title="Auto Recall" icon="bolt">
+    Automatically inject relevant episodic and semantic memories before your agent responds.
+  </Card>
+</CardGroup>
+
+## Features
+
+* **Auto Recall**: Searches memories before the agent responds and injects matches into the context.
+* **Auto Capture**: Automatically sends every exchange to MemMachine after the agent responds.
+* **Native Functions**: Registers `memory_search`, `memory_store`, `memory_forget`, and `memory_get` directly in OpenClaw.
+* **Version Support**: Requires MemMachine plugin v0.3.0 or higher.
+
+---
+
+## Setup
+
+<Steps>
+  <Step title="Install the Plugin">
+    <Tabs>
+      <Tab title="Install via OpenClaw CLI">
+        Use this command to pull the latest stable version of the plugin directly from our registry:
+        ```bash
+        openclaw plugins install @memmachine/openclaw-memmachine
+        ```
+      </Tab>
+      <Tab title="Install for Local Development">
+        Use this method if you are contributing to the plugin or testing local modifications. Ensure you are in the project root:
+        ```bash
+        openclaw plugins install ./MemMachine/integrations
+        cd ./MemMachine/integrations/openclaw && pnpm install
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Configure Credentials">
+    If you are using the **MemMachine Platform (Cloud)**, retrieve your API key from the [MemMachine Cloud console](https://console.memmachine.ai). 
+    
+    *Note: An API key is only required when connecting to the Cloud platform. For local deployments, this field may be omitted.*
+    
+    You can configure the plugin through the **OpenClaw Gateway Dashboard** under `Settings > Plugins` or by editing your `openclaw.json` file.
+  </Step>
+
+  <Step title="Initialize Configuration">
+    Add the `openclaw-memmachine` entry to your `plugins.entries` object in `openclaw.json`:
+
+    <Tabs>
+      <Tab title="MemMachine Cloud">
+        ```json5
+        "openclaw-memmachine": {
+          "enabled": true,
+          "config": {
+            "apiKey": "mm-...",
+            "baseUrl": "[https://api.memmachine.ai](https://api.memmachine.ai)",
+            "autoCapture": true,
+            "autoRecall": true,
+            "orgId": "openclaw",
+            "projectId": "openclaw"
+          }
+        }
+        ```
+      </Tab>
+      <Tab title="Local Deployment">
+        ```json5
+        "openclaw-memmachine": {
+          "enabled": true,
+          "config": {
+            "baseUrl": "http://host:port/api/v2",
+            "autoCapture": true,
+            "autoRecall": true,
+            "orgId": "openclaw",
+            "projectId": "openclaw"
+          }
+        }
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+---
+
+## UI Configuration
+
+For a no-code approach, use the OpenClaw Gateway Dashboard to toggle features and manage identifiers.
+
+![OpenClaw Configuration Dashboard](./assets/openclaw.png)
+
+### Configuration Parameters
+
+| Parameter | UI Label | Description |
+| :--- | :--- | :--- |
+| `apiKey` | MemMachine API Key | Your MemMachine API key (Required for Cloud). |
+| `baseUrl` | Base URL | The MemMachine API endpoint. |
+| `autoCapture` | Auto-Capture | Automatically store conversation context after each agent turn. |
+| `autoRecall` | Auto-Recall | Automatically inject relevant memories before each agent turn. |
+| `orgId` | Organization ID | Your unique organization identifier. |
+| `projectId` | Project ID | Your unique project identifier. |
+| `userId` | Default User ID | User identifier used for scoping memories. |
+| `searchThreshold` | Search score Threshold | Minimum reranking score for search results (0-1). |
+| `topK` | Top K Results | Maximum number of memories to retrieve per turn. |
+
+<Note>
+**Pro Tip:** Tuning the **Search score Threshold** is key; a value of `0.5` is a good baseline, but increase it if your agent is recalling loosely related, noisy information.
+</Note>
+
+---
+
+## CLI Commands
+
+The plugin registers two CLI functions for manual memory management and debugging:
+
+* `search`: Search MemMachine memory directly from the command line.
+* `stats`: Retrieve usage and health statistics from MemMachine.

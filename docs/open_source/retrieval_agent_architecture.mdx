@@ -1,215 +1,100 @@
 ---
 title: "Retrieval Agent Architecture"
-description: "How MemMachine agent-mode retrieval is composed and executed"
-icon: "git-branch"
+description: "How MemMachine uses intelligent orchestration to solve complex, multi-hop memory queries."
+icon: "brain-circuit"
 ---
 
-## Overview
+Sometimes a single vector search isn't enough. `agent_mode` adds an intelligent orchestration layer to episodic long-term memory retrieval, moving beyond simple similarity to active reasoning. Use `agent_mode=true` in your memory search APIs to handle complex questions that require more than one step to answer.
 
-`agent_mode` adds an orchestration layer on top of episodic long-term-memory
-search. Instead of relying on one direct vector search, it can:
+## How it Works
 
-- Route a query to the best retrieval strategy.
-- Rewrite or split queries when one pass is not enough.
-- Aggregate and rerank evidence before returning episodes.
+<Steps>
+  <Step title="Smart Routing">
+    The `ToolSelectAgent` analyzes your query to decide the best path forward: a direct lookup, splitting the query into parts, or following a chain of evidence.
+  </Step>
+  <Step title="Specialized Execution">
+    The orchestrator hands the query to a specialized agent that can dig through your memory based on the specific complexity of your question.
+  </Step>
+  <Step title="Evidence Aggregation">
+    MemMachine gathers all the findings, reranks them for precision, and returns the results along with clear metrics on how it found the answer.
+  </Step>
+</Steps>
 
-Enable this mode with `agent_mode=true` in memory search APIs.
+![Retrieval Agent Orchestration](/images/intelligent_orchestration.png)
 
-## Diagram
+## Agent Taxonomy
+
+Not all queries are created equal. We use different agents to handle different levels of complexity:
+
+| Agent | Role | Best For |
+| :--- | :--- | :--- |
+| `MemMachineAgent` | Direct Retrieval | Simple, one-shot lookups. |
+| `SplitQueryAgent` | Parallel Search | Queries with multiple independent entities or constraints. |
+| `ChainOfQueryAgent` | Multi-hop Retrieval | Complex relationship chains where facts depend on each other. |
+
+---
+
+## Why Agentic Retrieval Matters
+
+Standard vector search works great when a query maps directly to a single memory. However, real-world questions are often "messy." 
+
+`agent_mode` is designed for scenarios that require:
+- **Multi-hop chains:** Where Fact B can't be found until you find Fact A.
+- **Relationship traversal:** Jumping across entities (e.g., `Person` -> `Organization` -> `Role`).
+- **Mixed constraints:** Filtering by time, location, and role simultaneously in steps.
+- **Sufficiency checks:** Ensuring the agent doesn't stop until it actually has enough evidence.
+
+### The "Spouse" Problem (Multi-hop struggle)
+Imagine asking: *"What is the current company of the spouse of the CEO of Acme?"*
+
+A standard search might over-focus on "Acme" and "CEO," completely missing the spouse's data because that entity hasn't been identified yet. 
+
+### How MemMachine Fixes This
+1. **Detection:** `ToolSelectAgent` sees the complexity and routes to a chain-based strategy.
+2. **Iteration:** `ChainOfQueryAgent` finds the CEO first, identifies the spouse, and then searches for that spouse's company.
+3. **Verification:** At each step, the agent checks if it has enough info to move forward.
+4. **Ranking:** All gathered evidence is combined and ranked to give you the most relevant answer.
+
+<Note>
+Setting `agent_mode=false` (default) uses the standard `EpisodicMemory` path. This is faster for simple queries but may struggle with multi-step reasoning.
+</Note>
+
+### Workflow Diagram
+
+This diagram shows how our Intelligent Orchestration resolves these patterns by branching between standard and agentic paths:
 
 ![Retrieval Agent Workflow Diagram](/images/retrieval-agent-workflow.png)
 
-## Why Retrieval-Agent Mode Helps
+---
 
-A single direct retrieval works best when one query maps cleanly to one
-relevant cluster of episodes. Many real user questions are harder than that.
+## Configuration & Extension
 
-Retrieval-agent mode helps when queries require:
+You can fine-tune how these agents behave using the `extra_params` dictionary.
 
-- Multi-hop dependency chains where later facts depend on earlier facts.
-- Relationship traversal across entities (`person -> organization -> role`).
-- Mixed constraints (time, location, role) that are easier to retrieve in
-  steps.
-- Evidence completeness checks before stopping.
+```python
+# Example: Tuning agent behavior for higher precision
+memory.search(
+    query="Find the CEO of Acme's spouse's current company",
+    agent_mode=True,
+    extra_params={
+        "max_attempts": 3,      # How many hops to allow
+        "confidence_score": 0.85 # Threshold for stopping early
+    }
+)
+```
 
-### Where direct retrieval struggles on multi-hop relationship queries
+<Tip>**Pro Tip:** If the `ChainOfQueryAgent` isn't navigating your data correctly, check the `selected_tool` and `confidence_scores` in your metadata. You can often fix "lost" agents by providing more context in the `combined_prompt` within your config.</Tip>
 
-One similarity search query tries to retrieve all required evidence in one shot.
-For relationship chains, this often fails because the intermediate entity is
-unknown at query start.
+------
 
-Example query:
+## Metrics and Telemetry
 
-`What is the current company of the spouse of the CEO of Acme?`
+Transparency is key. We provide detailed metrics so you can see exactly how the agent "thought" through your query:
 
-Required hops:
-
-1. Find CEO of Acme.
-2. Find spouse of that CEO.
-3. Find current company of the spouse.
-
-If you issue one direct query, search may over-focus on "Acme" and "CEO" and
-miss the spouse/company evidence needed for the final answer.
-
-### How retrieval-agent mode fixes this pattern
-
-- `ToolSelectAgent` detects query shape and routes to chain-based retrieval.
-- `ChainOfQueryAgent` iteratively rewrites to the next missing hop.
-- Each iteration retrieves new evidence, then performs sufficiency checking.
-- Evidence from all hops is accumulated and reranked before returning.
-
-This turns one brittle retrieval into a guided sequence of targeted retrievals,
-which typically improves recall and end-to-end answerability for complex
-chain-relationship questions.
-
-## Where It Fits
-
-The retrieval agent is created in
-`packages/server/src/memmachine_server/retrieval_agent/service_locator.py` and cached in `MemMachine`.
-It is used only for long-term episodic retrieval.
-
-- Request flow:
-  - `POST /api/v2/memories/search` (or SDK `memory.search(..., agent_mode=True)`)
-  - `MemMachine.query_search(..., agent_mode=True)`
-  - `MemMachine._search_episodic_memory(...)`
-  - `MemMachine._query_episodic_with_retrieval_agent(...)`
-  - Retrieval agent `do_query(...)` with `QueryParam(memory=<EpisodicMemory>)`
-  - `EpisodicMemory.query_memory(..., mode=LONG_TERM_ONLY)` for long-term search
-  - `EpisodicMemory.query_memory(..., mode=SHORT_TERM_ONLY)` for short-term merge
-
-- `agent_mode=false` keeps the default `EpisodicMemory.query_memory(...)` path.
-
-## Core Components
-
-### 1) Shared Agent API
-
-`packages/server/src/memmachine_server/retrieval_agent/common/agent_api.py` defines:
-
-- `QueryParam`: query text, limit, context expansion, optional property filter.
-- `QueryPolicy`: budget/quality policy inputs (currently mostly advisory).
-- `AgentToolBase`: shared orchestration behavior:
-  - child tool fan-out (`do_query`)
-  - perf-metric merge (`_update_perf_metrics`)
-  - optional rerank (`_do_rerank`)
-
-### 2) MemMachineAgent (Direct Retrieval)
-
-`packages/server/src/memmachine_server/retrieval_agent/agents/memmachine_retriever.py`
-
-- Calls `EpisodicMemory.query_memory(..., mode=LONG_TERM_ONLY)` directly.
-- Returns episodes plus basic metrics (`memory_search_called`,
-  `memory_retrieval_time`).
-- No query rewrite/splitting.
-
-### 3) SplitQueryAgent (Independent Sub-Queries)
-
-`packages/server/src/memmachine_server/retrieval_agent/agents/split_query_agent.py`
-
-- Uses an LLM prompt to split a complex single-hop query into sub-queries.
-- Runs child retrieval for each sub-query.
-- Aggregates and reranks the combined result.
-- Tracks split queries and token/time metrics.
-
-### 4) ChainOfQueryAgent (Iterative Multi-Hop)
-
-`packages/server/src/memmachine_server/retrieval_agent/agents/coq_agent.py`
-
-- Iterates up to `max_attempts`.
-- Each iteration:
-  - retrieves with current query
-  - asks LLM to judge sufficiency + propose next query rewrite
-- Stops when:
-  - evidence is sufficient, and
-  - confidence exceeds configured threshold.
-- Aggregates evidence across iterations, then reranks final episodes.
-
-### 5) ToolSelectAgent (Router)
-
-`packages/server/src/memmachine_server/retrieval_agent/agents/tool_select_agent.py`
-
-- Uses an LLM prompt to choose exactly one strategy tool:
-  - `ChainOfQueryAgent`
-  - `SplitQueryAgent`
-  - `MemMachineAgent`
-- Executes only the selected tool.
-- Falls back to a configured default tool if selection is invalid.
-
-## Assembly in Service Locator
-
-`packages/server/src/memmachine_server/retrieval_agent/service_locator.py` creates a layered tool
-tree:
-
-1. `MemMachineAgent` (leaf; direct memory search)
-2. `ChainOfQueryAgent` and `SplitQueryAgent` (both wrap `MemMachineAgent`)
-3. `ToolSelectAgent` (wraps all three as router)
-
-Current default construction returns `ToolSelectAgent` as the top-level agent.
-Its fallback default tool is `ChainOfQueryAgent`.
-
-## Workflow by Query Type
-
-### A) Direct single-hop
-
-1. `ToolSelectAgent` picks `MemMachineAgent`.
-2. `MemMachineAgent` runs one long-term-only episodic query.
-3. Episodes are returned.
-
-### B) Single-hop with multiple independent entities/constraints
-
-1. `ToolSelectAgent` picks `SplitQueryAgent`.
-2. `SplitQueryAgent` generates N sub-queries.
-3. Child retrieval runs for each sub-query.
-4. Combined episodes are reranked and returned.
-
-### C) Multi-hop / dependency chain
-
-1. `ToolSelectAgent` picks `ChainOfQueryAgent`.
-2. Initial retrieval runs.
-3. LLM checks sufficiency and rewrites next query if needed.
-4. Steps repeat until enough evidence or attempt limit hit.
-5. Aggregated episodes are reranked and returned.
-
-## Key Features
-
-- Strategy routing: direct vs split vs iterative multi-hop.
-- Query decomposition: split and rewrite prompts are customizable.
-- Evidence accumulation: especially in chain-of-query mode.
-- Unified reranking: final ranking uses configured reranker when applicable.
-- Telemetry: each tool contributes performance and token metrics.
-
-## Metrics You Get Back
-
-Depending on selected strategy, metrics may include:
-
-- `selected_tool`
-- `queries`
-- `memory_search_called`
-- `memory_retrieval_time`
-- `llm_time`
-- `input_token` / `output_token`
-- `confidence_scores`
-- `evidence`
-
-This is useful for evaluation, tuning prompts, and cost/latency analysis.
-
-## Operational Notes and Constraints
-
-- Retrieval-agent mode applies to episodic long-term memory retrieval only.
-- Semantic-memory search is unaffected by retrieval-agent routing.
-- In agent mode, returned episodic long-term scores are normalized to `1.0`
-  in the final response payload.
-- Reranker and LLM quality strongly affect final result quality.
-- Child tool errors can propagate unless handled by retry logic.
-
-## Configuration and Extension Points
-
-- Enable at query-time with `agent_mode=true`.
-- Tune prompts via `extra_params`:
-  - `tool_select_prompt`
-  - `split_prompt`
-  - `combined_prompt` (chain-of-query)
-- Tune chain behavior:
-  - `max_attempts`
-  - `confidence_score` threshold
-- Change top-level strategy by setting retrieval config `agent_name`
-  (consumed by `create_retrieval_agent(...)`) for deterministic behavior.
+| **Metric**             | **Purpose**                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| `selected_tool`        | Identifies which agent was chosen to handle the heavy lifting. |
+| `queries`              | Shows the specific sub-queries generated during the process. |
+| `memory_search_called` | The total number of times the agent hit the database.        |
+| `llm_time`             | How long the orchestration/reasoning steps took.             |
+| `confidence_scores`    | The certainty level for each hop in a chain.                 |

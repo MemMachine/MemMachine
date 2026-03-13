@@ -365,13 +365,24 @@ class IngestionService:
             list(set(merged_citations)),
         )
 
+        original_tag = memories[0].tag if memories else None
+
         async def _add_feature(f: LLMReducedFeature) -> None:
+            tag = original_tag if original_tag is not None else f.tag
+            if tag != f.tag:
+                logger.warning(
+                    "Consolidation LLM changed tag from %r to %r; "
+                    "reverting to original tag",
+                    tag,
+                    f.tag,
+                )
+
             value_embedding = (await resources.embedder.ingest_embed([f.value]))[0]
 
             f_id = await self._semantic_storage.add_feature(
                 set_id=set_id,
                 category_name=semantic_category.name,
-                tag=f.tag,
+                tag=tag,
                 feature=f.feature,
                 value=f.value,
                 embedding=np.array(value_embedding),

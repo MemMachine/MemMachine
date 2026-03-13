@@ -1,6 +1,6 @@
 {
   "name": "@memmachine/client",
-  "version": "0.2.5",
+  "version": "0.0.0-development",
   "description": "TypeScript client for MemMachine RESTful APIs",
   "homepage": "https://memmachine.ai",
   "repository": {

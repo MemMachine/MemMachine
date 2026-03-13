@@ -130,7 +130,14 @@ function resolvePluginConfig(api: OpenClawPluginApi): PluginConfig {
 }
 
 function resolveApiKey(cfg: PluginConfig): string | undefined {
-  const envKey = typeof process !== "undefined" ? process.env.MEMMACHINE_API_KEY : undefined;
+  const envKey =
+    typeof globalThis !== "undefined" &&
+    typeof (globalThis as { process?: { env?: Record<string, string | undefined> } })
+      .process !== "undefined"
+      ? (
+          globalThis as { process?: { env?: Record<string, string | undefined> } }
+        ).process?.env?.MEMMACHINE_API_KEY
+      : undefined;
   return cfg.apiKey || envKey?.trim() || undefined;
 }
 
