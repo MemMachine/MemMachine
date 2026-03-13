@@ -103,7 +103,9 @@ class MockShortTermMemoryDataManager(SessionDataManager):
             ),
         )
 
-    async def get_sessions(self, filters: dict[str, PropertyValue | None] | None = None) -> list[str]:
+    async def get_sessions(
+        self, filters: dict[str, PropertyValue | None] | None = None
+    ) -> list[str]:
         return []
 
     async def update_session_episodic_config(
