@@ -20,15 +20,28 @@ class Collection(ABC):
     """Collection in a vector store."""
 
     @abstractmethod
+    async def startup(self) -> None:
+        """Startup."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Shutdown."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def upsert(
         self,
         *,
+        partition_key: str,
         records: Iterable[Record],
     ) -> None:
         """
         Upsert records in the collection.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the records belong.
             records (Iterable[Record]):
                 Iterable of records to upsert.
 
@@ -39,17 +52,20 @@ class Collection(ABC):
     async def query(
         self,
         *,
+        partition_key: str,
         query_vectors: Iterable[Sequence[float]],
         score_threshold: float | None = None,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = True,
+        return_vector: bool = False,
         return_properties: bool = True,
-    ) -> Iterable[Iterable[QueryResult]]:
+    ) -> Iterable[QueryResult]:
         """
         Query for records matching the criteria by query vectors.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the records belong.
             query_vectors (Iterable[Sequence[float]]):
                 The vectors to compare against.
             score_threshold (float | None):
@@ -71,9 +87,8 @@ class Collection(ABC):
                 (default: True).
 
         Returns:
-            Iterable[Iterable[QueryResult]]:
-                Iterables of results matching the criteria for each query vector,
-                each ordered by score from best to worst.
+            Iterable[QueryResult]:
+                Results for each query vector.
 
         """
         raise NotImplementedError
@@ -82,14 +97,17 @@ class Collection(ABC):
     async def get(
         self,
         *,
+        partition_key: str,
         record_uuids: Iterable[UUID],
-        return_vector: bool = True,
+        return_vector: bool = False,
         return_properties: bool = True,
     ) -> Iterable[Record]:
         """
         Get records from the collection by their UUIDs.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the records belong.
             record_uuids (Iterable[UUID]):
                 Iterable of UUIDs of the records to retrieve.
             return_vector (bool):
@@ -111,12 +129,15 @@ class Collection(ABC):
     async def delete(
         self,
         *,
+        partition_key: str,
         record_uuids: Iterable[UUID],
     ) -> None:
         """
         Delete records from the collection by their UUIDs.
 
         Args:
+            partition_key (str):
+                The key of the partition to which the records belong.
             record_uuids (Iterable[UUID]):
                 Iterable of UUIDs of the records to delete.
 
@@ -165,7 +186,7 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_collection(self, collection_name: str) -> Collection:
+    async def get_collection(self, collection_name: str) -> Collection | None:
         """
         Get a collection from the vector store.
 
@@ -174,8 +195,8 @@ class VectorStore(ABC):
                 Name of the collection to get.
 
         Returns:
-            Collection:
-                The requested collection.
+            Collection | None:
+                The requested collection, or None if it does not exist.
 
         """
         raise NotImplementedError
