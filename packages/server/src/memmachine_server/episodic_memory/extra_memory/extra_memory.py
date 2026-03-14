@@ -651,9 +651,7 @@ class ExtraMemory:
             )
         )
 
-        matched_derivative_uuids = [
-            match.record.uuid for match in query_result.matches
-        ]
+        matched_derivative_uuids = [match.record.uuid for match in query_result.matches]
 
         segments_by_derivatives = (
             await self._segment_linker_partition.get_segments_by_derivatives(
@@ -672,17 +670,25 @@ class ExtraMemory:
         max_backward_segments = expand_context // 3
         max_forward_segments = expand_context - max_backward_segments
 
-        segment_contexts = [
-            list(context)
-            for context in (
-                await self._segment_linker_partition.get_segment_contexts(
-                    seed_segment_uuids=[segment.uuid for segment in seed_segments],
-                    max_backward_segments=max_backward_segments,
-                    max_forward_segments=max_forward_segments,
-                    property_filter=property_filter,
+        segment_contexts_by_seed = (
+            await self._segment_linker_partition.get_segment_contexts(
+                seed_segment_uuids=[segment.uuid for segment in seed_segments],
+                max_backward_segments=max_backward_segments,
+                max_forward_segments=max_forward_segments,
+                property_filter=property_filter,
+            )
+        )
+
+        # Build aligned seed and context lists from the returned mapping.
+        seed_segments = []
+        segment_contexts: list[list[Segment]] = []
+        for seed_uuid, segment_context in segment_contexts_by_seed.items():
+            seed_segments.append(
+                next(
+                    segment for segment in segment_context if segment.uuid == seed_uuid
                 )
-            ).values()
-        ]
+            )
+            segment_contexts.append(list(segment_context))
 
         # Rerank segment contexts.
         segment_context_scores = await self._score_segment_contexts(
