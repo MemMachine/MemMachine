@@ -57,6 +57,7 @@ from memmachine_server.episodic_memory.extra_memory.data_types import (
 from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store import (
     DerivativeNotActiveError,
     SegmentLinker,
+    SegmentLinkerPartition,
 )
 
 logger = logging.getLogger(__name__)
@@ -174,26 +175,23 @@ class DerivativeRow(BaseSegmentLinker):
     )
 
 
-class SQLAlchemySegmentLinkerParams(BaseModel):
-    """Parameters for constructing a SQLAlchemySegmentLinker."""
+class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
+    """SQLAlchemy-backed partition handle."""
 
-    engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
-
-
-class SQLAlchemySegmentLinker(SegmentLinker):
-    """SQLAlchemy-backed SegmentLinker."""
-
-    def __init__(self, params: SQLAlchemySegmentLinkerParams) -> None:
-        """Initialize with an async SQLAlchemy engine."""
-        self._engine = params.engine
-        self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
+    def __init__(
+        self,
+        partition_key: str,
+        create_session: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Initialize with a partition key and session maker."""
+        self._partition_key = partition_key
+        self._create_session = create_session
 
     # Lifecycle
 
     @override
     async def startup(self) -> None:
-        async with self._engine.begin() as conn:
-            await conn.run_sync(BaseSegmentLinker.metadata.create_all)
+        pass
 
     @override
     async def shutdown(self) -> None:
@@ -204,7 +202,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     @override
     async def register_segments(
         self,
-        partition_key: str,
         links: Mapping[Segment, Iterable[UUID]],
         *,
         active: Iterable[UUID] | None = None,
@@ -226,11 +223,10 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             # Only lock/fetch derivatives declared as active — skip new ones.
             if active:
                 locked_rows = await self._lock_derivatives(session, active)
-                self._validate_active_derivatives(partition_key, active, locked_rows)
+                self._validate_active_derivatives(active, locked_rows)
 
             await self._insert_links(
                 session,
-                partition_key,
                 links,
                 link_counts,
                 new_derivative_uuids,
@@ -239,7 +235,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def _insert_links(
         self,
         session: AsyncSession,
-        partition_key: str,
         links: Mapping[Segment, Iterable[UUID]],
         link_counts: Mapping[UUID, int],
         new_derivative_uuids: Iterable[UUID],
@@ -252,7 +247,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 [
                     {
                         "uuid": derivative_uuid,
-                        "partition_key": partition_key,
+                        "partition_key": self._partition_key,
                         "state": DerivativeState.ACTIVE,
                         "ref_count": link_counts[derivative_uuid],
                     }
@@ -275,7 +270,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         segment_row_values = [
             {
                 "uuid": segment.uuid,
-                "partition_key": partition_key,
+                "partition_key": self._partition_key,
                 "episode_uuid": segment.episode_uuid,
                 "index": segment.index,
                 "offset": segment.offset,
@@ -292,7 +287,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             {
                 "segment_uuid": segment.uuid,
                 "key": property_key,
-                SQLAlchemySegmentLinker._property_type_column_name(
+                SQLAlchemySegmentLinkerPartition._property_type_column_name(
                     type(property_value)
                 ): property_value,
             }
@@ -318,7 +313,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     @override
     async def get_segments_by_derivatives(
         self,
-        partition_key: str,
         derivative_uuids: Iterable[UUID],
         *,
         limit_per_derivative: int | None = None,
@@ -332,7 +326,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             select(LinkRow.derivative_uuid, SegmentRow)
             .join(LinkRow, LinkRow.segment_uuid == SegmentRow.uuid)
             .where(
-                SegmentRow.partition_key == partition_key,
+                SegmentRow.partition_key == self._partition_key,
                 LinkRow.derivative_uuid.in_(derivative_uuids),
             )
             .order_by(
@@ -346,7 +340,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         if property_filter is not None:
             get_segments_by_derivatives_statement = (
                 get_segments_by_derivatives_statement.where(
-                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+                    SQLAlchemySegmentLinkerPartition._compile_property_filter(
+                        property_filter
+                    )
                 )
             )
 
@@ -364,7 +360,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         # Rows arrive sorted from DB; PK (segment_uuid, derivative_uuid) guarantees no duplicates.
         segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
         for derivative_uuid, segment_row in segment_rows:
-            segment = SQLAlchemySegmentLinker._segment_from_segment_row(
+            segment = SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
                 segment_row, properties_by_segments[segment_row.uuid]
             )
             segments_by_derivatives[derivative_uuid].append(segment)
@@ -385,7 +381,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     @override
     async def get_segment_contexts(
         self,
-        partition_key: str,
         seed_segment_uuids: Iterable[UUID],
         *,
         max_backward_segments: int = 0,
@@ -399,11 +394,13 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         async with self._create_session() as session:
             seed_statement = select(SegmentRow).where(
                 SegmentRow.uuid.in_(seed_segment_uuids),
-                SegmentRow.partition_key == partition_key,
+                SegmentRow.partition_key == self._partition_key,
             )
             if property_filter is not None:
                 seed_statement = seed_statement.where(
-                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+                    SQLAlchemySegmentLinkerPartition._compile_property_filter(
+                        property_filter
+                    )
                 )
             seed_segment_rows = (await session.execute(seed_statement)).scalars().all()
 
@@ -420,8 +417,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 )
                 return {
                     seed_segment_uuid: [
-                        SQLAlchemySegmentLinker._segment_from_segment_row(
-                            seed_segment_row, properties_by_segments[seed_segment_uuid]
+                        SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
+                            seed_segment_row,
+                            properties_by_segments[seed_segment_uuid],
                         )
                     ]
                     for seed_segment_uuid, seed_segment_row in seed_segment_rows_by_uuid.items()
@@ -431,7 +429,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             if session.bind.dialect.name != "sqlite":
                 context_rows_by_seed = await self._get_context_rows_lateral(
                     session,
-                    partition_key,
                     seed_segment_rows_by_uuid,
                     max_backward_segments,
                     max_forward_segments,
@@ -440,7 +437,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             else:
                 context_rows_by_seed = await self._get_context_rows_loop(
                     session,
-                    partition_key,
                     seed_segment_rows_by_uuid,
                     max_backward_segments,
                     max_forward_segments,
@@ -466,7 +462,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                     seed_uuid, ([], [])
                 )
                 segments_by_seed[seed_uuid] = [
-                    SQLAlchemySegmentLinker._segment_from_segment_row(
+                    SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
                         row, properties_by_segments.get(row.uuid, {})
                     )
                     for row in [*reversed(backward_rows), seed_row, *forward_rows]
@@ -477,7 +473,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def _get_context_rows_lateral(
         self,
         session: AsyncSession,
-        partition_key: str,
         seed_rows_by_uuid: Mapping[UUID, SegmentRow],
         max_backward_segments: int,
         max_forward_segments: int,
@@ -509,6 +504,8 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             seeds_subquery.c.seed_offset,
         )
 
+        partition_key = self._partition_key
+
         async def _lateral_query(
             range_condition: ColumnElement[bool],
             ordering: Iterable[ColumnElement | InstrumentedAttribute],
@@ -523,7 +520,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             )
             if property_filter is not None:
                 lateral_inner = lateral_inner.where(
-                    SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+                    SQLAlchemySegmentLinkerPartition._compile_property_filter(
+                        property_filter
+                    )
                 )
 
             lateral_subquery = lateral_inner.subquery().lateral("context")
@@ -594,7 +593,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     async def _get_context_rows_loop(
         self,
         session: AsyncSession,
-        partition_key: str,
         seed_rows_by_uuid: Mapping[UUID, SegmentRow],
         max_backward_segments: int,
         max_forward_segments: int,
@@ -611,7 +609,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         )
 
         compiled_property_filter = (
-            SQLAlchemySegmentLinker._compile_property_filter(property_filter)
+            SQLAlchemySegmentLinkerPartition._compile_property_filter(property_filter)
             if property_filter is not None
             else None
         )
@@ -629,7 +627,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 backward_statement = (
                     select(SegmentRow)
                     .where(
-                        SegmentRow.partition_key == partition_key,
+                        SegmentRow.partition_key == self._partition_key,
                         segment_ordering_columns < seed_ordering_values,
                     )
                     .order_by(
@@ -653,7 +651,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
                 forward_statement = (
                     select(SegmentRow)
                     .where(
-                        SegmentRow.partition_key == partition_key,
+                        SegmentRow.partition_key == self._partition_key,
                         segment_ordering_columns > seed_ordering_values,
                     )
                     .order_by(
@@ -681,7 +679,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     @override
     async def delete_segments_by_episodes(
         self,
-        partition_key: str,
         episode_uuids: Iterable[UUID],
     ) -> None:
         episode_uuids = list(episode_uuids)
@@ -689,7 +686,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             return
 
         get_segment_uuids_statement = select(SegmentRow.uuid).where(
-            SegmentRow.partition_key == partition_key,
+            SegmentRow.partition_key == self._partition_key,
             SegmentRow.episode_uuid.in_(episode_uuids),
         )
 
@@ -706,9 +703,9 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             await self._delete_segments(session, segment_uuids)
 
     @override
-    async def delete_all_segments(self, partition_key: str) -> None:
+    async def delete_all_segments(self) -> None:
         get_segment_uuids_statement = select(SegmentRow.uuid).where(
-            SegmentRow.partition_key == partition_key
+            SegmentRow.partition_key == self._partition_key
         )
 
         async with self._create_session() as session, session.begin():
@@ -776,13 +773,11 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     # Garbage collection
 
     @override
-    async def get_orphaned_derivatives(
-        self, partition_key: str, limit: int = 1000
-    ) -> Iterable[UUID]:
+    async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
         get_orphans_statement = (
             select(DerivativeRow.uuid)
             .where(
-                DerivativeRow.partition_key == partition_key,
+                DerivativeRow.partition_key == self._partition_key,
                 DerivativeRow.state == DerivativeState.ACTIVE,
                 DerivativeRow.ref_count == 0,
             )
@@ -793,7 +788,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     @override
     async def mark_orphaned_derivatives_for_purging(
-        self, partition_key: str, potential_orphan_uuids: Iterable[UUID]
+        self, potential_orphan_uuids: Iterable[UUID]
     ) -> Iterable[UUID]:
         potential_orphan_uuids = sorted(set(potential_orphan_uuids))
         if not potential_orphan_uuids:
@@ -804,7 +799,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             lock_statement = (
                 select(DerivativeRow.uuid)
                 .where(
-                    DerivativeRow.partition_key == partition_key,
+                    DerivativeRow.partition_key == self._partition_key,
                     DerivativeRow.uuid.in_(potential_orphan_uuids),
                     DerivativeRow.state == DerivativeState.ACTIVE,
                     DerivativeRow.ref_count == 0,
@@ -824,9 +819,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             return orphan_uuids
 
     @override
-    async def purge_derivatives(
-        self, partition_key: str, derivative_uuids: Iterable[UUID]
-    ) -> None:
+    async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
         derivative_uuids = set(derivative_uuids)
         if not derivative_uuids:
             return
@@ -834,7 +827,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         async with self._create_session() as session, session.begin():
             await session.execute(
                 delete(DerivativeRow).where(
-                    DerivativeRow.partition_key == partition_key,
+                    DerivativeRow.partition_key == self._partition_key,
                     DerivativeRow.uuid.in_(derivative_uuids),
                     DerivativeRow.state == DerivativeState.PURGING,
                 )
@@ -891,12 +884,13 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         for segment_property_row in segment_property_rows:
             properties_by_segments[segment_property_row.segment_uuid][
                 segment_property_row.key
-            ] = SQLAlchemySegmentLinker._coalesce_property_value(segment_property_row)
+            ] = SQLAlchemySegmentLinkerPartition._coalesce_property_value(
+                segment_property_row
+            )
         return properties_by_segments
 
-    @staticmethod
     def _validate_active_derivatives(
-        partition_key: str,
+        self,
         active: Iterable[UUID],
         existing: Iterable[DerivativeRow],
     ) -> None:
@@ -908,7 +902,7 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             for derivative_uuid in active
             if (row := existing_map.get(derivative_uuid)) is None
             or row.state == DerivativeState.PURGING
-            or row.partition_key != partition_key
+            or row.partition_key != self._partition_key
         }
         if not_active:
             raise DerivativeNotActiveError(not_active)
@@ -934,10 +928,14 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
         """Compile a FilterExpr into a SQLAlchemy boolean expression."""
         if isinstance(expr, Comparison):
-            value_column = SQLAlchemySegmentLinker._property_type_column_attribute(
-                type(expr.value)
+            value_column = (
+                SQLAlchemySegmentLinkerPartition._property_type_column_attribute(
+                    type(expr.value)
+                )
             )
-            comparison_op = SQLAlchemySegmentLinker._COMPARISON_OPERATORS[expr.op]
+            comparison_op = SQLAlchemySegmentLinkerPartition._COMPARISON_OPERATORS[
+                expr.op
+            ]
             return (
                 select(1)
                 .select_from(SegmentPropertyRow)
@@ -979,18 +977,18 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             )
 
         if isinstance(expr, Not):
-            return ~SQLAlchemySegmentLinker._compile_property_filter(expr.expr)
+            return ~SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.expr)
 
         if isinstance(expr, And):
             return and_(
-                SQLAlchemySegmentLinker._compile_property_filter(expr.left),
-                SQLAlchemySegmentLinker._compile_property_filter(expr.right),
+                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.left),
+                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.right),
             )
 
         if isinstance(expr, Or):
             return or_(
-                SQLAlchemySegmentLinker._compile_property_filter(expr.left),
-                SQLAlchemySegmentLinker._compile_property_filter(expr.right),
+                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.left),
+                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.right),
             )
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
@@ -1057,4 +1055,36 @@ class SQLAlchemySegmentLinker(SegmentLinker):
             timestamp=row.timestamp,
             block=block,
             properties=properties,
+        )
+
+
+class SQLAlchemySegmentLinkerParams(BaseModel):
+    """Parameters for constructing a SQLAlchemySegmentLinker."""
+
+    engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
+
+
+class SQLAlchemySegmentLinker(SegmentLinker):
+    """SQLAlchemy-backed SegmentLinker factory."""
+
+    def __init__(self, params: SQLAlchemySegmentLinkerParams) -> None:
+        """Initialize with an async SQLAlchemy engine."""
+        self._engine = params.engine
+        self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
+
+    @override
+    async def startup(self) -> None:
+        async with self._engine.begin() as conn:
+            await conn.run_sync(BaseSegmentLinker.metadata.create_all)
+
+    @override
+    async def shutdown(self) -> None:
+        pass
+
+    @override
+    def get_partition(self, partition_key: str) -> SQLAlchemySegmentLinkerPartition:
+        """Get a partition-scoped handle for the given partition key."""
+        return SQLAlchemySegmentLinkerPartition(
+            partition_key=partition_key,
+            create_session=self._create_session,
         )
