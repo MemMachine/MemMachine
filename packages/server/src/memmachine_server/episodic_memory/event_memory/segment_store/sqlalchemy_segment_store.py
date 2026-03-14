@@ -318,7 +318,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         limit_per_derivative: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> Mapping[UUID, Iterable[Segment]]:
-        derivative_uuids = list(derivative_uuids)
+        derivative_uuids = set(derivative_uuids)
         if not derivative_uuids:
             return {}
 
@@ -387,7 +387,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         max_forward_segments: int = 0,
         property_filter: FilterExpr | None = None,
     ) -> Mapping[UUID, Iterable[Segment]]:
-        seed_segment_uuids = list(seed_segment_uuids)
+        seed_segment_uuids = set(seed_segment_uuids)
         if not seed_segment_uuids:
             return {}
 
@@ -681,7 +681,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         self,
         episode_uuids: Iterable[UUID],
     ) -> None:
-        episode_uuids = list(episode_uuids)
+        episode_uuids = set(episode_uuids)
         if not episode_uuids:
             return
 
