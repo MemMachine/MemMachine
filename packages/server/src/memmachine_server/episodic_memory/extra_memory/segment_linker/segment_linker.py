@@ -24,11 +24,12 @@ class DerivativeNotActiveError(Exception):
         super().__init__(message)
 
 
-class SegmentLinker(ABC):
+class SegmentLinkerPartition(ABC):
     """
-    Abstract base class for a segment linker.
+    Partition-scoped handle for a segment linker.
 
-    Manages the relationship between episodes, segments, and their derivatives.
+    Manages the relationship between episodes, segments, and their derivatives
+    within a single partition.
     """
 
     @abstractmethod
@@ -44,7 +45,6 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def register_segments(
         self,
-        partition_key: str,
         links: Mapping[Segment, Iterable[UUID]],
         *,
         active: Iterable[UUID] | None = None,
@@ -55,8 +55,6 @@ class SegmentLinker(ABC):
         All UUIDs in `links` that are not in `active` will be registered in 'active' state.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the segments belong.
             links (Mapping[Segment, Iterable[UUID]]):
                 Mapping from each segment to the UUIDs of its derivatives.
             active (Iterable[UUID] | None):
@@ -72,7 +70,6 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def get_segments_by_derivatives(
         self,
-        partition_key: str,
         derivative_uuids: Iterable[UUID],
         *,
         limit_per_derivative: int | None = None,
@@ -91,8 +88,6 @@ class SegmentLinker(ABC):
         Segments are deduplicated per derivative.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the segments belong.
             derivative_uuids (Iterable[UUID]):
                 The UUIDs of the derivatives for which to retrieve linked segments.
             limit_per_derivative (int | None):
@@ -113,7 +108,6 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def get_segment_contexts(
         self,
-        partition_key: str,
         seed_segment_uuids: Iterable[UUID],
         *,
         max_backward_segments: int = 0,
@@ -124,8 +118,6 @@ class SegmentLinker(ABC):
         Get a window of segments around each of the seed segments.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the segments belong.
             seed_segment_uuids (Iterable[UUID]):
                 The UUIDs of the seed segments for which to retrieve contexts.
             max_backward_segments (int):
@@ -145,15 +137,12 @@ class SegmentLinker(ABC):
     @abstractmethod
     async def delete_segments_by_episodes(
         self,
-        partition_key: str,
         episode_uuids: Iterable[UUID],
     ) -> None:
         """
         Delete all segments associated with the episodes given by their UUIDs.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the segments belong.
             episode_uuids (Iterable[UUID]):
                 The UUIDs of the episodes for which to delete segments.
 
@@ -161,30 +150,16 @@ class SegmentLinker(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_all_segments(
-        self,
-        partition_key: str,
-    ) -> None:
-        """
-        Delete all segments for a partition.
-
-        Args:
-            partition_key (str):
-                The key of the partition for which to delete all segments.
-
-        """
+    async def delete_all_segments(self) -> None:
+        """Delete all segments for the partition."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_orphaned_derivatives(
-        self, partition_key: str, limit: int = 1000
-    ) -> Iterable[UUID]:
+    async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
         """
         Identify derivatives that are orphaned.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the derivatives belong.
             limit (int):
                 The maximum number of orphaned derivatives to return (default: 1000).
 
@@ -197,14 +172,12 @@ class SegmentLinker(ABC):
 
     @abstractmethod
     async def mark_orphaned_derivatives_for_purging(
-        self, partition_key: str, potential_orphan_uuids: Iterable[UUID]
+        self, potential_orphan_uuids: Iterable[UUID]
     ) -> Iterable[UUID]:
         """
         Transition derivatives from 'active' to 'purging' state if they are orphaned.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the derivatives belong.
             potential_orphan_uuids (Iterable[UUID]):
                 The UUIDs of potentially orphaned derivatives.
 
@@ -216,19 +189,49 @@ class SegmentLinker(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def purge_derivatives(
-        self, partition_key: str, derivative_uuids: Iterable[UUID]
-    ) -> None:
+    async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
         """
         Physically remove derivatives from the segment linker.
 
         Should be called after the derivatives have been deleted from external systems.
 
         Args:
-            partition_key (str):
-                The key of the partition to which the derivatives belong.
             derivative_uuids (Iterable[UUID]):
                 The UUIDs of the derivatives to purge.
+
+        """
+        raise NotImplementedError
+
+
+class SegmentLinker(ABC):
+    """
+    Abstract base class for a segment linker.
+
+    Factory that creates partition-scoped handles.
+    """
+
+    @abstractmethod
+    async def startup(self) -> None:
+        """Startup."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Shutdown."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_partition(self, partition_key: str) -> SegmentLinkerPartition:
+        """
+        Get a partition-scoped handle for the given partition key.
+
+        Args:
+            partition_key (str):
+                The key of the partition.
+
+        Returns:
+            SegmentLinkerPartition:
+                A partition-scoped handle.
 
         """
         raise NotImplementedError

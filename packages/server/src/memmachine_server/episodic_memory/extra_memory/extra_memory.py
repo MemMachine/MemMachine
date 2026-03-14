@@ -44,7 +44,7 @@ from .data_types import (
     Segment,
     Text,
 )
-from .segment_linker import DerivativeNotActiveError, SegmentLinker
+from .segment_linker import DerivativeNotActiveError, SegmentLinkerPartition
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,8 @@ class ExtraMemoryParams(BaseModel):
             Partition key.
         collection (Collection):
             Collection instance in a vector store.
-        segment_linker (SegmentLinker):
-            Segment linker instance for managing segments.
+        segment_linker_partition (SegmentLinkerPartition):
+            Segment linker partition handle for managing segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
         reranker (Reranker):
@@ -82,9 +82,9 @@ class ExtraMemoryParams(BaseModel):
         ...,
         description="Collection instance in a vector store",
     )
-    segment_linker: InstanceOf[SegmentLinker] = Field(
+    segment_linker_partition: InstanceOf[SegmentLinkerPartition] = Field(
         ...,
-        description="Segment linker instance for managing segments",
+        description="Segment linker partition handle for managing segments",
     )
     embedder: InstanceOf[Embedder] = Field(
         ...,
@@ -126,7 +126,7 @@ class ExtraMemory:
         """
         self._partition_key = params.partition_key
         self._collection = params.collection
-        self._segment_linker = params.segment_linker
+        self._segment_linker_partition = params.segment_linker_partition
 
         self._embedder = params.embedder
         self._reranker = params.reranker
@@ -213,14 +213,14 @@ class ExtraMemory:
     async def _purge_orphaned_derivatives(self) -> None:
         """Run a single purge cycle: identify, mark, delete from collection, then remove."""
         orphan_uuids = list(
-            await self._segment_linker.get_orphaned_derivatives(self._partition_key)
+            await self._segment_linker_partition.get_orphaned_derivatives()
         )
         if not orphan_uuids:
             return
 
         marked_uuids = list(
-            await self._segment_linker.mark_orphaned_derivatives_for_purging(
-                self._partition_key, orphan_uuids
+            await self._segment_linker_partition.mark_orphaned_derivatives_for_purging(
+                orphan_uuids
             )
         )
         if not marked_uuids:
@@ -229,7 +229,7 @@ class ExtraMemory:
         await self._collection.delete(
             partition_key=self._partition_key, record_uuids=marked_uuids
         )
-        await self._segment_linker.purge_derivatives(self._partition_key, marked_uuids)
+        await self._segment_linker_partition.purge_derivatives(marked_uuids)
 
     async def encode_episodes(
         self,
@@ -273,8 +273,7 @@ class ExtraMemory:
         )
 
         if self._derivative_consolidation_threshold is None:
-            await self._segment_linker.register_segments(
-                partition_key=self._partition_key,
+            await self._segment_linker_partition.register_segments(
                 links={
                     segment: [derivative.uuid for derivative in segment_derivatives]
                     for segment, segment_derivatives in zip(
@@ -327,8 +326,7 @@ class ExtraMemory:
                 links = dict(zip(segments, consolidated_uuids_per_segment, strict=True))
 
                 try:
-                    await self._segment_linker.register_segments(
-                        partition_key=self._partition_key,
+                    await self._segment_linker_partition.register_segments(
                         links=links,
                         active=active_uuids,
                     )
@@ -658,8 +656,7 @@ class ExtraMemory:
         ]
 
         segments_by_derivatives = (
-            await self._segment_linker.get_segments_by_derivatives(
-                partition_key=self._partition_key,
+            await self._segment_linker_partition.get_segments_by_derivatives(
                 derivative_uuids=matched_derivative_uuids,
                 property_filter=property_filter,
             )
@@ -678,8 +675,7 @@ class ExtraMemory:
         segment_contexts = [
             list(context)
             for context in (
-                await self._segment_linker.get_segment_contexts(
-                    partition_key=self._partition_key,
+                await self._segment_linker_partition.get_segment_contexts(
                     seed_segment_uuids=[segment.uuid for segment in seed_segments],
                     max_backward_segments=max_backward_segments,
                     max_forward_segments=max_forward_segments,
@@ -808,16 +804,13 @@ class ExtraMemory:
 
     async def forget_episodes(self, episode_uuids: Iterable[UUID]) -> None:
         """Forget episodes by their UUIDs."""
-        await self._segment_linker.delete_segments_by_episodes(
-            partition_key=self._partition_key,
+        await self._segment_linker_partition.delete_segments_by_episodes(
             episode_uuids=episode_uuids,
         )
 
     async def forget_all_episodes(self) -> None:
         """Forget all episodes in this partition."""
-        await self._segment_linker.delete_all_segments(
-            partition_key=self._partition_key,
-        )
+        await self._segment_linker_partition.delete_all_segments()
 
     @staticmethod
     def _unify_anchored_segment_contexts(
