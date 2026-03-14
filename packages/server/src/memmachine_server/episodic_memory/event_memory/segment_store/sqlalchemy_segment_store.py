@@ -52,6 +52,7 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.episodic_memory.extra_memory.data_types import (
     Block,
+    Context,
     Segment,
 )
 from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store import (
@@ -63,6 +64,7 @@ from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store 
 logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
+_ContextAdapter = TypeAdapter(Context | None)
 _BlockAdapter = TypeAdapter(Block)
 
 
@@ -94,6 +96,7 @@ class SegmentRow(BaseSegmentLinker):
     timestamp: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    context = mapped_column(_JSON_AUTO, nullable=True)
     block: MappedColumn[Block] = mapped_column(_JSON_AUTO, nullable=False)
 
     __table_args__ = (
@@ -275,6 +278,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 "index": segment.index,
                 "offset": segment.offset,
                 "timestamp": segment.timestamp,
+                "context": segment.context.model_dump() if segment.context else None,
                 "block": segment.block.model_dump(),
             }
             for segment in links
@@ -534,6 +538,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 lateral_subquery.c.index,
                 lateral_subquery.c.offset,
                 lateral_subquery.c.timestamp,
+                lateral_subquery.c.context,
                 lateral_subquery.c.block,
             ).select_from(seeds_subquery.join(lateral_subquery, true()))
 
@@ -549,6 +554,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                         index=row.index,
                         offset=row.offset,
                         timestamp=row.timestamp,
+                        context=row.context,
                         block=row.block,
                     )
                 )
@@ -1046,6 +1052,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         properties: dict[str, PropertyValue],
     ) -> Segment:
         """Convert a SegmentRow and its properties into a Segment."""
+        context = _ContextAdapter.validate_python(row.context)
         block = _BlockAdapter.validate_python(row.block)
         return Segment(
             uuid=row.uuid,
@@ -1053,6 +1060,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             index=row.index,
             offset=row.offset,
             timestamp=row.timestamp,
+            context=context,
             block=block,
             properties=properties,
         )

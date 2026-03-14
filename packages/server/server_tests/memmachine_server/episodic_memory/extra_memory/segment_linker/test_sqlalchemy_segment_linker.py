@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.filter.filter_parser import Comparison
 from memmachine_server.episodic_memory.extra_memory.data_types import (
+    CitationContext,
+    MessageContext,
     Segment,
     Text,
 )
@@ -44,6 +46,7 @@ def _seg(
     offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
+    context: MessageContext | CitationContext | None = None,
     properties: dict | None = None,
 ) -> Segment:
     return Segment(
@@ -53,6 +56,7 @@ def _seg(
         offset=offset,
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
         block=Text(text=text),
+        context=context,
         properties=properties or {},
     )
 
@@ -148,6 +152,71 @@ async def test_register_with_properties(
     result = await partition.get_segments_by_derivatives([deriv])
     returned = next(iter(result[deriv]))
     assert returned.properties == {"color": "red", "score": 42}
+
+
+@pytest.mark.asyncio
+async def test_register_with_message_context(
+    partition: SQLAlchemySegmentLinkerPartition,
+) -> None:
+    ctx = MessageContext(source="User")
+    seg = _seg(context=ctx)
+    deriv = uuid4()
+    await partition.register_segments({seg: [deriv]})
+
+    result = await partition.get_segments_by_derivatives([deriv])
+    returned = next(iter(result[deriv]))
+    assert returned.context == ctx
+
+
+@pytest.mark.asyncio
+async def test_register_with_citation_context(
+    partition: SQLAlchemySegmentLinkerPartition,
+) -> None:
+    ctx = CitationContext(source="docs.txt", source_type="file", location="/tmp")
+    seg = _seg(context=ctx)
+    deriv = uuid4()
+    await partition.register_segments({seg: [deriv]})
+
+    result = await partition.get_segments_by_derivatives([deriv])
+    returned = next(iter(result[deriv]))
+    assert returned.context == ctx
+
+
+@pytest.mark.asyncio
+async def test_register_with_no_context(
+    partition: SQLAlchemySegmentLinkerPartition,
+) -> None:
+    seg = _seg()
+    deriv = uuid4()
+    await partition.register_segments({seg: [deriv]})
+
+    result = await partition.get_segments_by_derivatives([deriv])
+    returned = next(iter(result[deriv]))
+    assert returned.context is None
+
+
+@pytest.mark.asyncio
+async def test_context_preserved_in_segment_contexts(
+    partition: SQLAlchemySegmentLinkerPartition,
+) -> None:
+    """Context is preserved when retrieving segment contexts (backward/forward)."""
+    ep = uuid4()
+    ctx_user = MessageContext(source="User")
+    ctx_assistant = MessageContext(source="Assistant")
+    s0 = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0, context=ctx_user)
+    s1 = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1, context=ctx_assistant)
+    s2 = _seg(episode_uuid=ep, offset=2, ts_offset_seconds=2, context=ctx_user)
+    deriv = uuid4()
+    await partition.register_segments({s0: [deriv], s1: [deriv], s2: [deriv]})
+
+    result = await partition.get_segment_contexts(
+        [s1.uuid], max_backward_segments=1, max_forward_segments=1
+    )
+    ctx = list(result[s1.uuid])
+    assert len(ctx) == 3
+    assert ctx[0].context == ctx_user
+    assert ctx[1].context == ctx_assistant
+    assert ctx[2].context == ctx_user
 
 
 @pytest.mark.asyncio
@@ -1109,3 +1178,68 @@ async def test_pg_concurrent_purge_and_register_new_derivative(
 
     await asyncio.gather(purger(), registerer())
     assert errors == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_context_preserved_via_lateral_join(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Context is preserved when retrieved via the LATERAL join path (multiple seeds)."""
+    partition = pg_linker.get_partition(PARTITION_KEY)
+    ep = uuid4()
+    ctx_user = MessageContext(source="User")
+    ctx_assistant = MessageContext(source="Assistant")
+    s0 = _seg(episode_uuid=ep, offset=0, ts_offset_seconds=0, context=ctx_user)
+    s1 = _seg(episode_uuid=ep, offset=1, ts_offset_seconds=1, context=ctx_assistant)
+    s2 = _seg(episode_uuid=ep, offset=2, ts_offset_seconds=2, context=ctx_user)
+    s3 = _seg(episode_uuid=ep, offset=3, ts_offset_seconds=3, context=ctx_assistant)
+    s4 = _seg(episode_uuid=ep, offset=4, ts_offset_seconds=4, context=ctx_user)
+    deriv = uuid4()
+    await partition.register_segments(
+        {s0: [deriv], s1: [deriv], s2: [deriv], s3: [deriv], s4: [deriv]}
+    )
+
+    # Two seeds exercises the LATERAL join code path.
+    result = await partition.get_segment_contexts(
+        [s1.uuid, s3.uuid], max_backward_segments=1, max_forward_segments=1
+    )
+
+    ctx_a = list(result[s1.uuid])
+    assert len(ctx_a) == 3
+    assert ctx_a[0].context == ctx_user
+    assert ctx_a[1].context == ctx_assistant
+    assert ctx_a[2].context == ctx_user
+
+    ctx_b = list(result[s3.uuid])
+    assert len(ctx_b) == 3
+    assert ctx_b[0].context == ctx_user
+    assert ctx_b[1].context == ctx_assistant
+    assert ctx_b[2].context == ctx_user
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pg_mixed_context_types(
+    pg_linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Different context types (message, citation, None) round-trip correctly on PG."""
+    partition = pg_linker.get_partition(PARTITION_KEY)
+    ctx_msg = MessageContext(source="User")
+    ctx_cite = CitationContext(source="paper.pdf", source_type="file", location="p.3")
+
+    s_msg = _seg(ts_offset_seconds=0, context=ctx_msg)
+    s_cite = _seg(ts_offset_seconds=1, context=ctx_cite)
+    s_none = _seg(ts_offset_seconds=2)
+
+    d1, d2, d3 = uuid4(), uuid4(), uuid4()
+    await partition.register_segments({s_msg: [d1], s_cite: [d2], s_none: [d3]})
+
+    r1 = await partition.get_segments_by_derivatives([d1])
+    assert next(iter(r1[d1])).context == ctx_msg
+
+    r2 = await partition.get_segments_by_derivatives([d2])
+    assert next(iter(r2[d2])).context == ctx_cite
+
+    r3 = await partition.get_segments_by_derivatives([d3])
+    assert next(iter(r3[d3])).context is None
