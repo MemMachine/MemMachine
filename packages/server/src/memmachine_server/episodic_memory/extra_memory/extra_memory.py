@@ -639,7 +639,7 @@ class ExtraMemory:
         )[0]
 
         # Search derivative collection for matches.
-        query_matches = next(
+        query_result = next(
             iter(
                 await self._collection.query(
                     partition_key=self._partition_key,
@@ -652,7 +652,7 @@ class ExtraMemory:
         )
 
         matched_derivative_uuids = [
-            query_match.record.uuid for query_match in query_matches
+            match.record.uuid for match in query_result.matches
         ]
 
         segments_by_derivatives = (
