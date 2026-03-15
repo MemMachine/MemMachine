@@ -61,6 +61,9 @@ data:
             db_name: {{ .Values.postgres.database }}
             pool_size: {{ .Values.postgres.pool_size }}
             max_overflow: {{ .Values.postgres.max_overflow }}
+            pool_timeout: {{ .Values.postgres.pool_timeout }}
+            pool_recycle: {{ .Values.postgres.pool_recycle }}
+            pool_pre_ping: {{ .Values.postgres.pool_pre_ping }}
         db_neo4j:
           provider: neo4j
           config:
@@ -71,6 +74,10 @@ data:
             connection_acquisition_timeout: {{ .Values.neo4j.pool.connection_acquisition_timeout }}
             range_index_creation_threshold: {{ .Values.neo4j.pool.range_index_creation_threshold }}
             vector_index_creation_threshold: {{ .Values.neo4j.pool.vector_index_creation_threshold }}
+            max_connection_lifetime: {{ .Values.neo4j.pool.max_connection_lifetime }}
+            {{- if .Values.neo4j.pool.liveness_check_timeout }}
+            liveness_check_timeout: {{ .Values.neo4j.pool.liveness_check_timeout }}
+            {{- end }}
       embedders:
         default_embedder:
           provider: "{{ .Values.memmachine.embedder.provider }}"

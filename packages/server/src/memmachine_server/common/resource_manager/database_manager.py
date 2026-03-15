@@ -9,7 +9,10 @@ from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from memmachine_server.common.configuration.database_conf import DatabasesConf
+from memmachine_server.common.configuration.database_conf import (
+    DatabasesConf,
+    Neo4jConf,
+)
 from memmachine_server.common.errors import (
     Neo4JConfigurationError,
     SQLConfigurationError,
@@ -120,6 +123,25 @@ class DatabaseManager:
         if tasks:
             await asyncio.gather(*tasks)
 
+    @staticmethod
+    def _build_neo4j_driver_kwargs(conf: Neo4jConf) -> dict[str, Any]:
+        """Build keyword arguments for AsyncGraphDatabase.driver from config."""
+        kwargs: dict[str, Any] = {
+            "uri": conf.get_uri(),
+            "auth": (conf.user, conf.password.get_secret_value()),
+        }
+        optional_fields = (
+            "max_connection_pool_size",
+            "connection_acquisition_timeout",
+            "max_connection_lifetime",
+            "liveness_check_timeout",
+        )
+        for field in optional_fields:
+            value = getattr(conf, field)
+            if value is not None:
+                kwargs[field] = value
+        return kwargs
+
     async def async_get_neo4j_driver(
         self, name: str, validate: bool = False
     ) -> AsyncDriver:
@@ -136,20 +158,7 @@ class DatabaseManager:
             if not conf:
                 raise ValueError(f"Neo4j config '{name}' not found.")
 
-            driver_kwargs: dict[str, Any] = {
-                "uri": conf.get_uri(),
-                "auth": (conf.user, conf.password.get_secret_value()),
-            }
-            if conf.max_connection_pool_size is not None:
-                driver_kwargs["max_connection_pool_size"] = (
-                    conf.max_connection_pool_size
-                )
-            if conf.connection_acquisition_timeout is not None:
-                driver_kwargs["connection_acquisition_timeout"] = (
-                    conf.connection_acquisition_timeout
-                )
-
-            driver = AsyncGraphDatabase.driver(**driver_kwargs)
+            driver = AsyncGraphDatabase.driver(**self._build_neo4j_driver_kwargs(conf))
             if validate:
                 await self.validate_neo4j_driver(name, driver)
             self.neo4j_drivers[name] = driver
@@ -255,6 +264,12 @@ class DatabaseManager:
                 engine_kwargs["pool_size"] = conf.pool_size
             if conf.max_overflow is not None:
                 engine_kwargs["max_overflow"] = conf.max_overflow
+            if conf.pool_timeout is not None:
+                engine_kwargs["pool_timeout"] = conf.pool_timeout
+            if conf.pool_recycle is not None:
+                engine_kwargs["pool_recycle"] = conf.pool_recycle
+            if conf.pool_pre_ping is not None:
+                engine_kwargs["pool_pre_ping"] = conf.pool_pre_ping
 
             engine = create_async_engine(conf.uri, **engine_kwargs)
             if validate:

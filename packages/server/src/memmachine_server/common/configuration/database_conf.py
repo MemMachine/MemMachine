@@ -60,6 +60,24 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
             "Internal default is 60.0."
         ),
     )
+    max_connection_lifetime: float | None = Field(
+        default=None,
+        description=(
+            "Maximum connection lifetime in seconds. Connections older than this "
+            "are proactively closed and replaced. Set below your infrastructure's "
+            "idle-connection timeout (e.g. AuraDB's 60-minute limit) to avoid "
+            "handing out defunct connections. Internal default is 3600."
+        ),
+    )
+    liveness_check_timeout: float | None = Field(
+        default=None,
+        description=(
+            "Idle time in seconds after which a pooled connection is tested for "
+            "liveness before being handed to a caller. Catches connections that "
+            "were reset server-side while sitting idle in the pool. "
+            "Set to None to disable liveness checks."
+        ),
+    )
 
     def get_uri(self) -> str:
         if self.uri:
@@ -239,6 +257,31 @@ class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
             "Maximum number of temporary connections allowed above `pool_size` during "
             "traffic spikes. These overflow connections are created on demand and "
             "disposed of when no longer needed."
+        ),
+    )
+    pool_timeout: int | None = Field(
+        default=None,
+        description=(
+            "Maximum time in seconds to wait for a connection from the pool. "
+            "If no connection is available within this period, a TimeoutError "
+            "is raised. Internal default is 30."
+        ),
+    )
+    pool_recycle: int | None = Field(
+        default=None,
+        description=(
+            "Maximum age of a connection in seconds before it is recycled. "
+            "Connections older than this are transparently replaced on checkout. "
+            "Set below your database server's idle-connection timeout to avoid "
+            "handing out stale connections. Internal default is -1 (disabled)."
+        ),
+    )
+    pool_pre_ping: bool | None = Field(
+        default=None,
+        description=(
+            "When True, test each connection for liveness (via a lightweight "
+            "SELECT 1) before checking it out of the pool. Catches connections "
+            "that were reset server-side. Internal default is False."
         ),
     )
 

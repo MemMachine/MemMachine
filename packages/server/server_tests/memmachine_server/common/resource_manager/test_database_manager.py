@@ -1,5 +1,5 @@
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import SecretStr
@@ -119,3 +119,138 @@ async def test_build_all_without_validation(mock_conf):
     assert "sqlite1" in builder.sql_engines
     assert "pg1" in builder.sql_engines
     assert "neo1" in builder.graph_stores
+
+
+@pytest.mark.asyncio
+async def test_neo4j_pool_lifecycle_kwargs():
+    """max_connection_lifetime and liveness_check_timeout are forwarded to the driver."""
+    conf = MagicMock(spec=DatabasesConf)
+    neo4j_conf = Neo4jConf(
+        host="localhost",
+        port=7687,
+        user="neo4j",
+        password=SecretStr("pw"),
+        max_connection_lifetime=3000.0,
+        liveness_check_timeout=300.0,
+    )
+    conf.neo4j_confs = {"neo1": neo4j_conf}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+
+    mock_driver = MagicMock()
+    mock_driver.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AsyncGraphDatabase.driver",
+            return_value=mock_driver,
+        ) as mock_driver_cls,
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.Neo4jVectorGraphStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.Neo4jVectorGraphStore",
+        ),
+    ):
+        builder = DatabaseManager(conf)
+        await builder.async_get_neo4j_driver("neo1")
+
+    call_kwargs = mock_driver_cls.call_args.kwargs
+    assert call_kwargs["max_connection_lifetime"] == 3000.0
+    assert call_kwargs["liveness_check_timeout"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_pool_lifecycle_kwargs():
+    """pool_timeout, pool_recycle, and pool_pre_ping are forwarded to create_async_engine."""
+    conf = MagicMock(spec=DatabasesConf)
+    sql_conf = SqlAlchemyConf(
+        dialect="sqlite",
+        driver="aiosqlite",
+        path=":memory:",
+        pool_timeout=30,
+        pool_recycle=3000,
+        pool_pre_ping=True,
+    )
+    conf.neo4j_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.relational_db_confs = {"db1": sql_conf}
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+
+    with patch(
+        "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+        return_value=mock_engine,
+    ) as mock_create:
+        builder = DatabaseManager(conf)
+        await builder.async_get_sql_engine("db1")
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert call_kwargs["pool_timeout"] == 30
+    assert call_kwargs["pool_recycle"] == 3000
+    assert call_kwargs["pool_pre_ping"] is True
+
+
+@pytest.mark.asyncio
+async def test_neo4j_pool_lifecycle_kwargs_none_omitted():
+    """When pool lifecycle fields are None, they are not forwarded to the driver."""
+    conf = MagicMock(spec=DatabasesConf)
+    neo4j_conf = Neo4jConf(
+        host="localhost",
+        port=7687,
+        user="neo4j",
+        password=SecretStr("pw"),
+    )
+    conf.neo4j_confs = {"neo1": neo4j_conf}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+
+    mock_driver = MagicMock()
+    mock_driver.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AsyncGraphDatabase.driver",
+            return_value=mock_driver,
+        ) as mock_driver_cls,
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.Neo4jVectorGraphStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.Neo4jVectorGraphStore",
+        ),
+    ):
+        builder = DatabaseManager(conf)
+        await builder.async_get_neo4j_driver("neo1")
+
+    call_kwargs = mock_driver_cls.call_args.kwargs
+    assert "max_connection_lifetime" not in call_kwargs
+    assert "liveness_check_timeout" not in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
+    """When pool lifecycle fields are None, they are not forwarded to create_async_engine."""
+    conf = MagicMock(spec=DatabasesConf)
+    sql_conf = SqlAlchemyConf(
+        dialect="sqlite",
+        driver="aiosqlite",
+        path=":memory:",
+    )
+    conf.neo4j_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.relational_db_confs = {"db1": sql_conf}
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+
+    with patch(
+        "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+        return_value=mock_engine,
+    ) as mock_create:
+        builder = DatabaseManager(conf)
+        await builder.async_get_sql_engine("db1")
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert "pool_timeout" not in call_kwargs
+    assert "pool_recycle" not in call_kwargs
+    assert "pool_pre_ping" not in call_kwargs
