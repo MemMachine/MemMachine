@@ -75,7 +75,7 @@ data:
             range_index_creation_threshold: {{ .Values.neo4j.pool.range_index_creation_threshold }}
             vector_index_creation_threshold: {{ .Values.neo4j.pool.vector_index_creation_threshold }}
             max_connection_lifetime: {{ .Values.neo4j.pool.max_connection_lifetime }}
-            {{- if .Values.neo4j.pool.liveness_check_timeout }}
+            {{- if ne .Values.neo4j.pool.liveness_check_timeout nil }}
             liveness_check_timeout: {{ .Values.neo4j.pool.liveness_check_timeout }}
             {{- end }}
       embedders:
