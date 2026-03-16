@@ -660,10 +660,12 @@ class ExtraMemory:
             )
         )
 
+        # Preserve vector search similarity ordering.
         seed_segments = [
             segment
-            for linked_segments in segments_by_derivatives.values()
-            for segment in linked_segments
+            for derivative_uuid in matched_derivative_uuids
+            if derivative_uuid in segments_by_derivatives
+            for segment in segments_by_derivatives[derivative_uuid]
         ]
 
         expand_context = min(max(0, expand_context), max_num_segments - 1)
@@ -679,16 +681,19 @@ class ExtraMemory:
             )
         )
 
-        # Build aligned seed and context lists from the returned mapping.
-        seed_segments = []
-        segment_contexts: list[list[Segment]] = []
-        for seed_uuid, segment_context in segment_contexts_by_seed.items():
-            seed_segments.append(
-                next(
-                    segment for segment in segment_context if segment.uuid == seed_uuid
-                )
+        # Build aligned lists, preserving similarity ordering from seed_segments.
+        # Deduplicate by UUID (multiple derivatives can map to the same segment).
+        kept_seed_segments = list(
+            dict.fromkeys(
+                seed_segment
+                for seed_segment in seed_segments
+                if seed_segment.uuid in segment_contexts_by_seed
             )
-            segment_contexts.append(list(segment_context))
+        )
+        segment_contexts: list[list[Segment]] = [
+            list(segment_contexts_by_seed[seed_segment.uuid])
+            for seed_segment in kept_seed_segments
+        ]
 
         # Rerank segment contexts.
         segment_context_scores = await self._score_segment_contexts(
@@ -701,7 +706,7 @@ class ExtraMemory:
             for _, seed_segment, segment_context in sorted(
                 zip(
                     segment_context_scores,
-                    seed_segments,
+                    kept_seed_segments,
                     segment_contexts,
                     strict=True,
                 ),
