@@ -38,6 +38,9 @@ resources:
         db_name: postgres
         pool_size: 5
         max_overflow: 10
+        pool_timeout: 30      # max seconds to wait for a pool connection (default: 30)
+        pool_recycle: -1      # max connection age in seconds; -1 = disabled (default: -1)
+        pool_pre_ping: false  # test connections for liveness before use (default: false)
 
     # NebulaGraph Enterprise 5.2.1 Configuration
     nebula_storage:
