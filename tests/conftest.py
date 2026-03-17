@@ -1,3 +1,5 @@
+"""Root test configuration — adds project root to sys.path."""
+
 from __future__ import annotations
 
 import sys

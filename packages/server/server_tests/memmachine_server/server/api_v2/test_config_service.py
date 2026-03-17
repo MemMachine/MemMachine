@@ -4,13 +4,12 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import ValidationError
-
 from memmachine_common.api.config_spec import (
     ResourceStatus,
     UpdateEpisodicMemorySpec,
     UpdateSemanticMemorySpec,
 )
+from pydantic import ValidationError
 
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
