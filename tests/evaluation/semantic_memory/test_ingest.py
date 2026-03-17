@@ -8,4 +8,5 @@ def test_build_episode_entries_sets_metadata():
         content="Hello",
         timestamp="2024-01-01T00:00:00Z",
     )
+    assert entries[0].metadata is not None
     assert entries[0].metadata["source_speaker"] == "Alice"
