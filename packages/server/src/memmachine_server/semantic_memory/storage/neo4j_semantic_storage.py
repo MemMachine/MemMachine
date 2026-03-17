@@ -1137,8 +1137,6 @@ class Neo4jSemanticStorage(SemanticStorage):
             return condition, inner_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
-
-
     def _resolve_field_reference(
         self,
         alias: str,

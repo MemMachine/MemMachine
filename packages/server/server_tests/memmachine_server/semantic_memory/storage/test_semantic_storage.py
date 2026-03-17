@@ -1398,7 +1398,8 @@ async def test_filter_equality(semantic_storage: SemanticStorage):
 
     try:
         results = await _collect_feature_set(
-            semantic_storage, filter_expr=_expr("value = '1'"),
+            semantic_storage,
+            filter_expr=_expr("value = '1'"),
         )
         assert len(results) == 1
         assert results[0].value == "1"
@@ -1422,7 +1423,8 @@ async def test_filter_not_equal(semantic_storage: SemanticStorage):
 
     try:
         results = await _collect_feature_set(
-            semantic_storage, filter_expr=_expr("value != '1'"),
+            semantic_storage,
+            filter_expr=_expr("value != '1'"),
         )
         assert {f.value for f in results} == {"2", "3"}
     finally:
@@ -1445,7 +1447,8 @@ async def test_filter_greater_equal(semantic_storage: SemanticStorage):
 
     try:
         results = await _collect_feature_set(
-            semantic_storage, filter_expr=_expr("value >= '2'"),
+            semantic_storage,
+            filter_expr=_expr("value >= '2'"),
         )
         assert {f.value for f in results} == {"2", "3"}
     finally:
@@ -1468,7 +1471,8 @@ async def test_filter_or(semantic_storage: SemanticStorage):
 
     try:
         results = await _collect_feature_set(
-            semantic_storage, filter_expr=_expr("set_id = 'or-u1' OR set_id = 'or-u2'"),
+            semantic_storage,
+            filter_expr=_expr("set_id = 'or-u1' OR set_id = 'or-u2'"),
         )
         assert {f.value for f in results} == {"val-or-u1", "val-or-u2"}
     finally:
@@ -1491,7 +1495,8 @@ async def test_filter_not(semantic_storage: SemanticStorage):
 
     try:
         results = await _collect_feature_set(
-            semantic_storage, filter_expr=_expr("NOT value = '1'"),
+            semantic_storage,
+            filter_expr=_expr("NOT value = '1'"),
         )
         assert {f.value for f in results} == {"2", "3"}
     finally:

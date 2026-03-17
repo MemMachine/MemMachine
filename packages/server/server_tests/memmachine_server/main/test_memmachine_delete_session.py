@@ -33,7 +33,7 @@ async def _wait_for_history(
     interval = 0.05
     attempts = max(int(timeout_seconds / interval), 1)
     for _ in range(attempts):
-        history = await semantic_storage.get_history_messages(set_ids=None)
+        history = [h async for h in semantic_storage.get_history_messages(set_ids=None)]
         if episode_id in history:
             return
         await asyncio.sleep(interval)
@@ -93,7 +93,9 @@ async def test_delete_session_clears_semantic_history_and_citations(
         await memmachine.delete_session(session_data)
         deleted = True
 
-        remaining_history = await semantic_storage.get_history_messages(set_ids=None)
+        remaining_history = [
+            h async for h in semantic_storage.get_history_messages(set_ids=None)
+        ]
         assert episode_id not in remaining_history
 
         after_feature = await semantic_storage.get_feature(

@@ -182,7 +182,7 @@ class MockSemanticStorage(SemanticStorage):
     async def delete_history_set(self, set_ids: Sequence[SetIdT]) -> None:
         raise NotImplementedError
 
-    async def get_history_set_ids(
+    def get_history_set_ids(
         self,
         *,
         min_uningested_messages: int | None = None,
