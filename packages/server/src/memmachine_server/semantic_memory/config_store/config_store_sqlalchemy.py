@@ -1,6 +1,7 @@
 """SQLAlchemy-backed implementation of the semantic config storage."""
 
 import logging
+from collections.abc import Sequence
 
 from sqlalchemy import (
     CheckConstraint,
@@ -415,7 +416,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         self,
         *,
         set_type_id: str,
-    ) -> list[SemanticCategory]:
+    ) -> Sequence[SemanticCategory]:
         set_type_id_int = int(set_type_id)
 
         stmt = (
@@ -461,7 +462,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         self,
         *,
         category_id: CategoryIdT,
-    ) -> list[SetIdT]:
+    ) -> Sequence[SetIdT]:
         category_id_int = int(category_id)
 
         async with self._create_session() as session:
@@ -729,7 +730,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         *,
         org_id: str,
         org_level_set: bool = False,
-        metadata_tags: list[str],
+        metadata_tags: Sequence[str],
         name: str | None = None,
         description: str | None = None,
     ) -> str:
@@ -776,7 +777,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
         return str(set_type_id)
 
-    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]:
+    async def list_set_type_ids(self, *, org_id: str) -> Sequence[SetTypeEntry]:
         stmt = select(SetType).where(SetType.org_id == org_id)
 
         async with self._create_session() as session:
