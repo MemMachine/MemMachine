@@ -24,7 +24,9 @@ async def test_delete_history_removes_history_and_citations(
     )
     await semantic_storage.add_citations(feature_id, [history_id])
 
-    before_history = await semantic_storage.get_history_messages(set_ids=["user-a"])
+    before_history = [
+        item async for item in semantic_storage.get_history_messages(set_ids=["user-a"])
+    ]
     assert history_id in before_history
 
     before_feature = await semantic_storage.get_feature(feature_id, load_citations=True)
@@ -34,7 +36,9 @@ async def test_delete_history_removes_history_and_citations(
 
     await semantic_storage.delete_history([history_id])
 
-    remaining = await semantic_storage.get_history_messages(set_ids=["user-a"])
+    remaining = [
+        item async for item in semantic_storage.get_history_messages(set_ids=["user-a"])
+    ]
     assert remaining == []
 
     feature = await semantic_storage.get_feature(feature_id, load_citations=True)

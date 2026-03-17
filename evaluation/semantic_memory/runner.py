@@ -11,11 +11,12 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
-
 from memmachine_server.common.configuration import Configuration
-from memmachine_server.common.resource_manager.resource_manager import ResourceManagerImpl
+from memmachine_server.common.resource_manager.resource_manager import (
+    ResourceManagerImpl,
+)
 from memmachine_server.semantic_memory.semantic_ingestion import IngestionService
+from openai import AsyncOpenAI
 
 from evaluation.semantic_memory.ingest import build_episode_entries
 from evaluation.semantic_memory.search import format_feature_context
@@ -23,7 +24,6 @@ from evaluation.semantic_memory.semantic_harness import (
     build_run_config,
     maybe_start_pg_container,
 )
-
 
 ANSWER_PROMPT = """
 You are an intelligent memory assistant tasked with answering questions using
@@ -105,9 +105,7 @@ def _get_answer_model_config(
 def _within_range(idx: int, conv_start: int | None, conv_stop: int | None) -> bool:
     if conv_start is not None and idx < conv_start - 1:
         return False
-    if conv_stop is not None and idx > conv_stop - 1:
-        return False
-    return True
+    return not (conv_stop is not None and idx > conv_stop - 1)
 
 
 async def _ingest_conversations(
@@ -175,7 +173,6 @@ async def _search_questions(
         if "conversation" not in item:
             continue
 
-        conversation = item["conversation"]
         qa_list = item.get("qa", [])
         group_id = f"group_{idx}"
 

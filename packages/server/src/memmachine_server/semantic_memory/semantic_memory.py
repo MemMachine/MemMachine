@@ -11,7 +11,7 @@ import asyncio
 import logging
 from asyncio import Task
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
@@ -23,7 +23,12 @@ from memmachine_server.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
 )
-from memmachine_server.common.filter.filter_parser import And, Comparison, FilterExpr, In
+from memmachine_server.common.filter.filter_parser import (
+    And,
+    Comparison,
+    FilterExpr,
+    In,
+)
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.utils import merge_async_iterators
@@ -80,7 +85,7 @@ def _with_has_set_ids(
 
     set_expr = In(
         field="set_id",
-        values=set_ids,
+        values=list(set_ids),
     )
 
     if filter_expr is None:

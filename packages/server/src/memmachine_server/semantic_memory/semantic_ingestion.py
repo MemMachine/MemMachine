@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
-from memmachine_server.common.filter.filter_parser import And, Comparison, Or
+from memmachine_server.common.filter.filter_parser import And, Comparison, IsNull, Or
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterManager,
     ClusterParams,
@@ -22,7 +22,9 @@ from memmachine_server.semantic_memory.cluster_splitter import (
     ClusterSplitterProtocol,
     NoOpClusterSplitter,
 )
-from memmachine_server.semantic_memory.cluster_store.cluster_store import ClusterStateStorage
+from memmachine_server.semantic_memory.cluster_store.cluster_store import (
+    ClusterStateStorage,
+)
 from memmachine_server.semantic_memory.cluster_store.in_memory_cluster_store import (
     InMemoryClusterStateStorage,
 )
@@ -196,11 +198,12 @@ class IngestionService:
 
         uid_to_embedding: dict[str, Sequence[float]] = {}
         missing_new = [h_id for h_id in new_ids if h_id not in messages_by_id]
-        if missing_new:
+        if missing_new and self._debug_fail_loudly:
             raise ValueError(
                 "Failed to retrieve messages. Invalid episode_ids exist for set_id "
                 f"{set_id}: {missing_new}"
             )
+        new_ids = [h_id for h_id in new_ids if h_id in messages_by_id]
         new_messages = [messages_by_id[h_id] for h_id in new_ids]
         if new_messages:
             ordered_messages = sorted(new_messages, key=lambda m: (m.created_at, m.uid))
@@ -255,14 +258,6 @@ class IngestionService:
                 for event_id in event_ids
                 if event_id in messages_by_id
             ]
-            if len(cluster_messages) != len(event_ids):
-                missing = [
-                    event_id for event_id in event_ids if event_id not in messages_by_id
-                ]
-                raise ValueError(
-                    "Failed to retrieve messages. Invalid episode_ids exist for set_id "
-                    f"{set_id}: {missing}"
-                )
             clustered_messages.append(
                 (
                     cluster_id,
@@ -605,9 +600,11 @@ class IngestionService:
         none_h_ids = [h_id for h_id, msg in raw_messages.items() if msg is None]
 
         if none_h_ids:
-            raise ValueError(
-                f"Failed to retrieve messages. Invalid episode_ids exist: {none_h_ids}"
+            logger.warning(
+                "Invalid episode_ids detected, deleting from storage: %s",
+                none_h_ids,
             )
+            await self._semantic_storage.delete_history(none_h_ids)
 
         messages = TypeAdapter(list[Episode]).validate_python(
             [msg for msg in raw_messages.values() if msg is not None]
@@ -737,10 +734,8 @@ class IngestionService:
                 op="=",
                 value=cluster_id,
             ),
-            right=Comparison(
+            right=IsNull(
                 field=f"metadata.{_CLUSTER_METADATA_KEY}",
-                op="is_null",
-                value="",
             ),
         )
 

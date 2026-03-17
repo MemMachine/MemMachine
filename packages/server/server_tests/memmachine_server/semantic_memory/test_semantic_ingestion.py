@@ -472,7 +472,7 @@ async def test_clustered_messages_group_llm_calls(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -523,7 +523,7 @@ async def test_distinct_clusters_call_llm_per_cluster(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -564,7 +564,7 @@ async def test_cluster_pending_persists_across_batches(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -662,7 +662,7 @@ async def test_splitter_topic_shift_calls_feature_update_per_segment(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -726,7 +726,7 @@ async def test_splitter_reranker_no_split_keeps_cluster_intact(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -779,7 +779,7 @@ async def test_splitter_reingestion_skips_reranker_scoring(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -858,7 +858,7 @@ async def test_splitter_feature_metadata_uses_segment_ids(
         ]
     )
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -926,7 +926,7 @@ async def test_noop_splitter_leaves_pipeline_unchanged(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -966,7 +966,7 @@ async def test_reingest_event_id_reuses_cluster(
 
     llm_feature_update_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_feature_update",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
         llm_feature_update_mock,
     )
 
@@ -1344,13 +1344,15 @@ async def test_process_single_set_deletes_invalid_episode_ids(
             resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=2,
             debug_fail_loudly=False,
+            ingestion_trigger_messages=1,
         )
     )
 
     await ingestion_service._process_single_set("user-999")
 
     # The invalid episode_id should have been delisted from semantic storage
-    remaining_history = await semantic_storage.get_history_messages(
+    remaining_history = await _collect_history_messages(
+        semantic_storage,
         set_ids=["user-999"],
         is_ingested=False,
     )
@@ -1448,6 +1450,7 @@ async def test_consolidation_deletes_features_not_in_keep_list(
         memories=memories,
         semantic_category=semantic_category,
         resources=resources,
+        cluster_id=None,
     )
 
     assert await semantic_storage.get_feature(progress_id) is None, (
@@ -1466,8 +1469,34 @@ async def test_consolidation_preserves_cluster_metadata(
     monkeypatch,
 ):
     """Cluster metadata (cluster_id) is preserved on consolidated features."""
-    keep_history = await add_history(episode_storage, content="keep")
-    drop_history = await add_history(episode_storage, content="drop")
+    await add_history(episode_storage, content="keep")
+    await add_history(episode_storage, content="drop")
+
+    keep_feature_id = await semantic_storage.add_feature(
+        set_id="user-888",
+        category_name=semantic_category.name,
+        feature="pizza",
+        value="likes pizza",
+        tag="food",
+        embedding=np.array([1.0, 0.0]),
+    )
+    await semantic_storage.add_feature(
+        set_id="user-888",
+        category_name=semantic_category.name,
+        feature="pasta",
+        value="likes pasta",
+        tag="food",
+        embedding=np.array([0.0, 1.0]),
+    )
+
+    filter_str = (
+        f"set_id IN ('user-888') AND category_name IN ('{semantic_category.name}')"
+    )
+    memories = await _collect_feature_set(
+        semantic_storage,
+        filter_expr=parse_filter(filter_str),
+        load_citations=True,
+    )
 
     consolidated_feature = LLMReducedFeature(
         tag="food",
@@ -1481,7 +1510,7 @@ async def test_consolidation_preserves_cluster_metadata(
         ),
     )
     monkeypatch.setattr(
-        "memmachine.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
         llm_consolidate_mock,
     )
 

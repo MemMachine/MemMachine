@@ -153,7 +153,7 @@ def build_update_prompt(*, tags: Mapping[str, str], description: str = "") -> st
     )
 
 
-def build_consolidation_prompt(*, tags: dict[str, str] | None = None) -> str:
+def build_consolidation_prompt(*, tags: Mapping[str, str] | None = None) -> str:
     """Create a consolidation prompt for merging overlapping memories.
 
     Args:

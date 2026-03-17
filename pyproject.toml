@@ -85,6 +85,7 @@ convention = "google"
 "packages/client/client_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/server/server_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/common/common_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"tests/evaluation/**/*.py" = ["ANN", "D", "SLF", "ARG", "INP"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
 "examples/**" = [
     "ANN",
@@ -113,15 +114,19 @@ convention = "google"
     "T201",
     "ANN",
     "FA",
+    "INP",
     "PTH123",
     "PTH120",
     "PTH110",
     "PTH100",
+    "ASYNC221",
     "ASYNC230",
+    "ASYNC240",
     "RUF001",
     "N806",
     "B023",
     "B007",
+    "SLF",
     "TRY300",
     "PERF203",
     "PERF401",
@@ -137,6 +142,7 @@ exclude = ["packages/**/build/**"]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 addopts = ["-m", "not integration"]
+pythonpath = ["."]
 
 markers = [
     "integration: mark the test as an integration test",

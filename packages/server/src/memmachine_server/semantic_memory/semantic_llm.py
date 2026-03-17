@@ -37,7 +37,7 @@ def _features_to_llm_format(
 
 
 def _features_to_consolidation_format(
-    features: list[SemanticFeature],
+    features: Sequence[SemanticFeature],
 ) -> list[dict[str, str | dict[str, str | None]]]:
     """Serialize features for the consolidation LLM, preserving metadata IDs.
 

@@ -1,4 +1,3 @@
-import pytest
 
 from evaluation.semantic_memory.semantic_harness import build_run_config
 

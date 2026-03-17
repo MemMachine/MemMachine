@@ -6,7 +6,9 @@ import copy
 from collections.abc import MutableMapping
 
 from memmachine_server.semantic_memory.cluster_manager import ClusterState
-from memmachine_server.semantic_memory.cluster_store.cluster_store import ClusterStateStorage
+from memmachine_server.semantic_memory.cluster_store.cluster_store import (
+    ClusterStateStorage,
+)
 from memmachine_server.semantic_memory.semantic_model import SetIdT
 
 
