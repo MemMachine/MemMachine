@@ -54,8 +54,6 @@ class ExtraMemoryParams(BaseModel):
     Parameters for ExtraMemory.
 
     Attributes:
-        partition_key (str):
-            Partition key.
         collection (Collection):
             Collection instance in a vector store.
         segment_linker_partition (SegmentLinkerPartition):
@@ -74,10 +72,6 @@ class ExtraMemoryParams(BaseModel):
             Seconds between purge cycles. None disables periodic purging (default: None).
     """
 
-    partition_key: str = Field(
-        ...,
-        description="Partition key",
-    )
     collection: InstanceOf[Collection] = Field(
         ...,
         description="Collection instance in a vector store",
@@ -124,7 +118,6 @@ class ExtraMemory:
                 Parameters for the ExtraMemory.
 
         """
-        self._partition_key = params.partition_key
         self._collection = params.collection
         self._segment_linker_partition = params.segment_linker_partition
 
@@ -226,9 +219,7 @@ class ExtraMemory:
         if not marked_uuids:
             return
 
-        await self._collection.delete(
-            partition_key=self._partition_key, record_uuids=marked_uuids
-        )
+        await self._collection.delete(record_uuids=marked_uuids)
         await self._segment_linker_partition.purge_derivatives(marked_uuids)
 
     async def encode_episodes(
@@ -299,7 +290,6 @@ class ExtraMemory:
 
         else:
             derivative_query_results = await self._collection.query(
-                partition_key=self._partition_key,
                 query_vectors=derivative_embeddings,
                 score_threshold=self._derivative_consolidation_threshold,
                 limit=1,
@@ -349,9 +339,7 @@ class ExtraMemory:
             ]
 
         if derivative_records:
-            await self._collection.upsert(
-                partition_key=self._partition_key, records=derivative_records
-            )
+            await self._collection.upsert(records=derivative_records)
 
     @staticmethod
     def _consolidate_derivatives(
@@ -642,7 +630,6 @@ class ExtraMemory:
         query_result = next(
             iter(
                 await self._collection.query(
-                    partition_key=self._partition_key,
                     query_vectors=[query_embedding],
                     limit=min(5 * max_num_segments, 200),
                     return_vector=False,
