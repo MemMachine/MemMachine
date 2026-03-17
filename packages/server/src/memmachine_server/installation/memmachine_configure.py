@@ -45,6 +45,20 @@ def get_memmachine_config_dir() -> str:
     return str(Path("~/.config/memmachine").expanduser())
 
 
+def _safe_extract_zip(zip_path: str, extract_to: str) -> None:
+    """Extract a zip file, rejecting entries that would escape the target directory."""
+    dest = Path(extract_to).resolve()
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        for member in zip_ref.infolist():
+            member_path = (dest / member.filename).resolve()
+            if not str(member_path).startswith(str(dest) + os.sep) and member_path != dest:
+                raise ValueError(
+                    f"Zip entry {member.filename!r} would extract outside "
+                    f"target directory"
+                )
+        zip_ref.extractall(extract_to)
+
+
 class Installer(ABC):
     """Abstract base class for MemMachine installers."""
 
@@ -111,9 +125,13 @@ class LinuxEnvironment:
         urllib.request.urlretrieve(url, dest)
 
     def extract_tar(self, tar_path: str, extract_to: str) -> None:
-        """Extract a .tar.gz file on Linux or macOS."""
+        """Extract a .tar.gz file on Linux or macOS.
+
+        Uses the ``data`` extraction filter to prevent path-traversal
+        attacks (e.g. entries containing ``../``).
+        """
         with tarfile.open(tar_path, "r:gz") as tar_ref:
-            tar_ref.extractall(extract_to)
+            tar_ref.extractall(extract_to, filter="data")
 
     def start_neo4j(self, java_home: str, neo4j_dir: str) -> None:
         logger.info("Starting Neo4j with JAVA_HOME=%s, dir=%s...", java_home, neo4j_dir)
@@ -291,9 +309,12 @@ class WindowsEnvironment:
         urllib.request.urlretrieve(url, dest)
 
     def extract_zip(self, zip_path: str, extract_to: str) -> None:
-        """Extract zip file on Windows."""
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_to)
+        """Extract zip file on Windows.
+
+        Validates that no entry would be written outside the target
+        directory (zip-slip protection).
+        """
+        _safe_extract_zip(zip_path, extract_to)
 
     def start_neo4j_service(self, install_dir: str) -> None:
         """Install and start Neo4j service on Windows."""
