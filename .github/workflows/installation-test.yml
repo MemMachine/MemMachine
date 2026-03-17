@@ -160,7 +160,7 @@ jobs:
           command: |
             set -eo pipefail
 
-            models=("qwen3:0.6b" "nomic-embed-text")
+            models=("smollm:135m" "all-minilm")
             for model in "${models[@]}"; do
               echo "Pulling model $model..."
               response=$(curl -sS http://localhost:11434/api/pull -d "{\"name\": \"$model\"}")
@@ -177,11 +177,11 @@ jobs:
           memmachine-configure << EOF
           y
           Ollama
-          qwen3:0.6b
+          smollm:135m
 
           http://localhost:11434/v1
-          nomic-embed-text
-          768
+          all-minilm
+          384
           localhost
           8080
           EOF
