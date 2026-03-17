@@ -405,6 +405,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         feature_id: FeatureIdT,
         history_ids: Sequence[EpisodeIdT],
     ) -> None:
+        if not history_ids:
+            return
+
         try:
             feature_id_int = int(feature_id)
         except (TypeError, ValueError) as e:

@@ -227,6 +227,7 @@ def _apply_semantic_memory_updates(
 
     _apply_semantic_memory_base_updates(sm, spec, changes)
     _apply_semantic_memory_ingestion_updates(sm, spec, changes)
+    _apply_semantic_memory_idle_ttl_updates(sm, spec, changes)
     _apply_semantic_memory_time_gap_updates(sm, spec, changes)
 
     return changes
@@ -279,7 +280,6 @@ def _apply_semantic_memory_ingestion_updates(
         changes.append(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
-    _apply_semantic_memory_idle_ttl_updates(sm, spec, changes)
 
 
 def _apply_semantic_memory_idle_ttl_updates(
