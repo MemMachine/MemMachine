@@ -10,7 +10,7 @@ information extraction and a vector database for semantic search capabilities.
 import asyncio
 import logging
 from asyncio import Task
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
@@ -30,6 +30,7 @@ from memmachine_server.common.filter.filter_parser import (
     In,
 )
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.utils import merge_async_iterators
 
 from .config_store.config_store import SemanticConfigStorage
 from .semantic_ingestion import IngestionService
@@ -47,13 +48,13 @@ from .storage.storage_base import SemanticStorage
 logger = logging.getLogger(__name__)
 
 
-def _consolidate_errors_and_raise(possible_errors: list[Any], msg: str) -> None:
+def _consolidate_errors_and_raise(possible_errors: Sequence[Any], msg: str) -> None:
     errors = [r for r in possible_errors if isinstance(r, Exception)]
     if len(errors) > 0:
         raise ExceptionGroup(msg, errors)
 
 
-DefaultCategoryRetriever = Callable[[SetIdT], list[SemanticCategory]]
+DefaultCategoryRetriever = Callable[[SetIdT], Sequence[SemanticCategory]]
 
 
 @runtime_checkable
@@ -66,7 +67,7 @@ class ResourceManager(Protocol):
 
 
 def _with_has_set_ids(
-    set_ids: list[SetIdT],
+    set_ids: Sequence[SetIdT],
     filter_expr: FilterExpr | None,
 ) -> FilterExpr:
     if len(set_ids) == 0:
@@ -74,7 +75,7 @@ def _with_has_set_ids(
 
     set_expr = In(
         field="set_id",
-        values=set_ids,
+        values=list(set_ids),
     )
 
     if filter_expr is None:
@@ -123,9 +124,9 @@ class SemanticService:
         self._default_embedder: Embedder = params.default_embedder
         self._default_embedder_name: str = params.default_embedder_name
         self._default_language_model: LanguageModel = params.default_language_model
-        self._default_category_retriever: Callable[[SetIdT], list[SemanticCategory]] = (
-            params.default_category_retriever
-        )
+        self._default_category_retriever: Callable[
+            [SetIdT], Sequence[SemanticCategory]
+        ] = params.default_category_retriever
 
         self._consolidation_threshold = params.consolidation_threshold
 
@@ -162,18 +163,18 @@ class SemanticService:
         self,
         *,
         set_id: str,
-        embedding: list[float],
+        embedding: Sequence[float],
         min_distance: float | None = None,
         limit: int | None = 30,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         filter_expr = _with_has_set_ids(
             set_ids=[set_id],
             filter_expr=filter_expr,
         )
 
-        return await self._semantic_storage.get_feature_set(
+        async for feature in self._semantic_storage.get_feature_set(
             filter_expr=filter_expr,
             page_size=limit,
             vector_search_opts=SemanticStorage.VectorSearchOpts(
@@ -181,52 +182,49 @@ class SemanticService:
                 min_distance=min_distance,
             ),
             load_citations=load_citations,
-        )
+        ):
+            yield feature
 
     async def search(
         self,
-        set_ids: list[SetIdT],
+        set_ids: Sequence[SetIdT],
         query: str,
         *,
         min_distance: float | None = None,
         limit: int | None = 30,
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         logger.debug("Searching for %s in set ids %s", query, set_ids)
 
-        embeddings: dict[str, list[float]] = await self._set_ids_embed(
+        embeddings: Mapping[str, Sequence[float]] = await self._set_ids_embed(
             set_ids=set_ids,
             query=query,
         )
 
         assert set(set_ids) == set(embeddings.keys())
 
-        tasks: list[asyncio.Task[list[SemanticFeature]]] = []
-        async with asyncio.TaskGroup() as tg:
-            for set_id in set_ids:
-                t = tg.create_task(
-                    self._set_id_search(
-                        set_id=set_id,
-                        embedding=embeddings[set_id],
-                        min_distance=min_distance,
-                        limit=limit,
-                        load_citations=load_citations,
-                        filter_expr=filter_expr,
-                    )
-                )
-                tasks.append(t)
+        # Create iterators for each set_id search (parallel)
+        iterators = [
+            self._set_id_search(
+                set_id=set_id,
+                embedding=embeddings[set_id],
+                min_distance=min_distance,
+                limit=limit,
+                load_citations=load_citations,
+                filter_expr=filter_expr,
+            )
+            for set_id in set_ids
+        ]
 
-        t_res = [t.result() for t in tasks]
+        # Merge and yield results as they become available
+        async for feature in merge_async_iterators(iterators):
+            yield feature
 
-        res: list[SemanticFeature] = []
-        for t_list in t_res:
-            res = res + t_list
-
-        return res
-
-    async def add_messages(self, set_id: SetIdT, history_ids: list[EpisodeIdT]) -> None:
-        logger.debug("Adding messages to set %s: %s", set_id, history_ids)
+    async def add_messages(
+        self, set_id: SetIdT, history_ids: Sequence[EpisodeIdT]
+    ) -> None:
+        logger.info("Adding messages to set %s: %s", set_id, history_ids)
 
         res = await asyncio.gather(
             *[
@@ -244,7 +242,7 @@ class SemanticService:
     async def add_message_to_sets(
         self,
         history_id: EpisodeIdT,
-        set_ids: list[SetIdT],
+        set_ids: Sequence[SetIdT],
     ) -> None:
         assert len(set_ids) == len(set(set_ids))
 
@@ -263,7 +261,12 @@ class SemanticService:
 
         _consolidate_errors_and_raise(res, "Failed to add message to sets")
 
-    async def number_of_uningested(self, set_ids: list[SetIdT]) -> int:
+    async def delete_messages(self, *, set_ids: Sequence[SetIdT]) -> None:
+        logger.info("Deleting messages from sets %s", set_ids)
+
+        await self._semantic_storage.delete_history_set(set_ids=set_ids)
+
+    async def number_of_uningested(self, set_ids: Sequence[SetIdT]) -> int:
         logger.debug("Getting number of uningested messages for set ids %s", set_ids)
 
         return await self._semantic_storage.get_history_messages_count(
@@ -279,8 +282,8 @@ class SemanticService:
         feature: str,
         value: str,
         tag: str,
-        metadata: dict[str, str] | None = None,
-        citations: list[EpisodeIdT] | None = None,
+        metadata: Mapping[str, str] | None = None,
+        citations: Sequence[EpisodeIdT] | None = None,
     ) -> FeatureIdT:
         logger.debug("Adding new feature %s to set %s", feature, set_id)
 
@@ -323,15 +326,15 @@ class SemanticService:
     async def get_set_features(
         self,
         *,
-        set_ids: list[SetIdT],
+        set_ids: Sequence[SetIdT],
         filter_expr: FilterExpr | None = None,
         page_size: int | None = None,
         page_num: int | None = None,
         with_citations: bool = False,
-    ) -> list[SemanticFeature]:
+    ) -> AsyncIterator[SemanticFeature]:
         logger.debug("Getting features for set ids %s", set_ids)
 
-        return await self._semantic_storage.get_feature_set(
+        async for feature in self._semantic_storage.get_feature_set(
             filter_expr=_with_has_set_ids(
                 set_ids=set_ids,
                 filter_expr=filter_expr,
@@ -339,7 +342,8 @@ class SemanticService:
             page_size=page_size,
             page_num=page_num,
             load_citations=with_citations,
-        )
+        ):
+            yield feature
 
     async def update_feature(
         self,
@@ -350,7 +354,7 @@ class SemanticService:
         feature: str | None = None,
         value: str | None = None,
         tag: str | None = None,
-        metadata: dict[str, str] | None = None,
+        metadata: Mapping[str, str] | None = None,
     ) -> None:
         logger.debug("Updating feature %s", feature_id)
         embedding = None
@@ -391,20 +395,20 @@ class SemanticService:
             embedding=embedding,
         )
 
-    async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
-        logger.debug("Deleting history ids %s", history_ids)
+    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+        logger.info("Deleting history ids %s", history_ids)
 
         await self._semantic_storage.delete_history(history_ids)
 
-    async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
-        logger.debug("Deleting features ids %s", feature_ids)
+    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
+        logger.info("Deleting features ids %s", feature_ids)
 
         await self._semantic_storage.delete_features(feature_ids)
 
     async def delete_feature_set(
         self,
         *,
-        set_ids: list[SetIdT],
+        set_ids: Sequence[SetIdT],
         filter_expr: FilterExpr | None = None,
     ) -> None:
         logger.debug("Deleting filter feature set ids %s", set_ids)
@@ -419,11 +423,11 @@ class SemanticService:
     async def _set_ids_embed(
         self,
         *,
-        set_ids: list[SetIdT],
+        set_ids: Sequence[SetIdT],
         query: str,
-    ) -> dict[str, list[float]]:
-        set_id_embedders: dict[str, str | None]
-        embedders: dict[str, Embedder]
+    ) -> Mapping[str, Sequence[float]]:
+        set_id_embedders: Mapping[str, str | None]
+        embedders: Mapping[str, Embedder]
         has_default_embedder: bool
 
         (
@@ -432,8 +436,8 @@ class SemanticService:
             has_default_embedder,
         ) = await self._set_ids_embedders(set_ids=set_ids)
 
-        tasks: dict[str, asyncio.Task[list[list[float]]]] = {}
-        default_task: asyncio.Task[list[list[float]]] | None = None
+        tasks: MutableMapping[str, asyncio.Task[Sequence[Sequence[float]]]] = {}
+        default_task: asyncio.Task[Sequence[Sequence[float]]] | None = None
         async with asyncio.TaskGroup() as tg:
             for e_str, e_cls in embedders.items():
                 tasks[e_str] = tg.create_task(e_cls.search_embed(queries=[query]))
@@ -443,7 +447,7 @@ class SemanticService:
                     self._default_embedder.search_embed(queries=[query])
                 )
 
-        results: dict[str, list[float]] = {}
+        results: MutableMapping[str, Sequence[float]] = {}
         for set_id in set_ids:
             embedder_str = set_id_embedders[set_id]
 
@@ -459,20 +463,20 @@ class SemanticService:
     async def _set_ids_embedders(
         self,
         *,
-        set_ids: list[SetIdT],
-    ) -> tuple[dict[str, str | None], dict[str, Embedder], bool]:
+        set_ids: Sequence[SetIdT],
+    ) -> tuple[Mapping[str, str | None], Mapping[str, Embedder], bool]:
         async def _get_embedder_name(s_id: SetIdT) -> str | None:
             cfg = await self._semantic_config_storage.get_setid_config(set_id=s_id)
             return cfg.embedder_name
 
-        tasks: dict[str, asyncio.Task[str | None]] = {}
+        tasks: MutableMapping[str, asyncio.Task[str | None]] = {}
         async with asyncio.TaskGroup() as tg:
             for s_id in set_ids:
                 tasks[s_id] = tg.create_task(_get_embedder_name(s_id))
 
         set_id_embedders = {s_id: task.result() for s_id, task in tasks.items()}
 
-        embedders: dict[str, Embedder] = {}
+        embedders: MutableMapping[str, Embedder] = {}
         has_default_embedder = False
         for embedder_name in set_id_embedders.values():
             if embedder_name is None:
@@ -525,7 +529,7 @@ class SemanticService:
             if category.name not in disabled_categories
         ]
 
-        categories = user_categories + enabled_default
+        categories = [*user_categories, *enabled_default]
 
         return Resources(
             embedder=embedder,
@@ -533,8 +537,8 @@ class SemanticService:
             semantic_categories=categories,
         )
 
-    async def delete_set_id(self, *, set_ids: list[SetIdT]) -> None:
-        logger.debug("Deleting set ids %s", set_ids)
+    async def delete_set_id(self, *, set_ids: Sequence[SetIdT]) -> None:
+        logger.info("Deleting set ids %s", set_ids)
 
         async with asyncio.TaskGroup() as tg:
             tg.create_task(
@@ -565,9 +569,12 @@ class SemanticService:
         ).embedder_name
 
         if embedder_name != current_set_id_embedder_name:
+            has_features = False
+            async for _ in self.get_set_features(set_ids=[set_id]):
+                has_features = True
+                break
             valid_changing_embedder = (
-                current_set_id_embedder_name is None
-                and len(await self.get_set_features(set_ids=[set_id])) == 0
+                current_set_id_embedder_name is None and not has_features
             )
             if not valid_changing_embedder:
                 raise InvalidSetIdConfigurationError(set_id=set_id)
@@ -633,7 +640,7 @@ class SemanticService:
 
     async def get_set_type_categories(
         self, *, set_type_id: str
-    ) -> list[SemanticCategory]:
+    ) -> Sequence[SemanticCategory]:
         logger.debug("Getting set type categories for %s", set_type_id)
 
         return await self._semantic_config_storage.get_set_type_categories(
@@ -667,7 +674,7 @@ class SemanticService:
         self,
         *,
         category_id: CategoryIdT,
-    ) -> list[SetIdT]:
+    ) -> Sequence[SetIdT]:
         logger.debug("Getting set_ids for category %s", category_id)
 
         return await self._semantic_config_storage.get_category_set_ids(
@@ -755,10 +762,11 @@ class SemanticService:
 
         await self._semantic_config_storage.delete_tag(tag_id=tag_id)
 
-    async def list_set_id_starts_with(self, prefix: str) -> list[SetIdT]:
+    async def list_set_id_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         logger.debug("Listing set ids starts with %s", prefix)
 
-        return await self._semantic_storage.get_set_ids_starts_with(prefix)
+        async for set_id in self._semantic_storage.get_set_ids_starts_with(prefix):
+            yield set_id
 
     async def _background_ingestion_task(self) -> None:
         ingestion_service = IngestionService(
@@ -770,10 +778,13 @@ class SemanticService:
         )
 
         while not self._is_shutting_down:
-            dirty_sets = await self._semantic_storage.get_history_set_ids(
-                min_uningested_messages=self._feature_update_message_limit,
-                older_than=datetime.now(tz=UTC) - self._feature_time_limit,
-            )
+            dirty_sets = [
+                s
+                async for s in self._semantic_storage.get_history_set_ids(
+                    min_uningested_messages=self._feature_update_message_limit,
+                    older_than=datetime.now(tz=UTC) - self._feature_time_limit,
+                )
+            ]
 
             if len(dirty_sets) == 0:
                 await asyncio.sleep(self._background_ingestion_interval_sec)

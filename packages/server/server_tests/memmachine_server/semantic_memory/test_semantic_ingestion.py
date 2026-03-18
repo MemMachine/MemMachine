@@ -34,6 +34,10 @@ from server_tests.memmachine_server.semantic_memory.mock_semantic_memory_objects
 )
 
 
+async def _collect(async_iter):
+    return [item async for item in async_iter]
+
+
 @pytest.fixture
 def semantic_prompt() -> SemanticPrompt:
     return RawSemanticPrompt(
@@ -118,15 +122,19 @@ async def test_process_single_set_returns_when_no_messages(
 
     assert resource_retriever.seen_ids == ["user-123"]
     assert (
-        await semantic_storage.get_feature_set(
-            filter_expr=parse_filter("set_id IN ('user-123')")
+        await _collect(
+            semantic_storage.get_feature_set(
+                filter_expr=parse_filter("set_id IN ('user-123')")
+            )
         )
         == []
     )
     assert (
-        await semantic_storage.get_history_messages(
-            set_ids=["user-123"],
-            is_ingested=False,
+        await _collect(
+            semantic_storage.get_history_messages(
+                set_ids=["user-123"],
+                is_ingested=False,
+            )
         )
         == []
     )
@@ -179,9 +187,11 @@ async def test_process_single_set_applies_commands(
     filter_str = (
         f"set_id IN ('user-123') AND category_name IN ('{semantic_category.name}')"
     )
-    features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
-        load_citations=True,
+    features = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
     )
     assert len(features) == 1
     feature = features[0]
@@ -192,21 +202,27 @@ async def test_process_single_set_applies_commands(
     assert list(feature.metadata.citations) == [message_id]
 
     filter_str = "set_id IN ('user-123') AND feature_name IN ('favorite_motorcycle')"
-    remaining = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
+    remaining = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+        )
     )
     assert remaining == []
 
     assert (
-        await semantic_storage.get_history_messages(
-            set_ids=["user-123"],
-            is_ingested=False,
+        await _collect(
+            semantic_storage.get_history_messages(
+                set_ids=["user-123"],
+                is_ingested=False,
+            )
         )
         == []
     )
-    ingested = await semantic_storage.get_history_messages(
-        set_ids=["user-123"],
-        is_ingested=True,
+    ingested = await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-123"],
+            is_ingested=True,
+        )
     )
     assert list(ingested) == [message_id]
     assert embedder_double.ingest_calls == [["blue"]]
@@ -402,9 +418,11 @@ async def test_deduplicate_features_merges_and_relabels(
     filter_str = (
         f"set_id IN ('user-789') AND category_name IN ('{semantic_category.name}')"
     )
-    memories = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
-        load_citations=True,
+    memories = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
     )
 
     consolidated_feature = LLMReducedFeature(
@@ -441,9 +459,11 @@ async def test_deduplicate_features_merges_and_relabels(
     assert kept_feature is not None
     assert kept_feature.value == "original pizza"
 
-    all_features = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
-        load_citations=True,
+    all_features = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
     )
     consolidated = next(
         (f for f in all_features if f.value == "consolidated pizza"),
@@ -504,9 +524,11 @@ async def test_process_single_set_deletes_invalid_episode_ids(
     await ingestion_service._process_single_set("user-999")
 
     # The invalid episode_id should have been delisted from semantic storage
-    remaining_history = await semantic_storage.get_history_messages(
-        set_ids=["user-999"],
-        is_ingested=False,
+    remaining_history = await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-999"],
+            is_ingested=False,
+        )
     )
     assert invalid_id not in remaining_history
 
@@ -579,9 +601,11 @@ async def test_consolidation_deletes_features_not_in_keep_list(
     filter_str = (
         f"set_id IN ('user-1160a') AND category_name IN ('{semantic_category.name}')"
     )
-    memories = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
-        load_citations=True,
+    memories = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
     )
 
     # LLM keeps only bugfix_id — progress_id is omitted and will be deleted.
@@ -645,9 +669,11 @@ async def test_empty_keep_memories_deletes_all_features(
     filter_str = (
         f"set_id IN ('user-1160b') AND category_name IN ('{semantic_category.name}')"
     )
-    memories = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
-        load_citations=True,
+    memories = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
     )
 
     consolidated = LLMReducedFeature(
@@ -674,8 +700,10 @@ async def test_empty_keep_memories_deletes_all_features(
     assert await semantic_storage.get_feature(id1) is None
     assert await semantic_storage.get_feature(id2) is None
 
-    remaining = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
+    remaining = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+        )
     )
     assert len(remaining) == 1
     assert remaining[0].value == "combined a + b"
@@ -717,9 +745,11 @@ async def test_consolidation_rejects_llm_tag_rename(
     filter_str = (
         f"set_id IN ('user-1160c') AND category_name IN ('{semantic_category.name}')"
     )
-    memories = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
-        load_citations=True,
+    memories = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
     )
 
     # LLM tries to replace user tag "bugfix" with "Productivity Style"
@@ -746,8 +776,10 @@ async def test_consolidation_rejects_llm_tag_rename(
         resources=resources,
     )
 
-    remaining = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
+    remaining = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+        )
     )
     bugfix_features = [f for f in remaining if f.tag == "bugfix"]
     renamed_features = [f for f in remaining if f.tag == "Productivity Style"]
@@ -852,8 +884,10 @@ async def test_user_tags_preserved_after_ingestion_and_consolidation(
     filter_str = (
         f"set_id IN ('{set_id}') AND category_name IN ('{semantic_category.name}')"
     )
-    remaining = await semantic_storage.get_feature_set(
-        filter_expr=parse_filter(filter_str),
+    remaining = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+        )
     )
     remaining_tags = {f.tag for f in remaining}
 
