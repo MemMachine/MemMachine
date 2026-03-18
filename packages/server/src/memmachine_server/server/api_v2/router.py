@@ -405,12 +405,16 @@ async def get_feature(
         value=feature.value,
         metadata=SemanticFeature.Metadata(
             id=feature.metadata.id if feature.metadata else None,
-            citations=list(feature.metadata.citations)
-            if feature.metadata and feature.metadata.citations
-            else None,
-            other=dict(feature.metadata.other)
-            if feature.metadata and feature.metadata.other
-            else None,
+            citations=(
+                list(feature.metadata.citations)
+                if feature.metadata and feature.metadata.citations is not None
+                else None
+            ),
+            other=(
+                dict(feature.metadata.other)
+                if feature.metadata and feature.metadata.other is not None
+                else None
+            ),
         ),
     )
 
