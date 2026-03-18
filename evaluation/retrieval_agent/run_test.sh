@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 
 usage_locomo() {
-    echo "Locomo Usage: $0 locomo RESULT_POSTFIX RUN_TYPE TEST_TARGET"
+    echo "Locomo Usage: $0 locomo RESULT_POSTFIX RUN_TYPE TEST_TARGET [options]"
     echo
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
+    echo "Options:"
+    echo "  --ingest-concurrency N"
+    echo "                     Optional max concurrent LoCoMo ingestion tasks"
+    echo "                     (ingest only, default: 10)"
+    echo "  --search-concurrency N"
+    echo "                     Optional max concurrent LoCoMo search requests"
+    echo "                     (search only, default: 1)"
+    echo "  --judge-concurrency N"
+    echo "                     Optional max concurrent LLM judge workers"
+    echo "                     (search only, default: 30)"
     exit 1
 }
 
@@ -18,6 +28,13 @@ usage_wiki() {
     echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
     echo "  LENGTH            Number of examples to run [1 - 12576]"
+    echo "Options:"
+    echo "  --search-concurrency N"
+    echo "                     Optional max concurrent WikiMultiHop search requests"
+    echo "                     (search only, default: 10)"
+    echo "  --judge-concurrency N"
+    echo "                     Optional max concurrent LLM judge workers"
+    echo "                     (search only, default: 30)"
     exit 1
 }
 
@@ -32,6 +49,13 @@ usage_hotpotqa() {
     echo "                      hard questions only."
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
     echo "  LENGTH            Number of examples to run [train set 1 - 90447 | validation set 1 - 7405]"
+    echo "Options:"
+    echo "  --search-concurrency N"
+    echo "                     Optional max concurrent HotpotQA search requests"
+    echo "                     (search only, default: 30)"
+    echo "  --judge-concurrency N"
+    echo "                     Optional max concurrent LLM judge workers"
+    echo "                     (search only, default: 30)"
     exit 1
 }
 
@@ -44,6 +68,13 @@ usage_longmemeval() {
     echo "  SPLIT_NAME        Dataset split name, e.g. longmemeval_s_cleaned"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
     echo "  LENGTH            Number of examples to run [1 - split size]"
+    echo "Options:"
+    echo "  --search-concurrency N"
+    echo "                     Optional max concurrent LongMemEval search requests"
+    echo "                     (search only, default: 30)"
+    echo "  --judge-concurrency N"
+    echo "                     Optional max concurrent LLM judge workers"
+    echo "                     (search only, default: 30)"
     exit 1
 }
 
@@ -82,25 +113,139 @@ show_help() {
     esac
 }
 
+POSITIONAL_ARGS=()
+INGEST_CONCURRENCY=""
+SEARCH_CONCURRENCY=""
+JUDGE_CONCURRENCY=""
+
+parse_optional_flags() {
+    POSITIONAL_ARGS=()
+    INGEST_CONCURRENCY=""
+    SEARCH_CONCURRENCY=""
+    JUDGE_CONCURRENCY=""
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --ingest-concurrency)
+                if [ "$#" -lt 2 ]; then
+                    echo "Error: --ingest-concurrency requires a value"
+                    exit 1
+                fi
+                INGEST_CONCURRENCY="$2"
+                shift 2
+                ;;
+            --ingest-concurrency=*)
+                INGEST_CONCURRENCY="${1#*=}"
+                shift
+                ;;
+            --search-concurrency)
+                if [ "$#" -lt 2 ]; then
+                    echo "Error: --search-concurrency requires a value"
+                    exit 1
+                fi
+                SEARCH_CONCURRENCY="$2"
+                shift 2
+                ;;
+            --search-concurrency=*)
+                SEARCH_CONCURRENCY="${1#*=}"
+                shift
+                ;;
+            --judge-concurrency)
+                if [ "$#" -lt 2 ]; then
+                    echo "Error: --judge-concurrency requires a value"
+                    exit 1
+                fi
+                JUDGE_CONCURRENCY="$2"
+                shift 2
+                ;;
+            --judge-concurrency=*)
+                JUDGE_CONCURRENCY="${1#*=}"
+                shift
+                ;;
+            *)
+                POSITIONAL_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+}
+
 validate_args() {
     case "$1" in
         locomo)
             if [ "$#" -ne 4 ]; then
                 show_help locomo
             fi
+            if [ -n "${INGEST_CONCURRENCY:-}" ] && [ "$3" != "ingest" ]; then
+                echo "--ingest-concurrency can only be used with locomo ingest"
+                echo
+                show_help locomo
+            fi
+            if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--search-concurrency can only be used with search runs"
+                echo
+                show_help locomo
+            fi
+            if [ -n "${JUDGE_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--judge-concurrency can only be used with search runs"
+                echo
+                show_help locomo
+            fi
             ;;
         wikimultihop)
+            if [ -n "${INGEST_CONCURRENCY:-}" ]; then
+                echo "--ingest-concurrency is only supported for locomo ingest"
+                exit 1
+            fi
             if [ "$#" -ne 5 ]; then
+                show_help wikimultihop
+            fi
+            if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--search-concurrency can only be used with search runs"
+                echo
+                show_help wikimultihop
+            fi
+            if [ -n "${JUDGE_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--judge-concurrency can only be used with search runs"
+                echo
                 show_help wikimultihop
             fi
             ;;
         hotpotqa)
+            if [ -n "${INGEST_CONCURRENCY:-}" ]; then
+                echo "--ingest-concurrency is only supported for locomo ingest"
+                exit 1
+            fi
             if [ "$#" -ne 6 ]; then
+                show_help hotpotqa
+            fi
+            if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--search-concurrency can only be used with search runs"
+                echo
+                show_help hotpotqa
+            fi
+            if [ -n "${JUDGE_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--judge-concurrency can only be used with search runs"
+                echo
                 show_help hotpotqa
             fi
             ;;
         longmemeval)
+            if [ -n "${INGEST_CONCURRENCY:-}" ]; then
+                echo "--ingest-concurrency is only supported for locomo ingest"
+                exit 1
+            fi
             if [ "$#" -ne 6 ]; then
+                show_help longmemeval
+            fi
+            if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--search-concurrency can only be used with search runs"
+                echo
+                show_help longmemeval
+            fi
+            if [ -n "${JUDGE_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--judge-concurrency can only be used with search runs"
+                echo
                 show_help longmemeval
             fi
             ;;
@@ -111,8 +256,44 @@ validate_args() {
     esac
 }
 
+validate_positive_integer() {
+    case "$1" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+        0)
+            return 1
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+check_python_modules() {
+    if ! python "$SCRIPT_DIR/preflight.py" "$@"; then
+        echo "Install benchmark dependencies with:"
+        echo "  (cd \"$SCRIPT_DIR\" && python -m pip install -r requirements.txt)"
+        return 1
+    fi
+}
+
 run_test() {
     TEST="$1"
+
+    if [ -n "${INGEST_CONCURRENCY:-}" ] && ! validate_positive_integer "$INGEST_CONCURRENCY"; then
+        echo "--ingest-concurrency must be a positive integer"
+        exit 1
+    fi
+    if [ -n "${SEARCH_CONCURRENCY:-}" ] && ! validate_positive_integer "$SEARCH_CONCURRENCY"; then
+        echo "--search-concurrency must be a positive integer"
+        exit 1
+    fi
+    if [ -n "${JUDGE_CONCURRENCY:-}" ] && ! validate_positive_integer "$JUDGE_CONCURRENCY"; then
+        echo "--judge-concurrency must be a positive integer"
+        exit 1
+    fi
+
     case "$TEST" in
         locomo)
             RESULT_POSTFIX=$2
@@ -160,7 +341,7 @@ run_test() {
 
     REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
     export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/packages/common/src:${REPO_ROOT}/packages/server/src:${REPO_ROOT}/packages/client/src${PYTHONPATH:+:${PYTHONPATH}}"
-    mkdir -p ${SCRIPT_DIR}/result/final_score
+    mkdir -p "${SCRIPT_DIR}/result/final_score"
     RESULT_FILE="${SCRIPT_DIR}/result/${TEST}_${TEST_TARGET}_output_${RESULT_POSTFIX}.json"
     EVAL_FILE="${SCRIPT_DIR}/result/${TEST}_${TEST_TARGET}_evaluation_metrics_${RESULT_POSTFIX}.json"
     FINAL_SCORE_FILE="${SCRIPT_DIR}/result/final_score/${TEST}_${TEST_TARGET}_${RESULT_POSTFIX}.result"
@@ -172,26 +353,49 @@ run_test() {
         locomo)
             INGEST_CMD=(python -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --config-path "$CONFIG_FILE")
             SEARCH_CMD=(python -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            if [ -n "${INGEST_CONCURRENCY:-}" ]; then
+                INGEST_CMD+=(--concurrency "$INGEST_CONCURRENCY")
+            fi
+            if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
+                SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
+            fi
             ;;
         wikimultihop)
             INGEST_CMD=(python -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH" --config-path "$CONFIG_FILE")
             SEARCH_CMD=(python -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH" --config-path "$CONFIG_FILE")
+            if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
+                SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
+            fi
             ;;
         hotpotqa)
             INGEST_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             SEARCH_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
+                SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
+            fi
             ;;
         longmemeval)
             INGEST_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
             SEARCH_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
+            if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
+                SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
+            fi
             ;;
     esac
 
     if [[ "$INGEST" = "ingest" ]]; then
         "${INGEST_CMD[@]}"
     elif [[ "$INGEST" = "search" ]]; then
+        EVALUATE_CMD=(python "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
+        if [ -n "${JUDGE_CONCURRENCY:-}" ]; then
+            EVALUATE_CMD+=(--max_workers "$JUDGE_CONCURRENCY")
+        fi
+        if ! check_python_modules pandas; then
+            echo "generate_scores.py requires pandas for final score generation."
+            exit 1
+        fi
         "${SEARCH_CMD[@]}"
-        python "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE"
+        "${EVALUATE_CMD[@]}"
         python "$SCRIPT_DIR/generate_scores.py" --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
         cat "$FINAL_SCORE_FILE"
     else
@@ -204,6 +408,9 @@ if [ "$#" -lt 1 ]; then
     echo "Error: missing TEST argument"
     show_help all
 fi
+
+parse_optional_flags "$@"
+set -- "${POSITIONAL_ARGS[@]}"
 
 TEST="${1:-}"
 

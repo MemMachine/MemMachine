@@ -29,7 +29,20 @@ still reference a valid SQL database ID.
 1. Copy one of the sample configurations below into
    `evaluation/retrieval_agent/configuration.yml`.
 2. Fill in your API keys / connection details.
-3. Run a benchmark:
+3. Install the benchmark dependencies:
+
+```sh
+cd evaluation/retrieval_agent
+python -m pip install -r requirements.txt
+```
+
+`requirements.txt` installs the local MemMachine packages used by these
+scripts plus `pandas` for `generate_scores.py`. `run_test.sh` checks for the
+required modules before starting any search run.
+
+Existing concurrency controls are exposed as named flags in `run_test.sh`:
+`--ingest-concurrency`, `--search-concurrency`, and `--judge-concurrency`.
+4. Run a benchmark:
 
 ```sh
 cd evaluation/retrieval_agent
@@ -427,6 +440,7 @@ From `evaluation/retrieval_agent/`:
 # WikiMultiHop — ingest then search 500 questions
 ./run_test.sh wikimultihop exp1 ingest retrieval_agent 500
 ./run_test.sh wikimultihop exp1 search retrieval_agent 500
+./run_test.sh wikimultihop exp1 search retrieval_agent 500 --search-concurrency 2 --judge-concurrency 4
 
 # HotpotQA validation set — 200 questions
 ./run_test.sh hotpotqa exp1 ingest validation retrieval_agent 200
@@ -434,7 +448,9 @@ From `evaluation/retrieval_agent/`:
 
 # LoCoMo
 ./run_test.sh locomo exp1 ingest retrieval_agent
+./run_test.sh locomo exp1 ingest retrieval_agent --ingest-concurrency 2
 ./run_test.sh locomo exp1 search retrieval_agent
+./run_test.sh locomo exp1 search retrieval_agent --search-concurrency 1 --judge-concurrency 4
 ```
 
 For the full argument reference run:

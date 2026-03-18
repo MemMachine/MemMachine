@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 from evaluation.retrieval_agent.llm_judge import (  # noqa: E402
     create_judge_fn,
     evaluate_llm_judge,
@@ -54,7 +55,7 @@ def process_sample(group_key: str, item: dict, call_fn):
     return group_key, res
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate results")
     parser.add_argument(
         "--data-path",
@@ -70,7 +71,7 @@ def main():
     )
     parser.add_argument(
         "--max_workers",
-        type=int,
+        type=positive_int,
         default=30,
         help="Maximum number of worker threads",
     )
@@ -80,8 +81,11 @@ def main():
         required=True,
         help="Path to configuration.yml (used to select the judge LLM)",
     )
+    return parser
 
-    args = parser.parse_args()
+
+def main():
+    args = build_parser().parse_args()
 
     call_fn = create_judge_fn(args.config_path)
 

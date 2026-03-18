@@ -11,8 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.retrieval_agent.wikimultihop_ingest import load_data  # noqa: E402
-from evaluation.utils import agent_utils  # noqa: E402
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -53,10 +52,7 @@ Question: {question}
 """
 
 
-async def run_wiki(
-    dpath: str | None = None,
-    epath: str | None = None,
-) -> tuple[str, dict[str, Any]]:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -84,18 +80,29 @@ async def run_wiki(
     )
     parser.add_argument(
         "--concurrency",
-        type=int,
+        type=positive_int,
         default=10,
         help="Max number of concurrent questions (use 1 for local/Ollama models)",
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+async def run_wiki(
+    dpath: str | None = None,
+    epath: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    from evaluation.retrieval_agent.wikimultihop_ingest import load_data
+    from evaluation.utils import agent_utils
+
+    args = build_parser().parse_args()
 
     print("Starting WikiMultiHop test...")
     print(f"Data path: {args.data_path}")
     print(f"Evaluation result path: {args.eval_result_path}")
     print(f"Length: {args.length}")
     print(f"Test target: {args.test_target}")
+    print(f"Concurrency: {args.concurrency}")
 
     data_path = args.data_path
     eval_result_path = args.eval_result_path

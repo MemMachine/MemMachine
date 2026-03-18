@@ -14,9 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine_server.common.episode_store import Episode  # noqa: E402
-
-from evaluation.utils import agent_utils  # noqa: E402
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -55,6 +53,8 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
 
 Question: {question}
 """
+
+DEFAULT_CONCURRENCY = 30
 
 
 def _split_chunks(text: str, max_chars: int = 3000) -> list[str]:
@@ -121,6 +121,10 @@ async def longmemeval_ingest(
     config_path: str,
     session_id: str,
 ):
+    from memmachine_server.common.episode_store import Episode
+
+    from evaluation.utils import agent_utils
+
     t1 = datetime.now(UTC)
     added_content = 0
     per_batch = 1000
@@ -174,7 +178,10 @@ async def longmemeval_search(
     eval_result_path: str | None = None,
     agent_name: str = "ToolSelectAgent",
     pure_llm: bool = False,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ):
+    from evaluation.utils import agent_utils
+
     tasks = []
     attribute_matrix = agent_utils.init_attribute_matrix()
     responses: list[tuple[str, dict[str, Any]]] = []
@@ -217,7 +224,7 @@ async def longmemeval_search(
             )
         )
 
-        if len(tasks) % 30 == 0 or sample == dataset[-1]:
+        if len(tasks) >= concurrency or sample == dataset[-1]:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
@@ -285,7 +292,7 @@ def load_longmemeval_dataset(length: int, split: str) -> list[dict[str, Any]]:
     return normalized_records
 
 
-async def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--eval-result-path",
@@ -329,7 +336,17 @@ async def main():
         required=True,
         help="Path to configuration.yml",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--concurrency",
+        type=positive_int,
+        default=DEFAULT_CONCURRENCY,
+        help="Maximum number of concurrent LongMemEval search requests",
+    )
+    return parser
+
+
+async def main():
+    args = build_parser().parse_args()
 
     dataset = load_longmemeval_dataset(args.length, args.split_name)
 
@@ -341,6 +358,7 @@ async def main():
         print(f"Length: {args.length}")
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
+        print(f"Concurrency: {args.concurrency}")
 
         agent_name = (
             "MemMachineAgent" if args.test_target == "memmachine" else "ToolSelectAgent"
@@ -352,6 +370,7 @@ async def main():
             args.eval_result_path,
             agent_name,
             args.test_target == "llm",
+            args.concurrency,
         )
     else:
         raise ValueError(

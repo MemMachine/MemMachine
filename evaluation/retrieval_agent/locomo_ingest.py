@@ -12,9 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine_server.common.episode_store import Episode  # noqa: E402
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 
-from evaluation.utils import agent_utils  # noqa: E402
+DEFAULT_CONCURRENCY = 10
 
 
 def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
@@ -23,17 +23,30 @@ def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
     )
 
 
-async def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--data-path", required=True, help="Path to the data file")
     parser.add_argument(
         "--config-path",
         required=True,
         help="Path to configuration.yml",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=positive_int,
+        default=DEFAULT_CONCURRENCY,
+        help="Maximum number of concurrent LoCoMo ingestion tasks",
+    )
+    return parser
 
-    args = parser.parse_args()
+
+async def main():
+    from memmachine_server.common.episode_store import Episode
+    from memmachine_server.common.utils import async_with
+
+    from evaluation.utils import agent_utils
+
+    args = build_parser().parse_args()
 
     data_path = args.data_path
 
@@ -116,7 +129,11 @@ async def main():
                 ]
             )
 
-    tasks = [process_conversation(idx, item) for idx, item in enumerate(locomo_data)]
+    semaphore = asyncio.Semaphore(args.concurrency)
+    tasks = [
+        async_with(semaphore, process_conversation(idx, item))
+        for idx, item in enumerate(locomo_data)
+    ]
     await asyncio.gather(*tasks)
 
 
