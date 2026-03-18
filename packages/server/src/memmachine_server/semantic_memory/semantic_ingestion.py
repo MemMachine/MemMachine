@@ -6,7 +6,7 @@ import logging
 from itertools import chain
 
 import numpy as np
-from pydantic import BaseModel, InstanceOf, TypeAdapter
+from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
@@ -46,6 +46,15 @@ class IngestionService:
         resource_retriever: ResourceRetrieverT
         consolidated_threshold: int = 20
         debug_fail_loudly: bool = False
+        max_features_per_update: int = Field(
+            50,
+            description=(
+                "Maximum number of existing features passed to the LLM per update "
+                "call. Limiting this prevents the LLM output from overflowing its "
+                "token budget when the profile has grown very large."
+            ),
+            gt=0,
+        )
 
     def __init__(self, params: Params) -> None:
         """Initialize the ingestion service with storage backends and helpers."""
@@ -54,6 +63,7 @@ class IngestionService:
         self._resource_retriever = params.resource_retriever
         self._consolidation_threshold = params.consolidated_threshold
         self._debug_fail_loudly = params.debug_fail_loudly
+        self._max_features_per_update = params.max_features_per_update
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
         async def _run(set_id: SetIdT) -> None:
@@ -157,6 +167,7 @@ class IngestionService:
 
                 features = await self._semantic_storage.get_feature_set(
                     filter_expr=filter_expr,
+                    page_size=self._max_features_per_update,
                 )
 
                 try:
