@@ -1,6 +1,6 @@
 """Core data models for semantic memory features and retrieval."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -45,7 +45,7 @@ class RawSemanticPrompt:
 class StructuredSemanticPrompt(BaseModel):
     """Pair of prompt templates driving update and consolidation LLM calls."""
 
-    tags: dict[str, str]
+    tags: Mapping[str, str]
     description: str | None = None
 
     @property
@@ -66,9 +66,9 @@ class SemanticFeature(BaseModel):
     class Metadata(BaseModel):
         """Storage metadata for a semantic feature, including id and citations."""
 
-        citations: list[EpisodeIdT] | None = None
+        citations: Sequence[EpisodeIdT] | None = None
         id: FeatureIdT | None = None
-        other: dict[str, Any] | None = None
+        other: Mapping[str, Any] | None = None
 
     set_id: SetIdT | None = None
     category: str
@@ -79,9 +79,11 @@ class SemanticFeature(BaseModel):
 
     @staticmethod
     def group_features(
-        features: list["SemanticFeature"],
-    ) -> dict[tuple[str, str, str], list["SemanticFeature"]]:
-        grouped_features: dict[tuple[str, str, str], list[SemanticFeature]] = {}
+        features: Sequence["SemanticFeature"],
+    ) -> Mapping[tuple[str, str, str], Sequence["SemanticFeature"]]:
+        grouped_features: MutableMapping[
+            tuple[str, str, str], list[SemanticFeature]
+        ] = {}
 
         for f in features:
             key = (f.category, f.tag, f.feature_name)
@@ -95,9 +97,9 @@ class SemanticFeature(BaseModel):
 
     @staticmethod
     def group_features_by_tag(
-        features: list["SemanticFeature"],
-    ) -> dict[str, list["SemanticFeature"]]:
-        grouped_features: dict[str, list[SemanticFeature]] = {}
+        features: Sequence["SemanticFeature"],
+    ) -> Mapping[str, Sequence["SemanticFeature"]]:
+        grouped_features: MutableMapping[str, list[SemanticFeature]] = {}
 
         for f in features:
             key = f.tag
@@ -141,7 +143,7 @@ class Resources(BaseModel):
 
     embedder: InstanceOf[Embedder]
     language_model: InstanceOf[LanguageModel]
-    semantic_categories: list[InstanceOf[SemanticCategory]]
+    semantic_categories: Sequence[InstanceOf[SemanticCategory]]
 
 
 class SetTypeEntry(BaseModel):
@@ -149,7 +151,7 @@ class SetTypeEntry(BaseModel):
 
     id: str | None = None
     is_org_level: bool
-    tags: list[str]
+    tags: Sequence[str]
     name: str | None = None
     description: str | None = None
 
