@@ -14,9 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine_server.common.episode_store import Episode  # noqa: E402
-
-from evaluation.utils import agent_utils  # noqa: E402
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -55,6 +53,8 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
 
 Question: {question}
 """
+
+DEFAULT_CONCURRENCY = 30
 
 
 def _split_chunks(text: str, max_chars: int = 3000) -> list[str]:
@@ -116,17 +116,22 @@ def _set_safe_embedder_request_limits(memory: Any) -> None:
         embedder.max_total_input_length_per_request = 30000
 
 
-async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
+async def longmemeval_ingest(
+    dataset: list[dict[str, Any]],
+    config_path: str,
+    session_id: str,
+):
+    from memmachine_server.common.episode_store import Episode
+
+    from evaluation.utils import agent_utils
+
     t1 = datetime.now(UTC)
     added_content = 0
     per_batch = 1000
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-
+    resource_manager = agent_utils.load_eval_config(config_path)
     memory, _, _ = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
+        resource_manager=resource_manager,
         session_id=session_id,
     )
     _set_safe_embedder_request_limits(memory)
@@ -168,22 +173,23 @@ async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
 
 async def longmemeval_search(
     dataset: list[dict[str, Any]],
+    config_path: str,
     session_id: str,
     eval_result_path: str | None = None,
     agent_name: str = "ToolSelectAgent",
     pure_llm: bool = False,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ):
+    from evaluation.utils import agent_utils
+
     tasks = []
     attribute_matrix = agent_utils.init_attribute_matrix()
     responses: list[tuple[str, dict[str, Any]]] = []
     num_searched = 0
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-    memory, model, query_agent = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
-        model_name="gpt-5-mini",
+    resource_manager = agent_utils.load_eval_config(config_path)
+    memory, answer_model, query_agent = await agent_utils.init_memmachine_params(
+        resource_manager=resource_manager,
         session_id=session_id,
         agent_name=agent_name,
     )
@@ -204,13 +210,12 @@ async def longmemeval_search(
                 answer_prompt=ANSWER_PROMPT,
                 query_agent=query_agent,
                 memory=memory,
-                model=model,
+                answer_model=answer_model,
                 question=question,
                 answer=answer,
                 category=str(sample.get("question_type", "unknown")),
                 supporting_facts=supporting_facts,
                 search_limit=20,
-                model_name="gpt-5-mini",
                 full_content=full_content if pure_llm else None,
                 extra_attributes={
                     "question_id": sample.get("question_id", ""),
@@ -219,7 +224,7 @@ async def longmemeval_search(
             )
         )
 
-        if len(tasks) % 30 == 0 or sample == dataset[-1]:
+        if len(tasks) >= concurrency or sample == dataset[-1]:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
@@ -287,7 +292,7 @@ def load_longmemeval_dataset(length: int, split: str) -> list[dict[str, Any]]:
     return normalized_records
 
 
-async def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--eval-result-path",
@@ -326,28 +331,46 @@ async def main():
         help="Session id used for both ingestion and retrieval",
         default="longmemeval_group",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=positive_int,
+        default=DEFAULT_CONCURRENCY,
+        help="Maximum number of concurrent LongMemEval search requests",
+    )
+    return parser
+
+
+async def main():
+    args = build_parser().parse_args()
 
     dataset = load_longmemeval_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
-        await longmemeval_ingest(dataset, args.session_id)
+        await longmemeval_ingest(dataset, args.config_path, args.session_id)
     elif args.run_type == "search":
         print("Starting LongMemEval test...")
         print(f"Evaluation result path: {args.eval_result_path}")
         print(f"Length: {args.length}")
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
+        print(f"Concurrency: {args.concurrency}")
 
         agent_name = (
             "MemMachineAgent" if args.test_target == "memmachine" else "ToolSelectAgent"
         )
         await longmemeval_search(
             dataset,
+            args.config_path,
             args.session_id,
             args.eval_result_path,
             agent_name,
             args.test_target == "llm",
+            args.concurrency,
         )
     else:
         raise ValueError(

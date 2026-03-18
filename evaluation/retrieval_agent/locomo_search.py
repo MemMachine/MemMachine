@@ -7,13 +7,54 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from memmachine_server.common.utils import async_with
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
+PACKAGE_ROOTS = [
+    REPO_ROOT,
+    REPO_ROOT / "packages" / "common" / "src",
+    REPO_ROOT / "packages" / "server" / "src",
+    REPO_ROOT / "packages" / "client" / "src",
+]
+for package_root in PACKAGE_ROOTS:
+    package_root_str = str(package_root)
+    if package_root_str not in sys.path:
+        sys.path.append(package_root_str)
 
-from evaluation.utils import agent_utils  # noqa: E402
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
+
+DEFAULT_CONCURRENCY = 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data-path", required=True, help="Path to the source data file"
+    )
+    parser.add_argument(
+        "--eval-result-path",
+        required=True,
+        help="Path to save evaluation results",
+        default=None,
+    )
+    parser.add_argument(
+        "--test-target",
+        required=True,
+        help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
+        choices=["memmachine", "retrieval_agent", "llm"],
+    )
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=positive_int,
+        default=DEFAULT_CONCURRENCY,
+        help="Maximum number of concurrent LoCoMo answer requests",
+    )
+    return parser
+
 
 ANSWER_PROMPT = """
 You are asked to answer a question based on your memories of a conversation.
@@ -47,30 +88,17 @@ async def run_locomo(  # noqa: C901
     dpath: str | None = None,
     epath: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    parser = argparse.ArgumentParser()
+    from memmachine_server.common.utils import async_with
 
-    parser.add_argument(
-        "--data-path", required=True, help="Path to the source data file"
-    )
-    parser.add_argument(
-        "--eval-result-path",
-        required=True,
-        help="Path to save evaluation results",
-        default=None,
-    )
-    parser.add_argument(
-        "--test-target",
-        required=True,
-        help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
-        choices=["memmachine", "retrieval_agent", "llm"],
-    )
+    from evaluation.utils import agent_utils
 
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
     print("Starting locomo test...")
     print(f"Data path: {args.data_path}")
     print(f"Evaluation result path: {args.eval_result_path}")
     print(f"Test target: {args.test_target}")
+    print(f"Concurrency: {args.concurrency}")
 
     data_path = args.data_path
     eval_result_path = args.eval_result_path
@@ -87,9 +115,9 @@ async def run_locomo(  # noqa: C901
     attribute_matrix = agent_utils.init_attribute_matrix()
     start_index = 0
     end_index = 20
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+
+    resource_manager = agent_utils.load_eval_config(args.config_path)
+
     for idx, item in enumerate(locomo_data):
         if idx < start_index:
             continue
@@ -133,9 +161,8 @@ async def run_locomo(  # noqa: C901
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
         memory, model, query_agent = await agent_utils.init_memmachine_params(
-            vector_graph_store=vector_graph_store,
+            resource_manager=resource_manager,
             session_id=group_id,
-            model_name="gpt-5-mini",
             agent_name="ToolSelectAgent"
             if args.test_target == "retrieval_agent"
             else "MemMachineAgent",
@@ -178,12 +205,11 @@ async def run_locomo(  # noqa: C901
                 stringified_evidence,
                 adversarial_answer,
                 20,
-                "gpt-5-mini",
                 full_content_str if args.test_target == "llm" else None,
             )
             return question_response
 
-        semaphore = asyncio.Semaphore(30)
+        semaphore = asyncio.Semaphore(args.concurrency)
         response_tasks = [
             async_with(
                 semaphore,
