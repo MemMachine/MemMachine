@@ -1,0 +1,44 @@
+logging:
+  path: semantic-eval.log
+  level: info
+
+episode_store:
+  database: semantic_eval_db
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: semantic_eval_db
+  config_database: semantic_eval_db
+
+prompt:
+  default_project_categories:
+    - profile_prompt
+
+resources:
+  databases:
+    semantic_eval_db:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: <YOUR_PASSWORD>
+        db_name: postgres
+        pool_size: 5
+        max_overflow: 10
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        model: text-embedding-3-small
+        api_key: <OPENAI_API_KEY>
+        base_url: https://api.openai.com/v1
+        dimensions: 1536
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: gpt-4o-mini
+        api_key: <OPENAI_API_KEY>
+        base_url: https://api.openai.com/v1
