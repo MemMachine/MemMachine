@@ -1,7 +1,9 @@
 """Prompt templates used by the semantic memory pipeline."""
 
+from collections.abc import Mapping
 
-def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
+
+def build_update_prompt(*, tags: Mapping[str, str], description: str = "") -> str:
     """Create an update prompt for extracting profile changes from a query."""
     return (
         """
@@ -151,7 +153,7 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
     )
 
 
-def build_consolidation_prompt(*, tags: dict[str, str] | None = None) -> str:
+def build_consolidation_prompt(*, tags: Mapping[str, str] | None = None) -> str:
     """Create a consolidation prompt for merging overlapping memories.
 
     Args:
