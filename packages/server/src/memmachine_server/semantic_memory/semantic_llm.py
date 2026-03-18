@@ -39,6 +39,27 @@ def _features_to_llm_format(
     return structured_features
 
 
+def _features_to_consolidation_format(
+    features: list[SemanticFeature],
+) -> list[dict[str, str | dict[str, str | None]]]:
+    """Serialize features for the consolidation LLM, preserving metadata IDs.
+
+    Unlike ``_features_to_llm_format`` (used for updates), this format
+    matches the schema described in the consolidation prompt — each memory
+    is a flat object with ``tag``, ``feature``, ``value``, and
+    ``metadata.id`` so the LLM can reference IDs in ``keep_memories``.
+    """
+    return [
+        {
+            "tag": f.tag,
+            "feature": f.feature_name,
+            "value": f.value,
+            "metadata": {"id": f.metadata.id},
+        }
+        for f in features
+    ]
+
+
 class _SemanticFeatureUpdateRes(BaseModel):
     """Schema used to validate parsed feature-update commands returned by the LLM."""
 
@@ -112,7 +133,7 @@ async def llm_consolidate_features(
     """Merge overlapping features and return consolidation commands from the LLM."""
     parsed_output = await model.generate_parsed_response(
         system_prompt=consolidate_prompt,
-        user_prompt=json.dumps(_features_to_llm_format(features)),
+        user_prompt=json.dumps(_features_to_consolidation_format(features)),
         output_format=SemanticConsolidateMemoryRes,
     )
 

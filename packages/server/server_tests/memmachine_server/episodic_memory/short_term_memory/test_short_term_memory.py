@@ -8,10 +8,12 @@ from typing import Any, TypeVar, cast
 import pytest
 import pytest_asyncio
 from memmachine_common.api import EpisodeType
+from pydantic import JsonValue
 
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
 )
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.episode_store import ContentType, Episode
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.common.language_model import LanguageModel
@@ -78,10 +80,10 @@ class MockShortTermMemoryDataManager(SessionDataManager):
     async def create_new_session(
         self,
         session_key: str,
-        configuration: dict,
+        configuration: dict[str, JsonValue],
         param: EpisodicMemoryConf,
         description: str,
-        metadata: dict,
+        metadata: dict[str, JsonValue],
     ):
         pass
 
@@ -101,7 +103,9 @@ class MockShortTermMemoryDataManager(SessionDataManager):
             ),
         )
 
-    async def get_sessions(self, filters: dict[str, object] | None = None) -> list[str]:
+    async def get_sessions(
+        self, filters: dict[str, PropertyValue | None] | None = None
+    ) -> list[str]:
         return []
 
     async def update_session_episodic_config(
@@ -134,7 +138,7 @@ class MockLanguageModel(LanguageModel):
         self,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        tools: list | None = None,
+        tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, str] | None = None,
         max_attempts: int = 1,
     ) -> tuple[str, Any]:
@@ -147,6 +151,23 @@ class MockLanguageModel(LanguageModel):
         await asyncio.sleep(0.1)
         user_input = self.parse_summary(prompt)
         return f"summary:{user_input}", ""
+
+    async def generate_response_with_token_usage(
+        self,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, str] | None = None,
+        max_attempts: int = 1,
+    ) -> tuple[str, Any, int, int]:
+        response, tool_output = await self.generate_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools=tools,
+            tool_choice=tool_choice,
+            max_attempts=max_attempts,
+        )
+        return response, tool_output, 0, 0
 
     async def generate_parsed_response(
         self,

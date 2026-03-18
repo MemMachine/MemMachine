@@ -14,6 +14,10 @@ episodic_memory:
     llm_model: openai_model
     message_capacity: 500
 
+retrieval_agent:
+  llm_model: openai_model
+  reranker: my_reranker_id
+
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
@@ -39,6 +43,9 @@ resources:
         password: <YOUR_PASSWORD_HERE>
         pool_size: 5
         max_overflow: 10
+        pool_timeout: 30      # max seconds to wait for a pool connection (default: 30)
+        pool_recycle: -1      # max connection age in seconds; -1 = disabled (default: -1)
+        pool_pre_ping: false  # test connections for liveness before use (default: false)
     my_storage_id:
       provider: neo4j
       config:
@@ -49,6 +56,8 @@ resources:
         connection_acquisition_timeout: 60.0
         range_index_creation_threshold: 10000
         vector_index_creation_threshold: 10000
+        max_connection_lifetime: 3600  # max connection age in seconds; lower for AuraDB (e.g. 3000) (default: 3600)
+        # liveness_check_timeout: ~    # test idle connections after N seconds; 0 = always (default: disabled)
     sqlite_test:
       provider: sqlite
       config:

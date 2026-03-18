@@ -1,0 +1,118 @@
+---
+title: "Helm Chart (Kubernetes)"
+icon: "anchor"
+description: "Deploy MemMachine to a Kubernetes cluster using the official Helm chart."
+---
+
+The MemMachine Helm chart provides a production-ready deployment including the core API, PostgreSQL (with `pgvector`), and Neo4j. This guide covers standard installation, external database integration, and resource optimization.
+
+<Note>
+  **Prerequisites**: You will need a Kubernetes cluster (v1.19+), Helm 3 installed, and a `StorageClass` that supports **ReadWriteMany (RWX)** (e.g., NFS-client).
+</Note>
+
+## High-Level Architecture
+
+The chart exposes the MemMachine API via a **NodePort** (default `31001`), while internal databases are kept private within the cluster using `ClusterIP` services.
+
+
+---
+
+## Quick Start
+
+Deploy MemMachine with default settings (in-cluster databases) using a single command:
+
+<Steps>
+<Step title="Set Up Your Namespace">
+  ```bash
+  kubectl create namespace memmachine
+  ```
+</Step>
+<Step title="Install the Chart">
+
+Provide your OpenAI API key to enable the default LLM and embedding providers.
+
+```bash
+helm upgrade --install memmachine . \
+  --namespace memmachine \
+  --set memmachine.openaiApiKey=sk-xxxx...
+```
+</Step>
+<Step title="Verify the Pods">
+```bash
+kubectl get pods -n memmachine
+```
+</Step>
+</Steps>
+
+------
+
+## Configuration Reference
+
+### Persistent Storage
+
+By default, the chart requests **5Gi** per volume using the `nfs-client` storage class.
+
+| **Parameter**  | **Default**     | **Description**                            |
+| -------------- | --------------- | ------------------------------------------ |
+| `storageClass` | `nfs-client`    | StorageClass for all PVCs.                 |
+| `accessMode`   | `ReadWriteMany` | Must match your StorageClass capabilities. |
+| `pvcSize`      | `5Gi`           | Storage request for each component.        |
+
+### External Databases
+
+If you prefer to use managed services (like RDS or Neo4j Aura), disable the in-cluster components:
+
+Bash
+
+```
+helm upgrade --install memmachine . \
+  --set postgres.enabled=false --set postgres.host=pg.example.com \
+  --set neo4j.enabled=false --set neo4j.host=neo4j.example.com
+```
+
+### Resource Limits
+
+Our QA team has verified these baseline limits for small-to-medium workloads:
+
+| **Component**  | **CPU Request** | **Memory Limit** | **Note**                                      |
+| -------------- | --------------- | ---------------- | --------------------------------------------- |
+| **MemMachine** | `200m`          | `2Gi`            | No CPU limit to prevent inference throttling. |
+| **PostgreSQL** | `250m`          | `2Gi`            | Headroom for `pgvector` index builds.         |
+| **Neo4j**      | `500m`          | `2Gi`            | Covers JVM heap + Page Cache.                 |
+
+------
+
+## Advanced Usage
+
+<CardGroup cols={2}>
+
+<Card title="Ollama Integration" icon="microchip">
+Override `model.base_url` and `model.provider` in your `values.yaml` to point to a local Ollama instance.
+</Card>
+<Card title="NodePort Customization" icon="network-wired">
+Change the default port by setting `nodePorts.http8080` to your desired range (30000-32767).
+</Card>
+</CardGroup>
+
+### Example: Custom Values File
+
+For production setups, we recommend using a `values-override.yaml`:
+
+```yaml
+memmachine:
+  resources:
+    limits:
+      memory: 4Gi
+neo4j:
+  heap:
+    max: 4G
+  resources:
+    limits:
+      memory: 8Gi
+```
+
+------
+
+<Tip>
+**Cleanup**: Helm does not delete PVCs by default to prevent accidental data loss. To fully wipe a deployment, run `helm uninstall memmachine` followed by `kubectl delete pvc -l app=memmachine`.
+</Tip>

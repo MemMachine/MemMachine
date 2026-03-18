@@ -8,7 +8,6 @@ of a vector graph store using Neo4j as the backend database.
 import asyncio
 import logging
 import re
-import time
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import Enum
 from typing import Any, LiteralString, cast
@@ -44,7 +43,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.neo4j_utils import (
     render_comparison,
     sanitize_value_for_neo4j,
@@ -111,10 +110,6 @@ class Neo4jVectorGraphStoreParams(BaseModel):
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
-        user_metrics_labels (dict[str, str]):
-            Labels to attach to the collected metrics
-            (default: {}).
-
     """
 
     driver: InstanceOf[AsyncDriver] = Field(
@@ -172,10 +167,6 @@ class Neo4jVectorGraphStoreParams(BaseModel):
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
     )
-    user_metrics_labels: dict[str, str] = Field(
-        default_factory=dict,
-        description="Labels to attach to the collected metrics",
-    )
 
 
 # https://neo4j.com/developer/kb/protecting-against-cypher-injection
@@ -217,189 +208,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         self._background_tasks: set[asyncio.Task] = set()
 
-        metrics_factory = params.metrics_factory
-
-        self._add_nodes_calls_counter = None
-        self._add_nodes_latency_summary = None
-        self._add_edges_calls_counter = None
-        self._add_edges_latency_summary = None
-        self._search_similar_nodes_calls_counter = None
-        self._search_similar_nodes_latency_summary = None
-        self._search_related_nodes_calls_counter = None
-        self._search_related_nodes_latency_summary = None
-        self._search_directional_nodes_calls_counter = None
-        self._search_directional_nodes_latency_summary = None
-        self._search_matching_nodes_calls_counter = None
-        self._search_matching_nodes_latency_summary = None
-        self._get_nodes_calls_counter = None
-        self._get_nodes_latency_summary = None
-        self._delete_nodes_calls_counter = None
-        self._delete_nodes_latency_summary = None
-        self._count_nodes_calls_counter = None
-        self._count_nodes_latency_summary = None
-        self._count_edges_calls_counter = None
-        self._count_edges_latency_summary = None
-        self._populate_index_state_cache_calls_counter = None
-        self._populate_index_state_cache_latency_summary = None
-        self._create_initial_indexes_if_not_exist_calls_counter = None
-        self._create_initial_indexes_if_not_exist_latency_summary = None
-        self._create_range_index_if_not_exists_calls_counter = None
-        self._create_range_index_if_not_exists_latency_summary = None
-        self._create_vector_index_if_not_exists_calls_counter = None
-        self._create_vector_index_if_not_exists_latency_summary = None
-
-        self._should_collect_metrics = False
-        if metrics_factory is not None:
-            self._should_collect_metrics = True
-            self._user_metrics_labels = params.user_metrics_labels
-            label_names = self._user_metrics_labels.keys()
-
-            self._add_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_add_nodes_calls",
-                "Number of calls to add_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._add_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_add_nodes_latency_seconds",
-                "Latency in seconds for add_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._add_edges_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_add_edges_calls",
-                "Number of calls to add_edges in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._add_edges_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_add_edges_latency_seconds",
-                "Latency in seconds for add_edges in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-
-            self._search_similar_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_search_similar_nodes_calls",
-                "Number of calls to search_similar_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_similar_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_search_similar_nodes_latency_seconds",
-                "Latency in seconds for search_similar_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_related_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_search_related_nodes_calls",
-                "Number of calls to search_related_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_related_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_search_related_nodes_latency_seconds",
-                "Latency in seconds for search_related_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_directional_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_search_directional_nodes_calls",
-                "Number of calls to search_directional_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_directional_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_search_directional_nodes_latency_seconds",
-                "Latency in seconds for search_directional_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_matching_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_search_matching_nodes_calls",
-                "Number of calls to search_matching_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._search_matching_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_search_matching_nodes_latency_seconds",
-                "Latency in seconds for search_matching_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-
-            self._get_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_get_nodes_calls",
-                "Number of calls to get_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._get_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_get_nodes_latency_seconds",
-                "Latency in seconds for get_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-
-            self._delete_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_delete_nodes_calls",
-                "Number of calls to delete_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._delete_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_delete_nodes_latency_seconds",
-                "Latency in seconds for delete_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-
-            self._count_nodes_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_count_nodes_calls",
-                "Number of calls to count_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._count_nodes_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_count_nodes_latency_seconds",
-                "Latency in seconds for count_nodes in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._count_edges_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_count_edges_calls",
-                "Number of calls to count_edges in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._count_edges_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_count_edges_latency_seconds",
-                "Latency in seconds for count_edges in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-
-            self._populate_index_state_cache_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_populate_index_state_cache_calls",
-                "Number of calls to _populate_index_state_cache in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._populate_index_state_cache_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_populate_index_state_cache_latency_seconds",
-                "Latency in seconds for _populate_index_state_cache in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-
-            self._create_initial_indexes_if_not_exist_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_create_initial_indexes_if_not_exist_calls",
-                "Number of calls to _create_initial_indexes_if_not_exist in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_initial_indexes_if_not_exist_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_create_initial_indexes_if_not_exist_latency_seconds",
-                "Latency in seconds for _create_initial_indexes_if_not_exist in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_range_index_if_not_exists_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_create_range_index_if_not_exists_calls",
-                "Number of calls to _create_range_index_if_not_exists in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_range_index_if_not_exists_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_create_range_index_if_not_exists_latency_seconds",
-                "Latency in seconds for _create_range_index_if_not_exists in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_vector_index_if_not_exists_calls_counter = metrics_factory.get_counter(
-                "vector_graph_store_neo4j_create_vector_index_if_not_exists_calls",
-                "Number of calls to _create_vector_index_if_not_exists in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
-            self._create_vector_index_if_not_exists_latency_summary = metrics_factory.get_summary(
-                "vector_graph_store_neo4j_create_vector_index_if_not_exists_latency_seconds",
-                "Latency in seconds for _create_vector_index_if_not_exists in Neo4jVectorGraphStore",
-                label_names=label_names,
-            )
+        self._tracker = OperationTracker(
+            params.metrics_factory, prefix="vector_graph_store_neo4j"
+        )
 
     def _track_task(self, task: asyncio.Task) -> None:
         """Keep background tasks from being garbage collected prematurely."""
@@ -413,120 +224,113 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         nodes: Iterable[Node],
     ) -> None:
         """Add nodes to a collection, creating indexes as needed."""
-        start_time = time.monotonic()
-
-        if collection not in self._collection_node_counts:
-            # Not async-safe but it's not crucial if the count is off.
-            self._collection_node_counts[collection] = await self._count_nodes(
-                collection,
-            )
-
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
-        sanitized_embedding_names = set()
-        embedding_dimensions_by_name: dict[str, int] = {}
-        embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
-
-        query_nodes = []
-        for node in nodes:
-            query_node_properties = Neo4jVectorGraphStore._sanitize_properties(
-                {
-                    mangle_property_name(key): value
-                    for key, value in node.properties.items()
-                },
-            )
-
-            for embedding_name, (
-                embedding,
-                similarity_metric,
-            ) in node.embeddings.items():
-                sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
-                    mangle_embedding_name(embedding_name),
-                )
-                sanitized_similarity_metric_name = Neo4jVectorGraphStore._sanitize_name(
-                    Neo4jVectorGraphStore._similarity_metric_property_name(
-                        embedding_name,
-                    ),
+        async with self._tracker("add_nodes"):
+            if collection not in self._collection_node_counts:
+                # Not async-safe but it's not crucial if the count is off.
+                self._collection_node_counts[collection] = await self._count_nodes(
+                    collection,
                 )
 
-                sanitized_embedding_names.add(sanitized_embedding_name)
-                embedding_dimensions_by_name[sanitized_embedding_name] = len(
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
+            sanitized_embedding_names = set()
+            embedding_dimensions_by_name: dict[str, int] = {}
+            embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
+
+            query_nodes = []
+            for node in nodes:
+                query_node_properties = Neo4jVectorGraphStore._sanitize_properties(
+                    {
+                        mangle_property_name(key): value
+                        for key, value in node.properties.items()
+                    },
+                )
+
+                for embedding_name, (
                     embedding,
-                )
-                embedding_similarity_by_name[sanitized_embedding_name] = (
-                    similarity_metric
-                )
-
-                query_node_properties[sanitized_embedding_name] = embedding
-                query_node_properties[sanitized_similarity_metric_name] = (
-                    similarity_metric.value
-                )
-
-            query_node: dict[str, PropertyValue | dict[str, PropertyValue]] = {
-                "uid": str(node.uid),
-                "properties": query_node_properties,
-            }
-            query_nodes.append(query_node)
-
-        await self._driver.execute_query(
-            _neo4j_query(
-                "UNWIND $nodes AS node\n"
-                f"CREATE (n:{sanitized_collection} {{uid: node.uid}})\n"
-                "SET n += node.properties"
-            ),
-            nodes=query_nodes,
-        )
-
-        self._collection_node_counts[collection] += len(query_nodes)
-
-        if (
-            self._collection_node_counts[collection]
-            >= self._range_index_creation_threshold
-        ):
-            self._track_task(
-                asyncio.create_task(
-                    self._create_initial_indexes_if_not_exist(
-                        EntityType.NODE,
-                        sanitized_collection,
-                    ),
-                )
-            )
-
-        if (
-            self._collection_node_counts[collection]
-            >= self._vector_index_creation_threshold
-        ):
-            for sanitized_embedding_name in sanitized_embedding_names:
-                if (
-                    Neo4jVectorGraphStore._index_name(
-                        EntityType.NODE,
-                        sanitized_collection,
-                        sanitized_embedding_name,
+                    similarity_metric,
+                ) in node.embeddings.items():
+                    sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
+                        mangle_embedding_name(embedding_name),
                     )
-                    not in self._index_state_cache
-                ):
-                    self._track_task(
-                        asyncio.create_task(
-                            self._create_vector_index_if_not_exists(
-                                entity_type=EntityType.NODE,
-                                sanitized_collection_or_relation=sanitized_collection,
-                                sanitized_embedding_name=sanitized_embedding_name,
-                                dimensions=embedding_dimensions_by_name[
-                                    sanitized_embedding_name
-                                ],
-                                similarity_metric=embedding_similarity_by_name[
-                                    sanitized_embedding_name
-                                ],
+                    sanitized_similarity_metric_name = (
+                        Neo4jVectorGraphStore._sanitize_name(
+                            Neo4jVectorGraphStore._similarity_metric_property_name(
+                                embedding_name,
                             ),
                         )
                     )
 
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._add_nodes_calls_counter,
-            self._add_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
+                    sanitized_embedding_names.add(sanitized_embedding_name)
+                    embedding_dimensions_by_name[sanitized_embedding_name] = len(
+                        embedding,
+                    )
+                    embedding_similarity_by_name[sanitized_embedding_name] = (
+                        similarity_metric
+                    )
+
+                    query_node_properties[sanitized_embedding_name] = embedding
+                    query_node_properties[sanitized_similarity_metric_name] = (
+                        similarity_metric.value
+                    )
+
+                query_node: dict[str, PropertyValue | dict[str, PropertyValue]] = {
+                    "uid": str(node.uid),
+                    "properties": query_node_properties,
+                }
+                query_nodes.append(query_node)
+
+            await self._driver.execute_query(
+                _neo4j_query(
+                    "UNWIND $nodes AS node\n"
+                    f"CREATE (n:{sanitized_collection} {{uid: node.uid}})\n"
+                    "SET n += node.properties"
+                ),
+                nodes=query_nodes,
+            )
+
+            self._collection_node_counts[collection] += len(query_nodes)
+
+            if (
+                self._collection_node_counts[collection]
+                >= self._range_index_creation_threshold
+            ):
+                self._track_task(
+                    asyncio.create_task(
+                        self._create_initial_indexes_if_not_exist(
+                            EntityType.NODE,
+                            sanitized_collection,
+                        ),
+                    )
+                )
+
+            if (
+                self._collection_node_counts[collection]
+                >= self._vector_index_creation_threshold
+            ):
+                for sanitized_embedding_name in sanitized_embedding_names:
+                    if (
+                        Neo4jVectorGraphStore._index_name(
+                            EntityType.NODE,
+                            sanitized_collection,
+                            sanitized_embedding_name,
+                        )
+                        not in self._index_state_cache
+                    ):
+                        self._track_task(
+                            asyncio.create_task(
+                                self._create_vector_index_if_not_exists(
+                                    entity_type=EntityType.NODE,
+                                    sanitized_collection_or_relation=sanitized_collection,
+                                    sanitized_embedding_name=sanitized_embedding_name,
+                                    dimensions=embedding_dimensions_by_name[
+                                        sanitized_embedding_name
+                                    ],
+                                    similarity_metric=embedding_similarity_by_name[
+                                        sanitized_embedding_name
+                                    ],
+                                ),
+                            )
+                        )
 
     async def add_edges(
         self,
@@ -537,128 +341,124 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         edges: Iterable[Edge],
     ) -> None:
         """Add edges between collections, creating indexes as needed."""
-        start_time = time.monotonic()
+        async with self._tracker("add_edges"):
+            if relation not in self._relation_edge_counts:
+                # Not async-safe but it's not crucial if the count is off.
+                self._relation_edge_counts[relation] = await self._count_edges(relation)
 
-        if relation not in self._relation_edge_counts:
-            # Not async-safe but it's not crucial if the count is off.
-            self._relation_edge_counts[relation] = await self._count_edges(relation)
+            sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
+            sanitized_embedding_names = set()
+            embedding_dimensions_by_name: dict[str, int] = {}
+            embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
 
-        sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
-        sanitized_embedding_names = set()
-        embedding_dimensions_by_name: dict[str, int] = {}
-        embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
-
-        query_edges = []
-        for edge in edges:
-            query_edge_properties = Neo4jVectorGraphStore._sanitize_properties(
-                {
-                    mangle_property_name(key): value
-                    for key, value in edge.properties.items()
-                },
-            )
-
-            for embedding_name, (
-                embedding,
-                similarity_metric,
-            ) in edge.embeddings.items():
-                sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
-                    mangle_embedding_name(embedding_name),
-                )
-                sanitized_similarity_metric_name = Neo4jVectorGraphStore._sanitize_name(
-                    Neo4jVectorGraphStore._similarity_metric_property_name(
-                        embedding_name,
-                    ),
+            query_edges = []
+            for edge in edges:
+                query_edge_properties = Neo4jVectorGraphStore._sanitize_properties(
+                    {
+                        mangle_property_name(key): value
+                        for key, value in edge.properties.items()
+                    },
                 )
 
-                sanitized_embedding_names.add(sanitized_embedding_name)
-                embedding_dimensions_by_name[sanitized_embedding_name] = len(
+                for embedding_name, (
                     embedding,
-                )
-                embedding_similarity_by_name[sanitized_embedding_name] = (
-                    similarity_metric
-                )
-
-                query_edge_properties[sanitized_embedding_name] = embedding
-                query_edge_properties[sanitized_similarity_metric_name] = (
-                    similarity_metric.value
-                )
-
-            query_edge = {
-                "uid": str(edge.uid),
-                "source_uid": str(edge.source_uid),
-                "target_uid": str(edge.target_uid),
-                "properties": query_edge_properties,
-            }
-            query_edges.append(query_edge)
-
-        sanitized_source_collection = Neo4jVectorGraphStore._sanitize_name(
-            source_collection,
-        )
-        sanitized_target_collection = Neo4jVectorGraphStore._sanitize_name(
-            target_collection,
-        )
-        await self._driver.execute_query(
-            _neo4j_query(
-                "UNWIND $edges AS edge\n"
-                "MATCH"
-                f"    (source:{sanitized_source_collection} {{uid: edge.source_uid}}),"
-                f" (target:{sanitized_target_collection} {{uid: edge.target_uid}})\n"
-                "CREATE (source)"
-                f"    -[r:{sanitized_relation} {{uid: edge.uid}}]->"
-                "    (target)\n"
-                "SET r += edge.properties"
-            ),
-            edges=query_edges,
-        )
-
-        self._relation_edge_counts[relation] += len(query_edges)
-
-        if self._relation_edge_counts[relation] >= self._range_index_creation_threshold:
-            self._track_task(
-                asyncio.create_task(
-                    self._create_initial_indexes_if_not_exist(
-                        EntityType.EDGE,
-                        sanitized_relation,
-                    ),
-                )
-            )
-
-        if (
-            self._relation_edge_counts[relation]
-            >= self._vector_index_creation_threshold
-        ):
-            for sanitized_embedding_name in sanitized_embedding_names:
-                if (
-                    Neo4jVectorGraphStore._index_name(
-                        EntityType.EDGE,
-                        sanitized_relation,
-                        sanitized_embedding_name,
+                    similarity_metric,
+                ) in edge.embeddings.items():
+                    sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
+                        mangle_embedding_name(embedding_name),
                     )
-                    not in self._index_state_cache
-                ):
-                    self._track_task(
-                        asyncio.create_task(
-                            self._create_vector_index_if_not_exists(
-                                entity_type=EntityType.EDGE,
-                                sanitized_collection_or_relation=sanitized_relation,
-                                sanitized_embedding_name=sanitized_embedding_name,
-                                dimensions=embedding_dimensions_by_name[
-                                    sanitized_embedding_name
-                                ],
-                                similarity_metric=embedding_similarity_by_name[
-                                    sanitized_embedding_name
-                                ],
+                    sanitized_similarity_metric_name = (
+                        Neo4jVectorGraphStore._sanitize_name(
+                            Neo4jVectorGraphStore._similarity_metric_property_name(
+                                embedding_name,
                             ),
                         )
                     )
 
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._add_edges_calls_counter,
-            self._add_edges_latency_summary,
-            start_time,
-            end_time,
-        )
+                    sanitized_embedding_names.add(sanitized_embedding_name)
+                    embedding_dimensions_by_name[sanitized_embedding_name] = len(
+                        embedding,
+                    )
+                    embedding_similarity_by_name[sanitized_embedding_name] = (
+                        similarity_metric
+                    )
+
+                    query_edge_properties[sanitized_embedding_name] = embedding
+                    query_edge_properties[sanitized_similarity_metric_name] = (
+                        similarity_metric.value
+                    )
+
+                query_edge = {
+                    "uid": str(edge.uid),
+                    "source_uid": str(edge.source_uid),
+                    "target_uid": str(edge.target_uid),
+                    "properties": query_edge_properties,
+                }
+                query_edges.append(query_edge)
+
+            sanitized_source_collection = Neo4jVectorGraphStore._sanitize_name(
+                source_collection,
+            )
+            sanitized_target_collection = Neo4jVectorGraphStore._sanitize_name(
+                target_collection,
+            )
+            await self._driver.execute_query(
+                _neo4j_query(
+                    "UNWIND $edges AS edge\n"
+                    "MATCH"
+                    f"    (source:{sanitized_source_collection} {{uid: edge.source_uid}}),"
+                    f" (target:{sanitized_target_collection} {{uid: edge.target_uid}})\n"
+                    "CREATE (source)"
+                    f"    -[r:{sanitized_relation} {{uid: edge.uid}}]->"
+                    "    (target)\n"
+                    "SET r += edge.properties"
+                ),
+                edges=query_edges,
+            )
+
+            self._relation_edge_counts[relation] += len(query_edges)
+
+            if (
+                self._relation_edge_counts[relation]
+                >= self._range_index_creation_threshold
+            ):
+                self._track_task(
+                    asyncio.create_task(
+                        self._create_initial_indexes_if_not_exist(
+                            EntityType.EDGE,
+                            sanitized_relation,
+                        ),
+                    )
+                )
+
+            if (
+                self._relation_edge_counts[relation]
+                >= self._vector_index_creation_threshold
+            ):
+                for sanitized_embedding_name in sanitized_embedding_names:
+                    if (
+                        Neo4jVectorGraphStore._index_name(
+                            EntityType.EDGE,
+                            sanitized_relation,
+                            sanitized_embedding_name,
+                        )
+                        not in self._index_state_cache
+                    ):
+                        self._track_task(
+                            asyncio.create_task(
+                                self._create_vector_index_if_not_exists(
+                                    entity_type=EntityType.EDGE,
+                                    sanitized_collection_or_relation=sanitized_relation,
+                                    sanitized_embedding_name=sanitized_embedding_name,
+                                    dimensions=embedding_dimensions_by_name[
+                                        sanitized_embedding_name
+                                    ],
+                                    similarity_metric=embedding_similarity_by_name[
+                                        sanitized_embedding_name
+                                    ],
+                                ),
+                            )
+                        )
 
     async def search_similar_nodes(
         self,
@@ -671,117 +471,108 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """Search nodes by vector similarity with optional property filters."""
-        start_time = time.monotonic()
-
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
-        sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
-            mangle_embedding_name(embedding_name),
-        )
-        vector_index_name = Neo4jVectorGraphStore._index_name(
-            EntityType.NODE,
-            sanitized_collection,
-            sanitized_embedding_name,
-        )
-
-        query_filter_string, query_filter_params = (
-            Neo4jVectorGraphStore._build_query_filter(
-                "n",
-                "query_filter_params",
-                property_filter,
+        async with self._tracker("search_similar_nodes"):
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
+            sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
+                mangle_embedding_name(embedding_name),
             )
-        )
-
-        do_exact_similarity_search = self._force_exact_similarity_search
-        records: list[Any] = []
-
-        if not do_exact_similarity_search:
-            await self._populate_index_state_cache()
-
-            if (
-                self._index_state_cache.get(vector_index_name)
-                != Neo4jVectorGraphStore.CacheIndexState.ONLINE
-            ):
-                do_exact_similarity_search = True
-
-        if not do_exact_similarity_search:
-            # ANN search requires a finite limit.
-            if limit is None:
-                limit = 1000
-
-            query = (
-                "CALL db.index.vector.queryNodes(\n"
-                "    $vector_index_name, $query_limit, $query_embedding\n"
-                ")\n"
-                "YIELD node AS n, score AS similarity\n"
-                f"WHERE {query_filter_string}\n"
-                "RETURN n\n"
-                "ORDER BY similarity DESC\n"
-                "LIMIT $limit"
+            vector_index_name = Neo4jVectorGraphStore._index_name(
+                EntityType.NODE,
+                sanitized_collection,
+                sanitized_embedding_name,
             )
 
-            records, _, _ = await self._driver.execute_query(
-                _neo4j_query(query),
-                query_embedding=query_embedding,
-                query_limit=(
-                    limit
-                    if property_filter is None
-                    else limit * self._filtered_similarity_search_fudge_factor
-                ),
-                limit=limit,
-                query_filter_params=query_filter_params,
-                vector_index_name=vector_index_name,
+            query_filter_string, query_filter_params = (
+                Neo4jVectorGraphStore._build_query_filter(
+                    "n",
+                    "query_filter_params",
+                    property_filter,
+                )
             )
 
-            if (
-                property_filter is not None
-                and len(records)
-                < limit * self._exact_similarity_search_fallback_threshold
-            ):
-                do_exact_similarity_search = True
+            do_exact_similarity_search = self._force_exact_similarity_search
+            records: list[Any] = []
 
-        if do_exact_similarity_search:
-            match similarity_metric:
-                case SimilarityMetric.COSINE:
-                    vector_similarity_function = "vector.similarity.cosine"
-                case SimilarityMetric.EUCLIDEAN:
-                    vector_similarity_function = "vector.similarity.euclidean"
-                case _:
-                    vector_similarity_function = "vector.similarity.cosine"
+            if not do_exact_similarity_search:
+                await self._populate_index_state_cache()
 
-            query = (
-                f"MATCH (n:{sanitized_collection})\n"
-                f"WHERE n.{sanitized_embedding_name} IS NOT NULL\n"
-                f"AND {query_filter_string}\n"
-                "WITH n,"
-                f"    {vector_similarity_function}("
-                f"        n.{sanitized_embedding_name}, $query_embedding"
-                "    ) AS similarity\n"
-                "RETURN n\n"
-                "ORDER BY similarity DESC\n"
-                f"{'LIMIT $limit' if limit is not None else ''}"
+                if (
+                    self._index_state_cache.get(vector_index_name)
+                    != Neo4jVectorGraphStore.CacheIndexState.ONLINE
+                ):
+                    do_exact_similarity_search = True
+
+            if not do_exact_similarity_search:
+                # ANN search requires a finite limit.
+                if limit is None:
+                    limit = 1000
+
+                query = (
+                    "CALL db.index.vector.queryNodes(\n"
+                    "    $vector_index_name, $query_limit, $query_embedding\n"
+                    ")\n"
+                    "YIELD node AS n, score AS similarity\n"
+                    f"WHERE {query_filter_string}\n"
+                    "RETURN n\n"
+                    "ORDER BY similarity DESC\n"
+                    "LIMIT $limit"
+                )
+
+                records, _, _ = await self._driver.execute_query(
+                    _neo4j_query(query),
+                    query_embedding=query_embedding,
+                    query_limit=(
+                        limit
+                        if property_filter is None
+                        else limit * self._filtered_similarity_search_fudge_factor
+                    ),
+                    limit=limit,
+                    query_filter_params=query_filter_params,
+                    vector_index_name=vector_index_name,
+                )
+
+                if (
+                    property_filter is not None
+                    and len(records)
+                    < limit * self._exact_similarity_search_fallback_threshold
+                ):
+                    do_exact_similarity_search = True
+
+            if do_exact_similarity_search:
+                match similarity_metric:
+                    case SimilarityMetric.COSINE:
+                        vector_similarity_function = "vector.similarity.cosine"
+                    case SimilarityMetric.EUCLIDEAN:
+                        vector_similarity_function = "vector.similarity.euclidean"
+                    case _:
+                        vector_similarity_function = "vector.similarity.cosine"
+
+                query = (
+                    f"MATCH (n:{sanitized_collection})\n"
+                    f"WHERE n.{sanitized_embedding_name} IS NOT NULL\n"
+                    f"AND {query_filter_string}\n"
+                    "WITH n,"
+                    f"    {vector_similarity_function}("
+                    f"        n.{sanitized_embedding_name}, $query_embedding"
+                    "    ) AS similarity\n"
+                    "RETURN n\n"
+                    "ORDER BY similarity DESC\n"
+                    f"{'LIMIT $limit' if limit is not None else ''}"
+                )
+
+                records, _, _ = await self._driver.execute_query(
+                    _neo4j_query(query),
+                    query_embedding=query_embedding,
+                    limit=limit,
+                    query_filter_params=query_filter_params,
+                )
+
+            similar_neo4j_nodes = [record["n"] for record in records]
+            similar_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
+                similar_neo4j_nodes
             )
 
-            records, _, _ = await self._driver.execute_query(
-                _neo4j_query(query),
-                query_embedding=query_embedding,
-                limit=limit,
-                query_filter_params=query_filter_params,
-            )
-
-        similar_neo4j_nodes = [record["n"] for record in records]
-        similar_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-            similar_neo4j_nodes
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._search_similar_nodes_calls_counter,
-            self._search_similar_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return similar_nodes
+            return similar_nodes
 
     async def search_related_nodes(
         self,
@@ -797,196 +588,173 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         node_property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """Search nodes connected by a relation with optional property filters."""
-        start_time = time.monotonic()
-
-        edge_query_filter_string, edge_query_filter_params = (
-            Neo4jVectorGraphStore._build_query_filter(
-                "r",
-                "edge_query_filter_params",
-                edge_property_filter,
+        async with self._tracker("search_related_nodes"):
+            edge_query_filter_string, edge_query_filter_params = (
+                Neo4jVectorGraphStore._build_query_filter(
+                    "r",
+                    "edge_query_filter_params",
+                    edge_property_filter,
+                )
             )
-        )
-        node_query_filter_string, node_query_filter_params = (
-            Neo4jVectorGraphStore._build_query_filter(
-                "n",
-                "node_query_filter_params",
-                node_property_filter,
+            node_query_filter_string, node_query_filter_params = (
+                Neo4jVectorGraphStore._build_query_filter(
+                    "n",
+                    "node_query_filter_params",
+                    node_property_filter,
+                )
             )
-        )
 
-        if not (find_sources or find_targets):
-            end_time = time.monotonic()
-            self._collect_metrics(
-                self._search_related_nodes_calls_counter,
-                self._search_related_nodes_latency_summary,
-                start_time,
-                end_time,
+            if not (find_sources or find_targets):
+                return []
+
+            sanitized_this_collection = Neo4jVectorGraphStore._sanitize_name(
+                this_collection,
             )
-            return []
+            sanitized_other_collection = Neo4jVectorGraphStore._sanitize_name(
+                other_collection,
+            )
+            sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
 
-        sanitized_this_collection = Neo4jVectorGraphStore._sanitize_name(
-            this_collection,
-        )
-        sanitized_other_collection = Neo4jVectorGraphStore._sanitize_name(
-            other_collection,
-        )
-        sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(
+                    "MATCH\n"
+                    f"    (m:{sanitized_this_collection} {{uid: $node_uid}})"
+                    f"    {'-' if find_targets else '<-'}"
+                    f"    [r:{sanitized_relation}]"
+                    f"    {'-' if find_sources else '->'}"
+                    f"    (n:{sanitized_other_collection})"
+                    f"WHERE {edge_query_filter_string}\n"
+                    f"AND {node_query_filter_string}\n"
+                    "RETURN DISTINCT n\n"
+                    f"{'LIMIT $limit' if limit is not None else ''}"
+                ),
+                node_uid=str(this_node_uid),
+                limit=limit,
+                edge_query_filter_params=edge_query_filter_params,
+                node_query_filter_params=node_query_filter_params,
+            )
 
-        records, _, _ = await self._driver.execute_query(
-            _neo4j_query(
-                "MATCH\n"
-                f"    (m:{sanitized_this_collection} {{uid: $node_uid}})"
-                f"    {'-' if find_targets else '<-'}"
-                f"    [r:{sanitized_relation}]"
-                f"    {'-' if find_sources else '->'}"
-                f"    (n:{sanitized_other_collection})"
-                f"WHERE {edge_query_filter_string}\n"
-                f"AND {node_query_filter_string}\n"
-                "RETURN DISTINCT n\n"
-                f"{'LIMIT $limit' if limit is not None else ''}"
-            ),
-            node_uid=str(this_node_uid),
-            limit=limit,
-            edge_query_filter_params=edge_query_filter_params,
-            node_query_filter_params=node_query_filter_params,
-        )
+            related_neo4j_nodes = [record["n"] for record in records]
+            related_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
+                related_neo4j_nodes
+            )
 
-        related_neo4j_nodes = [record["n"] for record in records]
-        related_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-            related_neo4j_nodes
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._search_related_nodes_calls_counter,
-            self._search_related_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return related_nodes
+            return related_nodes
 
     async def search_directional_nodes(
         self,
         *,
         collection: str,
         by_properties: Iterable[str],
-        starting_at: Iterable[OrderedValue | None],
+        starting_at: Iterable[OrderedValue | str | None],
         order_ascending: Iterable[bool],
         include_equal_start: bool = False,
         limit: int | None = 1,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """Find nodes ordered by property values in a chosen direction."""
-        start_time = time.monotonic()
+        async with self._tracker("search_directional_nodes"):
+            by_properties = list(by_properties)
+            starting_at = list(starting_at)
+            order_ascending = list(order_ascending)
 
-        by_properties = list(by_properties)
-        starting_at = list(starting_at)
-        order_ascending = list(order_ascending)
-
-        if not (len(by_properties) == len(starting_at) == len(order_ascending) > 0):
-            raise ValueError(
-                "Lengths of "
-                "by_properties, starting_at, and order_ascending "
-                "must be equal and greater than 0.",
-            )
-
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
-        sanitized_by_properties = [
-            Neo4jVectorGraphStore._sanitize_name(mangle_property_name(by_property))
-            for by_property in by_properties
-        ]
-
-        query_relational_requirements = (
-            Neo4jVectorGraphStore._query_lexicographic_relational_requirements(
-                "n",
-                "starting_at",
-                sanitized_by_properties,
-                starting_at,
-                order_ascending,
-            )
-            + (
-                (
-                    " OR ("
-                    + (
-                        " AND ".join(
-                            render_comparison(
-                                f"n.{sanitized_by_property}",
-                                "=",
-                                f"$starting_at[{index}]",
-                                starting_value,
-                            )
-                            for index, sanitized_by_property in enumerate(
-                                sanitized_by_properties,
-                            )
-                            if (starting_value := starting_at[index]) is not None
-                        )
-                        or "TRUE"  # All starting_at values are None → no constraints
-                    )
-                    + ")"
+            if not (len(by_properties) == len(starting_at) == len(order_ascending) > 0):
+                raise ValueError(
+                    "Lengths of "
+                    "by_properties, starting_at, and order_ascending "
+                    "must be equal and greater than 0.",
                 )
-                if include_equal_start
-                else ""
+
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
+            sanitized_by_properties = [
+                Neo4jVectorGraphStore._sanitize_name(mangle_property_name(by_property))
+                for by_property in by_properties
+            ]
+
+            query_relational_requirements = (
+                Neo4jVectorGraphStore._query_lexicographic_relational_requirements(
+                    "n",
+                    "starting_at",
+                    sanitized_by_properties,
+                    starting_at,
+                    order_ascending,
+                )
+                + (
+                    (
+                        " OR ("
+                        + (
+                            " AND ".join(
+                                render_comparison(
+                                    f"n.{sanitized_by_property}",
+                                    "=",
+                                    f"$starting_at[{index}]",
+                                    starting_value,
+                                )
+                                for index, sanitized_by_property in enumerate(
+                                    sanitized_by_properties,
+                                )
+                                if (starting_value := starting_at[index]) is not None
+                            )
+                            or "TRUE"  # All starting_at values are None → no constraints
+                        )
+                        + ")"
+                    )
+                    if include_equal_start
+                    else ""
+                )
             )
-        )
 
-        query_order_by = (
-            "ORDER BY "
-            + ", ".join(
-                f"n.{sanitized_by_property} {
-                    'ASC' if order_ascending[index] else 'DESC'
-                }"
-                for index, sanitized_by_property in enumerate(sanitized_by_properties)
+            query_order_by = (
+                "ORDER BY "
+                + ", ".join(
+                    f"n.{sanitized_by_property} {
+                        'ASC' if order_ascending[index] else 'DESC'
+                    }"
+                    for index, sanitized_by_property in enumerate(
+                        sanitized_by_properties
+                    )
+                )
+                + "\n"
             )
-            + "\n"
-        )
 
-        query_filter_string, query_filter_params = (
-            Neo4jVectorGraphStore._build_query_filter(
-                "n",
-                "query_filter_params",
-                property_filter,
+            query_filter_string, query_filter_params = (
+                Neo4jVectorGraphStore._build_query_filter(
+                    "n",
+                    "query_filter_params",
+                    property_filter,
+                )
             )
-        )
 
-        records, _, _ = await self._driver.execute_query(
-            _neo4j_query(
-                f"MATCH (n:{sanitized_collection})\n"
-                f"WHERE ({query_relational_requirements})\n"
-                f"AND {query_filter_string}\n"
-                "RETURN n\n"
-                f"{query_order_by}"
-                f"{'LIMIT $limit' if limit is not None else ''}"
-            ),
-            starting_at=[
-                sanitize_value_for_neo4j(starting_at_value)
-                for starting_at_value in starting_at
-            ],
-            limit=limit,
-            query_filter_params=query_filter_params,
-        )
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(
+                    f"MATCH (n:{sanitized_collection})\n"
+                    f"WHERE ({query_relational_requirements})\n"
+                    f"AND {query_filter_string}\n"
+                    "RETURN n\n"
+                    f"{query_order_by}"
+                    f"{'LIMIT $limit' if limit is not None else ''}"
+                ),
+                starting_at=[
+                    sanitize_value_for_neo4j(starting_at_value)
+                    for starting_at_value in starting_at
+                ],
+                limit=limit,
+                query_filter_params=query_filter_params,
+            )
 
-        directional_proximal_neo4j_nodes = [record["n"] for record in records]
-        directional_proximal_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-            directional_proximal_neo4j_nodes,
-        )
+            directional_proximal_neo4j_nodes = [record["n"] for record in records]
+            directional_proximal_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
+                directional_proximal_neo4j_nodes,
+            )
 
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._search_directional_nodes_calls_counter,
-            self._search_directional_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return directional_proximal_nodes
+            return directional_proximal_nodes
 
     @staticmethod
     def _query_lexicographic_relational_requirements(
         entity_query_alias: str,
         starting_at_query_parameter: str,
         sanitized_by_properties: Iterable[str],
-        starting_at: Iterable[OrderedValue | None],
+        starting_at: Iterable[OrderedValue | str | None],
         order_ascending: Iterable[bool],
     ) -> str:
         sanitized_by_properties = list(sanitized_by_properties)
@@ -1056,43 +824,34 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
         """Search nodes that match the provided property filters."""
-        start_time = time.monotonic()
+        async with self._tracker("search_matching_nodes"):
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
-
-        query_filter_string, query_filter_params = (
-            Neo4jVectorGraphStore._build_query_filter(
-                "n",
-                "query_filter_params",
-                property_filter,
+            query_filter_string, query_filter_params = (
+                Neo4jVectorGraphStore._build_query_filter(
+                    "n",
+                    "query_filter_params",
+                    property_filter,
+                )
             )
-        )
 
-        records, _, _ = await self._driver.execute_query(
-            _neo4j_query(
-                f"MATCH (n:{sanitized_collection})\n"
-                f"WHERE {query_filter_string}\n"
-                "RETURN n\n"
-                f"{'LIMIT $limit' if limit is not None else ''}"
-            ),
-            limit=limit,
-            query_filter_params=query_filter_params,
-        )
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(
+                    f"MATCH (n:{sanitized_collection})\n"
+                    f"WHERE {query_filter_string}\n"
+                    "RETURN n\n"
+                    f"{'LIMIT $limit' if limit is not None else ''}"
+                ),
+                limit=limit,
+                query_filter_params=query_filter_params,
+            )
 
-        matching_neo4j_nodes = [record["n"] for record in records]
-        matching_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
-            matching_neo4j_nodes
-        )
+            matching_neo4j_nodes = [record["n"] for record in records]
+            matching_nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(
+                matching_neo4j_nodes
+            )
 
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._search_matching_nodes_calls_counter,
-            self._search_matching_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return matching_nodes
+            return matching_nodes
 
     async def get_nodes(
         self,
@@ -1101,31 +860,22 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         node_uids: Iterable[str],
     ) -> list[Node]:
         """Retrieve nodes by uid from a specific collection."""
-        start_time = time.monotonic()
+        async with self._tracker("get_nodes"):
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(
+                    "UNWIND $node_uids AS node_uid\n"
+                    f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
+                    "RETURN n"
+                ),
+                node_uids=[str(node_uid) for node_uid in node_uids],
+            )
 
-        records, _, _ = await self._driver.execute_query(
-            _neo4j_query(
-                "UNWIND $node_uids AS node_uid\n"
-                f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
-                "RETURN n"
-            ),
-            node_uids=[str(node_uid) for node_uid in node_uids],
-        )
+            neo4j_nodes = [record["n"] for record in records]
+            nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
 
-        neo4j_nodes = [record["n"] for record in records]
-        nodes = Neo4jVectorGraphStore._nodes_from_neo4j_nodes(neo4j_nodes)
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._get_nodes_calls_counter,
-            self._get_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return nodes
+            return nodes
 
     async def delete_nodes(
         self,
@@ -1134,26 +884,17 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         node_uids: Iterable[str],
     ) -> None:
         """Delete nodes by uid from a collection."""
-        start_time = time.monotonic()
+        async with self._tracker("delete_nodes"):
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
-
-        await self._driver.execute_query(
-            _neo4j_query(
-                "UNWIND $node_uids AS node_uid\n"
-                f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
-                "DETACH DELETE n"
-            ),
-            node_uids=[str(node_uid) for node_uid in node_uids],
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._delete_nodes_calls_counter,
-            self._delete_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
+            await self._driver.execute_query(
+                _neo4j_query(
+                    "UNWIND $node_uids AS node_uid\n"
+                    f"MATCH (n:{sanitized_collection} {{uid: node_uid}})\n"
+                    "DETACH DELETE n"
+                ),
+                node_uids=[str(node_uid) for node_uid in node_uids],
+            )
 
     async def delete_all_data(self) -> None:
         """Delete all nodes and relationships from the database."""
@@ -1165,88 +906,56 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def _count_nodes(self, collection: str) -> int:
         """Count the number of nodes in a collection."""
-        start_time = time.monotonic()
+        async with self._tracker("count_nodes"):
+            sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
 
-        sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(
+                    f"MATCH (n:{sanitized_collection})\nRETURN count(n) AS node_count"
+                ),
+            )
 
-        records, _, _ = await self._driver.execute_query(
-            _neo4j_query(
-                f"MATCH (n:{sanitized_collection})\nRETURN count(n) AS node_count"
-            ),
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._count_nodes_calls_counter,
-            self._count_nodes_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return records[0]["node_count"]
+            return records[0]["node_count"]
 
     async def _count_edges(self, relation: str) -> int:
         """Count the number of edges having a relation type."""
-        start_time = time.monotonic()
+        async with self._tracker("count_edges"):
+            sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
 
-        sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
+            records, _, _ = await self._driver.execute_query(
+                _neo4j_query(
+                    f"MATCH ()-[r:{sanitized_relation}]->()\n"
+                    "RETURN count(r) AS relationship_count"
+                ),
+            )
 
-        records, _, _ = await self._driver.execute_query(
-            _neo4j_query(
-                f"MATCH ()-[r:{sanitized_relation}]->()\n"
-                "RETURN count(r) AS relationship_count"
-            ),
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._count_edges_calls_counter,
-            self._count_edges_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        return records[0]["relationship_count"]
+            return records[0]["relationship_count"]
 
     async def _populate_index_state_cache(self) -> None:
         """Populate the index state cache."""
-        start_time = time.monotonic()
+        async with self._tracker("populate_index_state_cache"):
+            if self._index_state_cache:
+                return
 
-        if self._index_state_cache:
-            end_time = time.monotonic()
-            self._collect_metrics(
-                self._populate_index_state_cache_calls_counter,
-                self._populate_index_state_cache_latency_summary,
-                start_time,
-                end_time,
-            )
-            return
+            async with self._populate_index_state_cache_lock:
+                if not self._index_state_cache:
+                    records, _, _ = await self._driver.execute_query(
+                        _neo4j_query("SHOW INDEXES YIELD name RETURN name"),
+                    )
 
-        async with self._populate_index_state_cache_lock:
-            if not self._index_state_cache:
-                records, _, _ = await self._driver.execute_query(
-                    _neo4j_query("SHOW INDEXES YIELD name RETURN name"),
-                )
+                    # This ensures that all the indexes in records are online.
+                    await self._driver.execute_query(
+                        _neo4j_query("CALL db.awaitIndexes()")
+                    )
 
-                # This ensures that all the indexes in records are online.
-                await self._driver.execute_query(_neo4j_query("CALL db.awaitIndexes()"))
-
-                # Synchronous code is atomic in asynchronous framework
-                # so double-checked locking works here.
-                self._index_state_cache.update(
-                    {
-                        record["name"]: Neo4jVectorGraphStore.CacheIndexState.ONLINE
-                        for record in records
-                    },
-                )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._populate_index_state_cache_calls_counter,
-            self._populate_index_state_cache_latency_summary,
-            start_time,
-            end_time,
-        )
+                    # Synchronous code is atomic in asynchronous framework
+                    # so double-checked locking works here.
+                    self._index_state_cache.update(
+                        {
+                            record["name"]: Neo4jVectorGraphStore.CacheIndexState.ONLINE
+                            for record in records
+                        },
+                    )
 
     async def _create_initial_indexes_if_not_exist(
         self,
@@ -1254,42 +963,33 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         sanitized_collection_or_relation: str,
     ) -> None:
         """Create initial indexes if missing and wait for them to be online."""
-        start_time = time.monotonic()
-
-        tasks = [
-            self._create_range_index_if_not_exists(
-                entity_type=entity_type,
-                sanitized_collection_or_relation=sanitized_collection_or_relation,
-                sanitized_property_names="uid",
-            ),
-        ]
-        tasks += [
-            self._create_range_index_if_not_exists(
-                entity_type=entity_type,
-                sanitized_collection_or_relation=sanitized_collection_or_relation,
-                sanitized_property_names=[
-                    Neo4jVectorGraphStore._sanitize_name(
-                        mangle_property_name(property_name),
-                    )
-                    for property_name in property_name_hierarchy
-                ],
-            )
-            for range_index_hierarchy in self._range_index_hierarchies
-            for property_name_hierarchy in [
-                range_index_hierarchy[: i + 1]
-                for i in range(len(range_index_hierarchy))
+        async with self._tracker("create_initial_indexes_if_not_exist"):
+            tasks = [
+                self._create_range_index_if_not_exists(
+                    entity_type=entity_type,
+                    sanitized_collection_or_relation=sanitized_collection_or_relation,
+                    sanitized_property_names="uid",
+                ),
             ]
-        ]
+            tasks += [
+                self._create_range_index_if_not_exists(
+                    entity_type=entity_type,
+                    sanitized_collection_or_relation=sanitized_collection_or_relation,
+                    sanitized_property_names=[
+                        Neo4jVectorGraphStore._sanitize_name(
+                            mangle_property_name(property_name),
+                        )
+                        for property_name in property_name_hierarchy
+                    ],
+                )
+                for range_index_hierarchy in self._range_index_hierarchies
+                for property_name_hierarchy in [
+                    range_index_hierarchy[: i + 1]
+                    for i in range(len(range_index_hierarchy))
+                ]
+            ]
 
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._create_initial_indexes_if_not_exist_calls_counter,
-            self._create_initial_indexes_if_not_exist_latency_summary,
-            start_time,
-            end_time,
-        )
-
-        await asyncio.gather(*tasks)
+            await asyncio.gather(*tasks)
 
     async def _create_range_index_if_not_exists(
         self,
@@ -1298,89 +998,68 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         sanitized_property_names: str | Iterable[str],
     ) -> None:
         """Create a range index if missing and wait for it to be online."""
-        start_time = time.monotonic()
+        async with self._tracker("create_range_index_if_not_exists"):
+            if isinstance(sanitized_property_names, str):
+                sanitized_property_names = [sanitized_property_names]
 
-        if isinstance(sanitized_property_names, str):
-            sanitized_property_names = [sanitized_property_names]
+            sanitized_property_names = list(sanitized_property_names)
+            if len(sanitized_property_names) == 0:
+                raise ValueError("sanitized_property_names must be nonempty")
 
-        sanitized_property_names = list(sanitized_property_names)
-        if len(sanitized_property_names) == 0:
-            raise ValueError("sanitized_property_names must be nonempty")
+            await self._populate_index_state_cache()
 
-        await self._populate_index_state_cache()
+            range_index_name = Neo4jVectorGraphStore._index_name(
+                entity_type,
+                sanitized_collection_or_relation,
+                sanitized_property_names,
+            )
 
-        range_index_name = Neo4jVectorGraphStore._index_name(
-            entity_type,
-            sanitized_collection_or_relation,
-            sanitized_property_names,
-        )
-
-        cached_index_state = self._index_state_cache.get(range_index_name)
-        match cached_index_state:
-            case Neo4jVectorGraphStore.CacheIndexState.CREATING:
-                # Wait for the index to be online.
-                await self._await_create_index_if_not_exists(
-                    range_index_name,
-                    asyncio.sleep(0),  # Use as a no-op.
-                )
-                end_time = time.monotonic()
-                self._collect_metrics(
-                    self._create_range_index_if_not_exists_calls_counter,
-                    self._create_range_index_if_not_exists_latency_summary,
-                    start_time,
-                    end_time,
-                )
-                return
-            case Neo4jVectorGraphStore.CacheIndexState.ONLINE:
-                end_time = time.monotonic()
-                self._collect_metrics(
-                    self._create_range_index_if_not_exists_calls_counter,
-                    self._create_range_index_if_not_exists_latency_summary,
-                    start_time,
-                    end_time,
-                )
-                return
-
-        # Code is synchronous between the cache read and this write,
-        # so it is effectively atomic in the asynchronous framework.
-        self._index_state_cache[range_index_name] = (
-            Neo4jVectorGraphStore.CacheIndexState.CREATING
-        )
-
-        match entity_type:
-            case EntityType.NODE:
-                query_index_for_expression = f"(e:{sanitized_collection_or_relation})"
-            case EntityType.EDGE:
-                query_index_for_expression = (
-                    f"()-[e:{sanitized_collection_or_relation}]-()"
-                )
-
-        create_index_awaitable = self._driver.execute_query(
-            _neo4j_query(
-                f"CREATE RANGE INDEX {range_index_name}\n"
-                "IF NOT EXISTS\n"
-                f"FOR {query_index_for_expression}\n"
-                f"ON ({
-                    ', '.join(
-                        f'e.{sanitized_property_name}'
-                        for sanitized_property_name in sanitized_property_names
+            cached_index_state = self._index_state_cache.get(range_index_name)
+            match cached_index_state:
+                case Neo4jVectorGraphStore.CacheIndexState.CREATING:
+                    # Wait for the index to be online.
+                    await self._await_create_index_if_not_exists(
+                        range_index_name,
+                        asyncio.sleep(0),  # Use as a no-op.
                     )
-                })"
-            ),
-        )
+                    return
+                case Neo4jVectorGraphStore.CacheIndexState.ONLINE:
+                    return
 
-        await self._await_create_index_if_not_exists(
-            range_index_name,
-            create_index_awaitable,
-        )
+            # Code is synchronous between the cache read and this write,
+            # so it is effectively atomic in the asynchronous framework.
+            self._index_state_cache[range_index_name] = (
+                Neo4jVectorGraphStore.CacheIndexState.CREATING
+            )
 
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._create_range_index_if_not_exists_calls_counter,
-            self._create_range_index_if_not_exists_latency_summary,
-            start_time,
-            end_time,
-        )
+            match entity_type:
+                case EntityType.NODE:
+                    query_index_for_expression = (
+                        f"(e:{sanitized_collection_or_relation})"
+                    )
+                case EntityType.EDGE:
+                    query_index_for_expression = (
+                        f"()-[e:{sanitized_collection_or_relation}]-()"
+                    )
+
+            create_index_awaitable = self._driver.execute_query(
+                _neo4j_query(
+                    f"CREATE RANGE INDEX {range_index_name}\n"
+                    "IF NOT EXISTS\n"
+                    f"FOR {query_index_for_expression}\n"
+                    f"ON ({
+                        ', '.join(
+                            f'e.{sanitized_property_name}'
+                            for sanitized_property_name in sanitized_property_names
+                        )
+                    })"
+                ),
+            )
+
+            await self._await_create_index_if_not_exists(
+                range_index_name,
+                create_index_awaitable,
+            )
 
     async def _create_vector_index_if_not_exists(
         self,
@@ -1394,95 +1073,74 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         if not (1 <= dimensions <= 4096):
             raise ValueError("dimensions must be between 1 and 4096")
 
-        start_time = time.monotonic()
+        async with self._tracker("create_vector_index_if_not_exists"):
+            await self._populate_index_state_cache()
 
-        await self._populate_index_state_cache()
+            vector_index_name = Neo4jVectorGraphStore._index_name(
+                entity_type,
+                sanitized_collection_or_relation,
+                sanitized_embedding_name,
+            )
 
-        vector_index_name = Neo4jVectorGraphStore._index_name(
-            entity_type,
-            sanitized_collection_or_relation,
-            sanitized_embedding_name,
-        )
+            cached_index_state = self._index_state_cache.get(vector_index_name)
+            match cached_index_state:
+                case Neo4jVectorGraphStore.CacheIndexState.CREATING:
+                    # Wait for the index to be online.
+                    await self._await_create_index_if_not_exists(
+                        vector_index_name,
+                        asyncio.sleep(0),  # Use as a no-op.
+                    )
+                    return
+                case Neo4jVectorGraphStore.CacheIndexState.ONLINE:
+                    return
 
-        cached_index_state = self._index_state_cache.get(vector_index_name)
-        match cached_index_state:
-            case Neo4jVectorGraphStore.CacheIndexState.CREATING:
-                # Wait for the index to be online.
-                await self._await_create_index_if_not_exists(
-                    vector_index_name,
-                    asyncio.sleep(0),  # Use as a no-op.
-                )
-                end_time = time.monotonic()
-                self._collect_metrics(
-                    self._create_vector_index_if_not_exists_calls_counter,
-                    self._create_vector_index_if_not_exists_latency_summary,
-                    start_time,
-                    end_time,
-                )
-                return
-            case Neo4jVectorGraphStore.CacheIndexState.ONLINE:
-                end_time = time.monotonic()
-                self._collect_metrics(
-                    self._create_vector_index_if_not_exists_calls_counter,
-                    self._create_vector_index_if_not_exists_latency_summary,
-                    start_time,
-                    end_time,
-                )
-                return
+            # Code is synchronous between the cache read and this write,
+            # so it is effectively atomic in the asynchronous framework.
+            self._index_state_cache[vector_index_name] = (
+                Neo4jVectorGraphStore.CacheIndexState.CREATING
+            )
 
-        # Code is synchronous between the cache read and this write,
-        # so it is effectively atomic in the asynchronous framework.
-        self._index_state_cache[vector_index_name] = (
-            Neo4jVectorGraphStore.CacheIndexState.CREATING
-        )
+            match similarity_metric:
+                case SimilarityMetric.COSINE:
+                    similarity_function = "cosine"
+                case SimilarityMetric.EUCLIDEAN:
+                    similarity_function = "euclidean"
+                case _:
+                    similarity_function = "cosine"
 
-        match similarity_metric:
-            case SimilarityMetric.COSINE:
-                similarity_function = "cosine"
-            case SimilarityMetric.EUCLIDEAN:
-                similarity_function = "euclidean"
-            case _:
-                similarity_function = "cosine"
+            match entity_type:
+                case EntityType.NODE:
+                    query_index_for_expression = (
+                        f"(e:{sanitized_collection_or_relation})"
+                    )
+                case EntityType.EDGE:
+                    query_index_for_expression = (
+                        f"()-[e:{sanitized_collection_or_relation}]-()"
+                    )
 
-        match entity_type:
-            case EntityType.NODE:
-                query_index_for_expression = f"(e:{sanitized_collection_or_relation})"
-            case EntityType.EDGE:
-                query_index_for_expression = (
-                    f"()-[e:{sanitized_collection_or_relation}]-()"
-                )
+            create_index_awaitable = self._driver.execute_query(
+                _neo4j_query(
+                    f"CREATE VECTOR INDEX {vector_index_name}\n"
+                    "IF NOT EXISTS\n"
+                    f"FOR {query_index_for_expression}\n"
+                    f"ON e.{sanitized_embedding_name}\n"
+                    "OPTIONS {\n"
+                    "    indexConfig: {\n"
+                    "        `vector.dimensions`:\n"
+                    "            $dimensions,\n"
+                    "        `vector.similarity_function`:\n"
+                    "            $similarity_function\n"
+                    "    }\n"
+                    "}"
+                ),
+                dimensions=dimensions,
+                similarity_function=similarity_function,
+            )
 
-        create_index_awaitable = self._driver.execute_query(
-            _neo4j_query(
-                f"CREATE VECTOR INDEX {vector_index_name}\n"
-                "IF NOT EXISTS\n"
-                f"FOR {query_index_for_expression}\n"
-                f"ON e.{sanitized_embedding_name}\n"
-                "OPTIONS {\n"
-                "    indexConfig: {\n"
-                "        `vector.dimensions`:\n"
-                "            $dimensions,\n"
-                "        `vector.similarity_function`:\n"
-                "            $similarity_function\n"
-                "    }\n"
-                "}"
-            ),
-            dimensions=dimensions,
-            similarity_function=similarity_function,
-        )
-
-        await self._await_create_index_if_not_exists(
-            vector_index_name,
-            create_index_awaitable,
-        )
-
-        end_time = time.monotonic()
-        self._collect_metrics(
-            self._create_vector_index_if_not_exists_calls_counter,
-            self._create_vector_index_if_not_exists_latency_summary,
-            start_time,
-            end_time,
-        )
+            await self._await_create_index_if_not_exists(
+                vector_index_name,
+                create_index_awaitable,
+            )
 
     @async_locked
     async def _await_create_index_if_not_exists(
@@ -1635,23 +1293,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
         return nodes
 
-    def _collect_metrics(
-        self,
-        calls_counter: MetricsFactory.Counter | None,
-        latency_summary: MetricsFactory.Summary | None,
-        start_time: float,
-        end_time: float,
-    ) -> None:
-        """Increment calls and observe latency."""
-        if self._should_collect_metrics:
-            cast(MetricsFactory.Counter, calls_counter).increment(
-                labels=self._user_metrics_labels
-            )
-            cast(MetricsFactory.Summary, latency_summary).observe(
-                value=end_time - start_time,
-                labels=self._user_metrics_labels,
-            )
-
     @staticmethod
     def _build_query_filter(
         entity_query_alias: str,
@@ -1693,7 +1334,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
             param_name = _sanitize(f"filter_expr_param_{uuid4()}")
             condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
-            params = {param_name: expr.values}
+            params: dict[str, FilterValue] = {param_name: expr.values}
             return condition, params
 
         if isinstance(expr, FilterComparison):

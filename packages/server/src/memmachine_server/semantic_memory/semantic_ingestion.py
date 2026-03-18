@@ -63,7 +63,7 @@ class IngestionService:
                 logger.exception("Failed to process set_id %s", set_id)
                 raise
 
-        logger.info("Starting ingestion processing for set ids: %s", set_ids)
+        logger.debug("Starting ingestion processing for set ids: %s", set_ids)
 
         results = await asyncio.gather(
             *[_run(set_id) for set_id in set_ids],
@@ -84,7 +84,7 @@ class IngestionService:
         )
 
         if len(resources.semantic_categories) == 0:
-            logger.info(
+            logger.debug(
                 "No semantic categories configured for set %s, skipping ingestion",
                 set_id,
             )
@@ -133,7 +133,7 @@ class IngestionService:
 
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
-        logger.info("Processing %d messages for set %s", len(messages), set_id)
+        logger.debug("Processing %d messages for set %s", len(messages), set_id)
 
         async def process_semantic_type(
             semantic_category: InstanceOf[SemanticCategory],
@@ -195,7 +195,7 @@ class IngestionService:
 
         await asyncio.gather(*semantic_category_runners)
 
-        logger.info(
+        logger.debug(
             "Finished processing %d messages out of %d for set %s",
             len(mark_messages),
             len(messages),
@@ -365,13 +365,24 @@ class IngestionService:
             list(set(merged_citations)),
         )
 
+        original_tag = memories[0].tag if memories else None
+
         async def _add_feature(f: LLMReducedFeature) -> None:
+            tag = original_tag if original_tag is not None else f.tag
+            if tag != f.tag:
+                logger.warning(
+                    "Consolidation LLM changed tag from %r to %r; "
+                    "reverting to original tag",
+                    tag,
+                    f.tag,
+                )
+
             value_embedding = (await resources.embedder.ingest_embed([f.value]))[0]
 
             f_id = await self._semantic_storage.add_feature(
                 set_id=set_id,
                 category_name=semantic_category.name,
-                tag=f.tag,
+                tag=tag,
                 feature=f.feature,
                 value=f.value,
                 embedding=np.array(value_embedding),

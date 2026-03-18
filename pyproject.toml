@@ -11,7 +11,7 @@ dev = [
     "complexipy>=4.2.0",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
-    "ruff==0.15.1",
+    "ruff==0.15.5",
     "testcontainers[neo4j,postgres]>=4.13.1",
     "ty~=0.0.20",
     "pytest-cov>=7.0.0",
@@ -19,7 +19,13 @@ dev = [
 ]
 
 [tool.ruff]
-exclude = ["tools"]
+exclude = [
+    "tools",
+    "build",
+    ".tmp",
+    "evaluation/retrieval_skill",
+    "src/memmachine-ts",
+]
 
 [tool.ruff.lint]
 select = [
@@ -76,7 +82,6 @@ convention = "google"
 
 # Do not add any new paths under packages/
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/client/client_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/server/server_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/common/common_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
@@ -87,6 +92,7 @@ convention = "google"
     "ASYNC210",
     "C901",
     "D",
+    "FA",
     "PERF203",
     "PTH",
     "T201",
@@ -98,6 +104,7 @@ convention = "google"
     "T201",
     "D",
     "ARG",
+    "FA",
     "PERF203",
 ]
 "evaluation/**/*.py" = [
@@ -105,6 +112,7 @@ convention = "google"
     "ARG",
     "T201",
     "ANN",
+    "FA",
     "PTH123",
     "PTH120",
     "PTH110",
@@ -115,8 +123,15 @@ convention = "google"
     "B023",
     "B007",
     "TRY300",
+    "PERF203",
     "PERF401",
 ]
+
+[tool.ty.environment]
+extra-paths = ["packages/common/src", "packages/server/src", "packages/client/src"]
+
+[tool.ty.src]
+exclude = ["packages/**/build/**"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "session"
@@ -129,7 +144,7 @@ markers = [
 ]
 
 [tool.complexipy]
-paths = ["packages/server/src", "packages/client/src", "tests"]
+paths = ["packages/server/src", "packages/client/src", "packages/common/src"]
 max-complexity-allowed = 10
 quiet = false
 ignore-complexity = false

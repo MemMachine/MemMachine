@@ -34,7 +34,9 @@ class MemMachineClient:
 
     def post(self, path: str, json_body: dict[str, Any]) -> dict[str, Any]:
         url = self.base_url.rstrip("/") + "/" + path.lstrip("/")
-        resp = requests.post(url, headers=self._headers(), json=json_body, timeout=self.timeout)
+        resp = requests.post(
+            url, headers=self._headers(), json=json_body, timeout=self.timeout
+        )
 
         # If API returns non-JSON on error, keep a safe fallback.
         try:

@@ -166,6 +166,39 @@ def test_serialize_deserialize_database_conf(db_conf_dict):
     assert conf == conf_cp
 
 
+def test_neo4j_pool_lifecycle_fields():
+    # Defaults are None (use driver's internal defaults)
+    conf = Neo4jConf()
+    assert conf.max_connection_lifetime is None
+    assert conf.liveness_check_timeout is None
+
+    # Explicit values round-trip correctly
+    conf = Neo4jConf(max_connection_lifetime=3000.0, liveness_check_timeout=300.0)
+    assert conf.max_connection_lifetime == 3000.0
+    assert conf.liveness_check_timeout == 300.0
+
+
+def test_sqlalchemy_pool_lifecycle_fields():
+    # Defaults are None (use SQLAlchemy's internal defaults)
+    conf = SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path="test.db")
+    assert conf.pool_timeout is None
+    assert conf.pool_recycle is None
+    assert conf.pool_pre_ping is None
+
+    # Explicit values round-trip correctly
+    conf = SqlAlchemyConf(
+        dialect="sqlite",
+        driver="aiosqlite",
+        path="test.db",
+        pool_timeout=30,
+        pool_recycle=3000,
+        pool_pre_ping=True,
+    )
+    assert conf.pool_timeout == 30
+    assert conf.pool_recycle == 3000
+    assert conf.pool_pre_ping is True
+
+
 def test_neo4j_uri():
     conf = Neo4jConf(uri="bolt://localhost:1234")
     assert conf.get_uri() == "bolt://localhost:1234"

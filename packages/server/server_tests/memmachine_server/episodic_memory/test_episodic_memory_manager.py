@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
@@ -132,7 +133,7 @@ async def test_create_episodic_memory_success(
     """Test successfully creating a new episodic memory instance."""
     session_key = "new_session"
     description = "A new test session"
-    metadata = {"owner": "tester"}
+    metadata: dict[str, JsonValue] = {"owner": "tester"}
     mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
 
     # Patch the service locator function
@@ -198,7 +199,7 @@ async def test_create_or_open_episodic_memory_success(
     """Test successfully creating or opening an episodic memory instance."""
     session_key = "create_or_open_session"
     description = "A test session"
-    metadata = {"owner": "tester"}
+    metadata: dict[str, JsonValue] = {"owner": "tester"}
 
     # Create a new session
     async with manager.open_or_create_episodic_memory(

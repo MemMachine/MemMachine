@@ -4,6 +4,8 @@ import pytest
 
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_llm import (
+    _features_to_consolidation_format,
+    _features_to_llm_format,
     llm_consolidate_features,
     llm_feature_update,
 )
@@ -251,3 +253,62 @@ async def test_llm_feature_update_with_delete_command(
     assert len(commands) == 1
     assert commands[0].command == SemanticCommandType.DELETE
     assert commands[0].feature == "favorite_pizza"
+
+
+class TestConsolidationSerialization:
+    """Consolidation needs a separate serializer that includes feature IDs
+    so the LLM can reference them in ``keep_memories``."""
+
+    @pytest.fixture
+    def features_with_ids(self):
+        return [
+            SemanticFeature(
+                category="CodeKnowledge",
+                tag="bugfix",
+                feature_name="observer_fix",
+                value="Fixed observer subagent bug",
+                metadata=SemanticFeature.Metadata(id="42"),
+            ),
+            SemanticFeature(
+                category="CodeKnowledge",
+                tag="progress",
+                feature_name="more_agents",
+                value="User added more agents",
+                metadata=SemanticFeature.Metadata(id="43"),
+            ),
+        ]
+
+    def test_update_format_omits_ids(self, features_with_ids):
+        """The update serializer intentionally omits IDs — updates don't
+        need them."""
+        import json
+
+        formatted = _features_to_llm_format(features_with_ids)
+        serialized = json.dumps(formatted)
+
+        assert "42" not in serialized
+        assert "43" not in serialized
+
+    def test_consolidation_format_includes_ids(self, features_with_ids):
+        """The consolidation serializer must include ``metadata.id`` so
+        the LLM can return them in ``keep_memories``."""
+        import json
+
+        formatted = _features_to_consolidation_format(features_with_ids)
+        serialized = json.dumps(formatted)
+
+        assert "42" in serialized
+        assert "43" in serialized
+        assert "metadata" in serialized
+
+    def test_consolidation_format_preserves_all_fields(self, features_with_ids):
+        """Each entry in the consolidation format should have tag, feature,
+        value, and metadata.id."""
+        formatted = _features_to_consolidation_format(features_with_ids)
+
+        assert len(formatted) == 2
+        entry = formatted[0]
+        assert entry["tag"] == "bugfix"
+        assert entry["feature"] == "observer_fix"
+        assert entry["value"] == "Fixed observer subagent bug"
+        assert entry["metadata"] == {"id": "42"}
