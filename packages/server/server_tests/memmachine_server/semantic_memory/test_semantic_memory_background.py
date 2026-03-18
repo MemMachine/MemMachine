@@ -23,7 +23,6 @@ from server_tests.memmachine_server.semantic_memory.storage.in_memory_semantic_s
 )
 
 
-
 async def _collect_feature_set(storage: SemanticStorage, **kwargs):
     return [item async for item in storage.get_feature_set(**kwargs)]
 

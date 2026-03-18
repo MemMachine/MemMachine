@@ -18,8 +18,6 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 from pydantic import BaseModel, InstanceOf
 
-from memmachine_server.common.utils import merge_async_iterators
-
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeIdT, EpisodeStorage
 from memmachine_server.common.errors import (
@@ -33,6 +31,7 @@ from memmachine_server.common.filter.filter_parser import (
     In,
 )
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.utils import merge_async_iterators
 
 from .config_store.config_store import SemanticConfigStorage
 from .semantic_ingestion import IngestionService
