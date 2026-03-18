@@ -321,7 +321,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         *,
         limit_per_derivative: int | None = None,
         property_filter: FilterExpr | None = None,
-    ) -> Mapping[UUID, Iterable[Segment]]:
+    ) -> dict[UUID, list[Segment]]:
         derivative_uuids = set(derivative_uuids)
         if not derivative_uuids:
             return {}
@@ -390,7 +390,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         max_backward_segments: int = 0,
         max_forward_segments: int = 0,
         property_filter: FilterExpr | None = None,
-    ) -> Mapping[UUID, Iterable[Segment]]:
+    ) -> dict[UUID, list[Segment]]:
         seed_segment_uuids = set(seed_segment_uuids)
         if not seed_segment_uuids:
             return {}
@@ -779,7 +779,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     # Garbage collection
 
     @override
-    async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
+    async def get_orphaned_derivatives(self, limit: int = 1000) -> set[UUID]:
         get_orphans_statement = (
             select(DerivativeRow.uuid)
             .where(
@@ -790,15 +790,15 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             .limit(limit)
         )
         async with self._create_session() as session:
-            return list((await session.execute(get_orphans_statement)).scalars().all())
+            return set((await session.execute(get_orphans_statement)).scalars().all())
 
     @override
     async def mark_orphaned_derivatives_for_purging(
         self, potential_orphan_uuids: Iterable[UUID]
-    ) -> Iterable[UUID]:
+    ) -> set[UUID]:
         potential_orphan_uuids = sorted(set(potential_orphan_uuids))
         if not potential_orphan_uuids:
-            return []
+            return set()
 
         async with self._create_session() as session, session.begin():
             # Lock candidates that are still orphaned.
@@ -813,7 +813,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 .order_by(DerivativeRow.uuid)
                 .with_for_update()
             )
-            orphan_uuids = list((await session.execute(lock_statement)).scalars().all())
+            orphan_uuids = set((await session.execute(lock_statement)).scalars().all())
 
             if orphan_uuids:
                 await session.execute(
