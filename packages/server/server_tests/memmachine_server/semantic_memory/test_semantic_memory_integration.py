@@ -111,6 +111,9 @@ async def semantic_service(
         async def get_language_model(self, _: str) -> LanguageModel:
             return llm_model
 
+        async def get_reranker(self, _: str):
+            return None
+
     mem = SemanticService(
         SemanticService.Params(
             semantic_storage=semantic_storage,
