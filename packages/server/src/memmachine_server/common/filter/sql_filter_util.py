@@ -84,7 +84,7 @@ def compile_sql_filter(
     resolve_field: FieldResolver,
 ) -> ColumnElement[bool] | None:
     """Compile a FilterExpr tree into an SQLAlchemy boolean expression."""
-    if isinstance(expr, (IsNull, In, Comparison)):
+    if isinstance(expr, IsNull | In | Comparison):
         return _compile_leaf(expr, resolve_field)
 
     if isinstance(expr, And):

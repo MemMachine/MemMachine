@@ -20,6 +20,10 @@ Before you begin, ensure you have:
 2. MemMachine running (either via Docker or as a Python package)
 3. A MemMachine configuration file (`config.yml`)
 
+<Warning>
+Unlike **Claude Desktop**, Claude Code does not use `claude_desktop_config.json`. To integrate MemMachine MCP, you must use `.mcp.json` at your project root and `.claude/settings.local.json` for persistent settings. 
+</Warning>
+
 **Starting Your Docker Container:**
 
 Make sure your MemMachine Docker container is running:
@@ -53,9 +57,9 @@ Choose the method that best fits your workflow.
 
 </Step>
 
-<Step title="Option A: Configure with Docker">
+<Step title="Option A: Configure for Claude Code (Docker)">
 
-If you're running MemMachine in Docker, create or edit the `claude_desktop_config.json` file in your project root:
+To allow Claude Code to access the MemMachine MCP, create or edit the `.mcp.json` file in your **project root**:
 
 ```json
 {
@@ -77,12 +81,21 @@ If you're running MemMachine in Docker, create or edit the `claude_desktop_confi
   }
 }
 ```
+<Note> 
+**Crucial for Claude Code:** You must verify that your connection settings in `.mcp.json` match the bridge configuration in `./.claude/settings.local.json`. Claude Code uses the latter to maintain persistent authorization for the MCP server. 
+</Note>
+
+**Ensure Persistence:** To ensure the connection remains active across sessions, verify or add these settings to your local Claude settings file located at `./.claude/settings.local.json`.
 
 **Configuration Details:**
-- `memmachine-app`: The name of your Docker container (adjust if different)
-- `MEMORY_CONFIG`: Path to your config file inside the container
-- `MM_USER_ID`: Your user identifier for memory sessions (customize this)
-- `PYTHONUNBUFFERED`: Ensures immediate output from Python
+To ensure the MCP server communicates correctly with your environment, verify the following parameters in your `.mcp.json` and `.claude/settings.local.json` files:
+
+| Parameter | Value / Description |
+| :--- | :--- |
+| **`command`** | Use `docker` for containerized setups or `memmachine-mcp-stdio` for local installs. |
+| **`MEMORY_CONFIG`** | Path to your `configuration.yml`. **Note:** Use absolute paths for local (Option B) setups. |
+| **`userId`** | Your unique identifier for memory sessions (corresponds to `MM_USER_ID`). |
+| **`PYTHONUNBUFFERED`** | Always set to `1` to ensure immediate output and logging from Python. |
 
 
 </Step>
@@ -90,10 +103,10 @@ If you're running MemMachine in Docker, create or edit the `claude_desktop_confi
 <Step title="Option B: Configure with Direct Command">
 
 <Note>
-**Reference Implementation**: This method has not been fully tested with Claude Code. It follows the standard MCP stdio pattern and should work, but if you encounter issues, please use Option A (Docker) or report your findings.
+**Reference Implementation**: This method follows the standard MCP stdio pattern. While it uses the same configuration files as the Docker method, ensure your local Python environment is correctly mapped.
 </Note>
 
-If you have MemMachine installed locally, create or edit the `claude_desktop_config.json` file in your project root:
+If you have MemMachine installed locally, create or edit the `.mcp.json` file in your **project root**:
 
 ```json
 {
@@ -110,7 +123,7 @@ If you have MemMachine installed locally, create or edit the `claude_desktop_con
 }
 ```
 
-Or if you're using uv:
+**Using uv (Recommended for local setup):** If you are managing your environment with `uv`, use the following configuration in your `.mcp.json`:
 
 ```json
 {
@@ -130,6 +143,10 @@ Or if you're using uv:
 
 **Important:** Use absolute paths for `MEMORY_CONFIG` to avoid path resolution issues.
 
+<Note> 
+**Crucial for Claude Code:** You must verify that your connection settings in `.mcp.json` match the bridge configuration in `./.claude/settings.local.json`. Claude Code uses the latter to maintain persistent authorization for the MCP server. 
+</Note>
+
 </Step>
 
 <Step title="Test the Integration">
@@ -140,9 +157,11 @@ Once configured, start Claude Code in your project directory:
 claude
 ```
 
-Claude Code will automatically detect the `claude_desktop_config.json` file and connect to MemMachine.
-
-**Verify the connection** by checking /mcp or asking Claude to store something in memory:
+**Verify the connection** by checking the active MCP servers:
+```bash
+/MCP
+```
+If MemMachine is listed, Claude will automatically use the `add_memory` and `search_memory` tools to manage your project context.
 
 ```
 You: Remember that I prefer using TypeScript for new projects

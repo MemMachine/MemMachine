@@ -284,3 +284,124 @@ class TestStructuredSemanticPrompt:
         assert "memory consolidation" in built_prompt
         assert "keep_memories" in built_prompt
         assert "consolidate_memories" in built_prompt
+
+    def test_consolidation_prompt_without_tags_omits_tag_section(self):
+        """When no tags are provided, the consolidation prompt should still
+        work but not contain a tag enumeration section."""
+        from memmachine_server.semantic_memory.util.semantic_prompt_template import (
+            build_consolidation_prompt,
+        )
+
+        prompt = build_consolidation_prompt()
+        assert "memory consolidation" in prompt
+        assert "valid tags for this category" not in prompt
+
+    def test_consolidation_prompt_should_include_user_tags(self):
+        """Consolidation prompt must contain user-defined tags so the LLM
+        knows which tags are valid and preserves them."""
+        tags = {
+            "bugfix": "Bugs the user has fixed",
+            "progress": "Project progress updates",
+            "decision": "Decisions the user has made",
+        }
+        prompt = StructuredSemanticPrompt(tags=tags, description="")
+        consolidation_text = prompt.consolidation_prompt
+
+        for tag_name in tags:
+            assert tag_name in consolidation_text, (
+                f"Consolidation prompt should contain tag '{tag_name}' "
+                f"so the LLM knows which tags are valid"
+            )
+
+
+class TestSemanticCommandNullByteStripping:
+    """Tests that SemanticCommand strips null bytes from LLM output."""
+
+    def test_strips_null_byte_from_value(self):
+        from memmachine_server.semantic_memory.semantic_model import (
+            SemanticCommand,
+            SemanticCommandType,
+        )
+
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="cultural_focus",
+            tag="Insights",
+            value="D\x00a de Los Muertos",
+        )
+        assert "\x00" not in cmd.value
+        assert cmd.value == "Da de Los Muertos"
+
+    def test_strips_null_byte_from_feature(self):
+        from memmachine_server.semantic_memory.semantic_model import (
+            SemanticCommand,
+            SemanticCommandType,
+        )
+
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="cultural\x00focus",
+            tag="Insights",
+            value="some value",
+        )
+        assert "\x00" not in cmd.feature
+        assert cmd.feature == "culturalfocus"
+
+    def test_strips_null_byte_from_tag(self):
+        from memmachine_server.semantic_memory.semantic_model import (
+            SemanticCommand,
+            SemanticCommandType,
+        )
+
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="focus",
+            tag="Ins\x00ights",
+            value="some value",
+        )
+        assert "\x00" not in cmd.tag
+        assert cmd.tag == "Insights"
+
+    def test_clean_strings_pass_through(self):
+        from memmachine_server.semantic_memory.semantic_model import (
+            SemanticCommand,
+            SemanticCommandType,
+        )
+
+        cmd = SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="cultural_focus",
+            tag="Insights",
+            value="Día de Los Muertos",
+        )
+        assert cmd.value == "Día de Los Muertos"
+        assert cmd.feature == "cultural_focus"
+        assert cmd.tag == "Insights"
+
+
+class TestLLMReducedFeatureNullByteStripping:
+    """Tests that LLMReducedFeature strips null bytes from consolidation output."""
+
+    def test_strips_null_byte_from_value(self):
+        from memmachine_server.semantic_memory.semantic_llm import LLMReducedFeature
+
+        f = LLMReducedFeature(tag="tag", feature="feat", value="D\x00a")
+        assert f.value == "Da"
+
+    def test_strips_null_byte_from_feature(self):
+        from memmachine_server.semantic_memory.semantic_llm import LLMReducedFeature
+
+        f = LLMReducedFeature(tag="tag", feature="fe\x00at", value="val")
+        assert f.feature == "feat"
+
+    def test_strips_null_byte_from_tag(self):
+        from memmachine_server.semantic_memory.semantic_llm import LLMReducedFeature
+
+        f = LLMReducedFeature(tag="t\x00ag", feature="feat", value="val")
+        assert f.tag == "tag"
+
+    def test_clean_strings_pass_through(self):
+        from memmachine_server.semantic_memory.semantic_llm import LLMReducedFeature
+
+        f = LLMReducedFeature(tag="tag", feature="feat", value="Día")
+        assert f.value == "Día"

@@ -4,7 +4,7 @@ import os
 import re
 from datetime import timedelta
 from enum import Enum
-from typing import ClassVar, Self
+from typing import ClassVar, Self, cast
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -50,11 +50,6 @@ class MetricsFactoryIdMixin(WithMetricsFactory, BaseModel):
     metrics_factory_id: str | None = Field(
         default=None,
         description="Metrics factory ID for monitoring and metrics collection.",
-    )
-
-    user_metrics_labels: dict[str, str] = Field(
-        default_factory=dict,
-        description="User-defined labels for metrics.",
     )
 
 
@@ -225,13 +220,13 @@ class YamlSerializableMixin(BaseModel):
                 cleaned = {
                     k: v for k, v in cleaned.items() if v not in (None, "", [], {})
                 }
-                return cleaned
+                return cast(YamlObjType, cleaned)
 
             # List — recurse & drop empty
             if isinstance(obj, list):
                 cleaned = [unwrap(v) for v in obj]
                 cleaned = [v for v in cleaned if v not in (None, "", [], {})]
-                return cleaned
+                return cast(YamlObjType, cleaned)
 
             # Base condition
             return obj

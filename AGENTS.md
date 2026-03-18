@@ -6,11 +6,11 @@ Python and the TypeScript REST client packages.
 
 ## Repository Orientation
 
-- `src/memmachine/`: core Python package (server, SDK, memory layers).
-- `tests/`: pytest suite for the Python package.
-- `packages/`: symlink to `src/` for workspace packages; avoid searching here
-  to prevent duplicate results.
-- `src/memmachine-ts/rest_client/`: TypeScript REST client library.
+- `packages/server/`: server Python package (server, SDK, memory layers).
+- `packages/common/`: common Python package (shared REST API).
+- `packages/client/`: client Python package.
+- `packages/ts-client/`: client TypeScript package.
+- `packages/meta/`: meta Python package (both server and client).
 - `integrations/`, `examples/`, `evaluation/`, `tools/`: demos and helpers.
 - `STYLE_GUIDE.md`: higher-level style notes and tooling references.
 
@@ -27,12 +27,12 @@ Python and the TypeScript REST client packages.
 - Install deps: `uv sync`.
 - Lint: `uv run ruff check` (or `ruff check`).
 - Format: `uv run ruff format` (or `ruff format`).
-- Type check: `uv run ty check src` (or `ty check src`).
+- Type check: `uv run ty check packages` (or `ty check packages`).
 - Run all tests: `uv run pytest` (or `pytest`).
 - Run a single test file:
-  `uv run pytest tests/memmachine/server/test-rest-memories.py`.
+  `uv run pytest packages/server/server_tests/memmachine_server/common/test_utils.py`.
 - Run a single test function:
-  `uv run pytest tests/memmachine/server/test-rest-memories.py::test_create_memory_sync`.
+  `uv run pytest packages/server/server_tests/memmachine_server/common/test_utils.py::test_chunk_text`.
 - Run tests by keyword:
   `uv run pytest -k "create_memory"`.
 - Run marked tests only:
@@ -45,10 +45,8 @@ Python and the TypeScript REST client packages.
 
 ### TypeScript REST Client (per package)
 
-Paths with package.json (prefer `src/` paths since `packages/` is a symlink):
-- `src/memmachine-ts/rest_client/`
-- `packages/server/src/memmachine-ts/rest_client/` (symlinked)
-- `packages/client/src/memmachine-ts/rest_client/` (symlinked)
+Paths with package.json:
+- `packages/ts-client/`
 
 Common commands (run from one of the above directories):
 
@@ -72,7 +70,6 @@ Common commands (run from one of the above directories):
 
 - Formatting is enforced by Ruff. Run `ruff format` before committing.
 - Imports are sorted by Ruff (stdlib → third-party → local).
-- Prefer absolute imports within `src/memmachine/`.
 - Avoid wildcard imports; keep import lists minimal and explicit.
 
 ### Python Types and APIs
@@ -122,7 +119,5 @@ Common commands (run from one of the above directories):
 ## Notes for Agents
 
 - This repo is a Python-first workspace with optional TypeScript clients.
-- `packages/` is a symlink to `src/`; avoid grepping/searching there to keep
-  results de-duplicated.
 - If you touch linted files, re-run Ruff to avoid CI failures.
 - Avoid reformatting unrelated files; keep diffs scoped to your change.

@@ -1150,7 +1150,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         options = record.get("options") or {}
         config = options.get("indexConfig") or {}
         dimensions = config.get("vector.dimensions")
-        if isinstance(dimensions, (int, float)):
+        if isinstance(dimensions, int | float):
             return int(dimensions)
         return None
 

@@ -45,6 +45,7 @@ package = true
 
 [tool.ty.environment]
 python-version = "3.10"
+extra-paths = ["../common/src"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"

@@ -42,10 +42,10 @@ async def get_config_service(request: Request) -> ConfigService:
     return ConfigService(resource_manager)
 
 
-config_router = APIRouter(prefix="/config", tags=["Configuration"])
+config_router = APIRouter(prefix="/config")
 
 
-@config_router.get("", description=RouterDoc.GET_CONFIG)
+@config_router.get("", description=RouterDoc.GET_CONFIG, tags=["Configuration"])
 async def get_config(
     service: Annotated[ConfigService, Depends(get_config_service)],
 ) -> GetConfigResponse:
@@ -60,7 +60,9 @@ async def get_config(
     )
 
 
-@config_router.get("/resources", description=RouterDoc.GET_RESOURCES)
+@config_router.get(
+    "/resources", description=RouterDoc.GET_RESOURCES, tags=["Configuration"]
+)
 async def get_resources(
     service: Annotated[ConfigService, Depends(get_config_service)],
 ) -> ResourcesStatus:
@@ -71,6 +73,7 @@ async def get_resources(
 @config_router.put(
     "/memory",
     description=RouterDoc.UPDATE_MEMORY_CONFIG,
+    tags=["Configuration"],
 )
 async def update_memory_config_endpoint(
     spec: UpdateMemoryConfigSpec,
@@ -96,6 +99,7 @@ async def update_memory_config_endpoint(
 @config_router.get(
     "/memory/episodic",
     description=RouterDoc.GET_EPISODIC_CONFIG,
+    tags=["Configuration"],
 )
 async def get_episodic_memory_config(
     service: Annotated[ConfigService, Depends(get_config_service)],
@@ -107,6 +111,7 @@ async def get_episodic_memory_config(
 @config_router.put(
     "/memory/episodic",
     description=RouterDoc.UPDATE_EPISODIC_CONFIG,
+    tags=["Configuration"],
 )
 async def update_episodic_memory_config(
     spec: UpdateEpisodicMemorySpec,
@@ -125,6 +130,7 @@ async def update_episodic_memory_config(
 @config_router.get(
     "/memory/episodic/long_term",
     description=RouterDoc.GET_LTM_CONFIG,
+    tags=["Configuration"],
 )
 async def get_long_term_memory_config(
     service: Annotated[ConfigService, Depends(get_config_service)],
@@ -136,6 +142,7 @@ async def get_long_term_memory_config(
 @config_router.get(
     "/memory/episodic/short_term",
     description=RouterDoc.GET_STM_CONFIG,
+    tags=["Configuration"],
 )
 async def get_short_term_memory_config(
     service: Annotated[ConfigService, Depends(get_config_service)],
@@ -159,6 +166,7 @@ class UpdateShortTermMemoryConfigSpec(UpdateShortTermMemorySpec):
 @config_router.put(
     "/memory/episodic/long_term",
     description=RouterDoc.UPDATE_LTM_CONFIG,
+    tags=["Configuration"],
 )
 async def update_long_term_memory_config(
     spec: UpdateLongTermMemoryConfigSpec,
@@ -183,6 +191,7 @@ async def update_long_term_memory_config(
 @config_router.put(
     "/memory/episodic/short_term",
     description=RouterDoc.UPDATE_STM_CONFIG,
+    tags=["Configuration"],
 )
 async def update_short_term_memory_config(
     spec: UpdateShortTermMemoryConfigSpec,
@@ -206,6 +215,7 @@ async def update_short_term_memory_config(
 @config_router.get(
     "/memory/semantic",
     description=RouterDoc.GET_SEMANTIC_CONFIG,
+    tags=["Configuration"],
 )
 async def get_semantic_memory_config(
     service: Annotated[ConfigService, Depends(get_config_service)],
@@ -217,6 +227,7 @@ async def get_semantic_memory_config(
 @config_router.put(
     "/memory/semantic",
     description=RouterDoc.UPDATE_SEMANTIC_CONFIG,
+    tags=["Configuration"],
 )
 async def update_semantic_memory_config(
     spec: UpdateSemanticMemorySpec,
@@ -236,6 +247,7 @@ async def update_semantic_memory_config(
     "/resources/embedders",
     status_code=201,
     description=RouterDoc.ADD_EMBEDDER,
+    tags=["Resources"],
 )
 async def add_embedder_endpoint(
     spec: AddEmbedderSpec,
@@ -262,6 +274,7 @@ async def add_embedder_endpoint(
     "/resources/language_models",
     status_code=201,
     description=RouterDoc.ADD_LANGUAGE_MODEL,
+    tags=["Resources"],
 )
 async def add_language_model_endpoint(
     spec: AddLanguageModelSpec,
@@ -287,6 +300,7 @@ async def add_language_model_endpoint(
 @config_router.delete(
     "/resources/embedders/{name}",
     description=RouterDoc.DELETE_EMBEDDER,
+    tags=["Resources"],
 )
 async def delete_embedder_endpoint(
     name: str,
@@ -305,6 +319,7 @@ async def delete_embedder_endpoint(
 @config_router.delete(
     "/resources/language_models/{name}",
     description=RouterDoc.DELETE_LANGUAGE_MODEL,
+    tags=["Resources"],
 )
 async def delete_language_model_endpoint(
     name: str,
@@ -323,6 +338,7 @@ async def delete_language_model_endpoint(
 @config_router.post(
     "/resources/embedders/{name}/retry",
     description=RouterDoc.RETRY_EMBEDDER,
+    tags=["Resources"],
 )
 async def retry_embedder_endpoint(
     name: str,
@@ -348,6 +364,7 @@ async def retry_embedder_endpoint(
 @config_router.post(
     "/resources/language_models/{name}/retry",
     description=RouterDoc.RETRY_LANGUAGE_MODEL,
+    tags=["Resources"],
 )
 async def retry_language_model_endpoint(
     name: str,
@@ -373,6 +390,7 @@ async def retry_language_model_endpoint(
 @config_router.post(
     "/resources/rerankers/{name}/retry",
     description=RouterDoc.RETRY_RERANKER,
+    tags=["Resources"],
 )
 async def retry_reranker_endpoint(
     name: str,

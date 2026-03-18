@@ -230,7 +230,6 @@ class RerankerManager(BaseResourceManager[Reranker]):
             model_id=conf.model_id,
             additional_model_request_fields=conf.additional_model_request_fields,
             metrics_factory=conf.get_metrics_factory(),
-            user_metrics_labels=conf.user_metrics_labels,
         )
         self._rerankers[name] = AmazonBedrockReranker(params)
         return self._rerankers[name]

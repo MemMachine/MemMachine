@@ -194,7 +194,6 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 model=conf.model,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
-                user_metrics_labels=conf.user_metrics_labels,
             ),
         )
 
@@ -217,7 +216,6 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 model=conf.model,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
-                user_metrics_labels=conf.user_metrics_labels,
             ),
         )
 
@@ -259,6 +257,5 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 additional_model_request_fields=conf.additional_model_request_fields,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
-                user_metrics_labels=conf.user_metrics_labels,
             ),
         )

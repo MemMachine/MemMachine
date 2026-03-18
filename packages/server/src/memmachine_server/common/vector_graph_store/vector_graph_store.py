@@ -167,7 +167,7 @@ class VectorGraphStore(ABC):
         *,
         collection: str,
         by_properties: Iterable[str],
-        starting_at: Iterable[OrderedValue | None],
+        starting_at: Iterable[OrderedValue | str | None],
         order_ascending: Iterable[bool],
         include_equal_start: bool = False,
         limit: int | None = 1,
@@ -181,7 +181,7 @@ class VectorGraphStore(ABC):
                 Collection that the nodes belong to.
             by_properties (Iterable[str]):
                 Hierarchy of property names to order the nodes by.
-            starting_at (Iterable[OrderedValue]):
+            starting_at (Iterable[OrderedValue | str]):
                 Values for each property to start the search from.
                 If a value is None, start from the minimum or maximum
                 based on order_ascending.

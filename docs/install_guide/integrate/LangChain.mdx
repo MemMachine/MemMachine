@@ -1,0 +1,129 @@
+---
+title: "LangChain"
+description: "Enable persistent, long-term memory for your LangChain chains and agents"
+icon: "link"
+---
+
+For the full source code and advanced implementation details, see the official **[LangChain Integration](https://github.com/MemMachine/MemMachine/tree/main/integrations/langchain)**  repository section..
+
+## Overview
+
+Integrating MemMachine with [LangChain](https://python.langchain.com) implements the `BaseMemory` interface, allowing you to use MemMachine as a persistent memory backend. This enables:
+
+* **Persistent Memory**: Conversations and context persist across multiple sessions.
+* **Semantic Search**: Retrieve relevant memories based on semantic similarity.
+* **Context Scoping**: Automatic filtering by `user_id`, `agent_id`, and `session_id`.
+* **Episodic & Semantic Memory**: Access to both conversation history and extracted knowledge.
+
+## Configuration
+
+The integration can be managed via environment variables or constructor parameters.
+
+| Parameter | Environment Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `base_url` | `MEMORY_BACKEND_URL` | `http://localhost:8080` | MemMachine server URL  |
+| `org_id` | `LANGCHAIN_ORG_ID` | `langchain_org` | Organization identifier  |
+| `project_id` | `LANGCHAIN_PROJECT_ID` | `langchain_project` | Project identifier  |
+| `user_id` | `LANGCHAIN_USER_ID` | `None` | Scopes memory to a specific user  |
+| `agent_id` | `LANGCHAIN_AGENT_ID` | `None` | Scopes memory to a specific agent  |
+| `session_id` | `LANGCHAIN_SESSION_ID` | `None` | Scopes memory to a specific session  |
+
+---
+
+<Steps>
+  <Step title="Install Dependencies">
+    Install the core LangChain framework along with the MemMachine client:
+
+    ```bash
+    pip install langchain memmachine-client
+    ```
+  </Step>
+
+  <Step title="Initialize MemMachine Memory">
+    Initialize the memory class with your project configuration. 
+
+    ```python
+    from integrations.langchain.memory import MemMachineMemory
+    
+    memory = MemMachineMemory(
+        base_url="http://localhost:8080",
+        org_id="my_org",
+        project_id="my_project",
+        user_id="user123",
+        session_id="session456",
+    )
+    ```
+  </Step>
+
+  <Step title="Integrate with a Chain">
+    Pass the `memory` instance to your LangChain `ConversationChain` or `LLMChain`.
+
+    ```python
+    from langchain.llms import OpenAI
+    from langchain.chains import ConversationChain
+    
+    llm = OpenAI(temperature=0)
+    
+    # Create conversation chain with MemMachine memory
+    chain = ConversationChain(
+        llm=llm,
+        memory=memory,
+        verbose=True,
+    )
+    
+    # The chain will now remember context across runs
+    chain.run("Hello, my name is Alice")
+    ```
+  </Step>
+</Steps>
+
+## Advanced Usage
+
+### Custom Prompt with Memory Context
+You can use a `PromptTemplate` to explicitly include both conversation history and semantic facts (extracted context).
+
+```python
+from langchain.prompts import PromptTemplate
+from langchain.chains import LLMChain
+
+prompt = PromptTemplate(
+    input_variables=["history", "memmachine_context", "input"],
+    template="""You are a helpful assistant with access to the user's memory.
+
+Relevant context from memory:
+{memmachine_context}
+
+Conversation history:
+{history}
+
+User: {input}
+Assistant:""",
+)
+
+chain = LLMChain(llm=llm, prompt=prompt, memory=memory)
+```
+
+### Direct Memory Operations
+
+For granular control, you can interface with the underlying memory storage directly.
+
+```python
+# Manually add a specific fact
+memory._memory.add(
+    content="I prefer working in the morning",
+    role="user",
+)
+
+# Search memories manually
+results = memory.load_memory_variables({"input": "What are my preferences?"})
+print(results["memmachine_context"])
+```
+
+<Note> **Pro Tip:** Use the `search_limit` parameter (default: 10) in the constructor to control the number of memory fragments retrieved during each interaction. </Note>
+
+## Requirements
+
+- **MemMachine Server:** Must be reachable at the `MEMORY_BACKEND_URL`.
+- **LLM API Key:** An `OPENAI_API_KEY` (or equivalent) must be configured in your environment or within the MemMachine `configuration.yml`.
+- **Python:** 3.10 or higher.
+- **Framework:** `langchain` and `memmachine`.

@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, NamedTuple, Protocol, cast
+from typing import Literal, NamedTuple, Protocol, cast, runtime_checkable
 
 from memmachine_server.common.data_types import PropertyValue
 
@@ -13,6 +13,7 @@ class FilterParseError(ValueError):
     """Raised when the textual filter specification is invalid."""
 
 
+@runtime_checkable
 class FilterExpr(Protocol):
     """Marker protocol for filter expression nodes."""
 
@@ -251,7 +252,7 @@ class _Parser:
     def _parse_in_value(self) -> int | str:
         """Parse a single value inside an IN list (only int and str allowed)."""
         value = self._parse_value()
-        if isinstance(value, bool) or not isinstance(value, (int, str)):
+        if isinstance(value, bool) or not isinstance(value, int | str):
             raise FilterParseError(
                 f"IN lists only support int and str values, got {type(value).__name__}"
             )

@@ -229,7 +229,7 @@ class SemanticService:
         return res
 
     async def add_messages(self, set_id: SetIdT, history_ids: list[EpisodeIdT]) -> None:
-        logger.info("Adding messages to set %s: %s", set_id, history_ids)
+        logger.debug("Adding messages to set %s: %s", set_id, history_ids)
 
         res = await asyncio.gather(
             *[
@@ -251,7 +251,7 @@ class SemanticService:
     ) -> None:
         assert len(set_ids) == len(set(set_ids))
 
-        logger.info("Adding message id %s to sets %s", history_id, set_ids)
+        logger.debug("Adding message id %s to sets %s", history_id, set_ids)
 
         res = await asyncio.gather(
             *[
@@ -285,7 +285,7 @@ class SemanticService:
         metadata: dict[str, str] | None = None,
         citations: list[EpisodeIdT] | None = None,
     ) -> FeatureIdT:
-        logger.info("Adding new feature %s to set %s", feature, set_id)
+        logger.debug("Adding new feature %s to set %s", feature, set_id)
 
         resources = await self._set_id_resource(set_id=set_id)
 
@@ -355,7 +355,7 @@ class SemanticService:
         tag: str | None = None,
         metadata: dict[str, str] | None = None,
     ) -> None:
-        logger.info("Updating feature %s", feature_id)
+        logger.debug("Updating feature %s", feature_id)
         embedding = None
 
         if category_name is not None or value is not None:
@@ -395,12 +395,12 @@ class SemanticService:
         )
 
     async def delete_history(self, history_ids: list[EpisodeIdT]) -> None:
-        logger.info("Deleting history ids %s", history_ids)
+        logger.debug("Deleting history ids %s", history_ids)
 
         await self._semantic_storage.delete_history(history_ids)
 
     async def delete_features(self, feature_ids: list[FeatureIdT]) -> None:
-        logger.info("Deleting features ids %s", feature_ids)
+        logger.debug("Deleting features ids %s", feature_ids)
 
         await self._semantic_storage.delete_features(feature_ids)
 
@@ -410,7 +410,7 @@ class SemanticService:
         set_ids: list[SetIdT],
         filter_expr: FilterExpr | None = None,
     ) -> None:
-        logger.info("Deleting filter feature set ids %s", set_ids)
+        logger.debug("Deleting filter feature set ids %s", set_ids)
 
         await self._semantic_storage.delete_feature_set(
             filter_expr=_with_has_set_ids(
@@ -537,7 +537,7 @@ class SemanticService:
         )
 
     async def delete_set_id(self, *, set_ids: list[SetIdT]) -> None:
-        logger.info("Deleting set ids %s", set_ids)
+        logger.debug("Deleting set ids %s", set_ids)
 
         async with asyncio.TaskGroup() as tg:
             tg.create_task(

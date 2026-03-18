@@ -38,7 +38,8 @@
               {
                 "group": "Cloud Deployments",
                 "pages": [
-                  "install_guide/cloud_deploy/aws_cloudformation"
+                  "install_guide/cloud_deploy/aws_cloudformation",
+                  "install_guide/cloud_deploy/Helm_Chart"
                 ]
               },  
               {
@@ -54,13 +55,16 @@
             "group": "Integrations",
             "icon": "puzzle-piece",
             "pages": [
+              "install_guide/integrate/openclaw",
               "install_guide/integrate/GPTStore",
               "install_guide/integrate/claude_code_mcp",
               "install_guide/integrate/LangGraph",
+              "install_guide/integrate/LangChain",
               "install_guide/integrate/crewai",
               "install_guide/integrate/n8n",
               "install_guide/integrate/dify",
-              "install_guide/integrate/Google_ADK"
+              "install_guide/integrate/Google_ADK",
+              "install_guide/integrate/LlamaIndex"
             ]
           },
           {
@@ -86,6 +90,7 @@
               "open_source/configuration",
               "open_source/memory_types",
               "open_source/databases",
+              "open_source/retrieval_agent_architecture",
               "open_source/community"
             ]
           }

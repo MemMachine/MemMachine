@@ -212,7 +212,6 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             metrics_factory=conf.get_metrics_factory(),
-            user_metrics_labels=conf.user_metrics_labels,
         )
         return OpenAIEmbedder(params)
 

@@ -94,7 +94,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/projects", status_code=201, description=RouterDoc.CREATE_PROJECT)
+@router.post(
+    "/projects",
+    status_code=201,
+    description=RouterDoc.CREATE_PROJECT,
+    tags=["Projects"],
+)
 async def create_project(
     spec: CreateProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -138,7 +143,7 @@ async def create_project(
     )
 
 
-@router.post("/projects/get", description=RouterDoc.GET_PROJECT)
+@router.post("/projects/get", description=RouterDoc.GET_PROJECT, tags=["Projects"])
 async def get_project(
     spec: GetProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -168,7 +173,11 @@ async def get_project(
     )
 
 
-@router.post("/projects/episode_count/get", description=RouterDoc.GET_EPISODE_COUNT)
+@router.post(
+    "/projects/episode_count/get",
+    description=RouterDoc.GET_EPISODE_COUNT,
+    tags=["Projects"],
+)
 async def get_episode_count(
     spec: GetProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -185,7 +194,7 @@ async def get_episode_count(
     return EpisodeCountResponse(count=count)
 
 
-@router.post("/projects/list", description=RouterDoc.LIST_PROJECTS)
+@router.post("/projects/list", description=RouterDoc.LIST_PROJECTS, tags=["Projects"])
 async def list_projects(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> list[dict[str, str]]:
@@ -202,7 +211,12 @@ async def list_projects(
     ]
 
 
-@router.post("/projects/delete", status_code=204, description=RouterDoc.DELETE_PROJECT)
+@router.post(
+    "/projects/delete",
+    status_code=204,
+    description=RouterDoc.DELETE_PROJECT,
+    tags=["Projects"],
+)
 async def delete_project(
     spec: DeleteProjectSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -220,7 +234,7 @@ async def delete_project(
         raise RestError(code=500, message="Unable to delete project", ex=e) from e
 
 
-@router.post("/memories", description=RouterDoc.ADD_MEMORIES)
+@router.post("/memories", description=RouterDoc.ADD_MEMORIES, tags=["Memories"])
 async def add_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -238,6 +252,7 @@ async def add_memories(
     "/memories/search",
     description=RouterDoc.SEARCH_MEMORIES,
     response_model_exclude_none=True,
+    tags=["Memories"],
 )
 async def search_memories(
     spec: SearchMemoriesSpec,
@@ -261,6 +276,7 @@ async def search_memories(
     "/memories/list",
     description=RouterDoc.LIST_MEMORIES,
     response_model_exclude_none=True,
+    tags=["Memories"],
 )
 async def list_memories(
     spec: ListMemoriesSpec,
@@ -277,6 +293,7 @@ async def list_memories(
     "/memories/episodic/delete",
     status_code=204,
     description=RouterDoc.DELETE_EPISODIC_MEMORY,
+    tags=["Memories"],
 )
 async def delete_episodic_memory(
     spec: DeleteEpisodicMemorySpec,
@@ -307,6 +324,7 @@ async def delete_episodic_memory(
     "/memories/semantic/delete",
     status_code=204,
     description=RouterDoc.DELETE_SEMANTIC_MEMORY,
+    tags=["Memories"],
 )
 async def delete_semantic_memory(
     spec: DeleteSemanticMemorySpec,
@@ -331,6 +349,7 @@ async def delete_semantic_memory(
     "/memories/semantic/feature",
     status_code=201,
     description=RouterDoc.ADD_FEATURE,
+    tags=["Semantic Memory: Features"],
 )
 async def add_feature(
     spec: AddFeatureSpec,
@@ -358,6 +377,7 @@ async def add_feature(
     "/memories/semantic/feature/get",
     description=RouterDoc.GET_FEATURE,
     response_model_exclude_none=True,
+    tags=["Semantic Memory: Features"],
 )
 async def get_feature(
     spec: GetFeatureSpec,
@@ -369,6 +389,8 @@ async def get_feature(
             feature_id=spec.feature_id,
             load_citations=spec.load_citations,
         )
+    except ResourceNotFoundError as e:
+        raise RestError(code=404, message=str(e), ex=e) from e
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except Exception as e:
@@ -393,6 +415,7 @@ async def get_feature(
     "/memories/semantic/feature/update",
     status_code=204,
     description=RouterDoc.UPDATE_FEATURE,
+    tags=["Semantic Memory: Features"],
 )
 async def update_feature(
     spec: UpdateFeatureSpec,
@@ -420,6 +443,7 @@ async def update_feature(
     "/memories/semantic/set_type",
     status_code=201,
     description=RouterDoc.CREATE_SEMANTIC_SET_TYPE,
+    tags=["Semantic Memory: Sets"],
 )
 async def create_semantic_set_type(
     spec: CreateSemanticSetTypeSpec,
@@ -447,6 +471,7 @@ async def create_semantic_set_type(
 @router.post(
     "/memories/semantic/set_type/list",
     description=RouterDoc.LIST_SEMANTIC_SET_TYPES,
+    tags=["Semantic Memory: Sets"],
 )
 async def list_semantic_set_types(
     spec: ListSemanticSetTypesSpec,
@@ -479,6 +504,7 @@ async def list_semantic_set_types(
     "/memories/semantic/set_type/delete",
     status_code=204,
     description=RouterDoc.DELETE_SEMANTIC_SET_TYPE,
+    tags=["Semantic Memory: Sets"],
 )
 async def delete_semantic_set_type(
     spec: DeleteSemanticSetTypeSpec,
@@ -498,6 +524,7 @@ async def delete_semantic_set_type(
 @router.post(
     "/memories/semantic/set_id/get",
     description=RouterDoc.GET_SEMANTIC_SET_ID,
+    tags=["Semantic Memory: Sets"],
 )
 async def get_semantic_set_id(
     spec: GetSemanticSetIdSpec,
@@ -524,6 +551,7 @@ async def get_semantic_set_id(
 @router.post(
     "/memories/semantic/set_id/list",
     description=RouterDoc.LIST_SEMANTIC_SET_IDS,
+    tags=["Semantic Memory: Sets"],
 )
 async def list_semantic_set_ids(
     spec: ListSemanticSetIdsSpec,
@@ -557,6 +585,7 @@ async def list_semantic_set_ids(
     "/memories/semantic/set/configure",
     status_code=204,
     description=RouterDoc.CONFIGURE_SEMANTIC_SET,
+    tags=["Semantic Memory: Sets"],
 )
 async def configure_semantic_set(
     spec: ConfigureSemanticSetSpec,
@@ -583,6 +612,7 @@ async def configure_semantic_set(
 @router.post(
     "/memories/semantic/category/get",
     description=RouterDoc.GET_SEMANTIC_CATEGORY,
+    tags=["Semantic Memory: Categories"],
 )
 async def get_semantic_category(
     spec: GetSemanticCategorySpec,
@@ -611,6 +641,7 @@ async def get_semantic_category(
     "/memories/semantic/category",
     status_code=201,
     description=RouterDoc.ADD_SEMANTIC_CATEGORY,
+    tags=["Semantic Memory: Categories"],
 )
 async def add_semantic_category(
     spec: AddSemanticCategorySpec,
@@ -635,6 +666,7 @@ async def add_semantic_category(
     "/memories/semantic/category/template",
     status_code=201,
     description=RouterDoc.ADD_SEMANTIC_CATEGORY_TEMPLATE,
+    tags=["Semantic Memory: Categories"],
 )
 async def add_semantic_category_template(
     spec: AddSemanticCategoryTemplateSpec,
@@ -660,6 +692,7 @@ async def add_semantic_category_template(
 @router.post(
     "/memories/semantic/category/template/list",
     description=RouterDoc.LIST_SEMANTIC_CATEGORY_TEMPLATES,
+    tags=["Semantic Memory: Categories"],
 )
 async def list_semantic_category_templates(
     spec: ListSemanticCategoryTemplatesSpec,
@@ -691,6 +724,7 @@ async def list_semantic_category_templates(
     "/memories/semantic/category/disable",
     status_code=204,
     description=RouterDoc.DISABLE_SEMANTIC_CATEGORY,
+    tags=["Semantic Memory: Categories"],
 )
 async def disable_semantic_category(
     spec: DisableSemanticCategorySpec,
@@ -713,6 +747,7 @@ async def disable_semantic_category(
 @router.post(
     "/memories/semantic/category/set_ids/get",
     description=RouterDoc.GET_SEMANTIC_CATEGORY_SET_IDS,
+    tags=["Semantic Memory: Categories"],
 )
 async def get_semantic_category_set_ids(
     spec: GetSemanticCategorySetIdsSpec,
@@ -734,6 +769,7 @@ async def get_semantic_category_set_ids(
     "/memories/semantic/category/delete",
     status_code=204,
     description=RouterDoc.DELETE_SEMANTIC_CATEGORY,
+    tags=["Semantic Memory: Categories"],
 )
 async def delete_semantic_category(
     spec: DeleteSemanticCategorySpec,
@@ -759,6 +795,7 @@ async def delete_semantic_category(
     "/memories/semantic/category/tag",
     status_code=201,
     description=RouterDoc.ADD_SEMANTIC_TAG,
+    tags=["Semantic Memory: Categories"],
 )
 async def add_semantic_tag(
     spec: AddSemanticTagSpec,
@@ -784,6 +821,7 @@ async def add_semantic_tag(
     "/memories/semantic/category/tag/delete",
     status_code=204,
     description=RouterDoc.DELETE_SEMANTIC_TAG,
+    tags=["Semantic Memory: Categories"],
 )
 async def delete_semantic_tag(
     spec: DeleteSemanticTagSpec,
@@ -808,6 +846,7 @@ async def delete_semantic_tag(
 @router.post(
     "/memory/episodic/config/get",
     description=RouterDoc.GET_EPISODIC_MEMORY_CONFIG,
+    tags=["Episodic Configuration"],
 )
 async def get_episodic_memory_config(
     spec: GetEpisodicMemoryConfigSpec,
@@ -835,6 +874,7 @@ async def get_episodic_memory_config(
     "/memory/episodic/config",
     status_code=204,
     description=RouterDoc.CONFIGURE_EPISODIC_MEMORY,
+    tags=["Episodic Configuration"],
 )
 async def configure_episodic_memory(
     spec: ConfigureEpisodicMemorySpec,
@@ -862,6 +902,7 @@ async def configure_episodic_memory(
 @router.post(
     "/memory/episodic/short_term/config/get",
     description=RouterDoc.GET_SHORT_TERM_MEMORY_CONFIG,
+    tags=["Episodic Configuration"],
 )
 async def get_short_term_memory_config(
     spec: GetShortTermMemoryConfigSpec,
@@ -887,6 +928,7 @@ async def get_short_term_memory_config(
     "/memory/episodic/short_term/config",
     status_code=204,
     description=RouterDoc.CONFIGURE_SHORT_TERM_MEMORY,
+    tags=["Episodic Configuration"],
 )
 async def configure_short_term_memory(
     spec: ConfigureShortTermMemorySpec,
@@ -912,6 +954,7 @@ async def configure_short_term_memory(
 @router.post(
     "/memory/episodic/long_term/config/get",
     description=RouterDoc.GET_LONG_TERM_MEMORY_CONFIG,
+    tags=["Episodic Configuration"],
 )
 async def get_long_term_memory_config(
     spec: GetLongTermMemoryConfigSpec,
@@ -937,6 +980,7 @@ async def get_long_term_memory_config(
     "/memory/episodic/long_term/config",
     status_code=204,
     description=RouterDoc.CONFIGURE_LONG_TERM_MEMORY,
+    tags=["Episodic Configuration"],
 )
 async def configure_long_term_memory(
     spec: ConfigureLongTermMemorySpec,
@@ -959,13 +1003,29 @@ async def configure_long_term_memory(
         ) from e
 
 
-@router.get("/metrics", description=RouterDoc.METRICS_PROMETHEUS)
+@router.get(
+    "/metrics",
+    description=RouterDoc.METRICS_PROMETHEUS,
+    tags=["System"],
+    responses={
+        200: {
+            "content": {
+                "text/plain": {
+                    "schema": {
+                        "type": "string",
+                        "description": "Prometheus metrics in text format",
+                    }
+                }
+            }
+        }
+    },
+)
 async def metrics() -> Response:
     """Expose Prometheus metrics endpoint."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@router.get("/health", description=RouterDoc.HEALTH_CHECK)
+@router.get("/health", description=RouterDoc.HEALTH_CHECK, tags=["System"])
 async def health_check() -> dict[str, str]:
     """Health check endpoint for container orchestration."""
     return {

@@ -20,7 +20,7 @@ dependencies = [
     "json-repair>=0.54",
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
-    "nltk>=3.9.1",
+    "nltk>=3.9.3",
     "openai>=2.21.0",
     "pgvector>=0.4.1",
     "prometheus-client>=0.22.1",
@@ -54,6 +54,9 @@ license = "Apache-2.0"
 gpu = [
     "sentence-transformers>=5.1.0",
 ]
+nebula = [
+    "nebula5-python>=5.2.1",
+]
 
 [project.scripts]
 memmachine-server = "memmachine_server.server.app:main"
@@ -69,6 +72,9 @@ Issues = "https://github.com/MemMachine/MemMachine/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.yml", "*.yaml", "*.sql"]
+
 [tool.setuptools_scm]
 root = "../.."
 
@@ -77,6 +83,10 @@ package = true
 
 [tool.ty.environment]
 python-version = "3.12"
+extra-paths = ["../common/src", "../client/src"]
+
+[tool.ty.src]
+exclude = ["build/**"]
 
 [tool.ruff]
 extend = "../../pyproject.toml"

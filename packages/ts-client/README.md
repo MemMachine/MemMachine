@@ -44,6 +44,13 @@ async function run() {
     // Search memories
     const result = await memory.search('What do I like to eat?')
     console.dir(result, { depth: null })
+
+    // Search memories with options
+    const agentResult = await memory.search('Summarize my preferences', {
+      top_k: 20,
+      agent_mode: true
+    })
+    console.dir(agentResult, { depth: null })
   } catch (err) {
     if (err instanceof MemMachineAPIError) {
       // Handle error

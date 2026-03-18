@@ -151,9 +151,24 @@ def build_update_prompt(*, tags: dict[str, str], description: str = "") -> str:
     )
 
 
-def build_consolidation_prompt() -> str:
-    """Create a consolidation prompt for merging overlapping memories."""
-    return """
+def build_consolidation_prompt(*, tags: dict[str, str] | None = None) -> str:
+    """Create a consolidation prompt for merging overlapping memories.
+
+    Args:
+        tags: Optional mapping of valid tag names to descriptions.  When
+            provided the LLM is told which tags are allowed and must not
+            invent new ones.
+    """
+    tag_section = ""
+    if tags:
+        tag_section = (
+            "\n    The valid tags for this category are:\n"
+            + "\n".join([f"\t- {key}: {value}" for key, value in tags.items()])
+            + "\n    You MUST only use these tags. Do not create new tag names.\n"
+        )
+
+    return (
+        """
     Your job is to perform memory consolidation for an llm long term memory system.
     Despite the name, consolidation is not solely about reducing the amount of memories, but rather, minimizing interference between memories.
     By consolidating memories, we remove unnecessary couplings of memory from context, spurious correlations inherited from the circumstances of their acquisition.
@@ -174,7 +189,9 @@ def build_consolidation_prompt() -> str:
     - metadata: object with 1 field
     -- citations: list of ids of old memories which influenced this one
     You will also output a list of old memories to keep (memories are deleted by default)
-
+"""
+        + tag_section
+        + """
     Guidelines:
     Memories should not contain unrelated ideas. Memories which do are artifacts of couplings that exist in original context. Separate them. This minimizes interference.
     Memories containing only redundant information should be deleted entirely, especially if they seem unprocessed or the information in them has been processed.
@@ -214,3 +231,4 @@ def build_consolidation_prompt() -> str:
         "keep_memories": list of ids of old memories to keep
     }
     """
+    )

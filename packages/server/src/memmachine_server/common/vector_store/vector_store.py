@@ -1,8 +1,7 @@
 """
 Abstract base class for a vector store.
 
-Defines the interface for adding, searching,
-and deleting records.
+Defines the interface for adding, querying, and deleting records.
 """
 
 from abc import ABC, abstractmethod
@@ -40,24 +39,24 @@ class Collection(ABC):
     async def query(
         self,
         *,
-        query_vector: Sequence[float],
-        similarity_threshold: float | None = None,
+        query_vectors: Iterable[Sequence[float]],
+        score_threshold: float | None = None,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
         return_vector: bool = True,
         return_properties: bool = True,
-    ) -> Iterable[QueryResult]:
+    ) -> Iterable[Iterable[QueryResult]]:
         """
-        Query for records matching the criteria by vector similarity.
+        Query for records matching the criteria by query vectors.
 
         Args:
-            query_vector (Sequence[float] | None):
-                The vector to compare against.
-            similarity_threshold (float | None):
-                Minimum similarity score to consider a match
+            query_vectors (Iterable[Sequence[float]]):
+                The vectors to compare against.
+            score_threshold (float | None):
+                Score threshold to consider a match
                 (default: None).
             limit (int | None):
-                Maximum number of matching records to return.
+                Maximum number of matching records to return per query vector.
                 If None, return as many matching records as possible
                 (default: None).
             property_filter (FilterExpr | None):
@@ -72,9 +71,9 @@ class Collection(ABC):
                 (default: True).
 
         Returns:
-            Iterable[QueryResult]:
-                Iterable of search results matching the criteria,
-                ordered by similarity score descending.
+            Iterable[Iterable[QueryResult]]:
+                Iterables of results matching the criteria for each query vector,
+                each ordered by score from best to worst.
 
         """
         raise NotImplementedError
@@ -168,7 +167,7 @@ class VectorStore(ABC):
     @abstractmethod
     async def get_collection(self, collection_name: str) -> Collection:
         """
-        Get a collection from the vector store. Handle persists across deletion and creation.
+        Get a collection from the vector store.
 
         Args:
             collection_name (str):

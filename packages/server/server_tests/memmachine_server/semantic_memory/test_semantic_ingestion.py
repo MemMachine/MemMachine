@@ -594,3 +594,330 @@ async def test_process_single_set_limits_features_sent_to_llm(
         "Expected feature set to be capped before calling the LLM, "
         f"but {len(passed_features)} features were passed"
     )
+
+
+@pytest.mark.asyncio
+async def test_consolidation_deletes_features_not_in_keep_list(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """Any feature whose ID is absent from ``keep_memories``
+    is unconditionally deleted, even when it holds valid user data."""
+    hist1 = await add_history(episode_storage, content="fixed observer bug")
+    hist2 = await add_history(episode_storage, content="added more agents")
+
+    bugfix_id = await semantic_storage.add_feature(
+        set_id="user-1160a",
+        category_name=semantic_category.name,
+        feature="observer_fix",
+        value="Fixed observer subagent bug",
+        tag="bugfix",
+        embedding=np.array([1.0, 0.0]),
+    )
+    progress_id = await semantic_storage.add_feature(
+        set_id="user-1160a",
+        category_name=semantic_category.name,
+        feature="more_agents",
+        value="User added more agents",
+        tag="bugfix",
+        embedding=np.array([0.0, 1.0]),
+    )
+    await semantic_storage.add_citations(bugfix_id, [hist1])
+    await semantic_storage.add_citations(progress_id, [hist2])
+
+    filter_str = (
+        f"set_id IN ('user-1160a') AND category_name IN ('{semantic_category.name}')"
+    )
+    memories = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(filter_str),
+        load_citations=True,
+    )
+
+    # LLM keeps only bugfix_id — progress_id is omitted and will be deleted.
+    llm_mock = AsyncMock(
+        return_value=SemanticConsolidateMemoryRes(
+            consolidated_memories=[],
+            keep_memories=[bugfix_id],
+        ),
+    )
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-1160a",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    assert await semantic_storage.get_feature(progress_id) is None, (
+        "Feature deleted because its ID was not in keep_memories"
+    )
+    assert await semantic_storage.get_feature(bugfix_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_empty_keep_memories_deletes_all_features(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """An empty ``keep_memories`` list causes every feature in the
+    consolidated group to be deleted."""
+    hist1 = await add_history(episode_storage, content="msg1")
+    hist2 = await add_history(episode_storage, content="msg2")
+
+    id1 = await semantic_storage.add_feature(
+        set_id="user-1160b",
+        category_name=semantic_category.name,
+        feature="feat_a",
+        value="value a",
+        tag="bugfix",
+        embedding=np.array([1.0, 0.0]),
+    )
+    id2 = await semantic_storage.add_feature(
+        set_id="user-1160b",
+        category_name=semantic_category.name,
+        feature="feat_b",
+        value="value b",
+        tag="bugfix",
+        embedding=np.array([0.0, 1.0]),
+    )
+    await semantic_storage.add_citations(id1, [hist1])
+    await semantic_storage.add_citations(id2, [hist2])
+
+    filter_str = (
+        f"set_id IN ('user-1160b') AND category_name IN ('{semantic_category.name}')"
+    )
+    memories = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(filter_str),
+        load_citations=True,
+    )
+
+    consolidated = LLMReducedFeature(
+        tag="bugfix", feature="combined", value="combined a + b"
+    )
+    llm_mock = AsyncMock(
+        return_value=SemanticConsolidateMemoryRes(
+            consolidated_memories=[consolidated],
+            keep_memories=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-1160b",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    assert await semantic_storage.get_feature(id1) is None
+    assert await semantic_storage.get_feature(id2) is None
+
+    remaining = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(filter_str),
+    )
+    assert len(remaining) == 1
+    assert remaining[0].value == "combined a + b"
+
+
+@pytest.mark.asyncio
+async def test_consolidation_rejects_llm_tag_rename(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """Consolidated features keep their original tag even when the LLM
+    invents a new one like 'Productivity Style'."""
+    hist1 = await add_history(episode_storage, content="msg1")
+    hist2 = await add_history(episode_storage, content="msg2")
+
+    id1 = await semantic_storage.add_feature(
+        set_id="user-1160c",
+        category_name=semantic_category.name,
+        feature="observer_fix",
+        value="Fixed observer subagent bug",
+        tag="bugfix",
+        embedding=np.array([1.0, 0.0]),
+    )
+    id2 = await semantic_storage.add_feature(
+        set_id="user-1160c",
+        category_name=semantic_category.name,
+        feature="step_disable",
+        value="Steps 7 and 8 disabled",
+        tag="bugfix",
+        embedding=np.array([0.0, 1.0]),
+    )
+    await semantic_storage.add_citations(id1, [hist1])
+    await semantic_storage.add_citations(id2, [hist2])
+
+    filter_str = (
+        f"set_id IN ('user-1160c') AND category_name IN ('{semantic_category.name}')"
+    )
+    memories = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(filter_str),
+        load_citations=True,
+    )
+
+    # LLM tries to replace user tag "bugfix" with "Productivity Style"
+    consolidated = LLMReducedFeature(
+        tag="Productivity Style",
+        feature="development_practices",
+        value="User fixes bugs and disables untested steps",
+    )
+    llm_mock = AsyncMock(
+        return_value=SemanticConsolidateMemoryRes(
+            consolidated_memories=[consolidated],
+            keep_memories=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-1160c",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    remaining = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(filter_str),
+    )
+    bugfix_features = [f for f in remaining if f.tag == "bugfix"]
+    renamed_features = [f for f in remaining if f.tag == "Productivity Style"]
+
+    assert len(bugfix_features) == 1, "Original 'bugfix' tag must be preserved"
+    assert len(renamed_features) == 0, "LLM-invented tag must be rejected"
+
+
+@pytest.mark.asyncio
+async def test_user_tags_preserved_after_ingestion_and_consolidation(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    embedder_double: MockEmbedder,
+    semantic_category: SemanticCategory,
+    mock_llm_model,
+    monkeypatch,
+):
+    """End-to-end: user-defined tags survive consolidation even when the
+    LLM invents new tag names.
+
+    1. Pre-populate features with user tags (bugfix, decision, progress).
+    2. Ingest a message that adds another "progress" entry.
+    3. Consolidation fires (threshold=2) on the "progress" group.
+    4. LLM tries to replace "progress" with "Productivity Style".
+    5. Tag validation reverts to "progress" — all user tags survive."""
+    set_id = "user-1160-e2e"
+
+    await semantic_storage.add_feature(
+        set_id=set_id,
+        category_name=semantic_category.name,
+        feature="observer_fix",
+        value="Fixed observer subagent bug",
+        tag="bugfix",
+        embedding=np.array([1.0, 0.0]),
+    )
+    await semantic_storage.add_feature(
+        set_id=set_id,
+        category_name=semantic_category.name,
+        feature="more_agents",
+        value="User decided to add more agents",
+        tag="decision",
+        embedding=np.array([0.5, 0.5]),
+    )
+    await semantic_storage.add_feature(
+        set_id=set_id,
+        category_name=semantic_category.name,
+        feature="design_progress",
+        value="User completed 50% of design",
+        tag="progress",
+        embedding=np.array([0.0, 1.0]),
+    )
+
+    message_id = await add_history(
+        episode_storage, content="Completed 60% of design now"
+    )
+    await semantic_storage.add_history_to_set(set_id=set_id, history_id=message_id)
+
+    # LLM update adds another progress entry (reaches threshold=2)
+    update_commands = [
+        SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="design_progress_60",
+            tag="progress",
+            value="User completed 60% of design",
+        ),
+    ]
+    update_mock = AsyncMock(return_value=update_commands)
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        update_mock,
+    )
+
+    # Consolidation LLM tries to replace "progress" with "Productivity Style"
+    consolidated = LLMReducedFeature(
+        tag="Productivity Style",
+        feature="design_progress",
+        value="User has completed 60% of design",
+    )
+    consolidate_mock = AsyncMock(
+        return_value=SemanticConsolidateMemoryRes(
+            consolidated_memories=[consolidated],
+            keep_memories=[],
+        ),
+    )
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        consolidate_mock,
+    )
+
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+        )
+    )
+
+    await ingestion_service._process_single_set(set_id)
+
+    filter_str = (
+        f"set_id IN ('{set_id}') AND category_name IN ('{semantic_category.name}')"
+    )
+    remaining = await semantic_storage.get_feature_set(
+        filter_expr=parse_filter(filter_str),
+    )
+    remaining_tags = {f.tag for f in remaining}
+
+    # Tag validation reverts LLM-invented tag back to "progress"
+    assert "Productivity Style" not in remaining_tags, (
+        "LLM-invented tag must be rejected"
+    )
+    assert "progress" in remaining_tags, (
+        "Original 'progress' tag must survive consolidation"
+    )
+
+    # "bugfix" and "decision" survive (each had < 2 entries)
+    assert "bugfix" in remaining_tags
+    assert "decision" in remaining_tags
