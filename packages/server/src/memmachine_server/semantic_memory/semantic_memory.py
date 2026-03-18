@@ -11,11 +11,11 @@ import asyncio
 import logging
 from asyncio import Task
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeIdT, EpisodeStorage
@@ -30,8 +30,16 @@ from memmachine_server.common.filter.filter_parser import (
     In,
 )
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.utils import merge_async_iterators
 
+from .cluster_manager import ClusterParams, ClusterSplitParams
+from .cluster_splitter import (
+    ClusterSplitterProtocol,
+    NoOpClusterSplitter,
+    RerankerClusterSplitter,
+)
+from .cluster_store.cluster_store import ClusterStateStorage
 from .config_store.config_store import SemanticConfigStorage
 from .semantic_ingestion import IngestionService
 from .semantic_model import (
@@ -65,6 +73,8 @@ class ResourceManager(Protocol):
 
     async def get_language_model(self, language_model_name: str) -> LanguageModel: ...
 
+    async def get_reranker(self, reranker_name: str) -> Reranker: ...
+
 
 def _with_has_set_ids(
     set_ids: Sequence[SetIdT],
@@ -92,12 +102,19 @@ class SemanticService:
         semantic_storage: InstanceOf[SemanticStorage]
         episode_storage: InstanceOf[EpisodeStorage]
         semantic_config_storage: InstanceOf[SemanticConfigStorage]
+        cluster_state_storage: InstanceOf[ClusterStateStorage]
+        cluster_params: ClusterParams = Field(default_factory=ClusterParams)
+        cluster_split_params: ClusterSplitParams = Field(
+            default_factory=ClusterSplitParams,
+        )
+        cluster_split_reranker_name: str | None = None
         consolidation_threshold: int = 20
 
         feature_update_interval_sec: float = 2.0
 
         uningested_message_limit: int = 5
         uningested_time_limit: timedelta = timedelta(minutes=5)
+        cluster_idle_ttl: timedelta | None = timedelta(days=1)
 
         resource_manager: InstanceOf[ResourceManager]
 
@@ -118,6 +135,10 @@ class SemanticService:
         self._semantic_config_storage: SemanticConfigStorage = (
             params.semantic_config_storage
         )
+        self._cluster_state_storage = params.cluster_state_storage
+        self._cluster_params = params.cluster_params
+        self._cluster_split_params = params.cluster_split_params
+        self._cluster_split_reranker_name = params.cluster_split_reranker_name
         self._background_ingestion_interval_sec = params.feature_update_interval_sec
 
         self._resource_manager = params.resource_manager
@@ -130,11 +151,9 @@ class SemanticService:
 
         self._consolidation_threshold = params.consolidation_threshold
 
-        self._feature_update_message_limit = max(
-            params.uningested_message_limit,
-            1,
-        )
-        self._feature_time_limit = params.uningested_time_limit
+        self._cluster_ingestion_message_limit = params.uningested_message_limit
+        self._cluster_ingestion_time_limit = params.uningested_time_limit
+        self._cluster_idle_ttl = params.cluster_idle_ttl
 
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
@@ -515,6 +534,15 @@ class SemanticService:
         else:
             llm_model = await self._resource_manager.get_language_model(config.llm_name)
 
+        reranker: Reranker | None = None
+        if (
+            self._cluster_split_params.enabled
+            and self._cluster_split_reranker_name is not None
+        ):
+            reranker = await self._resource_manager.get_reranker(
+                self._cluster_split_reranker_name
+            )
+
         if config.disabled_categories is None:
             disabled_categories = []
         else:
@@ -534,6 +562,7 @@ class SemanticService:
         return Resources(
             embedder=embedder,
             language_model=llm_model,
+            reranker=reranker,
             semantic_categories=categories,
         )
 
@@ -547,8 +576,10 @@ class SemanticService:
                 )
             )
             tg.create_task(self._semantic_storage.reset_set_ids(set_ids=set_ids))
+            for set_id in set_ids:
+                tg.create_task(self._cluster_state_storage.delete_state(set_id=set_id))
 
-    async def get_set_id_category_names(self, *, set_id: SetIdT) -> list[str]:
+    async def get_set_id_category_names(self, *, set_id: SetIdT) -> Sequence[str]:
         logger.debug("Getting category names for set id %s", set_id)
 
         resources = await self._set_id_resource(set_id=set_id)
@@ -768,30 +799,55 @@ class SemanticService:
         async for set_id in self._semantic_storage.get_set_ids_starts_with(prefix):
             yield set_id
 
+    def _build_cluster_splitter(self) -> ClusterSplitterProtocol:
+        if self._cluster_split_params.enabled:
+            if self._cluster_split_reranker_name:
+                return RerankerClusterSplitter(self._cluster_split_params)
+            logger.warning(
+                "Cluster splitting enabled but no reranker configured; disabling"
+            )
+        return NoOpClusterSplitter()
+
     async def _background_ingestion_task(self) -> None:
         ingestion_service = IngestionService(
             params=IngestionService.Params(
                 semantic_storage=self._semantic_storage,
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
+                ingestion_trigger_messages=self._cluster_ingestion_message_limit,
+                ingestion_trigger_age=self._cluster_ingestion_time_limit,
+                cluster_idle_ttl=self._cluster_idle_ttl,
+                cluster_state_storage=self._cluster_state_storage,
+                cluster_params=self._cluster_params,
+                cluster_splitter=self._build_cluster_splitter(),
             ),
         )
 
         while not self._is_shutting_down:
-            dirty_sets = [
-                s
-                async for s in self._semantic_storage.get_history_set_ids(
-                    min_uningested_messages=self._feature_update_message_limit,
-                    older_than=datetime.now(tz=UTC) - self._feature_time_limit,
-                )
-            ]
+            dirty_sets = self._semantic_storage.get_history_set_ids(
+                min_uningested_messages=1,
+            )
 
-            if len(dirty_sets) == 0:
+            first_set_id: SetIdT | None = None
+            async for set_id in dirty_sets:
+                first_set_id = set_id
+                break
+
+            if first_set_id is None:
                 await asyncio.sleep(self._background_ingestion_interval_sec)
                 continue
 
+            async def _stream_set_ids(
+                first_id: SetIdT, remaining: AsyncIterator[SetIdT]
+            ) -> AsyncIterator[SetIdT]:
+                yield first_id
+                async for set_id in remaining:
+                    yield set_id
+
             try:
-                await ingestion_service.process_set_ids(dirty_sets)
+                await ingestion_service.process_set_ids(
+                    _stream_set_ids(first_set_id, dirty_sets)
+                )
             except Exception:
                 if self._debug_fail_loudly:
                     raise

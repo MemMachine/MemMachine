@@ -1,5 +1,6 @@
 """Abstract interface for storing semantic configuration data."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -34,8 +35,8 @@ class SemanticConfigStorage(Protocol):
 
         embedder_name: str | None
         llm_name: str | None
-        disabled_categories: list[str] | None
-        categories: list[SemanticCategory]
+        disabled_categories: Sequence[str] | None
+        categories: Sequence[SemanticCategory]
 
     async def get_setid_config(
         self,
@@ -69,7 +70,7 @@ class SemanticConfigStorage(Protocol):
         self,
         *,
         category_id: CategoryIdT,
-    ) -> list[SetIdT]: ...
+    ) -> Sequence[SetIdT]: ...
 
     async def create_category(
         self,
@@ -121,7 +122,7 @@ class SemanticConfigStorage(Protocol):
         self,
         *,
         set_type_id: str,
-    ) -> list[SemanticCategory]: ...
+    ) -> Sequence[SemanticCategory]: ...
 
     @dataclass(frozen=True)
     class Tag:
@@ -164,11 +165,11 @@ class SemanticConfigStorage(Protocol):
         *,
         org_id: str,
         org_level_set: bool = False,
-        metadata_tags: list[str],
+        metadata_tags: Sequence[str],
         name: str | None = None,
         description: str | None = None,
     ) -> str: ...
 
-    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]: ...
+    async def list_set_type_ids(self, *, org_id: str) -> Sequence[SetTypeEntry]: ...
 
     async def delete_set_type_id(self, *, set_type_id: str) -> None: ...

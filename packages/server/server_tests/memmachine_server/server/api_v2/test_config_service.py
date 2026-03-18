@@ -9,6 +9,7 @@ from memmachine_common.api.config_spec import (
     UpdateEpisodicMemorySpec,
     UpdateSemanticMemorySpec,
 )
+from pydantic import ValidationError
 
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
@@ -326,6 +327,18 @@ def test_update_semantic_ingestion_settings(memory_resource_manager):
     assert sm.ingestion_trigger_age == timedelta(seconds=600)
     assert "ingestion_trigger_messages=10" in message
     assert "ingestion_trigger_age=600s" in message
+
+
+@pytest.mark.parametrize("value", [-0.1, 1.1])
+def test_update_semantic_memory_spec_rejects_invalid_cluster_threshold(value):
+    with pytest.raises(ValidationError):
+        UpdateSemanticMemorySpec.model_validate({"cluster_similarity_threshold": value})
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_update_semantic_memory_spec_rejects_invalid_cluster_time_gap(value):
+    with pytest.raises(ValidationError):
+        UpdateSemanticMemorySpec.model_validate({"cluster_max_time_gap_seconds": value})
 
 
 def test_update_both_episodic_and_semantic(memory_resource_manager):

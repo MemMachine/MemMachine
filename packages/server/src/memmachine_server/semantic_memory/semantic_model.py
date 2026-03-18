@@ -10,6 +10,7 @@ from pydantic import BaseModel, InstanceOf
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.reranker import Reranker
 from memmachine_server.semantic_memory.util import semantic_prompt_template
 
 SetIdT = str
@@ -139,10 +140,11 @@ class SemanticCategory(BaseModel):
 
 
 class Resources(BaseModel):
-    """Resource bundle (embedder, language model, semantic categories) for a set_id."""
+    """Resource bundle for a set_id (embedder, language model, reranker, categories)."""
 
     embedder: InstanceOf[Embedder]
     language_model: InstanceOf[LanguageModel]
+    reranker: InstanceOf[Reranker] | None = None
     semantic_categories: Sequence[InstanceOf[SemanticCategory]]
 
 
