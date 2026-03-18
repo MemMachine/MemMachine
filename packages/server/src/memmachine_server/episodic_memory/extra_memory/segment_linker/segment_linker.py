@@ -74,7 +74,7 @@ class SegmentLinkerPartition(ABC):
         *,
         limit_per_derivative: int | None = None,
         property_filter: FilterExpr | None = None,
-    ) -> Mapping[UUID, Iterable[Segment]]:
+    ) -> dict[UUID, list[Segment]]:
         """
         Get segments associated with the derivatives given by their UUIDs.
 
@@ -99,7 +99,7 @@ class SegmentLinkerPartition(ABC):
                 An optional filter expression to apply to the segments (default: None).
 
         Returns:
-            Mapping[UUID, Iterable[Segment]]:
+            dict[UUID, list[Segment]]:
                 A mapping from each derivative UUID to its linked segments.
 
         """
@@ -113,7 +113,7 @@ class SegmentLinkerPartition(ABC):
         max_backward_segments: int = 0,
         max_forward_segments: int = 0,
         property_filter: FilterExpr | None = None,
-    ) -> Mapping[UUID, Iterable[Segment]]:
+    ) -> dict[UUID, list[Segment]]:
         """
         Get a window of segments around each of the seed segments.
 
@@ -128,7 +128,7 @@ class SegmentLinkerPartition(ABC):
                 An optional filter expression to apply to the segments (default: None).
 
         Returns:
-            Mapping[UUID, Iterable[Segment]]:
+            dict[UUID, list[Segment]]:
                 A mapping from each seed segment UUID to its context segments.
 
         """
@@ -155,7 +155,7 @@ class SegmentLinkerPartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_orphaned_derivatives(self, limit: int = 1000) -> Iterable[UUID]:
+    async def get_orphaned_derivatives(self, limit: int = 1000) -> set[UUID]:
         """
         Identify derivatives that are orphaned.
 
@@ -164,7 +164,7 @@ class SegmentLinkerPartition(ABC):
                 The maximum number of orphaned derivatives to return (default: 1000).
 
         Returns:
-            Iterable[UUID]:
+            set[UUID]:
                 The UUIDs of the orphaned derivatives.
 
         """
@@ -173,7 +173,7 @@ class SegmentLinkerPartition(ABC):
     @abstractmethod
     async def mark_orphaned_derivatives_for_purging(
         self, potential_orphan_uuids: Iterable[UUID]
-    ) -> Iterable[UUID]:
+    ) -> set[UUID]:
         """
         Transition derivatives from 'active' to 'purging' state if they are orphaned.
 
@@ -182,7 +182,7 @@ class SegmentLinkerPartition(ABC):
                 The UUIDs of potentially orphaned derivatives.
 
         Returns:
-            Iterable[UUID]:
+            set[UUID]:
                 The UUIDs of derivatives successfully marked for purging.
 
         """

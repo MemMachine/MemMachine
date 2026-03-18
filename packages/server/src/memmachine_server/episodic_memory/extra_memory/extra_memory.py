@@ -205,13 +205,11 @@ class ExtraMemory:
 
     async def _purge_orphaned_derivatives(self) -> None:
         """Run a single purge cycle: identify, mark, delete from collection, then remove."""
-        orphan_uuids = list(
-            await self._segment_linker_partition.get_orphaned_derivatives()
-        )
+        orphan_uuids = await self._segment_linker_partition.get_orphaned_derivatives()
         if not orphan_uuids:
             return
 
-        marked_uuids = list(
+        marked_uuids = (
             await self._segment_linker_partition.mark_orphaned_derivatives_for_purging(
                 orphan_uuids
             )
@@ -627,15 +625,11 @@ class ExtraMemory:
         )[0]
 
         # Search derivative collection for matches.
-        query_result = next(
-            iter(
-                await self._collection.query(
-                    query_vectors=[query_embedding],
-                    limit=min(5 * max_num_segments, 200),
-                    return_vector=False,
-                    return_properties=False,
-                )
-            )
+        [query_result] = await self._collection.query(
+            query_vectors=[query_embedding],
+            limit=min(5 * max_num_segments, 200),
+            return_vector=False,
+            return_properties=False,
         )
 
         matched_derivative_uuids = [match.record.uuid for match in query_result.matches]
@@ -678,7 +672,7 @@ class ExtraMemory:
             )
         )
         segment_contexts: list[list[Segment]] = [
-            list(segment_contexts_by_seed[seed_segment.uuid])
+            segment_contexts_by_seed[seed_segment.uuid]
             for seed_segment in kept_seed_segments
         ]
 
