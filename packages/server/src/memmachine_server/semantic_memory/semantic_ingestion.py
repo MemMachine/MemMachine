@@ -3,6 +3,7 @@
 import asyncio
 import itertools
 import logging
+from collections.abc import Sequence
 from itertools import chain
 
 import numpy as np
@@ -297,7 +298,7 @@ class IngestionService:
                 )
             ]
 
-            consolidation_sections: list[list[SemanticFeature]] = list(
+            consolidation_sections: list[Sequence[SemanticFeature]] = list(
                 SemanticFeature.group_features_by_tag(features).values(),
             )
 
@@ -331,13 +332,13 @@ class IngestionService:
         self,
         *,
         set_id: str,
-        memories: list[SemanticFeature],
+        memories: Sequence[SemanticFeature],
         semantic_category: InstanceOf[SemanticCategory],
         resources: InstanceOf[Resources],
     ) -> None:
         try:
             consolidate_resp = await llm_consolidate_features(
-                features=memories,
+                features=list(memories),
                 model=resources.language_model,
                 consolidate_prompt=semantic_category.prompt.consolidation_prompt,
             )
