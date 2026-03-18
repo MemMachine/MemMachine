@@ -55,12 +55,12 @@ class SemanticConfigStorage(Protocol):
         *,
         org_id: str,
         org_level_set: bool = False,
-        metadata_tags: list[str],
+        metadata_tags: Sequence[str],
         name: str | None = None,
         description: str | None = None,
     ) -> str: ...
 
-    async def list_set_type_ids(self, *, org_id: str) -> list[SetTypeEntry]: ...
+    async def list_set_type_ids(self, *, org_id: str) -> Sequence[SetTypeEntry]: ...
 
     async def delete_set_type_id(self, *, set_type_id: str) -> None: ...
 
@@ -503,7 +503,7 @@ class SemanticSessionManager:
         return await self._semantic_config.add_set_type_id(
             org_id=session_data.org_id,
             org_level_set=is_org_level,
-            metadata_tags=list(metadata_tags),
+            metadata_tags=metadata_tags,
             name=name,
             description=description,
         )
