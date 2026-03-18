@@ -117,6 +117,8 @@ POSITIONAL_ARGS=()
 INGEST_CONCURRENCY=""
 SEARCH_CONCURRENCY=""
 JUDGE_CONCURRENCY=""
+PYTHON_CMD=(python)
+PYTHON_INSTALL_CMD='python -m pip install -r requirements.txt'
 
 parse_optional_flags() {
     POSITIONAL_ARGS=()
@@ -271,9 +273,9 @@ validate_positive_integer() {
 }
 
 check_python_modules() {
-    if ! python "$SCRIPT_DIR/preflight.py" "$@"; then
+    if ! "${PYTHON_CMD[@]}" "$SCRIPT_DIR/preflight.py" "$@"; then
         echo "Install benchmark dependencies with:"
-        echo "  (cd \"$SCRIPT_DIR\" && python -m pip install -r requirements.txt)"
+        echo "  (cd \"$SCRIPT_DIR\" && ${PYTHON_INSTALL_CMD})"
         return 1
     fi
 }
@@ -293,6 +295,9 @@ run_test() {
         echo "--judge-concurrency must be a positive integer"
         exit 1
     fi
+
+    PYTHON_CMD=(python)
+    PYTHON_INSTALL_CMD='python -m pip install -r requirements.txt'
 
     case "$TEST" in
         locomo)
@@ -351,8 +356,8 @@ run_test() {
 
     case "$TEST" in
         locomo)
-            INGEST_CMD=(python -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --config-path "$CONFIG_FILE")
-            SEARCH_CMD=(python -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             if [ -n "${INGEST_CONCURRENCY:-}" ]; then
                 INGEST_CMD+=(--concurrency "$INGEST_CONCURRENCY")
             fi
@@ -361,22 +366,24 @@ run_test() {
             fi
             ;;
         wikimultihop)
-            INGEST_CMD=(python -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH" --config-path "$CONFIG_FILE")
-            SEARCH_CMD=(python -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH" --config-path "$CONFIG_FILE")
+            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
             ;;
         hotpotqa)
-            INGEST_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
-            SEARCH_CMD=(python -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
             ;;
         longmemeval)
-            INGEST_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
-            SEARCH_CMD=(uv run python -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
+            PYTHON_CMD=(uv run python)
+            PYTHON_INSTALL_CMD='uv run python -m pip install -r requirements.txt'
+            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
+            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
@@ -386,7 +393,7 @@ run_test() {
     if [[ "$INGEST" = "ingest" ]]; then
         "${INGEST_CMD[@]}"
     elif [[ "$INGEST" = "search" ]]; then
-        EVALUATE_CMD=(python "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
+        EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
         if [ -n "${JUDGE_CONCURRENCY:-}" ]; then
             EVALUATE_CMD+=(--max_workers "$JUDGE_CONCURRENCY")
         fi
@@ -396,7 +403,7 @@ run_test() {
         fi
         "${SEARCH_CMD[@]}"
         "${EVALUATE_CMD[@]}"
-        python "$SCRIPT_DIR/generate_scores.py" --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
+        "${PYTHON_CMD[@]}" "$SCRIPT_DIR/generate_scores.py" --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
         cat "$FINAL_SCORE_FILE"
     else
         echo "Unknown RUN_TYPE: $INGEST"

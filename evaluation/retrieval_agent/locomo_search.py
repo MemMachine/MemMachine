@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
+
 ANSWER_PROMPT = """
 You are asked to answer a question based on your memories of a conversation.
 
