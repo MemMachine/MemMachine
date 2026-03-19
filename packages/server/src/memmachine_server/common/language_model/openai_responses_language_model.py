@@ -264,6 +264,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     openai.RateLimitError,
                     openai.APITimeoutError,
                     openai.APIConnectionError,
+                    openai.InternalServerError,
                 ) as e:
                     # Exception may be retried.
                     if attempt >= max_attempts:
