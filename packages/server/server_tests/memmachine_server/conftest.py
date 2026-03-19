@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.core.waiting_utils import wait_container_is_ready
 from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
+from testcontainers.qdrant import QdrantContainer
 
 from memmachine_server.common.embedder.openai_embedder import (
     OpenAIEmbedder,
@@ -397,6 +398,28 @@ async def neo4j_semantic_storage(neo4j_driver):
     yield storage
     await storage.delete_all()
     await storage.cleanup()
+
+
+@pytest.fixture(scope="session")
+def qdrant_container():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
+    with QdrantContainer(image="qdrant/qdrant:v1.17.0") as container:
+        yield container
+
+
+@pytest_asyncio.fixture(scope="session")
+async def qdrant_client(qdrant_container):
+    client = qdrant_container.get_async_client()
+    yield client
+    await client.close()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def qdrant_grpc_client(qdrant_container):
+    client = qdrant_container.get_async_client(prefer_grpc=True)
+    yield client
+    await client.close()
 
 
 @pytest.fixture(
