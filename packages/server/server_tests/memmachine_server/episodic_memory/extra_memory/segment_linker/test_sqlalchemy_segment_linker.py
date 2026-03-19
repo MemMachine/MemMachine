@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -24,6 +24,9 @@ from memmachine_server.episodic_memory.extra_memory.segment_linker.segment_linke
 )
 from memmachine_server.episodic_memory.extra_memory.segment_linker.sqlalchemy_segment_linker import (
     BaseSegmentLinker,
+    DeletionByEpisodes,
+    DeletionJobRow,
+    DeletionJobStatus,
     SegmentRow,
     SQLAlchemySegmentLinker,
     SQLAlchemySegmentLinkerParams,
@@ -605,7 +608,7 @@ async def test_delete_by_episodes(
 
 
 @pytest.mark.asyncio
-async def test_delete_by_episodes_decrements_ref_count(
+async def test_delete_by_episodes_orphans_derivative(
     partition: SQLAlchemySegmentLinkerPartition,
 ) -> None:
     ep = uuid4()
@@ -616,8 +619,8 @@ async def test_delete_by_episodes_decrements_ref_count(
 
     await partition.delete_segments_by_episodes([ep])
 
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
+    await partition.mark_orphaned_derivatives_for_purging()
+    assert deriv in await partition.get_derivatives_pending_purge()
 
 
 @pytest.mark.asyncio
@@ -663,19 +666,16 @@ async def test_orphan_lifecycle(
     await partition.register_segments({seg: [deriv]})
 
     # No orphans yet
-    assert list(await partition.get_orphaned_derivatives()) == []
+    await partition.mark_orphaned_derivatives_for_purging()
+    assert deriv not in await partition.get_derivatives_pending_purge()
 
     # Delete segment -> derivative becomes orphaned
     await partition.delete_segments_by_episodes([ep])
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
+    await partition.mark_orphaned_derivatives_for_purging()
 
-    # Mark for purging
-    marked = list(await partition.mark_orphaned_derivatives_for_purging([deriv]))
-    assert deriv in marked
-
-    # No longer shows as orphaned (state=P)
-    assert list(await partition.get_orphaned_derivatives()) == []
+    # Derivative is now pending purge (state=P)
+    pending = await partition.get_derivatives_pending_purge()
+    assert deriv in pending
 
     # Purge
     await partition.purge_derivatives([deriv])
@@ -694,8 +694,8 @@ async def test_mark_orphaned_ignores_non_orphans(
     deriv = uuid4()
     await partition.register_segments({seg: [deriv]})
 
-    marked = list(await partition.mark_orphaned_derivatives_for_purging([deriv]))
-    assert marked == []
+    await partition.mark_orphaned_derivatives_for_purging()
+    assert deriv not in await partition.get_derivatives_pending_purge()
 
 
 @pytest.mark.asyncio
@@ -892,32 +892,27 @@ async def test_concurrent_orphan_mark_does_not_crash(
     await partition.register_segments({seg: [deriv]})
     await partition.delete_segments_by_episodes([ep])
 
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
-
     errors: list[Exception] = []
 
-    async def mark() -> list[UUID]:
+    async def mark() -> None:
         try:
             part = _get_partition(engine)
-            return list(await part.mark_orphaned_derivatives_for_purging([deriv]))
+            await part.mark_orphaned_derivatives_for_purging()
         except Exception as e:
             errors.append(e)
-            return []
 
-    results = await asyncio.gather(mark(), mark())
-    all_marked = [uuid for result in results for uuid in result]
+    await asyncio.gather(mark(), mark())
 
     assert errors == []
     # At least one should have marked it.
-    assert deriv in all_marked
+    assert deriv in await partition.get_derivatives_pending_purge()
 
 
 @pytest.mark.asyncio
 async def test_concurrent_delete_overlapping_episodes_shared_derivative(
     linker: SQLAlchemySegmentLinker,
 ) -> None:
-    """Deleting two episodes that share a derivative concurrently should correctly decrement ref_count."""
+    """Deleting two episodes that share a derivative concurrently should orphan the derivative."""
     import asyncio
 
     engine = linker._engine
@@ -929,16 +924,16 @@ async def test_concurrent_delete_overlapping_episodes_shared_derivative(
     deriv = uuid4()
     await partition.register_segments({seg1: [deriv], seg2: [deriv]})
 
-    # Both segments link to deriv (ref_count=2). Delete both episodes concurrently.
+    # Both segments link to deriv. Delete both episodes concurrently.
     async def delete_ep(ep: UUID) -> None:
         part = _get_partition(engine)
         await part.delete_segments_by_episodes([ep])
 
     await asyncio.gather(delete_ep(ep1), delete_ep(ep2))
 
-    # Derivative should be orphaned (ref_count=0).
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
+    # Derivative should be orphaned (owner_segment_uuid IS NULL).
+    await partition.mark_orphaned_derivatives_for_purging()
+    assert deriv in await partition.get_derivatives_pending_purge()
 
 
 # --- PostgreSQL-only concurrency tests ---
@@ -949,7 +944,7 @@ async def test_concurrent_delete_overlapping_episodes_shared_derivative(
 async def test_pg_concurrent_orphan_mark_exactly_once(
     pg_linker: SQLAlchemySegmentLinker,
 ) -> None:
-    """On PG, FOR UPDATE ensures only one of two concurrent markers wins."""
+    """On PG, FOR UPDATE SKIP LOCKED ensures only one of two concurrent markers wins."""
     import asyncio
 
     engine = pg_linker._engine
@@ -961,18 +956,14 @@ async def test_pg_concurrent_orphan_mark_exactly_once(
     await partition.register_segments({seg: [deriv]})
     await partition.delete_segments_by_episodes([ep])
 
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
-
-    async def mark() -> list[UUID]:
+    async def mark() -> None:
         part = _get_partition(engine)
-        return list(await part.mark_orphaned_derivatives_for_purging([deriv]))
+        await part.mark_orphaned_derivatives_for_purging()
 
-    results = await asyncio.gather(mark(), mark())
-    all_marked = [uuid for result in results for uuid in result]
+    await asyncio.gather(mark(), mark())
 
-    # Exactly one should have marked it due to FOR UPDATE serialization.
-    assert all_marked.count(deriv) == 1
+    # Exactly one should have marked it due to SKIP LOCKED serialization.
+    assert deriv in await partition.get_derivatives_pending_purge()
 
 
 @pytest.mark.integration
@@ -1070,34 +1061,30 @@ async def test_pg_orphan_relink_race(
 
     # Orphan it.
     await partition.delete_segments_by_episodes([ep])
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
 
     # Now, concurrently re-link and try to mark for purging.
-    relinked = asyncio.Event()
-
     async def relinker() -> None:
         part = _get_partition(engine)
         new_seg = _seg(ts_offset_seconds=10)
         await part.register_segments({new_seg: [deriv]}, active=[deriv])
-        relinked.set()
 
-    async def marker() -> list[UUID]:
+    async def marker() -> None:
         # Wait a tiny bit to let relinker likely win, but it's a race so either outcome is valid.
         await asyncio.sleep(0.01)
         part = _get_partition(engine)
-        return list(await part.mark_orphaned_derivatives_for_purging([deriv]))
+        await part.mark_orphaned_derivatives_for_purging()
 
-    _, marked = await asyncio.gather(relinker(), marker())
+    await asyncio.gather(relinker(), marker())
 
-    # If relinker won the race, deriv has ref_count > 0 and should NOT be marked.
+    # If relinker won the race, deriv has owner != NULL and should NOT be in pending.
     # If marker won the race, deriv was still orphaned and gets marked.
     # Either way, no crash.
-    if not marked:
+    pending = await partition.get_derivatives_pending_purge()
+    if deriv not in pending:
         # Relinker won — derivative should still be retrievable.
         result = await partition.get_segments_by_derivatives([deriv])
         assert deriv in result
-    # If marked, the derivative was legitimately marked before relinking.
+    # If in pending, the derivative was legitimately marked before relinking.
 
 
 @pytest.mark.integration
@@ -1134,8 +1121,8 @@ async def test_pg_concurrent_mass_deletes(
     result = await partition.get_segments_by_derivatives([deriv])
     assert deriv not in result
 
-    orphans = list(await partition.get_orphaned_derivatives())
-    assert deriv in orphans
+    await partition.mark_orphaned_derivatives_for_purging()
+    assert deriv in await partition.get_derivatives_pending_purge()
 
 
 @pytest.mark.integration
@@ -1155,8 +1142,8 @@ async def test_pg_concurrent_purge_and_register_new_derivative(
     old_deriv = uuid4()
     await partition.register_segments({seg: [old_deriv]})
     await partition.delete_segments_by_episodes([ep])
-    marked = list(await partition.mark_orphaned_derivatives_for_purging([old_deriv]))
-    assert old_deriv in marked
+    await partition.mark_orphaned_derivatives_for_purging()
+    assert old_deriv in await partition.get_derivatives_pending_purge()
 
     errors: list[Exception] = []
 
@@ -1243,3 +1230,91 @@ async def test_pg_mixed_context_types(
 
     r3 = await partition.get_segments_by_derivatives([d3])
     assert next(iter(r3[d3])).context is None
+
+
+# ===================================================================
+# Stamp-on-segment deletion
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_stamped(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """A job left in STAGED with segments still present makes them invisible to reads."""
+    partition = linker.get_partition(PARTITION_KEY)
+    ep = uuid4()
+    seg = _seg(episode_uuid=ep, ts_offset_seconds=0)
+    deriv = uuid4()
+    await partition.register_segments({seg: [deriv]})
+
+    job_uuid = uuid4()
+    engine = linker._engine
+    async with engine.begin() as conn:
+        # Insert job as STAGED and stamp the segment.
+        await conn.execute(
+            insert(DeletionJobRow).values(
+                uuid=job_uuid,
+                partition_key=PARTITION_KEY,
+                created_at=func.now(),
+                status=DeletionJobStatus.STAGED,
+                criteria=DeletionByEpisodes(episode_uuids=[ep]).model_dump(mode="json"),
+            )
+        )
+        await conn.execute(
+            update(SegmentRow)
+            .where(SegmentRow.uuid == seg.uuid)
+            .values(deletion_job_uuid=job_uuid)
+        )
+
+    # Segment should be invisible (STAGED job filters it out).
+    result = await partition.get_segments_by_derivatives([deriv])
+    assert len(result.get(deriv, [])) == 0
+
+
+@pytest.mark.asyncio
+async def test_atomic_visibility(
+    linker: SQLAlchemySegmentLinker,
+) -> None:
+    """Segments visible during ADDING, invisible after flip to STAGED."""
+    partition = linker.get_partition(PARTITION_KEY)
+    ep = uuid4()
+    seg = _seg(episode_uuid=ep, ts_offset_seconds=0)
+    deriv = uuid4()
+    await partition.register_segments({seg: [deriv]})
+
+    job_uuid = uuid4()
+    engine = linker._engine
+
+    # Insert an ADDING job and stamp the segment.
+    async with engine.begin() as conn:
+        await conn.execute(
+            insert(DeletionJobRow).values(
+                uuid=job_uuid,
+                partition_key=PARTITION_KEY,
+                created_at=func.now(),
+                status=DeletionJobStatus.ADDING,
+                criteria=DeletionByEpisodes(episode_uuids=[ep]).model_dump(mode="json"),
+            )
+        )
+        await conn.execute(
+            update(SegmentRow)
+            .where(SegmentRow.uuid == seg.uuid)
+            .values(deletion_job_uuid=job_uuid)
+        )
+
+    # Segment should still be visible (job is ADDING, not STAGED).
+    result = await partition.get_segments_by_derivatives([deriv])
+    assert len(result.get(deriv, [])) == 1
+
+    # Flip to STAGED.
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(DeletionJobRow)
+            .where(DeletionJobRow.uuid == job_uuid)
+            .values(status=DeletionJobStatus.STAGED)
+        )
+
+    # Segment should now be invisible.
+    result = await partition.get_segments_by_derivatives([deriv])
+    assert len(result.get(deriv, [])) == 0
