@@ -46,17 +46,39 @@ def get_memmachine_config_dir() -> str:
 
 
 def _safe_extract_zip(zip_path: str, extract_to: str) -> None:
-    """Extract a zip file, rejecting entries that would escape the target directory."""
+    """Extract a zip file safely, rejecting dangerous entries.
+
+    Guards against:
+    - Path traversal (zip-slip): entries whose resolved path escapes ``extract_to``.
+    - Symlink-based escapes: symlink entries are rejected outright so a
+      malicious symlink cannot redirect a later member outside the target dir.
+
+    Each member is validated and extracted individually so the resolved path
+    is checked against the real filesystem state at extraction time.
+    """
     dest = Path(extract_to).resolve()
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
         for member in zip_ref.infolist():
+            # Reject symlink entries (external_attr encodes Unix file type in
+            # the upper 16 bits; 0xA000 is the symlink type mask).
+            is_symlink = (member.external_attr >> 16) & 0xFFFF == 0xA000
+            if is_symlink:
+                raise ValueError(
+                    f"Zip entry {member.filename!r} is a symlink and was rejected"
+                )
+
+            # Resolve the target path *before* extraction and confirm it stays
+            # within dest.  Use Path.is_relative_to() (Py >= 3.9) for a robust,
+            # platform-aware boundary check that avoids brittle string-prefix
+            # comparisons.
             member_path = (dest / member.filename).resolve()
-            if not str(member_path).startswith(str(dest) + os.sep) and member_path != dest:
+            if member_path != dest and not member_path.is_relative_to(dest):
                 raise ValueError(
                     f"Zip entry {member.filename!r} would extract outside "
                     f"target directory"
                 )
-        zip_ref.extractall(extract_to)
+
+            zip_ref.extract(member, extract_to)
 
 
 class Installer(ABC):
