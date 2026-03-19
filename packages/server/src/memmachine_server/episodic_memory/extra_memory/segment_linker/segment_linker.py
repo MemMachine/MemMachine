@@ -63,7 +63,6 @@ class SegmentLinkerPartition(ABC):
         Raises:
             DerivativeNotActiveError:
                 If any derivative in `active` is not active.
-
         """
         raise NotImplementedError
 
@@ -101,7 +100,6 @@ class SegmentLinkerPartition(ABC):
         Returns:
             dict[UUID, list[Segment]]:
                 A mapping from each derivative UUID to its linked segments.
-
         """
         raise NotImplementedError
 
@@ -130,7 +128,6 @@ class SegmentLinkerPartition(ABC):
         Returns:
             dict[UUID, list[Segment]]:
                 A mapping from each seed segment UUID to its context segments.
-
         """
         raise NotImplementedError
 
@@ -145,7 +142,6 @@ class SegmentLinkerPartition(ABC):
         Args:
             episode_uuids (Iterable[UUID]):
                 The UUIDs of the episodes for which to delete segments.
-
         """
         raise NotImplementedError
 
@@ -155,36 +151,30 @@ class SegmentLinkerPartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_orphaned_derivatives(self, limit: int = 1000) -> set[UUID]:
+    async def mark_orphaned_derivatives_for_purging(self, limit: int = 1000) -> None:
         """
-        Identify derivatives that are orphaned.
+        Find and transition orphaned derivatives from 'active' to 'purging' state.
+
+        A derivative is orphaned if it has no linked segments in this partition.
 
         Args:
             limit (int):
-                The maximum number of orphaned derivatives to return (default: 1000).
-
-        Returns:
-            set[UUID]:
-                The UUIDs of the orphaned derivatives.
-
+                The maximum number of orphaned derivatives to mark in one call (default: 1000).
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def mark_orphaned_derivatives_for_purging(
-        self, potential_orphan_uuids: Iterable[UUID]
-    ) -> set[UUID]:
+    async def get_derivatives_pending_purge(self, limit: int = 1000) -> set[UUID]:
         """
-        Transition derivatives from 'active' to 'purging' state if they are orphaned.
+        Get derivatives marked for purging but not yet purged.
 
         Args:
-            potential_orphan_uuids (Iterable[UUID]):
-                The UUIDs of potentially orphaned derivatives.
+            limit (int):
+                The maximum number of UUIDs of derivatives to return (default: 1000).
 
         Returns:
             set[UUID]:
-                The UUIDs of derivatives successfully marked for purging.
-
+                The UUIDs of derivatives in the purging state.
         """
         raise NotImplementedError
 
@@ -198,7 +188,6 @@ class SegmentLinkerPartition(ABC):
         Args:
             derivative_uuids (Iterable[UUID]):
                 The UUIDs of the derivatives to purge.
-
         """
         raise NotImplementedError
 
@@ -232,6 +221,5 @@ class SegmentLinker(ABC):
         Returns:
             SegmentLinkerPartition:
                 A partition-scoped handle.
-
         """
         raise NotImplementedError

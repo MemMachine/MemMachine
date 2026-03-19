@@ -204,21 +204,17 @@ class ExtraMemory:
                 logger.exception("Error during derivative purge cycle")
 
     async def _purge_orphaned_derivatives(self) -> None:
-        """Run a single purge cycle: identify, mark, delete from collection, then remove."""
-        orphan_uuids = await self._segment_linker_partition.get_orphaned_derivatives()
-        if not orphan_uuids:
-            return
+        """Run a single purge cycle."""
+        await self._segment_linker_partition.mark_orphaned_derivatives_for_purging()
 
-        marked_uuids = (
-            await self._segment_linker_partition.mark_orphaned_derivatives_for_purging(
-                orphan_uuids
-            )
+        pending_uuids = (
+            await self._segment_linker_partition.get_derivatives_pending_purge()
         )
-        if not marked_uuids:
+        if not pending_uuids:
             return
 
-        await self._collection.delete(record_uuids=marked_uuids)
-        await self._segment_linker_partition.purge_derivatives(marked_uuids)
+        await self._collection.delete(record_uuids=pending_uuids)
+        await self._segment_linker_partition.purge_derivatives(pending_uuids)
 
     async def encode_episodes(
         self,
