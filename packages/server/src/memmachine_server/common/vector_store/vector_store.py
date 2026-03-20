@@ -5,19 +5,27 @@ Defines the interface for adding, querying, and deleting records.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
 
-from .data_types import QueryResult, Record
+from .data_types import (
+    CollectionConfig,
+    QueryResult,
+    Record,
+)
 
 
 class Collection(ABC):
-    """Collection in a vector store."""
+    """
+    A logical collection in a vector store.
+
+    Identified by a (namespace, name) pair.
+    All data operations are scoped to this logical collection.
+    """
 
     @abstractmethod
     async def upsert(
@@ -28,10 +36,12 @@ class Collection(ABC):
         """
         Upsert records in the collection.
 
+        Insert records with new UUIDs,
+        and update records with existing UUIDs.
+
         Args:
             records (Iterable[Record]):
                 Iterable of records to upsert.
-
         """
         raise NotImplementedError
 
@@ -43,9 +53,9 @@ class Collection(ABC):
         score_threshold: float | None = None,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = True,
+        return_vector: bool = False,
         return_properties: bool = True,
-    ) -> Iterable[Iterable[QueryResult]]:
+    ) -> list[QueryResult]:
         """
         Query for records matching the criteria by query vectors.
 
@@ -71,10 +81,9 @@ class Collection(ABC):
                 (default: True).
 
         Returns:
-            Iterable[Iterable[QueryResult]]:
-                Iterables of results matching the criteria for each query vector,
-                each ordered by score from best to worst.
-
+            list[QueryResult]:
+                Results for each query vector,
+                ordered as in the input iterable.
         """
         raise NotImplementedError
 
@@ -83,9 +92,9 @@ class Collection(ABC):
         self,
         *,
         record_uuids: Iterable[UUID],
-        return_vector: bool = True,
+        return_vector: bool = False,
         return_properties: bool = True,
-    ) -> Iterable[Record]:
+    ) -> list[Record]:
         """
         Get records from the collection by their UUIDs.
 
@@ -100,10 +109,9 @@ class Collection(ABC):
                 (default: True).
 
         Returns:
-            Iterable[Record]:
+            list[Record]:
                 Iterable of records with the specified UUIDs,
                 ordered as in the input iterable.
-
         """
         raise NotImplementedError
 
@@ -119,13 +127,27 @@ class Collection(ABC):
         Args:
             record_uuids (Iterable[UUID]):
                 Iterable of UUIDs of the records to delete.
-
         """
         raise NotImplementedError
 
 
 class VectorStore(ABC):
-    """Abstract base class for a vector store."""
+    """
+    Abstract base class for a vector store.
+
+    A given logical collection identified by a (namespace, name) pair
+    must be managed by at most one process at a time.
+    The consumer is responsible for sharding names across processes.
+
+    Different namespaces are fully independent (separate native collections).
+    Multiple logical collections with the same (namespace, vector dimensions, similarity metric, properties schema)
+    may share a native collection to reduce overhead.
+
+    Naming constraints:
+        - Namespaces, names, and property keys must match `[a-z0-9_]+`
+          (lowercase alphanumeric and underscores only).
+        - Each identifier must be at most 32 bytes.
+    """
 
     @abstractmethod
     async def startup(self) -> None:
@@ -140,54 +162,103 @@ class VectorStore(ABC):
     @abstractmethod
     async def create_collection(
         self,
-        collection_name: str,
         *,
-        vector_dimensions: int,
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
-        properties_schema: Mapping[str, type[PropertyValue]] | None = None,
+        namespace: str,
+        name: str,
+        config: CollectionConfig,
     ) -> None:
         """
-        Create a collection in the vector store.
+        Create a logical collection in the vector store and return a handle to it.
+
+        A (namespace, name) pair uniquely identifies a collection.
+        The configuration (dimensions, similarity metric, schema)
+        is fixed at creation time.
 
         Args:
-            collection_name (str):
-                Name of the collection to create.
-            vector_dimensions (int):
-                Number of dimensions for the vectors.
-            similarity_metric (SimilarityMetric):
-                Similarity metric to use for vector comparisons
-                (default: SimilarityMetric.COSINE).
-            properties_schema (Mapping[str, type] | None):
-                Mapping of property names to their types
-                (default: None).
+            namespace (str):
+                Groups related collections and guarantees storage
+                isolation at the native collection level.
+            name (str):
+                Name to identify the collection within a namespace.
+            config (CollectionConfig):
+                Configuration for the collection.
 
+        Raises:
+            CollectionAlreadyExistsError: If a collection with the same
+                (namespace, name) already exists.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def get_collection(self, collection_name: str) -> Collection:
+    async def open_or_create_collection(
+        self,
+        *,
+        namespace: str,
+        name: str,
+        config: CollectionConfig,
+    ) -> Collection:
         """
-        Get a collection from the vector store.
+        Open the collection if it exists, or create it if it does not.
 
         Args:
-            collection_name (str):
-                Name of the collection to get.
+            namespace (str):
+                Groups related collections and guarantees storage
+                isolation at the native collection level.
+            name (str):
+                Name to identify the collection within a namespace.
+            config (CollectionConfig):
+                Configuration for the collection.
 
         Returns:
             Collection:
-                The requested collection.
+                A handle to the opened or created collection.
 
+        Raises:
+            CollectionConfigMismatchError: If a collection with the same
+                (namespace, name) already exists with a different configuration.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_collection(self, collection_name: str) -> None:
+    async def open_collection(self, *, namespace: str, name: str) -> Collection | None:
         """
-        Delete a collection from the vector store.
+        Get a handle to a logical collection in the vector store.
 
         Args:
-            collection_name (str):
-                Name of the collection to delete.
+            namespace (str):
+                Namespace of the collection.
+            name (str):
+                Name of the collection within the namespace.
 
+        Returns:
+            Collection | None:
+                A handle to the opened collection, or None if it does not exist.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def close_collection(self, *, collection: Collection) -> None:
+        """
+        Close a collection handle.
+
+        Args:
+            collection (Collection):
+                The handle of the collection to close.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_collection(self, *, namespace: str, name: str) -> None:
+        """
+        Delete a logical collection from the vector store.
+
+        This will delete all data in the collection.
+        It is idempotent.
+
+        Args:
+            namespace (str):
+                Namespace of the collection.
+            name (str):
+                Name of the collection within the namespace.
         """
         raise NotImplementedError
