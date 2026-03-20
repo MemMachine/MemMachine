@@ -33,6 +33,16 @@ class SegmentLinkerPartition(ABC):
     """
 
     @abstractmethod
+    async def startup(self) -> None:
+        """Startup."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Shutdown."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def register_segments(
         self,
         links: Mapping[Segment, Iterable[UUID]],
