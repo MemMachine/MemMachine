@@ -141,7 +141,7 @@ class SegmentLinkerPartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def mark_orphaned_derivatives_for_purging(self, limit: int = 1000) -> None:
+    async def mark_orphaned_derivatives_for_purging(self, limit: int = 10_000) -> None:
         """
         Find and transition orphaned derivatives from 'active' to 'purging' state.
 
@@ -149,18 +149,18 @@ class SegmentLinkerPartition(ABC):
 
         Args:
             limit (int):
-                The maximum number of orphaned derivatives to mark in one call (default: 1000).
+                The maximum number of orphaned derivatives to mark in one call (default: 10_000).
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def get_derivatives_pending_purge(self, limit: int = 1000) -> set[UUID]:
+    async def get_derivatives_pending_purge(self, limit: int = 10_000) -> set[UUID]:
         """
         Get derivatives marked for purging but not yet purged.
 
         Args:
             limit (int):
-                The maximum number of UUIDs of derivatives to return (default: 1000).
+                The maximum number of UUIDs of derivatives to return (default: 10_000).
 
         Returns:
             set[UUID]:
