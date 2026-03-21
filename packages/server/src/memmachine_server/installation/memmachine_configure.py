@@ -61,7 +61,7 @@ def _safe_extract_zip(zip_path: str, extract_to: str) -> None:
         for member in zip_ref.infolist():
             # Reject symlink entries (external_attr encodes Unix file type in
             # the upper 16 bits; 0xA000 is the symlink type mask).
-            is_symlink = (member.external_attr >> 16) & 0xFFFF == 0xA000
+            is_symlink = (member.external_attr >> 16) & 0xF000 == 0xA000
             if is_symlink:
                 raise ValueError(
                     f"Zip entry {member.filename!r} is a symlink and was rejected"
