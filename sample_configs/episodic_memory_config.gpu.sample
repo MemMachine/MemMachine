@@ -139,6 +139,9 @@ resources:
       config:
         cohere_key: <COHERE_API_KEY>
         model: "rerank-english-v3.0"
+      # Optional for self-hosted Cohere-compatible rerank APIs.
+      # Examples:
+      # base_url: "http://localhost:8000"
     ce_ranker_id:
       provider: "cross-encoder"
       config:
