@@ -1,9 +1,10 @@
 """Reranker configuration models."""
 
 from typing import ClassVar, Self
+from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, SecretStr
+from pydantic import BaseModel, Field, PrivateAttr, SecretStr, field_validator
 
 from memmachine_server.common.configuration.mixin_confs import (
     MetricsFactoryIdMixin,
@@ -64,6 +65,20 @@ class CohereRerankerConf(YamlSerializableMixin):
         default="rerank-english-v3.0",
         description="Cohere rerank model",
     )
+    base_url: str | None = Field(
+        default=None,
+        description="Cohere-compatible Rerank API base URL",
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str | None) -> str | None:
+        """Ensure the base URL includes a scheme and host."""
+        if v is not None:
+            parsed_url = urlparse(v)
+            if not parsed_url.scheme or not parsed_url.netloc:
+                raise ValueError(f"Invalid base URL: base_url={v}")
+        return v
 
 
 class CrossEncoderRerankerConf(YamlSerializableMixin):

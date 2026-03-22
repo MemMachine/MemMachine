@@ -7,6 +7,7 @@ from pydantic import SecretStr, ValidationError
 from memmachine_server.common.configuration.reranker_conf import (
     AmazonBedrockRerankerConf,
     BM25RerankerConf,
+    CohereRerankerConf,
     CrossEncoderRerankerConf,
     EmbedderRerankerConf,
     IdentityRerankerConf,
@@ -48,6 +49,18 @@ def amazon_bedrock_reranker_conf() -> dict:
 
 
 @pytest.fixture
+def cohere_reranker_conf() -> dict:
+    return {
+        "provider": "cohere",
+        "config": {
+            "cohere_key": "test-cohere-key",
+            "model": "rerank-english-v3.0",
+            "base_url": "http://localhost:8000",
+        },
+    }
+
+
+@pytest.fixture
 def cross_encoder_reranker_conf() -> dict:
     return {
         "provider": "cross-encoder",
@@ -83,6 +96,7 @@ def full_reranker_input(
     bm25_reranker_conf,
     identity_reranker_conf,
     amazon_bedrock_reranker_conf,
+    cohere_reranker_conf,
     cross_encoder_reranker_conf,
     embedder_reranker_conf,
     rrf_hybrid_reranker_conf,
@@ -93,6 +107,7 @@ def full_reranker_input(
             "id_ranker_id": identity_reranker_conf,
             "bm_ranker_id": bm25_reranker_conf,
             "aws_reranker_id": amazon_bedrock_reranker_conf,
+            "cohere_reranker_id": cohere_reranker_conf,
             "cross_encoder_id": cross_encoder_reranker_conf,
             "embedder_id": embedder_reranker_conf,
         },
@@ -119,6 +134,13 @@ def test_valid_amazon_bedrock_reranker_conf(amazon_bedrock_reranker_conf):
     assert conf.aws_access_key_id == SecretStr("key-id")
     assert conf.aws_secret_access_key == SecretStr("secret-key")
     assert conf.model_id == "amazon.rerank-v1:0"
+
+
+def test_valid_cohere_reranker_conf(cohere_reranker_conf):
+    conf = CohereRerankerConf(**cohere_reranker_conf["config"])
+    assert conf.cohere_key == SecretStr("test-cohere-key")
+    assert conf.model == "rerank-english-v3.0"
+    assert conf.base_url == "http://localhost:8000"
 
 
 def test_valid_cross_encoder_reranker_conf(cross_encoder_reranker_conf):
@@ -150,6 +172,8 @@ def test_full_reranker_conf(full_reranker_input):
 
     assert "aws_reranker_id" in conf.amazon_bedrock
     assert conf.amazon_bedrock["aws_reranker_id"].region == "us-west-2"
+    assert "cohere_reranker_id" in conf.cohere
+    assert conf.cohere["cohere_reranker_id"].base_url == "http://localhost:8000"
 
     assert "cross_encoder_id" in conf.cross_encoder
     assert (
@@ -182,3 +206,12 @@ def test_missing_required_field_in_bedrock_reranker():
         AmazonBedrockRerankerConf(**config)
     assert "missing" in str(exc_info.value)
     assert "aws_secret_access_key" in str(exc_info.value)
+
+
+def test_invalid_cohere_base_url():
+    with pytest.raises(ValidationError, match="Invalid base URL"):
+        CohereRerankerConf(
+            cohere_key=SecretStr("test-cohere-key"),
+            model="rerank-english-v3.0",
+            base_url="localhost:8000",
+        )

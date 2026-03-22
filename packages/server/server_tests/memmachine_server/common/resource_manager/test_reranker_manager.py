@@ -34,8 +34,9 @@ def mock_conf():
         bm25={"bm_ranker_id": BM25RerankerConf(tokenizer="simple")},
         cohere={
             "cohere_reranker_id": CohereRerankerConf(
-                cohere_key=SecretStr("<COHERE_API_KEY>"),
+                cohere_key=SecretStr("test-cohere-key"),
                 model="rerank-english-v3.0",
+                base_url="http://localhost:8000",
             ),
         },
         cross_encoder={
@@ -130,6 +131,72 @@ async def test_build_cohere_rerankers(reranker_manager):
     assert reranker_manager.has_reranker("cohere_reranker_id")
     reranker = reranker_manager.get_reranker("cohere_reranker_id")
     assert reranker is not None
+
+
+@pytest.mark.asyncio
+async def test_build_cohere_reranker_passes_base_url(monkeypatch):
+    captured_kwargs = {}
+
+    class FakeCohereClient:
+        pass
+
+    def fake_client_v2(**kwargs):
+        captured_kwargs.update(kwargs)
+        return FakeCohereClient()
+
+    monkeypatch.setattr("cohere.ClientV2", fake_client_v2)
+
+    conf = RerankersConf(
+        cohere={
+            "cohere_reranker_id": CohereRerankerConf(
+                cohere_key=SecretStr("test-cohere-key"),
+                model="rerank-english-v3.0",
+                base_url="http://localhost:8000",
+            ),
+        },
+    )
+    reranker_manager = RerankerManager(
+        conf=conf,
+        embedder_factory=cast(EmbedderFactory, FakeEmbedderFactory()),
+    )
+
+    await reranker_manager.get_reranker("cohere_reranker_id")
+
+    assert captured_kwargs == {
+        "api_key": "test-cohere-key",
+        "base_url": "http://localhost:8000",
+    }
+
+
+@pytest.mark.asyncio
+async def test_build_cohere_reranker_omits_base_url_when_not_configured(monkeypatch):
+    captured_kwargs = {}
+
+    class FakeCohereClient:
+        pass
+
+    def fake_client_v2(**kwargs):
+        captured_kwargs.update(kwargs)
+        return FakeCohereClient()
+
+    monkeypatch.setattr("cohere.ClientV2", fake_client_v2)
+
+    conf = RerankersConf(
+        cohere={
+            "cohere_reranker_id": CohereRerankerConf(
+                cohere_key=SecretStr("test-cohere-key"),
+                model="rerank-english-v3.0",
+            ),
+        },
+    )
+    reranker_manager = RerankerManager(
+        conf=conf,
+        embedder_factory=cast(EmbedderFactory, FakeEmbedderFactory()),
+    )
+
+    await reranker_manager.get_reranker("cohere_reranker_id")
+
+    assert captured_kwargs == {"api_key": "test-cohere-key"}
 
 
 @requires_sentence_transformers
