@@ -99,6 +99,8 @@ class SemanticService:
         uningested_message_limit: int = 5
         uningested_time_limit: timedelta = timedelta(minutes=5)
 
+        max_features_per_update: int = 50
+
         resource_manager: InstanceOf[ResourceManager]
 
         default_embedder: InstanceOf[Embedder]
@@ -129,6 +131,7 @@ class SemanticService:
         )
 
         self._consolidation_threshold = params.consolidation_threshold
+        self._max_features_per_update = params.max_features_per_update
 
         self._feature_update_message_limit = max(
             params.uningested_message_limit,
@@ -775,6 +778,7 @@ class SemanticService:
                 semantic_storage=self._semantic_storage,
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
+                max_features_per_update=self._max_features_per_update,
             ),
         )
 
