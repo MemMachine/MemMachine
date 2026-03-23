@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import numpy as np
 from alembic import command
@@ -27,7 +27,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, CursorResult
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -160,6 +160,10 @@ class SetIngestedHistory(BaseSemanticStorage):
         server_default=func.now(),
     )
     ingested = mapped_column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        Index("ix_set_ingested_history_set_id_ingested", "set_id", "ingested"),
+    )
 
 
 async def apply_alembic_migrations(engine: AsyncEngine) -> None:
@@ -740,7 +744,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             SetIngestedHistory.set_id.not_in(sets_with_pending),
         )
         async with self._create_session() as session:
-            result = await session.execute(stmt)
+            result = cast(CursorResult[Any], await session.execute(stmt))
             await session.commit()
             return result.rowcount
 

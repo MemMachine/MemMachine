@@ -8,6 +8,7 @@ information extraction and a vector database for semantic search capabilities.
 """
 
 import asyncio
+import contextlib
 import logging
 from asyncio import Task
 from collections.abc import Callable
@@ -137,6 +138,7 @@ class SemanticService:
 
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
+        self._shutdown_event = asyncio.Event()
         self._debug_fail_loudly = params.debug_fail_loudly
 
     async def start(self) -> None:
@@ -146,6 +148,7 @@ class SemanticService:
             return
 
         self._is_shutting_down = False
+        self._shutdown_event.clear()
         self._ingestion_task = asyncio.create_task(self._background_ingestion_task())
 
     async def stop(self) -> None:
@@ -155,6 +158,7 @@ class SemanticService:
             return
 
         self._is_shutting_down = True
+        self._shutdown_event.set()
         await self._ingestion_task
         self._ingestion_task = None
 
@@ -760,6 +764,11 @@ class SemanticService:
 
         return await self._semantic_storage.get_set_ids_starts_with(prefix)
 
+    async def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep that wakes early when shutdown is requested."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._shutdown_event.wait(), timeout=seconds)
+
     async def _background_ingestion_task(self) -> None:
         ingestion_service = IngestionService(
             params=IngestionService.Params(
@@ -778,22 +787,31 @@ class SemanticService:
             )
 
             if len(dirty_sets) == 0:
-                await asyncio.sleep(self._background_ingestion_interval_sec)
+                await self._interruptible_sleep(self._background_ingestion_interval_sec)
                 continue
 
+            had_errors = False
             try:
                 await ingestion_service.process_set_ids(dirty_sets)
-                purged = await self._semantic_storage.purge_ingested_rows(dirty_sets)
-                if purged:
-                    logger.info(
-                        "purged %d ingested rows for %d sets", purged, len(dirty_sets)
-                    )
-                backoff_sec = self._background_ingestion_interval_sec
             except Exception:
                 if self._debug_fail_loudly:
                     raise
+                had_errors = True
                 logger.exception(
                     "background ingestion failed, backing off %.1fs", backoff_sec
                 )
-                await asyncio.sleep(backoff_sec)
+
+            # Always attempt purge — purge_ingested_rows only deletes rows
+            # for fully-ingested sets, so partially-failed sets are skipped
+            # and their duplicate guard is preserved.
+            purged = await self._semantic_storage.purge_ingested_rows(dirty_sets)
+            if purged:
+                logger.info(
+                    "purged %d ingested rows for %d sets", purged, len(dirty_sets)
+                )
+
+            if had_errors:
+                await self._interruptible_sleep(backoff_sec)
                 backoff_sec = min(backoff_sec * 2, 60.0)
+            else:
+                backoff_sec = self._background_ingestion_interval_sec
