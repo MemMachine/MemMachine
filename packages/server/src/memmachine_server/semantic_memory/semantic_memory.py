@@ -787,6 +787,9 @@ class SemanticService:
             )
 
             if len(dirty_sets) == 0:
+                # Reset backoff so prior error-induced backoff doesn't carry
+                # over across long idle periods.
+                backoff_sec = self._background_ingestion_interval_sec
                 await self._interruptible_sleep(self._background_ingestion_interval_sec)
                 continue
 
