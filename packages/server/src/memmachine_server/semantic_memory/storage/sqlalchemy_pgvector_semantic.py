@@ -19,10 +19,8 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
-    and_,
     delete,
     insert,
-    or_,
     select,
     text,
     union,
@@ -35,7 +33,6 @@ from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
     MappedColumn,
-    aliased,
     mapped_column,
 )
 from sqlalchemy.sql import Delete, Select, func
@@ -687,42 +684,65 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         min_uningested_messages: int | None = None,
         older_than: AwareDatetime | None = None,
     ) -> list[SetIdT]:
-        stmt = select(SetIngestedHistory.set_id).distinct()
-
-        conditions = []
+        subqueries: list[Select] = []
 
         if min_uningested_messages is not None and min_uningested_messages > 0:
-            inner = aliased(SetIngestedHistory)
-
-            count_uningested = (
-                select(func.count(inner.set_id))
-                .where(
-                    inner.set_id == SetIngestedHistory.set_id,  # correlate on set_id
-                    inner.ingested.is_(False),
-                )
-                .scalar_subquery()
+            uningested_subq = (
+                select(SetIngestedHistory.set_id)
+                .where(SetIngestedHistory.ingested.is_(False))
+                .group_by(SetIngestedHistory.set_id)
+                .having(func.count() >= min_uningested_messages)
             )
-
-            conditions.append(count_uningested >= min_uningested_messages)
+            subqueries.append(uningested_subq)
 
         if older_than is not None:
-            conditions.append(
-                and_(
-                    SetIngestedHistory.created_at <= older_than,
+            older_subq = (
+                select(SetIngestedHistory.set_id)
+                .where(
                     SetIngestedHistory.ingested.is_(False),
+                    SetIngestedHistory.created_at <= older_than,
                 )
+                .distinct()
             )
+            subqueries.append(older_subq)
 
-        if len(conditions) == 1:
-            stmt = stmt.where(conditions[0])
-        elif len(conditions) > 1:
-            stmt = stmt.where(or_(*conditions))
+        if not subqueries:
+            # No filters: return all distinct set_ids
+            stmt = select(SetIngestedHistory.set_id).distinct()
+        elif len(subqueries) == 1:
+            stmt = subqueries[0]
+        else:
+            # OR semantics: union the subqueries
+            stmt = union(*subqueries)
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
             set_ids = result.scalars().all()
 
         return TypeAdapter(list[SetIdT]).validate_python(set_ids)
+
+    async def purge_ingested_rows(self, set_ids: list[SetIdT]) -> int:
+        if not set_ids:
+            return 0
+        # Only purge set_ids where no uningested rows remain, so the
+        # (set_id, history_id) duplicate guard stays intact for pending sets.
+        sets_with_pending = (
+            select(SetIngestedHistory.set_id)
+            .where(
+                SetIngestedHistory.set_id.in_(set_ids),
+                SetIngestedHistory.ingested.is_(False),
+            )
+            .distinct()
+        )
+        stmt = delete(SetIngestedHistory).where(
+            SetIngestedHistory.set_id.in_(set_ids),
+            SetIngestedHistory.ingested.is_(True),
+            SetIngestedHistory.set_id.not_in(sets_with_pending),
+        )
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount
 
     async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
         stmt = union(

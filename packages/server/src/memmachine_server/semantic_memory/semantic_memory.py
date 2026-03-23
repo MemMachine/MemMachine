@@ -769,6 +769,8 @@ class SemanticService:
             ),
         )
 
+        backoff_sec = self._background_ingestion_interval_sec
+
         while not self._is_shutting_down:
             dirty_sets = await self._semantic_storage.get_history_set_ids(
                 min_uningested_messages=self._feature_update_message_limit,
@@ -781,7 +783,17 @@ class SemanticService:
 
             try:
                 await ingestion_service.process_set_ids(dirty_sets)
+                purged = await self._semantic_storage.purge_ingested_rows(dirty_sets)
+                if purged:
+                    logger.info(
+                        "purged %d ingested rows for %d sets", purged, len(dirty_sets)
+                    )
+                backoff_sec = self._background_ingestion_interval_sec
             except Exception:
                 if self._debug_fail_loudly:
                     raise
-                logger.exception("background task crashed, restarting")
+                logger.exception(
+                    "background ingestion failed, backing off %.1fs", backoff_sec
+                )
+                await asyncio.sleep(backoff_sec)
+                backoff_sec = min(backoff_sec * 2, 60.0)

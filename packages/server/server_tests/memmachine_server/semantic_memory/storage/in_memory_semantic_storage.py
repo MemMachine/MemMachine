@@ -339,6 +339,34 @@ class InMemorySemanticStorage(SemanticStorage):
 
             return set_ids
 
+    async def purge_ingested_rows(self, set_ids: list[SetIdT]) -> int:
+        if not set_ids:
+            return 0
+        deleted = 0
+        async with self._lock:
+            for set_id in set_ids:
+                history_map = self._set_history_map.get(set_id)
+                if history_map is None:
+                    continue
+                # Skip sets that still have pending (uningested) messages
+                # to preserve the duplicate guard for in-flight work.
+                has_pending = any(not v for v in history_map.values())
+                if has_pending:
+                    continue
+                ingested_ids = list(history_map.keys())
+                for h_id in ingested_ids:
+                    del history_map[h_id]
+                    self._history_created_at.pop((set_id, h_id), None)
+                    h_sets = self._history_to_sets.get(h_id)
+                    if h_sets is not None:
+                        h_sets.pop(set_id, None)
+                        if not h_sets:
+                            self._history_to_sets.pop(h_id, None)
+                    deleted += 1
+                if not history_map:
+                    self._set_history_map.pop(set_id, None)
+        return deleted
+
     async def get_set_ids_starts_with(self, prefix: str) -> list[SetIdT]:
         async with self._lock:
             set_ids = {
