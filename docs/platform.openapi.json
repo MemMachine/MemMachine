@@ -211,9 +211,7 @@
             "type": "object"
           },
           "metadata": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
+            "additionalProperties": true,
             "description": "Optional metadata associated with the episode.",
             "nullable": true,
             "title": "Metadata",
@@ -298,9 +296,7 @@
             "$ref": "#/components/schemas/EpisodeType"
           },
           "metadata": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
+            "additionalProperties": true,
             "description": "Optional metadata associated with the episode.",
             "nullable": true,
             "title": "Metadata",
@@ -441,7 +437,6 @@
         "description": "Specification model for retrieving a project.\n\nThe `project_id` uniquely identifies the project to retrieve.\n",
         "title": "GetProjectSpec"
       },
-      "JsonValue": {},
       "ListMemoriesSpec": {
         "allOf": [
           {
@@ -469,6 +464,13 @@
                 "example": 50,
                 "title": "Page Size",
                 "type": "integer"
+              },
+              "set_metadata": {
+                "additionalProperties": true,
+                "description": "Optional metadata key-value pairs used to filter or identify\na specific semantic memory set. Applies only when listing\nsemantic memories.\n",
+                "nullable": true,
+                "title": "Set Metadata",
+                "type": "object"
               },
               "type": {
                 "$ref": "#/components/schemas/MemoryType"
@@ -649,11 +651,13 @@
           },
           "org_id": {
             "description": "The unique identifier of the organization this project belongs to.\n\nReturned exactly as stored by the system.\n",
+            "maxLength": 255,
             "title": "Org Id",
             "type": "string"
           },
           "project_id": {
             "description": "The identifier of the project.\n\nThis value uniquely identifies the project within the organization.\n",
+            "maxLength": 255,
             "title": "Project Id",
             "type": "string"
           }
@@ -670,6 +674,7 @@
           "project_id": {
             "default": "",
             "description": "The identifier of the project. If empty, the user's default project is used.",
+            "maxLength": 255,
             "pattern": "^[\\p{L}\\p{N}_:-]*$",
             "title": "Project Id",
             "type": "string",
@@ -685,6 +690,13 @@
           },
           {
             "properties": {
+              "agent_mode": {
+                "default": false,
+                "description": "Whether to enable top-level retrieval-agent orchestration for episodic search.\nWhen false, episodic search uses direct memory retrieval.\n",
+                "example": false,
+                "title": "Agent Mode",
+                "type": "boolean"
+              },
               "expand_context": {
                 "default": 0,
                 "description": "The number of additional episodes to include around each matched\nepisode from long term memory for better context.\n",
@@ -711,6 +723,13 @@
                 "nullable": true,
                 "title": "Score Threshold",
                 "type": "number"
+              },
+              "set_metadata": {
+                "additionalProperties": true,
+                "description": "Optional metadata key-value pairs used to filter or identify\na specific semantic memory set. Applies only when searching\nsemantic memories.\n",
+                "nullable": true,
+                "title": "Set Metadata",
+                "type": "object"
               },
               "top_k": {
                 "default": 10,
