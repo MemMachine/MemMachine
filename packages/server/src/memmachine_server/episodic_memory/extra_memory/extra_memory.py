@@ -66,8 +66,8 @@ class ExtraMemoryParams(BaseModel):
             Whether to derive sentence-level derivatives from content (default: False).
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation (default: 2000).
-        derivative_consolidation_threshold (float):
-            Threshold for consolidating derivatives (default: 0.0, range: 0.0 to 1.0).
+        derivative_consolidation_threshold (float | None):
+            Threshold for consolidating derivatives (default: None).
         purge_interval (float | None):
             Seconds between purge cycles. None disables periodic purging (default: None).
     """
