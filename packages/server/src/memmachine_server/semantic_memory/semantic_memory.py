@@ -766,7 +766,7 @@ class SemanticService:
 
     async def _interruptible_sleep(self, seconds: float) -> None:
         """Sleep that wakes early when shutdown is requested."""
-        with contextlib.suppress(TimeoutError):
+        with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(self._shutdown_event.wait(), timeout=seconds)
 
     async def _background_ingestion_task(self) -> None:
@@ -815,3 +815,4 @@ class SemanticService:
                 backoff_sec = min(backoff_sec * 2, 60.0)
             else:
                 backoff_sec = self._background_ingestion_interval_sec
+                await self._interruptible_sleep(self._background_ingestion_interval_sec)

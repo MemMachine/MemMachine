@@ -24,6 +24,7 @@ def upgrade() -> None:
         "ix_set_ingested_history_set_id_ingested",
         "set_ingested_history",
         ["set_id", "ingested"],
+        if_not_exists=True,
     )
 
 

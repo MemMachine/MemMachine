@@ -33,6 +33,7 @@ from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
     MappedColumn,
+    aliased,
     mapped_column,
 )
 from sqlalchemy.sql import Delete, Select, func
@@ -730,18 +731,20 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             return 0
         # Only purge set_ids where no uningested rows remain, so the
         # (set_id, history_id) duplicate guard stays intact for pending sets.
-        sets_with_pending = (
-            select(SetIngestedHistory.set_id)
+        pending_alias = aliased(SetIngestedHistory)
+        pending_exists = (
+            select(pending_alias.set_id)
             .where(
-                SetIngestedHistory.set_id.in_(set_ids),
-                SetIngestedHistory.ingested.is_(False),
+                pending_alias.set_id == SetIngestedHistory.set_id,
+                pending_alias.ingested.is_(False),
             )
-            .distinct()
+            .correlate(SetIngestedHistory)
+            .exists()
         )
         stmt = delete(SetIngestedHistory).where(
             SetIngestedHistory.set_id.in_(set_ids),
             SetIngestedHistory.ingested.is_(True),
-            SetIngestedHistory.set_id.not_in(sets_with_pending),
+            ~pending_exists,
         )
         async with self._create_session() as session:
             result = cast(CursorResult[Any], await session.execute(stmt))

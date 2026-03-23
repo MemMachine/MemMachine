@@ -753,7 +753,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             WHERE h.is_ingested = true
             WITH h, count(h) AS cnt
             DETACH DELETE h
-            RETURN sum(cnt) AS deleted
+            RETURN coalesce(sum(cnt), 0) AS deleted
             """,
             set_ids=set_ids_param,
         )
