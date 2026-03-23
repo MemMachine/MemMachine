@@ -580,11 +580,31 @@ class ShortTermMemoryConsolidator:
         ]
         return any(keyword in error_msg for keyword in keywords)
 
+    @staticmethod
+    def _split_episode(episode: Episode) -> tuple[Episode, Episode] | None:
+        """
+        Split a single oversized episode into two synthetic chunks.
+
+        The chunks keep the original episode metadata so they can be summarized
+        sequentially as if they were adjacent messages from the same source.
+        """
+        if len(episode.content) <= 1:
+            return None
+
+        mid = len(episode.content) // 2
+        if mid == 0 or mid >= len(episode.content):
+            return None
+
+        first_chunk = episode.model_copy(update={"content": episode.content[:mid]})
+        second_chunk = episode.model_copy(update={"content": episode.content[mid:]})
+        return first_chunk, second_chunk
+
     async def _create_summary(self, summary: str, episodes: list[Episode]) -> str:
         """
         Generate a summary recursively.
 
-        splitting the batch if it exceeds the context window or encounters an error.
+        Split the work into smaller pieces when the prompt exceeds the model's
+        context window so all episode content is still consumed.
         """
         # Base Case: Nothing to process
         if not episodes:
@@ -616,26 +636,30 @@ class ShortTermMemoryConsolidator:
                 )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:
             if self._is_exceed_context_window_error(e):
-                # If a single episode fails, drop it and return the current summary
+                batches: list[list[Episode]]
                 if len(episodes) == 1:
-                    logger.exception("Dropping failed episode %s", episodes[0].uid)
-                    return summary
+                    split_episode = self._split_episode(episodes[0])
+                    if split_episode is None:
+                        logger.exception("Dropping failed episode %s", episodes[0].uid)
+                        return summary
+                    logger.warning(
+                        "Episode %s exceeded context window. Splitting content into "
+                        "smaller chunks.",
+                        episodes[0].uid,
+                    )
+                    batches = [[split_episode[0]], [split_episode[1]]]
+                else:
+                    mid = len(episodes) // 2
+                    logger.warning(
+                        "Batch failed. Splitting %d episodes into halves.",
+                        len(episodes),
+                    )
+                    batches = [episodes[:mid], episodes[mid:]]
 
-                # Otherwise, split and recurse
-                mid = len(episodes) // 2
-                logger.warning(
-                    "Batch failed. Splitting %d episodes into halves.", len(episodes)
-                )
-
-                # 1. Summarize the first half
-                summary_after_first_half = await self._create_summary(
-                    summary, episodes[:mid]
-                )
-
-                # 2. Use that result as the 'base' to summarize the second half
-                return await self._create_summary(
-                    summary_after_first_half, episodes[mid:]
-                )
+                current_summary = summary
+                for batch in batches:
+                    current_summary = await self._create_summary(current_summary, batch)
+                return current_summary
             # For other errors, log and ignore
             logger.exception("Summarization failed due to unexpected error")
         else:
