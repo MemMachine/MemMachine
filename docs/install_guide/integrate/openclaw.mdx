@@ -38,11 +38,11 @@ The MemMachine plugin for [OpenClaw](https://github.com/OpenClaw/OpenClaw) provi
       <Tab title="Install for Local Development">
         Use this method if you are contributing to the plugin or testing local modifications. Ensure you are in the project root:
         ```bash
-        openclaw plugins install ./MemMachine/integrations
-        cd ./MemMachine/integrations/openclaw && pnpm install
+        openclaw plugins install ./MemMachine/integrations/openclaw
         ```
       </Tab>
     </Tabs>
+    Do not use `openclaw hooks install` for this package. It is an OpenClaw plugin pack that exports `openclaw.extensions`, not a hook pack with `openclaw.hooks`.
   </Step>
   <Step title="Configure Credentials">
     If you are using the **MemMachine Platform (Cloud)**, retrieve your API key from the [MemMachine Cloud console](https://console.memmachine.ai). 
