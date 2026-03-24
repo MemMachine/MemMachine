@@ -5,17 +5,15 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Literal, cast, override
+from typing import Annotated, Any, Literal, cast, override
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
 from sqlalchemy import (
     JSON,
-    Boolean,
     DateTime,
-    Float,
     ForeignKey,
     Index,
     Integer,
@@ -44,7 +42,11 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
+    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    PropertyValue,
+)
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -68,6 +70,10 @@ from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store 
 logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
+
+_PROPERTY_TYPE_KEY = "t"
+_PROPERTY_VALUE_KEY = "v"
+
 _ContextAdapter = TypeAdapter(Context | None)
 _BlockAdapter = TypeAdapter(Block)
 
@@ -114,6 +120,9 @@ class SegmentRow(BaseSegmentLinker):
     block: MappedColumn[dict[str, JsonValue]] = mapped_column(
         _JSON_AUTO, nullable=False
     )
+    properties: MappedColumn[dict[str, JsonValue]] = mapped_column(
+        _JSON_AUTO, nullable=False, default=dict
+    )
 
     created_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -143,26 +152,6 @@ class SegmentRow(BaseSegmentLinker):
             "segment_linker_segments__dj",
             "deletion_job_uuid",
         ),
-    )
-
-
-class SegmentPropertyRow(BaseSegmentLinker):
-    """Property key-value pair for a segment."""
-
-    __tablename__ = "segment_linker_segment_properties"
-
-    segment_uuid: MappedColumn[UUID] = mapped_column(
-        Uuid,
-        ForeignKey("segment_linker_segments.uuid", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    key: MappedColumn[str] = mapped_column(String, primary_key=True)
-    value_bool: MappedColumn[bool] = mapped_column(Boolean, nullable=True)
-    value_int: MappedColumn[int] = mapped_column(Integer, nullable=True)
-    value_float: MappedColumn[float] = mapped_column(Float, nullable=True)
-    value_str: MappedColumn[str] = mapped_column(String, nullable=True)
-    value_datetime: MappedColumn[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
 
 
@@ -427,25 +416,14 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     else None
                 ),
                 "block": segment.block.model_dump(mode="json"),
+                "properties": SQLAlchemySegmentLinkerPartition._encode_properties(
+                    segment.properties
+                ),
             }
             for segment in segments
         ]
         if segment_row_values:
             await session.execute(insert(SegmentRow), segment_row_values)
-
-        property_row_values: list[dict[str, PropertyValue | UUID]] = [
-            {
-                "segment_uuid": segment.uuid,
-                "key": property_key,
-                SQLAlchemySegmentLinkerPartition._property_type_column_name(
-                    type(property_value)
-                ): property_value,
-            }
-            for segment in segments
-            for property_key, property_value in segment.properties.items()
-        ]
-        if property_row_values:
-            await session.execute(insert(SegmentPropertyRow), property_row_values)
 
     async def _insert_new_derivatives(
         self,
@@ -557,17 +535,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             )
 
             segment_rows = (await session.execute(segments_by_derivatives_query)).all()
-            segment_uuids: set[UUID] = {
-                segment_row.uuid for _, segment_row in segment_rows
-            }
-            properties_by_segments = await self._load_properties_by_segments(
-                session, segment_uuids
-            )
 
         segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
         for derivative_uuid, segment_row in segment_rows:
             segment = SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
-                segment_row, properties_by_segments[segment_row.uuid]
+                segment_row
             )
             segments_by_derivatives[derivative_uuid].append(segment)
 
@@ -624,6 +596,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 SegmentRow.timestamp,
                 SegmentRow.context,
                 SegmentRow.block,
+                SegmentRow.properties,
                 row_number_ascending,
                 row_number_descending,
             )
@@ -673,10 +646,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             limited_derivative_segment_rows = (
                 await session.execute(limited_derivative_segments_query)
             ).all()
-            segment_uuids = {row.uuid for row in limited_derivative_segment_rows}
-            properties_by_segments = await self._load_properties_by_segments(
-                session, segment_uuids
-            )
 
         segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
         for row in limited_derivative_segment_rows:
@@ -688,9 +657,10 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 timestamp=row.timestamp,
                 context=row.context,
                 block=row.block,
+                properties=row.properties,
             )
             segment = SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
-                segment_row, properties_by_segments[segment_row.uuid]
+                segment_row
             )
             segments_by_derivatives[row.derivative_uuid].append(segment)
 
@@ -735,14 +705,10 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
 
             # Short-circuit: no context needed.
             if max_backward_segments <= 0 and max_forward_segments <= 0:
-                properties_by_segments = await self._load_properties_by_segments(
-                    session, list(seed_segment_rows_by_uuid.keys())
-                )
                 return {
                     seed_segment_uuid: [
                         SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
                             seed_segment_row,
-                            properties_by_segments[seed_segment_uuid],
                         )
                     ]
                     for seed_segment_uuid, seed_segment_row in seed_segment_rows_by_uuid.items()
@@ -768,18 +734,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     not_deleted_filter,
                 )
 
-            # Load properties for all segments (seeds + context).
-            all_segment_uuids = set(seed_segment_rows_by_uuid.keys())
-            for backward_rows, forward_rows in context_rows_by_seed.values():
-                for row in backward_rows:
-                    all_segment_uuids.add(row.uuid)
-                for row in forward_rows:
-                    all_segment_uuids.add(row.uuid)
-
-            properties_by_segments = await self._load_properties_by_segments(
-                session, all_segment_uuids
-            )
-
             # Assemble results: [backward (reversed) + seed + forward].
             segments_by_seed: dict[UUID, list[Segment]] = {}
             for seed_uuid, seed_row in seed_segment_rows_by_uuid.items():
@@ -787,9 +741,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     seed_uuid, ([], [])
                 )
                 segments_by_seed[seed_uuid] = [
-                    SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
-                        row, properties_by_segments.get(row.uuid, {})
-                    )
+                    SQLAlchemySegmentLinkerPartition._segment_from_segment_row(row)
                     for row in [*reversed(backward_rows), seed_row, *forward_rows]
                 ]
 
@@ -865,6 +817,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 lateral_subquery.c.timestamp,
                 lateral_subquery.c.context,
                 lateral_subquery.c.block,
+                lateral_subquery.c.properties,
             ).select_from(seeds_subquery.join(lateral_subquery, true()))
 
             # Group result rows by seed UUID.
@@ -882,6 +835,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                         timestamp=row.timestamp,
                         context=row.context,
                         block=row.block,
+                        properties=row.properties,
                     )
                 )
             return rows_by_seed
@@ -1385,39 +1339,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
 
     # Helpers
 
-    async def _load_properties_by_segments(
-        self,
-        session: AsyncSession,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, dict[str, PropertyValue]]:
-        """Load properties for a batch of segment UUIDs."""
-        segment_uuids = set(segment_uuids)
-
-        if not segment_uuids:
-            return {}
-
-        segment_property_rows = (
-            (
-                await session.execute(
-                    select(SegmentPropertyRow).where(
-                        SegmentPropertyRow.segment_uuid.in_(segment_uuids)
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        properties_by_segments: dict[UUID, dict[str, PropertyValue]] = {
-            segment_uuid: {} for segment_uuid in segment_uuids
-        }
-        for segment_property_row in segment_property_rows:
-            properties_by_segments[segment_property_row.segment_uuid][
-                segment_property_row.key
-            ] = SQLAlchemySegmentLinkerPartition._coalesce_property_value(
-                segment_property_row
-            )
-        return properties_by_segments
-
     def _validate_active_derivatives(
         self,
         active: Iterable[UUID],
@@ -1435,23 +1356,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         }
         if not_active:
             raise DerivativeNotActiveError(not_active)
-
-    _COMPARISON_OPERATORS: ClassVar[
-        dict[
-            str,
-            Callable[
-                [InstrumentedAttribute[PropertyValue], PropertyValue],
-                ColumnElement[bool],
-            ],
-        ]
-    ] = {
-        "=": lambda column, value: column == value,
-        "!=": lambda column, value: column != value,
-        ">": lambda column, value: column > value,
-        "<": lambda column, value: column < value,
-        ">=": lambda column, value: column >= value,
-        "<=": lambda column, value: column <= value,
-    }
 
     def _build_not_deleted_filter(
         self,
@@ -1472,56 +1376,74 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         )
 
     @staticmethod
+    def _encode_properties(
+        properties: Mapping[str, PropertyValue],
+    ) -> dict[str, dict[str, Any]]:
+        """Encode properties as type-tagged JSONB: {"key": {_PROPERTY_VALUE_KEY: value, _PROPERTY_TYPE_KEY: type_name}}."""
+        encoded: dict[str, dict[str, Any]] = {}
+        for key, value in properties.items():
+            type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME.get(type(value))
+            if type_name is None:
+                raise ValueError(f"Unsupported property value type: {type(value)!r}")
+            if isinstance(value, datetime):
+                utc_value = value.astimezone(UTC)
+                encoded[key] = {
+                    _PROPERTY_VALUE_KEY: utc_value.isoformat(),
+                    _PROPERTY_TYPE_KEY: type_name,
+                }
+            else:
+                encoded[key] = {
+                    _PROPERTY_VALUE_KEY: value,
+                    _PROPERTY_TYPE_KEY: type_name,
+                }
+        return encoded
+
+    @staticmethod
+    def _decode_properties(
+        encoded: dict[str, Any],
+    ) -> dict[str, PropertyValue]:
+        """Decode type-tagged JSONB properties back to Python values."""
+        properties: dict[str, PropertyValue] = {}
+        for key, entry in encoded.items():
+            type_name = entry[_PROPERTY_TYPE_KEY]
+            raw_value = entry[_PROPERTY_VALUE_KEY]
+            property_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
+            if property_type is None:
+                raise ValueError(f"Unknown property type name: {type_name!r}")
+            if property_type is datetime:
+                properties[key] = datetime.fromisoformat(raw_value)
+            else:
+                properties[key] = cast(type[bool | int | float | str], property_type)(
+                    raw_value
+                )
+        return properties
+
+    @staticmethod
     def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
-        """Compile a FilterExpr into a SQLAlchemy boolean expression."""
+        """Compile a FilterExpr into a SQLAlchemy boolean expression against inline JSONB properties."""
         if isinstance(expr, Comparison):
-            value_column = (
-                SQLAlchemySegmentLinkerPartition._property_type_column_attribute(
-                    type(expr.value)
-                )
-            )
-            comparison_op = SQLAlchemySegmentLinkerPartition._COMPARISON_OPERATORS[
-                expr.op
-            ]
-            return (
-                select(1)
-                .select_from(SegmentPropertyRow)
-                .where(
-                    SegmentPropertyRow.segment_uuid == SegmentRow.uuid,
-                    SegmentPropertyRow.key == expr.field,
-                    comparison_op(value_column, expr.value),
-                )
-                .exists()
+            return SQLAlchemySegmentLinkerPartition._compile_comparison(
+                expr.field, expr.op, expr.value
             )
 
         if isinstance(expr, In):
-            first_value = expr.values[0] if expr.values else None
-            value_column = (
-                SegmentPropertyRow.value_int
-                if isinstance(first_value, int)
-                else SegmentPropertyRow.value_str
+            # IN is equivalent to OR of equalities on the same field.
+            if not expr.values:
+                return literal(False)
+            first_value = expr.values[0]
+            type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[type(first_value)]
+            value_element = SegmentRow.properties[expr.field][_PROPERTY_VALUE_KEY]
+            type_check = (
+                SegmentRow.properties[expr.field][_PROPERTY_TYPE_KEY].as_string()
+                == type_name
             )
-            return (
-                select(1)
-                .select_from(SegmentPropertyRow)
-                .where(
-                    SegmentPropertyRow.segment_uuid == SegmentRow.uuid,
-                    SegmentPropertyRow.key == expr.field,
-                    value_column.in_(expr.values),
-                )
-                .exists()
-            )
+            if isinstance(first_value, int):
+                return and_(type_check, value_element.as_integer().in_(expr.values))
+            return and_(type_check, value_element.as_string().in_(expr.values))
 
         if isinstance(expr, IsNull):
-            return ~(
-                select(1)
-                .select_from(SegmentPropertyRow)
-                .where(
-                    SegmentPropertyRow.segment_uuid == SegmentRow.uuid,
-                    SegmentPropertyRow.key == expr.field,
-                )
-                .exists()
-            )
+            # Property is null = key does not exist in the JSONB object.
+            return SegmentRow.properties[expr.field].is_(None)
 
         if isinstance(expr, Not):
             return ~SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.expr)
@@ -1541,60 +1463,53 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
     @staticmethod
-    def _property_type_column_attribute(
-        property_type: type[PropertyValue],
-    ) -> InstrumentedAttribute[PropertyValue]:
-        """Return the SQLAlchemy column attribute for a given property type."""
-        if property_type is bool:
-            return SegmentPropertyRow.value_bool
-        if property_type is int:
-            return SegmentPropertyRow.value_int
-        if property_type is float:
-            return SegmentPropertyRow.value_float
-        if property_type is str:
-            return SegmentPropertyRow.value_str
-        if property_type is datetime:
-            return SegmentPropertyRow.value_datetime
-        raise ValueError(f"Unsupported property value type: {property_type!r}")
+    def _compile_comparison(
+        field: str, op: str, value: PropertyValue
+    ) -> ColumnElement[bool]:
+        """Compile a single comparison against a type-tagged JSONB property."""
+        type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[type(value)]
+        value_element = SegmentRow.properties[field][_PROPERTY_VALUE_KEY]
+        type_check = (
+            SegmentRow.properties[field][_PROPERTY_TYPE_KEY].as_string() == type_name
+        )
 
-    @staticmethod
-    def _property_type_column_name(property_type: type[PropertyValue]) -> str:
-        """Return the column name for a given property type."""
-        if property_type is bool:
-            return "value_bool"
-        if property_type is int:
-            return "value_int"
-        if property_type is float:
-            return "value_float"
-        if property_type is str:
-            return "value_str"
-        if property_type is datetime:
-            return "value_datetime"
-        raise ValueError(f"Unsupported property value type: {property_type!r}")
+        # Convert the value and cast the JSON element appropriately.
+        if isinstance(value, bool):
+            casted = value_element.as_boolean()
+            cmp_value: Any = value
+        elif isinstance(value, int):
+            casted = value_element.as_integer()
+            cmp_value = value
+        elif isinstance(value, float):
+            casted = value_element.as_float()
+            cmp_value = value
+        elif isinstance(value, str):
+            casted = value_element.as_string()
+            cmp_value = value
+        elif isinstance(value, datetime):
+            casted = value_element.as_string()
+            cmp_value = value.astimezone(UTC).isoformat()
+        else:
+            raise TypeError(f"Unsupported property value type: {type(value)!r}")
 
-    @staticmethod
-    def _coalesce_property_value(row: SegmentPropertyRow) -> PropertyValue:
-        """Read back whichever value_* column is non-null."""
-        if row.value_bool is not None:
-            return row.value_bool
-        if row.value_int is not None:
-            return row.value_int
-        if row.value_float is not None:
-            return row.value_float
-        if row.value_str is not None:
-            return row.value_str
-        if row.value_datetime is not None:
-            return row.value_datetime
-        raise ValueError(f"Property row for key={row.key!r} has no value set")
+        ops: dict[str, Callable] = {
+            "=": lambda c, v: c == v,
+            "!=": lambda c, v: c != v,
+            ">": lambda c, v: c > v,
+            "<": lambda c, v: c < v,
+            ">=": lambda c, v: c >= v,
+            "<=": lambda c, v: c <= v,
+        }
+        return and_(type_check, ops[op](casted, cmp_value))
 
     @staticmethod
     def _segment_from_segment_row(
         row: SegmentRow,
-        properties: Mapping[str, PropertyValue],
     ) -> Segment:
-        """Convert a SegmentRow and its properties into a Segment."""
+        """Convert a SegmentRow into a Segment."""
         context = _ContextAdapter.validate_python(row.context)
         block = _BlockAdapter.validate_python(row.block)
+        properties = SQLAlchemySegmentLinkerPartition._decode_properties(row.properties)
         return Segment(
             uuid=row.uuid,
             episode_uuid=row.episode_uuid,
@@ -1603,7 +1518,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             timestamp=row.timestamp,
             context=context,
             block=block,
-            properties=dict(properties),
+            properties=properties,
         )
 
 
