@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from memmachine_client import Skill, SkillRunner  # noqa: E402
+from memmachine_common import Skill, SkillRunner  # noqa: E402
 
 from evaluation.utils import skill_utils  # noqa: E402
 
@@ -170,12 +170,6 @@ async def test_process_question_with_runner_skips_memory_for_llm_mode():
                 output=[],
                 usage=_FakeUsage(9, 2),
             ),
-            _FakeResponse(
-                response_id="resp-2",
-                output_text="Ada Lovelace",
-                output=[],
-                usage=_FakeUsage(4, 1),
-            ),
         ]
     )
     full_content = "Ada Lovelace wrote the first algorithm notes."
@@ -197,4 +191,6 @@ async def test_process_question_with_runner_skips_memory_for_llm_mode():
     assert result["memory_search_called"] == 0
     assert result["num_episodes_retrieved"] == 0
     assert result["selected_skill_name"] == "PureLLM"
-    assert result["llm_call_count"] == 2
+    assert result["llm_call_count"] == 1
+    assert "open_domain_rescue_used" not in result
+    assert "answer_verification_used" not in result

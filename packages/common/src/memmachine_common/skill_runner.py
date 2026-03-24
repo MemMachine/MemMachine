@@ -1,4 +1,4 @@
-"""Client-side provider session loop for installed MemMachine skills."""
+"""Shared provider session loop for installed MemMachine skills."""
 # ruff: noqa: SLF001
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ import inspect
 import json
 import re
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from memmachine_common.skill_loop import (
     SkillLoopState,
@@ -26,7 +26,10 @@ from memmachine_common.skill_loop import (
 from .skill import Skill
 
 if TYPE_CHECKING:
-    from .memory import Memory
+    class RestMemoryProtocol(Protocol):
+        """Minimal rest-memory interface used by the shared skill runner."""
+
+        def search(self, query: str, **kwargs: object) -> object: ...
 
 ProviderName = Literal["anthropic", "openai"]
 SearchMode = Literal["direct", "rest"]
@@ -193,7 +196,7 @@ class SkillRunner:
         model: str,
         provider: ProviderName | None = None,
         search_mode: SearchMode = "rest",
-        rest_memory: Memory | None = None,
+        rest_memory: RestMemoryProtocol | None = None,
         direct_memory: object | None = None,
         direct_search_extra_kwargs: dict[str, object] | None = None,
         max_turns: int = 10,

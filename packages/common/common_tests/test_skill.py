@@ -1,9 +1,9 @@
-"""Unit tests for installed skill metadata."""
+"""Unit tests for shared installed skill metadata."""
 
 import pytest
 from pydantic import ValidationError
 
-from memmachine_client import Skill
+from memmachine_common import Skill
 
 
 def test_skill_fields():

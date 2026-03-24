@@ -8,7 +8,7 @@ from typing import Any
 import boto3
 import neo4j
 import openai
-from memmachine_client import SkillRunner, install_skill
+from memmachine_common import SkillRunner, install_skill
 from memmachine_server.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
@@ -242,58 +242,9 @@ def _extract_memory_search_latency_breakdown(
     ]
 
 
-def _is_unknown_like_answer(text: str) -> bool:
-    normalized = text.strip().lower()
-    return any(
-        marker in normalized
-        for marker in (
-            "i don't know",
-            "i don’t know",
-            "i do not know",
-            "unknown",
-            "not sure",
-            "unclear",
-            "cannot determine",
-            "can't determine",
-            "cannot be determined",
-            "can't be determined",
-            "cannot confirm",
-            "can't confirm",
-            "cannot find",
-            "can't find",
-            "not specified",
-            "not mentioned",
-            "no information",
-            "insufficient",
-            "not enough information",
-            "insufficient evidence",
-        )
-    )
-
-
-def _is_same_country_or_nationality_question(question: str) -> bool:
-    normalized = f" {question.strip().lower()} "
-    if not re.match(
-        r"\s*(is|are|was|were|do|does|did|can|could|has|have|had)\b",
-        normalized,
-    ):
-        return False
-    return any(
-        marker in normalized
-        for marker in (
-            " same country ",
-            " same nationality ",
-            " from the same country ",
-            " from the same nationality ",
-        )
-    )
-
-
 def _looks_like_non_answer(text: str) -> bool:
     normalized = text.strip().lower()
     if not normalized:
-        return True
-    if _is_unknown_like_answer(normalized):
         return True
     if normalized.endswith("?"):
         return True
@@ -310,90 +261,6 @@ def _looks_like_non_answer(text: str) -> bool:
             "it is unclear",
             "it is unknown",
         )
-    )
-
-
-def _needs_answer_verification(
-    *,
-    question: str,
-    perf_metrics: dict[str, Any],
-    draft_answer: str,
-) -> bool:
-    if _is_unknown_like_answer(draft_answer):
-        return True
-    if _looks_like_non_answer(draft_answer):
-        return True
-    if not bool(perf_metrics.get("top_level_is_sufficient", False)):
-        return True
-    if _is_same_country_or_nationality_question(question):
-        return True
-    if bool(perf_metrics.get("top_level_is_sufficient", False)):
-        confidence = perf_metrics.get("top_level_confidence_score")
-        if (
-            isinstance(confidence, int | float)
-            and not isinstance(confidence, bool)
-            and float(confidence) < 0.8
-        ):
-            return True
-    return False
-
-
-async def _rescue_unknown_answer(
-    *,
-    model: openai.AsyncOpenAI,
-    question: str,
-    model_name: str,
-) -> tuple[str, bool, int, int, float, int]:
-    rescue_prompts = [
-        (
-            "Answer the question using best available world knowledge. "
-            "Do not say unknown unless truly unknowable. "
-            "Provide only the concise final answer.\n"
-            f"Question: {question}"
-        ),
-        (
-            "Provide your single best concrete answer to the question. "
-            "Do not use uncertainty language like \"I don't know\", "
-            "'unknown', or 'not enough information'. "
-            "Return only the final answer.\n"
-            f"Question: {question}"
-        ),
-    ]
-    rescue_model_name = "gpt-5.2" if model_name == "gpt-5-mini" else model_name
-    total_input_tokens = 0
-    total_output_tokens = 0
-    total_duration = 0.0
-    llm_call_count = 0
-    for rescue_prompt in rescue_prompts:
-        rsp_start = time.perf_counter()
-        rescue_rsp = await model.responses.create(
-            model=rescue_model_name,
-            max_output_tokens=512,
-            top_p=1,
-            input=[{"role": "user", "content": rescue_prompt}],
-        )
-        total_duration += time.perf_counter() - rsp_start
-        llm_call_count += 1
-        input_tokens, output_tokens = _response_usage_tokens(rescue_rsp)
-        total_input_tokens += input_tokens
-        total_output_tokens += output_tokens
-        rescue_text = rescue_rsp.output_text.strip()
-        if rescue_text and not _is_unknown_like_answer(rescue_text):
-            return (
-                rescue_text,
-                True,
-                total_input_tokens,
-                total_output_tokens,
-                total_duration,
-                llm_call_count,
-            )
-    return (
-        "",
-        False,
-        total_input_tokens,
-        total_output_tokens,
-        total_duration,
-        llm_call_count,
     )
 
 
@@ -525,29 +392,6 @@ async def process_question_with_runner(  # noqa: C901
             "top_level_is_sufficient": False,
         }
 
-    open_domain_rescue_used = False
-    answer_verification_used = False
-    extra_llm_calls = 0
-    if _is_unknown_like_answer(rsp_text):
-        (
-            rescue_text,
-            open_domain_rescue_used,
-            rescue_input_tokens,
-            rescue_output_tokens,
-            rescue_duration,
-            rescue_llm_calls,
-        ) = await _rescue_unknown_answer(
-            model=model,
-            question=question,
-            model_name=model_name,
-        )
-        total_input_tokens += rescue_input_tokens
-        total_output_tokens += rescue_output_tokens
-        llm_answering_time += rescue_duration
-        extra_llm_calls += rescue_llm_calls
-        if rescue_text:
-            rsp_text = rescue_text
-
     if full_content is not None:
         formatted_context = full_content
     else:
@@ -568,49 +412,6 @@ async def process_question_with_runner(  # noqa: C901
         ]
         formatted_context = "\n".join(context_parts).strip()
 
-    if _needs_answer_verification(
-        question=question,
-        perf_metrics=perf_metrics,
-        draft_answer=rsp_text,
-    ):
-        verification_prompt = f"""You are validating a draft answer to a multi-hop question.
-
-Question: {question}
-
-Memories:
-{formatted_context}
-
-Draft answer:
-{rsp_text}
-
-Requirements:
-- If the draft is already correct, keep it unchanged.
-- For same-country/same-nationality yes/no questions, answer "yes" when compared entities share at least one normalized country/nationality.
-- For relation-chain questions, ensure the answer targets the final asked attribute (not an intermediate entity).
-- Do not return unknown if a best-supported answer can be given from memory or general knowledge.
-- Return only the final answer, concise."""
-        verification_start = time.perf_counter()
-        verification_rsp = await model.responses.create(
-            model=model_name,
-            max_output_tokens=512,
-            top_p=1,
-            input=[{"role": "user", "content": verification_prompt}],
-        )
-        llm_answering_time += time.perf_counter() - verification_start
-        verification_input_tokens, verification_output_tokens = _response_usage_tokens(
-            verification_rsp
-        )
-        total_input_tokens += verification_input_tokens
-        total_output_tokens += verification_output_tokens
-        extra_llm_calls += 1
-        verified_text = verification_rsp.output_text.strip()
-        if verified_text:
-            verified_is_unknown = _is_unknown_like_answer(verified_text)
-            draft_is_unknown = _is_unknown_like_answer(rsp_text)
-            if not (verified_is_unknown and not draft_is_unknown):
-                rsp_text = verified_text
-                answer_verification_used = True
-
     if full_content is None:
         perf_metrics = _build_runner_perf_metrics(
             runner=runner,
@@ -619,7 +420,7 @@ Requirements:
         )
 
     perf_metrics["llm_time"] = float(perf_metrics.get("llm_time", 0.0)) + llm_answering_time
-    perf_metrics["llm_call_count"] = _extract_llm_call_count(perf_metrics) + extra_llm_calls
+    perf_metrics["llm_call_count"] = _extract_llm_call_count(perf_metrics)
 
     num_episodes_retrieved = _count_runner_retrieved_episodes(
         runner.last_search_results if runner is not None else []
@@ -655,8 +456,6 @@ Requirements:
         "conversation_memories": formatted_context,
         "num_episodes_retrieved": num_episodes_retrieved,
         "llm_call_count": llm_call_count,
-        "open_domain_rescue_used": open_domain_rescue_used,
-        "answer_verification_used": answer_verification_used,
         "input_token": total_input_tokens,
         "output_token": total_output_tokens,
     }
@@ -798,9 +597,6 @@ def _build_runner_perf_metrics(  # noqa: C901
         "selected_agent_name": "SkillRunner",
         "top_level_is_sufficient": False,
     }
-    if runner.last_stage_sub_queries:
-        perf_metrics["stage_sub_queries"] = list(runner.last_stage_sub_queries)
-        perf_metrics["latest_stage_sub_queries"] = list(runner.last_stage_sub_queries)
 
     stage_results: list[dict[str, object]] = []
     for item in runner.last_stage_results:
@@ -824,11 +620,6 @@ def _build_runner_perf_metrics(  # noqa: C901
 
     if not stage_results:
         return perf_metrics
-
-    perf_metrics["stage_results"] = stage_results
-    perf_metrics["latest_stage_results"] = stage_results
-    perf_metrics["sufficiency_signal_seen"] = True
-    perf_metrics["latest_sufficiency_signal_agent"] = "SkillRunner"
 
     latest_stage_result = stage_results[-1]
     latest_candidate = latest_stage_result["stage_result"]
@@ -857,9 +648,7 @@ def _build_runner_perf_metrics(  # noqa: C901
         perf_metrics["top_level_confidence_score"] = normalized_confidence
         if isinstance(latest_reason, str) and latest_reason.strip():
             perf_metrics["top_level_reason_note"] = latest_reason.strip()
-        if not _is_unknown_like_answer(final_answer) and not _looks_like_non_answer(
-            final_answer
-        ):
+        if not _looks_like_non_answer(final_answer):
             perf_metrics["top_level_is_sufficient"] = _answers_roughly_align(
                 latest_candidate,
                 final_answer,

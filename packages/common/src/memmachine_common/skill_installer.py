@@ -1,4 +1,4 @@
-"""Provider-backed skill installation helpers for the Python client SDK."""
+"""Provider-backed skill installation helpers shared by client and server."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ ProviderName = Literal["anthropic", "openai"]
 
 _ANTHROPIC_FILES_BETA = "files-api-2025-04-14"
 _CACHE_FILE = ".memmachine_skill_cache.json"
-_MAIN_SKILL_FILENAMES = {"skill.md", "retrieve_agent.md"}
+_MAIN_SKILL_FILENAMES = {"skill.md", "retrieve_agent.md", "retrieve_skill.md"}
 
 
 class _NamedBytesIO(io.BytesIO):
@@ -41,8 +41,7 @@ def _require_anthropic_sdk() -> object:
         return importlib.import_module("anthropic")
     except ModuleNotFoundError as err:
         raise ImportError(
-            "anthropic SDK not installed. Install it with: "
-            "pip install 'memmachine-client[anthropic]'"
+            "anthropic SDK not installed. Install it with: pip install anthropic"
         ) from err
 
 
@@ -51,8 +50,7 @@ def _require_openai_sdk() -> object:
         return importlib.import_module("openai")
     except ModuleNotFoundError as err:
         raise ImportError(
-            "openai SDK not installed. Install it with: "
-            "pip install 'memmachine-client[openai]'"
+            "openai SDK not installed. Install it with: pip install openai"
         ) from err
 
 

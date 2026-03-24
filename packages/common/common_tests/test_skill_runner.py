@@ -1,4 +1,4 @@
-"""Unit tests for provider-native SkillRunner behavior."""
+"""Unit tests for shared provider-native SkillRunner behavior."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from memmachine_client import Skill, SkillRunner
+from memmachine_common import Skill, SkillRunner
 
 
 class _FakeResponsesAPI:

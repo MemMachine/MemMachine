@@ -1,4 +1,4 @@
-"""Unit tests for provider-backed skill installation."""
+"""Unit tests for shared provider-backed skill installation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from memmachine_client import Skill, install_skill
+from memmachine_common import Skill, install_skill
 
 
 class _FakeAnthropicFiles:
@@ -178,7 +178,7 @@ async def test_missing_anthropic_import_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(importlib, "import_module", _patched_import_module)
 
-    with pytest.raises(ImportError, match="memmachine-client\\[anthropic\\]"):
+    with pytest.raises(ImportError, match="pip install anthropic"):
         await install_skill(skill_file, "anthropic")
 
 
@@ -196,5 +196,5 @@ async def test_missing_openai_import_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(importlib, "import_module", _patched_import_module)
 
-    with pytest.raises(ImportError, match="memmachine-client\\[openai\\]"):
+    with pytest.raises(ImportError, match="pip install openai"):
         await install_skill(skill_file, "openai")

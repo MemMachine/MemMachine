@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from memmachine_client import SkillRunner, install_skill
+from memmachine_common import SkillRunner, install_skill
 from memmachine_common.skill_loop import SkillLoopContractError
 
 from memmachine_server.common.configuration.retrieval_config import (
