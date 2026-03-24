@@ -30,6 +30,27 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 logger = logging.getLogger(__name__)
 
 
+def _is_context_length_exceeded_error(error: Exception) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        code = getattr(current, "code", None)
+        if isinstance(code, str) and code.lower() == "context_length_exceeded":
+            return True
+
+        message = str(current).lower()
+        if (
+            "context_length_exceeded" in message
+            or "exceeds the context window" in message
+        ):
+            return True
+
+        current = current.__cause__ or current.__context__
+
+    return False
+
+
 class IngestionService:
     """
     Processes un-ingested history for each set_id and updates semantic features.
@@ -177,7 +198,17 @@ class IngestionService:
                         model=resources.language_model,
                         update_prompt=semantic_category.prompt.update_prompt,
                     )
-                except Exception:
+                except Exception as err:
+                    if _is_context_length_exceeded_error(err):
+                        logger.warning(
+                            "Skipping message %s for semantic type %s due to non-retryable context length error",
+                            message.uid,
+                            semantic_category.name,
+                        )
+                        if message.uid not in mark_messages:
+                            mark_messages.append(message.uid)
+                        continue
+
                     logger.exception(
                         "Failed to process message %s for semantic type %s",
                         message.uid,
