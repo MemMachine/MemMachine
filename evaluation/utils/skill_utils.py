@@ -34,7 +34,7 @@ from memmachine_server.episodic_memory.long_term_memory import (
 RETRIEVE_SKILL_NAME = "RetrieveSkill"
 SKILL_SPEC_ROOT = (
     Path(__file__).resolve().parents[2]
-    / "packages/server/src/memmachine_server/retrieval_skill/skills/specs"
+    / "packages/server/src/memmachine_server/retrieval_agent/agents/specs"
 )
 RETRIEVAL_HINT_UNCERTAINTY_PATTERN = re.compile(
     r"(?i)\b(if|likely|probably|suggests?|inferred?|assum(?:e|ed|ption)|"
@@ -42,7 +42,7 @@ RETRIEVAL_HINT_UNCERTAINTY_PATTERN = re.compile(
 )
 
 
-def _normalize_sub_skill_name(raw_name: str) -> str | None:
+def _normalize_sub_agent_name(raw_name: str) -> str | None:
     normalized = raw_name.strip()
     if not normalized:
         return None
@@ -65,26 +65,26 @@ def _normalize_sub_skill_name(raw_name: str) -> str | None:
     return normalized
 
 
-def _extract_sub_skills(perf_metrics: dict[str, Any]) -> list[str]:
-    used_sub_skills: list[str] = []
+def _extract_sub_agents(perf_metrics: dict[str, Any]) -> list[str]:
+    used_sub_agents: list[str] = []
     seen: set[str] = set()
 
     def _add(raw_name: object) -> None:
         if not isinstance(raw_name, str):
             return
-        skill_name = _normalize_sub_skill_name(raw_name)
-        if not skill_name:
+        normalized_skill_name = _normalize_sub_agent_name(raw_name)
+        if not normalized_skill_name:
             return
-        if skill_name not in seen:
-            used_sub_skills.append(skill_name)
-            seen.add(skill_name)
+        if normalized_skill_name not in seen:
+            used_sub_agents.append(normalized_skill_name)
+            seen.add(normalized_skill_name)
 
-    for run in perf_metrics.get("orchestrator_sub_skill_runs", []):
+    for run in perf_metrics.get("orchestrator_sub_agent_runs", []):
         if isinstance(run, dict):
-            _add(run.get("skill_name"))
-    _add(perf_metrics.get("selected_skill"))
-    _add(perf_metrics.get("selected_skill_name"))
-    return used_sub_skills
+            _add(run.get("agent_name"))
+    _add(perf_metrics.get("selected_agent"))
+    _add(perf_metrics.get("selected_agent_name"))
+    return used_sub_agents
 
 
 def _build_skill_used_label(perf_metrics: dict[str, Any]) -> str:
@@ -94,7 +94,7 @@ def _build_skill_used_label(perf_metrics: dict[str, Any]) -> str:
     def _push(raw_name: object) -> None:
         if not isinstance(raw_name, str):
             return
-        label = _normalize_sub_skill_name(raw_name) or raw_name.strip()
+        label = _normalize_sub_agent_name(raw_name) or raw_name.strip()
         if not label:
             return
         if label not in seen:
@@ -103,8 +103,8 @@ def _build_skill_used_label(perf_metrics: dict[str, Any]) -> str:
 
     # Keep top-level first, then append sub-skills in discovered order.
     _push(perf_metrics.get("skill"))
-    for sub_skill in _extract_sub_skills(perf_metrics):
-        _push(sub_skill)
+    for sub_agent in _extract_sub_agents(perf_metrics):
+        _push(sub_agent)
 
     return ", ".join(labels) if labels else "N/A"
 
@@ -222,7 +222,7 @@ def _extract_llm_call_count(perf_metrics: dict[str, Any]) -> int:
         return explicit
 
     inferred = _metric_as_int(perf_metrics.get("top_level_session_turn_count", 0))
-    for run in perf_metrics.get("orchestrator_sub_skill_runs", []):
+    for run in perf_metrics.get("orchestrator_sub_agent_runs", []):
         if not isinstance(run, dict):
             continue
         inferred += _metric_as_int(run.get("llm_call_count", 0))
@@ -521,6 +521,7 @@ async def process_question_with_runner(  # noqa: C901
             "llm_call_count": 1,
             "skill": "PureLLM",
             "selected_skill_name": "PureLLM",
+            "selected_agent_name": "PureLLM",
             "top_level_is_sufficient": False,
         }
 
@@ -794,6 +795,7 @@ def _build_runner_perf_metrics(  # noqa: C901
         "llm_call_count": runner.last_llm_call_count,
         "skill": RETRIEVE_SKILL_NAME,
         "selected_skill_name": "SkillRunner",
+        "selected_agent_name": "SkillRunner",
         "top_level_is_sufficient": False,
     }
     if runner.last_stage_sub_queries:
@@ -826,7 +828,7 @@ def _build_runner_perf_metrics(  # noqa: C901
     perf_metrics["stage_results"] = stage_results
     perf_metrics["latest_stage_results"] = stage_results
     perf_metrics["sufficiency_signal_seen"] = True
-    perf_metrics["latest_sufficiency_signal_skill"] = "SkillRunner"
+    perf_metrics["latest_sufficiency_signal_agent"] = "SkillRunner"
 
     latest_stage_result = stage_results[-1]
     latest_candidate = latest_stage_result["stage_result"]
@@ -919,6 +921,8 @@ def update_results(
         tool = (
             response.get("selected_skill_name")
             or response.get("selected_skill")
+            or response.get("selected_agent_name")
+            or response.get("selected_agent")
             or response.get("route")
             or response.get("skill")
             or "Unknown"

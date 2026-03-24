@@ -7,6 +7,7 @@ name = "memmachine-server"
 dynamic = ["version"]
 dependencies = [
     "memmachine-common",
+    "memmachine-client",
     "alembic>=1.17.1",
     "anthropic>=0.70.0",
     "asyncpg>=0.31.0",

@@ -46,11 +46,11 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
-from memmachine_server.retrieval_skill import create_retrieval_skill
-from memmachine_server.retrieval_skill.common.skill_api import (
+from memmachine_server.retrieval_agent import create_retrieval_agent
+from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
-    SkillToolBase,
+    RetrievalAgentProtocol,
 )
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
@@ -110,9 +110,9 @@ class MemMachine:
         else:
             self._resources = ResourceManagerImpl(conf)
         self._initialize_default_episodic_configuration()
-        self._initialize_default_retrieval_skill_configuration()
-        self._retrieval_skill: SkillToolBase | None = None
-        self._retrieval_skill_lock = asyncio.Lock()
+        self._initialize_default_retrieval_agent_configuration()
+        self._retrieval_agent: RetrievalAgentProtocol | None = None
+        self._retrieval_agent_lock = asyncio.Lock()
         self._started = False
 
     def _initialize_default_episodic_configuration(self) -> None:
@@ -203,8 +203,8 @@ class MemMachine:
         if stm.summary_prompt_user is None:
             stm.summary_prompt_user = self._conf.prompt.episode_summary_user_prompt
 
-    def _initialize_default_retrieval_skill_configuration(self) -> None:
-        """Initialize retrieval-skill defaults independent of episodic config."""
+    def _initialize_default_retrieval_agent_configuration(self) -> None:
+        """Initialize retrieval-agent defaults independent of episodic config."""
         retrieval_conf = getattr(self._conf, "retrieval_agent", None)
         if retrieval_conf is None:
             self._conf.retrieval_agent = RetrievalAgentConf()
@@ -222,7 +222,7 @@ class MemMachine:
             )
         ):
             logger.warning(
-                "Retrieval skill disabled: language model '%s' is not configured.",
+                "Retrieval agent disabled: language model '%s' is not configured.",
                 retrieval_conf.llm_model,
             )
             retrieval_conf.llm_model = None
@@ -234,13 +234,13 @@ class MemMachine:
             )
         ):
             logger.warning(
-                "Retrieval skill disabled: reranker '%s' is not configured.",
+                "Retrieval agent disabled: reranker '%s' is not configured.",
                 retrieval_conf.reranker,
             )
             retrieval_conf.reranker = None
 
     def _resolve_retrieval_llm_model_fallback(self) -> str | None:
-        """Resolve retrieval-skill LLM from existing memory configuration."""
+        """Resolve retrieval-agent LLM from existing memory configuration."""
         candidates: list[str] = []
         stm = self._conf.episodic_memory.short_term_memory
         if stm is not None and stm.llm_model is not None:
@@ -256,7 +256,7 @@ class MemMachine:
         return None
 
     def _resolve_retrieval_reranker_fallback(self) -> str | None:
-        """Resolve retrieval-skill reranker from long-term memory defaults."""
+        """Resolve retrieval-agent reranker from long-term memory defaults."""
         ltm = self._conf.episodic_memory.long_term_memory
         if (
             ltm is not None
@@ -266,17 +266,17 @@ class MemMachine:
             return ltm.reranker
         return None
 
-    async def _get_retrieval_skill(self) -> SkillToolBase | None:
-        """Lazily initialize the retrieval-skill instance from top-level config."""
+    async def _get_retrieval_agent(self) -> RetrievalAgentProtocol | None:
+        """Lazily initialize the retrieval-agent instance from top-level config."""
         conf = self._conf.retrieval_agent
         if conf.llm_model is None or conf.reranker is None:
             return None
-        if self._retrieval_skill is not None:
-            return self._retrieval_skill
+        if self._retrieval_agent is not None:
+            return self._retrieval_agent
 
-        async with self._retrieval_skill_lock:
-            if self._retrieval_skill is not None:
-                return self._retrieval_skill
+        async with self._retrieval_agent_lock:
+            if self._retrieval_agent is not None:
+                return self._retrieval_agent
             try:
                 llm_model = await self._resources.get_language_model(
                     conf.llm_model,
@@ -287,20 +287,20 @@ class MemMachine:
                     validate=True,
                 )
             except Exception:
-                logger.exception("Failed to initialize retrieval skill resources.")
+                logger.exception("Failed to initialize retrieval agent resources.")
                 return None
 
             try:
-                self._retrieval_skill = create_retrieval_skill(
+                self._retrieval_agent = create_retrieval_agent(
                     model=llm_model,
                     reranker=reranker,
                     retrieval_conf=conf,
                 )
             except Exception:
-                logger.exception("Failed to initialize retrieval skill.")
+                logger.exception("Failed to initialize retrieval agent.")
                 return None
 
-        return self._retrieval_skill
+        return self._retrieval_agent
 
     async def start(self) -> None:
         """
@@ -676,7 +676,7 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
-        retrieval_skill: SkillToolBase | None = None,
+        retrieval_agent: RetrievalAgentProtocol | None = None,
         retrieval_trace_out: dict[str, JsonValue] | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
         """
@@ -689,7 +689,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
-            retrieval_skill: Optional top-level retrieval skill for long-term search.
+            retrieval_agent: Optional top-level retrieval agent for long-term search.
             retrieval_trace_out: Optional dict populated with retrieval trace metadata.
 
         Returns:
@@ -706,7 +706,7 @@ class MemMachine:
             ),
             metadata={},
         ) as episodic_session:
-            if retrieval_skill is None or episodic_session.long_term_memory is None:
+            if retrieval_agent is None or episodic_session.long_term_memory is None:
                 response = await episodic_session.query_memory(
                     query=query,
                     limit=limit,
@@ -715,9 +715,9 @@ class MemMachine:
                     property_filter=search_filter,
                 )
             else:
-                response = await self._query_episodic_with_retrieval_skill(
+                response = await self._query_episodic_with_retrieval_agent(
                     episodic_session=episodic_session,
-                    retrieval_skill=retrieval_skill,
+                    retrieval_agent=retrieval_agent,
                     query=query,
                     limit=limit,
                     expand_context=expand_context,
@@ -728,11 +728,11 @@ class MemMachine:
 
         return response
 
-    async def _query_episodic_with_retrieval_skill(
+    async def _query_episodic_with_retrieval_agent(
         self,
         *,
         episodic_session: EpisodicMemory,
-        retrieval_skill: SkillToolBase,
+        retrieval_agent: RetrievalAgentProtocol,
         query: str,
         limit: int | None,
         expand_context: int,
@@ -740,7 +740,7 @@ class MemMachine:
         search_filter: FilterExpr | None,
         retrieval_trace_out: dict[str, JsonValue] | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
-        """Build episodic query response using retrieval-skill long-term search."""
+        """Build episodic query response using retrieval-agent long-term search."""
         if episodic_session.long_term_memory is None:
             return await episodic_session.query_memory(
                 query=query,
@@ -752,9 +752,9 @@ class MemMachine:
             )
 
         search_limit = limit if limit is not None else 20
-        normalized_long_episodes = await self._run_retrieval_skill_long_term_search(
+        normalized_long_episodes = await self._run_retrieval_agent_long_term_search(
             episodic_session=episodic_session,
-            retrieval_skill=retrieval_skill,
+            retrieval_agent=retrieval_agent,
             query=query,
             limit=search_limit,
             expand_context=expand_context,
@@ -790,11 +790,11 @@ class MemMachine:
             ),
         )
 
-    async def _run_retrieval_skill_long_term_search(
+    async def _run_retrieval_agent_long_term_search(
         self,
         *,
         episodic_session: EpisodicMemory,
-        retrieval_skill: SkillToolBase,
+        retrieval_agent: RetrievalAgentProtocol,
         query: str,
         limit: int,
         expand_context: int,
@@ -805,7 +805,7 @@ class MemMachine:
         if episodic_session.long_term_memory is None:
             return []
 
-        long_episodes, perf_metrics = await retrieval_skill.do_query(
+        long_episodes, perf_metrics = await retrieval_agent.do_query(
             QueryPolicy(
                 token_cost=10,
                 time_cost=10,
@@ -826,7 +826,7 @@ class MemMachine:
         if retrieval_trace_out is not None:
             retrieval_trace_out.update(
                 self._build_retrieval_trace(
-                    retrieval_skill=retrieval_skill,
+                    retrieval_agent=retrieval_agent,
                     perf_metrics=perf_metrics,
                 )
             )
@@ -836,17 +836,17 @@ class MemMachine:
     def _build_retrieval_trace(
         self,
         *,
-        retrieval_skill: SkillToolBase,
+        retrieval_agent: RetrievalAgentProtocol,
         perf_metrics: dict[str, Any],
     ) -> dict[str, JsonValue]:
         trace: dict[str, JsonValue] = {
-            "skill": cast(JsonValue, retrieval_skill.skill_name),
+            "agent": cast(JsonValue, retrieval_agent.agent_name),
         }
         keys = (
             "route",
             "selected_route",
-            "selected_skill",
-            "selected_skill_name",
+            "selected_agent",
+            "selected_agent_name",
             "confidence_score",
             "reason_code",
             "reason_note",
@@ -860,13 +860,13 @@ class MemMachine:
             "orchestrator_step_count",
             "orchestrator_event_count",
             "orchestrator_tool_call_count",
-            "orchestrator_sub_skill_count",
+            "orchestrator_sub_agent_count",
             "orchestrator_episode_count",
             "orchestrator_completed",
             "orchestrator_state_snapshot",
             "orchestrator_final_response",
             "orchestrator_trace",
-            "orchestrator_sub_skill_runs",
+            "orchestrator_sub_agent_runs",
             "llm_call_count",
             "input_token",
             "output_token",
@@ -975,11 +975,8 @@ class MemMachine:
 
         property_filter = parse_filter(search_filter) if search_filter else None
         if MemoryType.Episodic in target_memories:
-            retrieval_skill = await self._get_retrieval_skill() if agent_mode else None
-            retrieval_trace_out: dict[str, JsonValue] | None = None
-            if retrieval_skill is not None:
-                retrieval_trace_out = {}
-                retrieval_trace = retrieval_trace_out
+            retrieval_agent = await self._get_retrieval_agent() if agent_mode else None
+            retrieval_trace = {} if retrieval_agent is not None else None
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(
                     session_data=session_data,
@@ -988,8 +985,8 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     search_filter=property_filter,
-                    retrieval_skill=retrieval_skill,
-                    retrieval_trace_out=retrieval_trace_out,
+                    retrieval_agent=retrieval_agent,
+                    retrieval_trace_out=retrieval_trace,
                 )
             )
 

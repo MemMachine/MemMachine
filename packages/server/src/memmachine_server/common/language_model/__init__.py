@@ -20,7 +20,6 @@ from .skill_openai_session_language_model import (
     SkillToolExecution,
     SkillToolNotFoundError,
 )
-from .skill_session_factory import create_skill_session_model
 
 __all__ = [
     "LanguageModel",
@@ -36,6 +35,5 @@ __all__ = [
     "SkillToolCallFormatError",
     "SkillToolExecution",
     "SkillToolNotFoundError",
-    "create_skill_session_model",
     "materialize_provider_skill_bundle",
 ]

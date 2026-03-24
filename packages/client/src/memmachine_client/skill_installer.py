@@ -25,7 +25,7 @@ ProviderName = Literal["anthropic", "openai"]
 
 _ANTHROPIC_FILES_BETA = "files-api-2025-04-14"
 _CACHE_FILE = ".memmachine_skill_cache.json"
-_MAIN_SKILL_FILENAMES = {"skill.md", "retrieve_skill.md"}
+_MAIN_SKILL_FILENAMES = {"skill.md", "retrieve_agent.md"}
 
 
 class _NamedBytesIO(io.BytesIO):

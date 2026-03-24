@@ -1,4 +1,5 @@
 """Client-side provider session loop for installed MemMachine skills."""
+# ruff: noqa: SLF001
 
 from __future__ import annotations
 
@@ -6,8 +7,21 @@ import inspect
 import json
 import re
 import time
-from contextlib import suppress
 from typing import TYPE_CHECKING, Literal
+
+from memmachine_common.skill_loop import (
+    SkillLoopState,
+    SkillLoopToolCall,
+    SkillLoopToolResult,
+    as_dict,
+    augment_prompt,
+    build_tool_search_result,
+    continue_tool_loop,
+    extract_query_from_arguments,
+    final_response_text,
+    normalize_search_result,
+    normalize_tool_arguments,
+)
 
 from .skill import Skill
 
@@ -16,26 +30,6 @@ if TYPE_CHECKING:
 
 ProviderName = Literal["anthropic", "openai"]
 SearchMode = Literal["direct", "rest"]
-
-_UNCERTAINTY_PATTERN = re.compile(
-    r"(?i)\b(if|likely|probably|suggests?|inferred?|assum(?:e|ed|ption)|"
-    r"traditional|uncertain|unknown|not explicit|no explicit|may be|might)\b"
-)
-_STAGE_RESULT_LINE_PATTERN = re.compile(
-    r"^\[StageResult(?:\s+\d+)?\]\s*Query:\s*(?P<query>.+?)\s*\|\s*"
-    r"Answer:\s*(?P<answer>.+?)"
-    r"(?:\s*\|\s*Confidence:\s*(?P<confidence>[01](?:\.\d+)?))?"
-    r"(?:\s*\|\s*Reason:\s*(?P<reason>.+))?$"
-)
-_SUBQUERY_LINE_PATTERN = re.compile(r"^\[SubQuery(?:\s+\d+)?\]\s*(?P<query>.+)$")
-_STAGE_RESULT_GUIDANCE = (
-    "If you continue after a memory search, first emit one compact line exactly as "
-    "[StageResult] Query: <resolved hop> | Answer: <best current candidate> | "
-    "Confidence: <0.00-1.00> | Reason: <short basis>. "
-    "If another search is needed, also emit one line exactly as "
-    "[SubQuery] <next query>. Keep both lines short. "
-    "When you are finished, give the final answer plainly with no stage tags."
-)
 
 _CANONICAL_MEMMACHINE_SEARCH_TOOL = {
     "type": "function",
@@ -55,6 +49,139 @@ _CANONICAL_MEMMACHINE_SEARCH_TOOL = {
 }
 
 
+class _OpenAIToolLoopTransport:
+    """OpenAI Responses transport wrapper for the shared tool loop."""
+
+    def __init__(self, runner: SkillRunner) -> None:
+        self._runner = runner
+
+    def response_text(self, response: object) -> str:
+        return self._runner._openai_response_output_text(response)
+
+    def tool_calls(self, response: object) -> list[SkillLoopToolCall]:
+        calls: list[SkillLoopToolCall] = []
+        for item in self._runner._openai_response_items(response):
+            if str(item.get("type", "")) != "function_call":
+                continue
+            arguments = normalize_tool_arguments(item.get("arguments", {}))
+            calls.append(
+                SkillLoopToolCall(
+                    name=str(item.get("name", "")),
+                    query=extract_query_from_arguments(arguments),
+                    call_id=item.get("call_id")
+                    if isinstance(item.get("call_id"), str)
+                    else None,
+                    arguments=arguments,
+                )
+            )
+        return calls
+
+    async def continue_with_results(
+        self,
+        *,
+        response: object,
+        tool_results: list[SkillLoopToolResult],
+    ) -> object:
+        outputs: list[dict[str, object]] = []
+        for result in tool_results:
+            if not isinstance(result.call_id, str) or not result.call_id:
+                continue
+            outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": result.call_id,
+                    "output": json.dumps(result.output, default=str),
+                }
+            )
+        request: dict[str, object] = {
+            "model": self._runner._model,
+            "input": outputs,
+            "tools": self._runner.tools(),
+            "tool_choice": self._runner._tool_choice,
+        }
+        response_id = self._runner._openai_response_id(response)
+        if response_id is not None:
+            request["previous_response_id"] = response_id
+        return await self._runner._client.responses.create(**request)
+
+    def usage(self, response: object) -> tuple[int, int]:
+        return self._runner._usage_tuple(response)
+
+
+class _AnthropicToolLoopTransport:
+    """Anthropic Messages transport wrapper for the shared tool loop."""
+
+    def __init__(self, runner: SkillRunner) -> None:
+        self._runner = runner
+
+    def response_text(self, response: object) -> str:
+        return self._runner._anthropic_extract_text(
+            self._runner._anthropic_content_blocks(response)
+        )
+
+    def tool_calls(self, response: object) -> list[SkillLoopToolCall]:
+        calls: list[SkillLoopToolCall] = []
+        for block in self._runner._anthropic_content_blocks(response):
+            if block.get("type") != "tool_use":
+                continue
+            arguments = normalize_tool_arguments(block.get("input"))
+            calls.append(
+                SkillLoopToolCall(
+                    name=str(block.get("name", "")),
+                    query=extract_query_from_arguments(arguments),
+                    call_id=block.get("id") if isinstance(block.get("id"), str) else None,
+                    arguments=arguments,
+                )
+            )
+        return calls
+
+    async def continue_with_results(
+        self,
+        *,
+        response: object,
+        tool_results: list[SkillLoopToolResult],
+    ) -> object:
+        if self._runner._anthropic_messages is None:
+            raise RuntimeError(
+                "Call skill_messages() before Anthropic handle_tool_loop()."
+            )
+
+        content_blocks = self._runner._anthropic_content_blocks(response)
+        self._runner._anthropic_messages.append(
+            {"role": "assistant", "content": content_blocks}
+        )
+        tool_outputs: list[dict[str, object]] = []
+        for result in tool_results:
+            if not isinstance(result.call_id, str) or not result.call_id:
+                continue
+            tool_outputs.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": result.call_id,
+                    "content": json.dumps(result.output, default=str),
+                }
+            )
+        self._runner._anthropic_messages.append(
+            {"role": "user", "content": tool_outputs}
+        )
+
+        request: dict[str, object] = {
+            "model": self._runner._model,
+            "messages": self._runner._anthropic_messages,
+            "tools": self._runner.tools(),
+            "max_tokens": self._runner._anthropic_max_tokens,
+        }
+        if self._runner._anthropic_system_prompt is not None:
+            request["system"] = self._runner._anthropic_system_prompt
+        anthropic_tool_choice = self._runner._anthropic_tool_choice()
+        if anthropic_tool_choice is not None:
+            request["tool_choice"] = anthropic_tool_choice
+        return await self._runner._client.messages.create(**request)
+
+    def usage(self, response: object) -> tuple[int, int]:
+        return self._runner._usage_tuple(response)
+
+
 class SkillRunner:
     """Attach an installed skill to a caller-owned provider client session."""
 
@@ -68,6 +195,7 @@ class SkillRunner:
         search_mode: SearchMode = "rest",
         rest_memory: Memory | None = None,
         direct_memory: object | None = None,
+        direct_search_extra_kwargs: dict[str, object] | None = None,
         max_turns: int = 10,
         search_limit: int = 20,
         expand_context: int = 0,
@@ -95,6 +223,11 @@ class SkillRunner:
         self._search_mode = search_mode
         self._rest_memory = rest_memory
         self._direct_memory = direct_memory
+        self._direct_search_extra_kwargs = (
+            dict(direct_search_extra_kwargs)
+            if direct_search_extra_kwargs is not None
+            else {}
+        )
         self.max_turns = max_turns
         self.search_limit = search_limit
         self.expand_context = expand_context
@@ -114,10 +247,13 @@ class SkillRunner:
         self._anthropic_messages: list[dict[str, object]] | None = None
         self._anthropic_system_prompt: str | None = None
         self.last_search_results: list[dict[str, object]] = []
+        self.last_raw_search_results: list[object] = []
         self.last_memory_search_called = 0
         self.last_memory_search_latency_seconds: list[float] = []
         self.last_stage_results: list[dict[str, object]] = []
         self.last_stage_sub_queries: list[str] = []
+        self.last_initial_input_tokens = 0
+        self.last_initial_output_tokens = 0
         self.last_llm_call_count = 0
         self.last_tool_call_count = 0
         self.last_follow_up_input_tokens = 0
@@ -146,6 +282,7 @@ class SkillRunner:
             search_mode=self._search_mode,
             rest_memory=self._rest_memory,
             direct_memory=self._direct_memory,
+            direct_search_extra_kwargs=dict(self._direct_search_extra_kwargs),
             max_turns=self.max_turns,
             search_limit=self.search_limit,
             expand_context=self.expand_context,
@@ -236,6 +373,7 @@ class SkillRunner:
     async def handle_tool_loop(self, response: object) -> str:
         """Execute the memmachine_search loop until a final text response is produced."""
         self.last_search_results = []
+        self.last_raw_search_results = []
         self.last_memory_search_called = 0
         self.last_memory_search_latency_seconds = []
         self.last_stage_results = []
@@ -245,128 +383,30 @@ class SkillRunner:
         self.last_follow_up_input_tokens = 0
         self.last_follow_up_output_tokens = 0
         self._seen_queries = set()
-        if self.provider == "openai":
-            return await self._handle_openai_tool_loop(response)
-        return await self._handle_anthropic_tool_loop(response)
-
-    async def _handle_openai_tool_loop(self, response: object) -> str:
-        latest_text = self._openai_response_output_text(response)
-        self._record_stage_progress(latest_text)
-        response_id = self._openai_response_id(response)
-
-        for turn_index in range(self.max_turns):
-            function_calls = [
-                item
-                for item in self._openai_response_items(response)
-                if str(item.get("type", "")) == "function_call"
-            ]
-            self.last_tool_call_count += len(function_calls)
-            if not function_calls:
-                return self._final_response_text(latest_text)
-            if turn_index + 1 >= self.max_turns:
-                return self._final_response_text(latest_text) or self._partial_response_text()
-
-            outputs: list[dict[str, object]] = []
-            for call in function_calls:
-                call_id = call.get("call_id")
-                if not isinstance(call_id, str) or not call_id:
-                    continue
-                result = await self._run_search(
-                    self._extract_query_from_arguments(call.get("arguments"))
-                )
-                outputs.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": json.dumps(result, default=str),
-                    }
-                )
-
-            if (
-                self.early_exit_confidence
-                and self.last_memory_search_called >= 1
-                and latest_text
-                and not _UNCERTAINTY_PATTERN.search(latest_text)
-            ):
-                return latest_text.strip()
-
-            request: dict[str, object] = {
-                "model": self._model,
-                "input": outputs,
-                "tools": self.tools(),
-                "tool_choice": self._tool_choice,
-            }
-            if response_id is not None:
-                request["previous_response_id"] = response_id
-            response = await self._client.responses.create(**request)
-            self.last_llm_call_count += 1
-            self._record_follow_up_usage(response)
-            latest_text = self._openai_response_output_text(response)
-            self._record_stage_progress(latest_text)
-            response_id = self._openai_response_id(response)
-
-        return self._final_response_text(latest_text) or self._partial_response_text()
-
-    async def _handle_anthropic_tool_loop(self, response: object) -> str:
-        if self._anthropic_messages is None:
-            raise RuntimeError("Call skill_messages() before Anthropic handle_tool_loop().")
-
-        latest_text = ""
-        for turn_index in range(self.max_turns):
-            content_blocks = self._anthropic_content_blocks(response)
-            latest_text = self._anthropic_extract_text(content_blocks)
-            self._record_stage_progress(latest_text)
-            tool_uses = [
-                block for block in content_blocks if block.get("type") == "tool_use"
-            ]
-            self.last_tool_call_count += len(tool_uses)
-            if not tool_uses:
-                return self._final_response_text(latest_text)
-            if turn_index + 1 >= self.max_turns:
-                return self._final_response_text(latest_text) or self._partial_response_text()
-
-            self._anthropic_messages.append({"role": "assistant", "content": content_blocks})
-            tool_results: list[dict[str, object]] = []
-            for tool_use in tool_uses:
-                call_id = tool_use.get("id")
-                if not isinstance(call_id, str) or not call_id:
-                    continue
-                result = await self._run_search(
-                    self._extract_query_from_arguments(tool_use.get("input"))
-                )
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call_id,
-                        "content": json.dumps(result, default=str),
-                    }
-                )
-            self._anthropic_messages.append({"role": "user", "content": tool_results})
-
-            if (
-                self.early_exit_confidence
-                and self.last_memory_search_called >= 1
-                and latest_text
-                and not _UNCERTAINTY_PATTERN.search(latest_text)
-            ):
-                return latest_text.strip()
-
-            request: dict[str, object] = {
-                "model": self._model,
-                "messages": self._anthropic_messages,
-                "tools": self.tools(),
-                "max_tokens": self._anthropic_max_tokens,
-            }
-            if self._anthropic_system_prompt is not None:
-                request["system"] = self._anthropic_system_prompt
-            anthropic_tool_choice = self._anthropic_tool_choice()
-            if anthropic_tool_choice is not None:
-                request["tool_choice"] = anthropic_tool_choice
-            response = await self._client.messages.create(**request)
-            self.last_llm_call_count += 1
-            self._record_follow_up_usage(response)
-
-        return self._final_response_text(latest_text) or self._partial_response_text()
+        state = SkillLoopState()
+        transport = (
+            _OpenAIToolLoopTransport(self)
+            if self.provider == "openai"
+            else _AnthropicToolLoopTransport(self)
+        )
+        result = await continue_tool_loop(
+            initial_response=response,
+            transport=transport,
+            state=state,
+            run_search=self._run_search,
+            max_turns=self.max_turns,
+            stage_result_mode=self.stage_result_mode,
+            early_exit_confidence=bool(self.early_exit_confidence),
+            partial_response_text=self._partial_response_text(),
+        )
+        self.last_stage_results = list(state.stage_results)
+        self.last_stage_sub_queries = list(state.stage_sub_queries)
+        self.last_llm_call_count = state.llm_call_count
+        self.last_tool_call_count = state.tool_call_count
+        self.last_follow_up_input_tokens = state.follow_up_input_tokens
+        self.last_follow_up_output_tokens = state.follow_up_output_tokens
+        self.last_memory_search_called = state.memory_search_called
+        return result
 
     def _anthropic_tool_choice(self) -> dict[str, str] | None:
         if isinstance(self._tool_choice, dict):
@@ -381,21 +421,36 @@ class SkillRunner:
             return {"type": "any"}
         return None
 
-    async def _run_search(self, query: str) -> dict[str, object]:  # noqa: C901
+    async def _run_search(  # noqa: C901
+        self,
+        query: str,
+        state: SkillLoopState | None = None,
+    ) -> dict[str, object]:
+        sync_back = state is None
+        if state is None:
+            state = SkillLoopState(
+                memory_search_called=self.last_memory_search_called,
+                stage_results=list(self.last_stage_results),
+                stage_sub_queries=list(self.last_stage_sub_queries),
+            )
         if self.query_dedup:
             normalized_query = frozenset(re.findall(r"[a-z0-9]+", query.lower()))
             if normalized_query in self._seen_queries:
                 for cached in self.last_search_results:
                     if cached.get("query") == query:
-                        return self._tool_search_result(cached)
+                        return self._tool_search_result(
+                            cached,
+                            stage_results=state.stage_results,
+                        )
                 return self._tool_search_result(
                     {
-                    "query": query,
-                    "episode_summary": [],
-                    "episodes": [],
-                    "episodes_text": "",
-                    "count": 0,
-                    }
+                        "query": query,
+                        "episode_summary": [],
+                        "episodes": [],
+                        "episodes_text": "",
+                        "count": 0,
+                    },
+                    stage_results=state.stage_results,
                 )
             self._seen_queries.add(normalized_query)
 
@@ -410,255 +465,193 @@ class SkillRunner:
                 score_threshold=self.score_threshold,
                 agent_mode=False,
             )
-            if inspect.isawaitable(result):
-                result = await result
-            elapsed_seconds = time.perf_counter() - search_start
-            payload = self._normalize_search_result(query=query, raw_result=result)
-            self.last_search_results.append(payload)
-            self.last_memory_search_called += 1
-            self.last_memory_search_latency_seconds.append(elapsed_seconds)
-            return self._tool_search_result(payload)
-
-        if self._direct_memory is None:
-            raise RuntimeError("direct_memory is required when search_mode='direct'.")
-        query_memory = getattr(self._direct_memory, "query_memory", None)
-        if not callable(query_memory):
-            raise TypeError("direct_memory must provide an async query_memory() method.")
-        search_start = time.perf_counter()
-        result = query_memory(
-            query,
-            limit=self._current_search_limit(),
-            expand_context=self.expand_context,
-            score_threshold=self.score_threshold if self.score_threshold is not None else -float("inf"),
-        )
+        else:
+            if self._direct_memory is None:
+                raise RuntimeError(
+                    "direct_memory is required when search_mode='direct'."
+                )
+            query_memory = getattr(self._direct_memory, "query_memory", None)
+            if not callable(query_memory):
+                raise TypeError(
+                    "direct_memory must provide an async query_memory() method."
+                )
+            search_start = time.perf_counter()
+            result = query_memory(
+                query=query,
+                limit=self._current_search_limit(),
+                expand_context=self.expand_context,
+                score_threshold=(
+                    self.score_threshold
+                    if self.score_threshold is not None
+                    else -float("inf")
+                ),
+                **self._direct_search_extra_kwargs,
+            )
         if inspect.isawaitable(result):
             result = await result
         elapsed_seconds = time.perf_counter() - search_start
-        payload = self._normalize_search_result(query=query, raw_result=result)
+        self.last_raw_search_results.append(result)
+        payload = self._normalize_search_result(
+            query=query,
+            raw_result=result,
+            state=state,
+        )
         self.last_search_results.append(payload)
-        self.last_memory_search_called += 1
+        state.memory_search_called += 1
         self.last_memory_search_latency_seconds.append(elapsed_seconds)
-        return self._tool_search_result(payload)
+        tool_result = self._tool_search_result(payload, stage_results=state.stage_results)
+        if sync_back:
+            self.last_memory_search_called = state.memory_search_called
+            self.last_stage_results = list(state.stage_results)
+            self.last_stage_sub_queries = list(state.stage_sub_queries)
+        return tool_result
+
+    async def search(self, query: str) -> dict[str, object]:
+        """Run one search outside the provider loop and return the tool payload."""
+        return await self._run_search(query)
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        max_output_tokens: int | None = None,
+        top_p: float | None = None,
+    ) -> str:
+        """Run the full installed-skill session, including the initial provider call."""
+        self.last_initial_input_tokens = 0
+        self.last_initial_output_tokens = 0
+        if self.provider == "openai":
+            request: dict[str, object] = {
+                "model": self._model,
+                "input": [{"role": "user", "content": self.skill_messages(prompt)}],
+                "tools": self.tools(),
+                "tool_choice": self._tool_choice,
+            }
+            if max_output_tokens is not None:
+                request["max_output_tokens"] = max_output_tokens
+            if top_p is not None:
+                request["top_p"] = top_p
+            response = await self._client.responses.create(**request)
+        else:
+            _ = self.skill_messages(prompt, system_prompt=system_prompt)
+            if self._anthropic_messages is None:
+                raise RuntimeError("Anthropic skill_messages() did not initialize messages.")
+            request = {
+                "model": self._model,
+                "messages": self._anthropic_messages,
+                "tools": self.tools(),
+                "max_tokens": (
+                    max_output_tokens
+                    if max_output_tokens is not None
+                    else self._anthropic_max_tokens
+                ),
+            }
+            if system_prompt is not None:
+                request["system"] = system_prompt
+            anthropic_tool_choice = self._anthropic_tool_choice()
+            if anthropic_tool_choice is not None:
+                request["tool_choice"] = anthropic_tool_choice
+            response = await self._client.messages.create(**request)
+        self.last_initial_input_tokens, self.last_initial_output_tokens = (
+            self._usage_tuple(response)
+        )
+        return await self.handle_tool_loop(response)
 
     def _normalize_search_result(
         self,
         *,
         query: str,
         raw_result: object,
+        state: SkillLoopState | None = None,
     ) -> dict[str, object]:
-        payload = self._as_dict(raw_result)
-        episodic_payload = self._as_dict(payload.get("content")).get(
-            "episodic_memory", payload
+        if state is None:
+            state = SkillLoopState(
+                stage_results=list(self.last_stage_results),
+                stage_sub_queries=list(self.last_stage_sub_queries),
+            )
+        return normalize_search_result(
+            query=query,
+            raw_result=raw_result,
+            score_threshold=self.score_threshold,
+            max_episode_chars=self.max_episode_chars,
+            stage_result_mode=self.stage_result_mode,
+            stage_results=state.stage_results,
+            stage_sub_queries=state.stage_sub_queries,
         )
-        episodic = self._as_dict(episodic_payload)
-        short_term = self._as_dict(episodic.get("short_term_memory"))
-        long_term = self._as_dict(episodic.get("long_term_memory"))
 
-        episode_summary = [
-            item
-            for item in short_term.get("episode_summary", [])
-            if isinstance(item, str) and item.strip()
-        ]
-        episodes = [
-            *self._normalize_episodes(short_term.get("episodes", [])),
-            *self._normalize_episodes(long_term.get("episodes", [])),
-        ]
-        episode_lines = [
-            f"{index}. {self._episode_content(episode['content'])}"
-            for index, episode in enumerate(episodes, start=1)
-            if isinstance(episode.get("content"), str) and episode["content"].strip()
-        ]
-        stage_result_memory = self._stage_result_memory_lines()
-
-        payload = {
-            "query": query,
-            "episode_summary": episode_summary,
-            "episodes": episodes,
-            "episodes_text": "\n".join([*episode_summary, *episode_lines]).strip(),
-            "count": len(episodes),
-        }
-        if stage_result_memory:
-            payload["stage_result_memory"] = stage_result_memory
-            payload["stage_result_instructions"] = _STAGE_RESULT_GUIDANCE
-        return payload
-
-    def _tool_search_result(self, payload: dict[str, object]) -> dict[str, object]:
-        compact_payload: dict[str, object] = {
-            "query": payload.get("query", ""),
-            "count": payload.get("count", 0),
-        }
-        stage_result_memory = payload.get("stage_result_memory")
-        if isinstance(stage_result_memory, list) and stage_result_memory:
-            compact_payload["stage_result_memory"] = stage_result_memory
-        if not self._should_omit_tool_episode_text():
-            compact_payload["episodes_text"] = payload.get("episodes_text", "")
-        return compact_payload
-
-    def _should_omit_tool_episode_text(self) -> bool:
-        if not self.omit_episode_text_on_confident_stage_result:
-            return False
-        if not self.stage_result_mode:
-            return False
-        if not self.last_stage_results:
-            return False
-        latest_stage_result = self.last_stage_results[-1]
-        confidence = latest_stage_result.get("confidence_score")
-        if not isinstance(confidence, int | float) or isinstance(confidence, bool):
-            return False
-        return float(confidence) >= self.stage_result_confidence_threshold
-
-    def _normalize_episodes(self, raw_episodes: object) -> list[dict[str, object]]:
-        if not isinstance(raw_episodes, list):
-            return []
-        normalized: list[dict[str, object]] = []
-        for raw_episode in raw_episodes:
-            episode = self._as_dict(raw_episode)
-            if not episode:
-                continue
-            if self.score_threshold is not None:
-                score = float(episode.get("score", episode.get("relevance_score", 1.0)))
-                if score < self.score_threshold:
-                    continue
-            normalized.append(episode)
-        return normalized
+    def _tool_search_result(
+        self,
+        payload: dict[str, object],
+        *,
+        stage_results: list[dict[str, object]],
+    ) -> dict[str, object]:
+        return build_tool_search_result(
+            payload=payload,
+            stage_result_mode=self.stage_result_mode,
+            stage_results=stage_results,
+            omit_episode_text_on_confident_stage_result=(
+                self.omit_episode_text_on_confident_stage_result
+            ),
+            stage_result_confidence_threshold=self.stage_result_confidence_threshold,
+        )
 
     def _current_search_limit(self) -> int:
         if self.adaptive_search_limit is None:
             return self.search_limit
-        if self.last_memory_search_called == 0:
+        if self.last_memory_search_called == 0 and not self.last_search_results:
             return self.adaptive_search_limit["initial"]
         return self.adaptive_search_limit["escalated"]
 
-    def _episode_content(self, content: str) -> str:
-        if self.max_episode_chars is None:
-            return content
-        return content[: self.max_episode_chars]
-
     def _augment_prompt(self, prompt: str) -> str:
-        if not self.stage_result_mode:
-            return prompt
-        return f"{prompt}\n\n{_STAGE_RESULT_GUIDANCE}"
-
-    def _record_follow_up_usage(self, response: object) -> None:
-        usage = response.get("usage") if isinstance(response, dict) else getattr(response, "usage", None)
-        if usage is None:
-            return
-        usage_payload = self._as_dict(usage)
-        self.last_follow_up_input_tokens += int(
-            usage_payload.get("input_tokens", getattr(usage, "input_tokens", 0)) or 0
-        )
-        self.last_follow_up_output_tokens += int(
-            usage_payload.get("output_tokens", getattr(usage, "output_tokens", 0)) or 0
-        )
-
-    def _record_stage_progress(self, latest_text: str) -> None:  # noqa: C901
-        if not self.stage_result_mode or not latest_text.strip():
-            return
-        for raw_line in latest_text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            stage_match = _STAGE_RESULT_LINE_PATTERN.match(line)
-            if stage_match:
-                query = stage_match.group("query").strip()
-                answer = stage_match.group("answer").strip()
-                if not query or not answer:
-                    continue
-                record: dict[str, object] = {
-                    "query": query,
-                    "stage_result": answer,
-                }
-                confidence_raw = stage_match.group("confidence")
-                if confidence_raw is not None:
-                    with suppress(ValueError):
-                        record["confidence_score"] = float(confidence_raw)
-                reason = stage_match.group("reason")
-                if reason is not None and reason.strip():
-                    record["reason_note"] = reason.strip()
-                key = (query, answer)
-                existing = {
-                    (
-                        str(item.get("query", "")),
-                        str(item.get("stage_result", "")),
-                    )
-                    for item in self.last_stage_results
-                }
-                if key not in existing:
-                    self.last_stage_results.append(record)
-                continue
-
-            subquery_match = _SUBQUERY_LINE_PATTERN.match(line)
-            if subquery_match:
-                subquery = subquery_match.group("query").strip()
-                if subquery and subquery not in self.last_stage_sub_queries:
-                    self.last_stage_sub_queries.append(subquery)
-
-    def _stage_result_memory_lines(self) -> list[str]:
-        if not self.stage_result_mode:
-            return []
-        lines: list[str] = []
-        for index, item in enumerate(self.last_stage_results, start=1):
-            query = str(item.get("query") or "").strip()
-            answer = str(item.get("stage_result") or "").strip()
-            if not query or not answer:
-                continue
-            line = f"[StageResult {index}] Query: {query} | Answer: {answer}"
-            confidence = item.get("confidence_score")
-            if isinstance(confidence, int | float) and not isinstance(confidence, bool):
-                line += f" | Confidence: {float(confidence):.2f}"
-            reason = item.get("reason_note")
-            if isinstance(reason, str) and reason.strip():
-                line += f" | Reason: {reason.strip()}"
-            lines.append(line)
-        for index, subquery in enumerate(self.last_stage_sub_queries, start=1):
-            lines.append(f"[SubQuery {index}] {subquery}")
-        return lines
+        return augment_prompt(prompt, stage_result_mode=self.stage_result_mode)
 
     def _final_response_text(self, latest_text: str) -> str:
-        stripped = latest_text.strip()
-        if not self.stage_result_mode or not stripped:
-            return stripped
-        clean_lines = [
-            line
-            for line in stripped.splitlines()
-            if not _STAGE_RESULT_LINE_PATTERN.match(line.strip())
-            and not _SUBQUERY_LINE_PATTERN.match(line.strip())
-        ]
-        cleaned = "\n".join(line for line in clean_lines if line.strip()).strip()
-        return cleaned or stripped
+        return final_response_text(
+            latest_text,
+            stage_result_mode=self.stage_result_mode,
+        )
 
     @staticmethod
     def _as_dict(raw_value: object) -> dict[str, object]:
-        if isinstance(raw_value, dict):
-            return {str(key): value for key, value in raw_value.items()}
-        model_dump = getattr(raw_value, "model_dump", None)
-        if callable(model_dump):
-            dumped = model_dump(mode="json")
-            if isinstance(dumped, dict):
-                return {str(key): value for key, value in dumped.items()}
-        raw_dict = getattr(raw_value, "__dict__", None)
-        if isinstance(raw_dict, dict):
-            return {str(key): value for key, value in raw_dict.items()}
-        return {}
+        return as_dict(raw_value)
 
     @staticmethod
     def _extract_query_from_arguments(raw_arguments: object) -> str:
-        if isinstance(raw_arguments, dict):
-            query = raw_arguments.get("query")
-            return query.strip() if isinstance(query, str) else ""
         if isinstance(raw_arguments, str):
             try:
-                parsed = json.loads(raw_arguments)
+                raw_arguments = json.loads(raw_arguments)
             except json.JSONDecodeError:
                 return ""
-            if isinstance(parsed, dict):
-                query = parsed.get("query")
-                return query.strip() if isinstance(query, str) else ""
-        return ""
+        return extract_query_from_arguments(raw_arguments)
 
     @staticmethod
     def _partial_response_text() -> str:
         return "Partial result: memmachine_search loop reached max_turns."
+
+    def _usage_tuple(self, response: object) -> tuple[int, int]:
+        usage = response.get("usage") if isinstance(response, dict) else getattr(
+            response, "usage", None
+        )
+        if usage is None:
+            return 0, 0
+        usage_payload = self._as_dict(usage)
+        return (
+            int(
+                usage_payload.get(
+                    "input_tokens",
+                    getattr(usage, "input_tokens", 0),
+                )
+                or 0
+            ),
+            int(
+                usage_payload.get(
+                    "output_tokens",
+                    getattr(usage, "output_tokens", 0),
+                )
+                or 0
+            ),
+        )
 
     @staticmethod
     def _openai_response_id(response: object) -> str | None:

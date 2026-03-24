@@ -397,9 +397,9 @@ def test_search_memories_returns_retrieval_trace(client, mock_memmachine):
                 "status": 0,
                 "content": {
                     "retrieval_trace": {
-                        "skill": "RetrieveSkill",
+                        "agent": "RetrievalAgent",
                         "selected_route": "decompose",
-                        "selected_skill": "coq",
+                        "selected_agent": "coq",
                         "orchestrator_step_count": 4,
                     },
                 },
@@ -409,9 +409,9 @@ def test_search_memories_returns_retrieval_trace(client, mock_memmachine):
         response = client.post("/api/v2/memories/search", json=payload)
         assert response.status_code == 200
         assert response.json()["content"]["retrieval_trace"] == {
-            "skill": "RetrieveSkill",
+            "agent": "RetrievalAgent",
             "selected_route": "decompose",
-            "selected_skill": "coq",
+            "selected_agent": "coq",
             "orchestrator_step_count": 4,
         }
 
