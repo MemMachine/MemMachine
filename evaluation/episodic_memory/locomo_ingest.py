@@ -74,29 +74,28 @@ async def main() -> None:
             session_date_time = conversation[f"{session_id}_date_time"]
             session_datetime = datetime_from_locomo_time(session_date_time)
 
-            context_messages: deque[str] = deque(maxlen=5)
             for message_index, message in enumerate(session):
                 speaker = message["speaker"]
                 blip_caption = message.get("blip_caption")
                 message_text = message["text"]
 
-                context_messages.append(
-                    f"[{session_date_time}] {speaker}: {message_text}",
-                )
-
-                await memory.add_memory_episode(
-                    producer=speaker,
-                    produced_for=speaker,
-                    episode_content=message_text,
-                    episode_type="default",
-                    content_type=ContentType.STRING,
-                    timestamp=session_datetime
-                    + message_index * timedelta(seconds=1),
-                    metadata={
-                        "source_timestamp": session_date_time,
-                        "source_speaker": speaker,
-                        "blip_caption": blip_caption,
-                    },
+                await memory.add_memory_episodes(
+                    episodes=[
+                        Episode(
+                            uid=str(uuid4()),
+                            content=message_text,
+                            session_key=group_id,
+                            created_at=session_datetime
+                            + message_index * timedelta(seconds=1),
+                            producer_id=speaker,
+                            producer_role=speaker,
+                            metadata={
+                                "source_timestamp": session_date_time,
+                                "source_speaker": speaker,
+                                "blip_caption": blip_caption,
+                            },
+                        )
+                    ],
                 )
 
         await memory.close()
