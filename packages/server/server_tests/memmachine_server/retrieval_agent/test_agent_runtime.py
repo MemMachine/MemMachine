@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from memmachine_server.common.episode_store import Episode
+from memmachine_server.common.episode_store import Episode, EpisodeResponse
+from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.retrieval_agent.agents.runtime import validate_agent_result
 from memmachine_server.retrieval_agent.agents.spec_loader import load_agent_spec
 from memmachine_server.retrieval_agent.agents.tool_protocol import (
@@ -33,6 +34,19 @@ def _build_episode(uid: str = "ep-1") -> Episode:
     )
 
 
+def _build_episodic_response(uid: str = "ep-1") -> EpisodicMemory.QueryResponse:
+    episode = _build_episode(uid)
+    return EpisodicMemory.QueryResponse(
+        long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+            episodes=[EpisodeResponse(score=1.0, **episode.model_dump())]
+        ),
+        short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+            episodes=[],
+            episode_summary=[],
+        ),
+    )
+
+
 def test_contract_schema_requires_v1_version() -> None:
     with pytest.raises(ValidationError):
         AgentRequestV1.model_validate(
@@ -53,7 +67,7 @@ def test_contract_schema_rejects_unknown_fields() -> None:
             {
                 "version": "v1",
                 "route_name": "retrieve-agent",
-                "episodes": [_build_episode()],
+                "episodic_memory": _build_episodic_response(),
                 "perf_metrics": {},
                 "unknown": "not-allowed",
             }
@@ -83,11 +97,14 @@ def test_contract_schema_load_agent_spec_requires_fields() -> None:
 
 def test_normalize_result_single_attempt_succeeds() -> None:
     normalizer_calls = {"count": 0}
-    episode = _build_episode()
+    episodic_memory = _build_episodic_response()
 
     def normalizer(_raw_result: object) -> object:
         normalizer_calls["count"] += 1
-        return ([episode], {"selected_agent_name": "DirectMemorySearch"})
+        return (
+            {"episodic_memory": episodic_memory},
+            {"selected_agent_name": "MemMachineSearch"},
+        )
 
     result = validate_agent_result(
         raw_result={"not": "a-result"},
@@ -98,8 +115,8 @@ def test_normalize_result_single_attempt_succeeds() -> None:
     assert normalizer_calls["count"] == 1
     assert result.version == "v1"
     assert result.route_name == "retrieve-agent"
-    assert result.episodes == [episode]
-    assert result.perf_metrics["selected_agent_name"] == "DirectMemorySearch"
+    assert result.episodic_memory == episodic_memory
+    assert result.perf_metrics["selected_agent_name"] == "MemMachineSearch"
 
 
 def test_invalid_result_after_normalize_raises_stable_error() -> None:
@@ -107,7 +124,7 @@ def test_invalid_result_after_normalize_raises_stable_error() -> None:
 
     def normalizer(_raw_result: object) -> object:
         normalizer_calls["count"] += 1
-        return {"version": "v1", "route_name": "retrieve-agent", "episodes": []}
+        return {"version": "v1", "route_name": "retrieve-agent"}
 
     with pytest.raises(AgentContractError) as exc_info:
         validate_agent_result(

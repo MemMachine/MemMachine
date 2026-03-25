@@ -6,15 +6,13 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 from dotenv import load_dotenv
+from memmachine_common.api.spec import MemoryMessage
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
-
-from memmachine_server.common.episode_store import Episode  # noqa: E402
 
 from evaluation.utils import skill_utils  # noqa: E402
 
@@ -94,19 +92,15 @@ async def main():
     parser.add_argument(
         "--length", type=int, default=500, help="Number of records to ingest"
     )
+    parser.add_argument(
+        "--session-id",
+        default="group1",
+        help="Evaluation session/project identifier for REST-backed ingestion",
+    )
 
     args = parser.parse_args()
 
     data_path = args.data_path
-
-    vector_graph_store = skill_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-    memory, _, _ = await skill_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
-        session_id="group1",  # Wikimultihop dataset does not have session concept
-        build_runner=False,
-    )
 
     contexts, _, _, _, _ = load_data(
         data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
@@ -114,10 +108,9 @@ async def main():
     print("Loaded", len(contexts), "contexts, start ingestion...")
 
     num_batch = 1000
-    episodes = []
+    messages: list[MemoryMessage] = []
     added_contexts = set()
     t1 = datetime.now(UTC)
-    episodes = []
     for c in contexts:
         # Wikimultihop dataset may have duplicate sentences, skip them
         if c in added_contexts:
@@ -128,24 +121,27 @@ async def main():
         ts = t1 + timedelta(seconds=len(added_contexts))
 
         source = c.split(":")[0]
-        episodes.append(
-            Episode(
-                uid=str(uuid4()),
+        messages.append(
+            MemoryMessage(
                 content=c,
-                session_key="group1",
-                created_at=ts,
-                producer_id=source,
-                producer_role="system",
+                producer=source,
+                role="system",
+                timestamp=ts,
+                metadata={"session_id": args.session_id},
             )
         )
 
         if len(added_contexts) % num_batch == 0 or (c == contexts[-1]):
             t = time.perf_counter()
-            await memory.add_memory_episodes(episodes=episodes)
-            print(
-                f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
+            await skill_utils.add_messages_via_rest(
+                session_id=args.session_id,
+                messages=messages,
+                batch_size=num_batch,
             )
-            episodes = []
+            print(
+                f"Gathered and added {len(messages)} memories in {(time.perf_counter() - t):.3f}s"
+            )
+            messages = []
 
             print(f"Total added episodes: {len(added_contexts)}")
 

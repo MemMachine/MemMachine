@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from memmachine_server.common.episode_store import Episode
+from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 AGENT_CONTRACT_VERSION_V1: Literal["v1"] = "v1"
 
@@ -72,7 +73,7 @@ class AgentSpecV1(BaseModel):
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     max_return_len: int = Field(default=10000, ge=1)
     max_steps: int = Field(default=8, ge=1, le=50)
-    fallback_hook: str = Field(default="direct-memory-search", min_length=1)
+    fallback_hook: str = Field(default="memmachine-search-only", min_length=1)
     allowed_actions: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     required_sections: list[str] = Field(default_factory=list)
@@ -99,7 +100,8 @@ class AgentResultV1(BaseModel):
 
     version: Literal["v1"] = AGENT_CONTRACT_VERSION_V1
     route_name: str = Field(default="retrieve-agent", min_length=1)
-    episodes: list[Episode]
+    episodic_memory: EpisodicMemory.QueryResponse | None = None
+    semantic_memory: list[SemanticFeature] | None = None
     perf_metrics: dict[str, object]
     fallback_trigger_reason: str | None = None
 

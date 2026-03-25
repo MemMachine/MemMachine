@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 import pytest
 
-from memmachine_server.common.episode_store import Episode, EpisodeResponse
+from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.retrieval_agent.agents.retrieve_agent import RetrievalAgent
 from memmachine_server.retrieval_agent.agents.session_state import (
     TopLevelAgentSessionState,
 )
 from memmachine_server.retrieval_agent.common.agent_api import (
-    QueryParam,
     QueryPolicy,
     RetrievalAgentParams,
 )
 from server_tests.memmachine_server.retrieval_agent.provider_runner_stub import (
     FakeOpenAIInstalledAgentModel,
+    FakeRestMemory,
+    build_query_param,
     openai_text_response,
+    openai_tool_call_response,
 )
 
 
@@ -27,38 +27,6 @@ class DummyReranker(Reranker):
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         _ = query
         return [float(len(candidates) - idx) for idx in range(len(candidates))]
-
-
-class FakeEpisodicMemory(EpisodicMemory):
-    def __init__(self, episodes_by_query: dict[str, list[Episode]]) -> None:
-        self._episodes_by_query = episodes_by_query
-        self._session_key = "test-session"
-
-    async def query_memory(
-        self,
-        query: str,
-        *,
-        limit: int | None = None,
-        expand_context: int = 0,
-        score_threshold: float = -float("inf"),
-        property_filter: Any | None = None,
-        mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
-    ) -> EpisodicMemory.QueryResponse | None:
-        _ = expand_context, score_threshold, property_filter, mode
-        episodes = self._episodes_by_query.get(query, [])
-        search_limit = limit if limit is not None else len(episodes)
-        return EpisodicMemory.QueryResponse(
-            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(score=1.0, **episode.model_dump())
-                    for episode in episodes[:search_limit]
-                ]
-            ),
-            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[],
-                episode_summary=[],
-            ),
-        )
 
 
 @pytest.fixture
@@ -116,7 +84,12 @@ async def test_retrieve_agent_emits_session_state_metrics(
     )
     retrieve_agent = RetrievalAgent(
         RetrievalAgentParams(
-            model=FakeOpenAIInstalledAgentModel([openai_text_response("fallback text")]),
+            model=FakeOpenAIInstalledAgentModel(
+                [
+                    openai_tool_call_response(query="hello"),
+                    openai_text_response("retrieved"),
+                ]
+            ),
             extra_params={
                 "agent_install_cache_path": tmp_path / ".agent-cache.json",
             },
@@ -124,16 +97,16 @@ async def test_retrieve_agent_emits_session_state_metrics(
         )
     )
 
-    episodes, metrics = await retrieve_agent.do_query(
+    result, metrics = await retrieve_agent.do_query(
         query_policy,
-        QueryParam(
+        build_query_param(
             query="hello",
-            limit=5,
-            memory=FakeEpisodicMemory({"hello": [episode]}),
+            rest_memory=FakeRestMemory({"hello": [episode]}),
         ),
     )
 
-    assert len(episodes) == 1
+    assert result.episodic_memory is not None
+    assert len(result.episodic_memory.long_term_memory.episodes) == 1
     assert metrics["route"] == "RetrievalAgent"
     assert metrics["orchestrator_step_count"] == 1
     assert metrics["orchestrator_sub_agent_count"] == 0

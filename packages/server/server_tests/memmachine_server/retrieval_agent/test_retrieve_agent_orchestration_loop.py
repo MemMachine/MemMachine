@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 import pytest
+from memmachine_common.api import MemoryType
 
 from memmachine_server.common.episode_store import Episode, EpisodeResponse
 from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.retrieval_agent.agents.retrieve_agent import RetrievalAgent
 from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
@@ -27,38 +26,42 @@ class DummyReranker(Reranker):
         return [float(len(candidates) - idx) for idx in range(len(candidates))]
 
 
-class FakeEpisodicMemory(EpisodicMemory):
+class FakeRestMemory:
     def __init__(self, episodes_by_query: dict[str, list[Episode]]) -> None:
         self._episodes_by_query = episodes_by_query
-        self._session_key = "test-session"
         self.queries: list[str] = []
 
-    async def query_memory(
+    async def search(
         self,
         query: str,
         *,
         limit: int | None = None,
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
-        property_filter: Any | None = None,
-        mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
-    ) -> EpisodicMemory.QueryResponse | None:
-        _ = expand_context, score_threshold, property_filter, mode
+        score_threshold: float | None = None,
+        agent_mode: bool = False,
+    ) -> dict[str, object]:
+        _ = expand_context, score_threshold, agent_mode
         self.queries.append(query)
         episodes = self._episodes_by_query.get(query, [])
         search_limit = limit if limit is not None else len(episodes)
-        return EpisodicMemory.QueryResponse(
-            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(score=1.0, **episode.model_dump())
-                    for episode in episodes[:search_limit]
-                ]
-            ),
-            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[],
-                episode_summary=[],
-            ),
-        )
+        return {
+            "content": {
+                "episodic_memory": {
+                    "long_term_memory": {
+                        "episodes": [
+                            EpisodeResponse(score=1.0, **episode.model_dump()).model_dump(
+                                mode="json"
+                            )
+                            for episode in episodes[:search_limit]
+                        ]
+                    },
+                    "short_term_memory": {
+                        "episodes": [],
+                        "episode_summary": [],
+                    },
+                }
+            }
+        }
 
 
 def _build_episode(uid: str, content: str) -> Episode:
@@ -107,7 +110,7 @@ async def test_memmachine_search_collects_episodes_and_final_response_metrics(
     tmp_path,
 ) -> None:
     episode = _build_episode("ep-direct", "direct")
-    memory = FakeEpisodicMemory({"hello": [episode]})
+    memory = FakeRestMemory({"hello": [episode]})
     model = FakeOpenAIInstalledAgentModel(
         [
             openai_tool_call_response(
@@ -119,12 +122,21 @@ async def test_memmachine_search_collects_episodes_and_final_response_metrics(
     )
     retrieve_agent = _build_skill(model, tmp_path=tmp_path)
 
-    episodes, metrics = await retrieve_agent.do_query(
+    result, metrics = await retrieve_agent.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
+        QueryParam(
+            query="hello",
+            limit=5,
+            session_key="test-session",
+            rest_memory=memory,
+            target_memories=[MemoryType.Episodic],
+        ),
     )
 
-    assert [item.uid for item in episodes] == ["ep-direct"]
+    assert result.episodic_memory is not None
+    assert [item.uid for item in result.episodic_memory.long_term_memory.episodes] == [
+        "ep-direct"
+    ]
     assert metrics["route"] == "RetrievalAgent"
     assert metrics["orchestrator_completed"] is True
     assert metrics["orchestrator_tool_call_count"] == 1
@@ -136,33 +148,42 @@ async def test_memmachine_search_collects_episodes_and_final_response_metrics(
     assert isinstance(trace, dict)
     search_call = trace["tool_calls"][0]
     assert search_call["tool_name"] == "memmachine_search"
-    assert search_call["raw_result"]["episodes_returned"] == 1
+    assert search_call["raw_result"]["episodic_count"] == 1
+    assert search_call["raw_result"]["semantic_count"] == 0
     assert search_call["raw_result"]["query"] == "hello"
-    assert "episodes_human_readable" not in search_call["raw_result"]
+    assert "memory_human_readable" in search_call["raw_result"]
 
 
 @pytest.mark.asyncio
-async def test_missing_tool_call_defaults_to_direct_search(
+async def test_missing_tool_call_returns_empty_result(
     query_policy: QueryPolicy,
     tmp_path,
 ) -> None:
     episode = _build_episode("ep-fallback-search", "fallback")
-    memory = FakeEpisodicMemory({"hello": [episode]})
+    memory = FakeRestMemory({"hello": [episode]})
     model = FakeOpenAIInstalledAgentModel(
         [openai_text_response("plain response without tool call")]
     )
     retrieve_agent = _build_skill(model, tmp_path=tmp_path)
 
-    episodes, metrics = await retrieve_agent.do_query(
+    result, metrics = await retrieve_agent.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
+        QueryParam(
+            query="hello",
+            limit=5,
+            session_key="test-session",
+            rest_memory=memory,
+            target_memories=[MemoryType.Episodic],
+        ),
     )
 
-    assert [item.uid for item in episodes] == ["ep-fallback-search"]
-    assert metrics["orchestrator_tool_call_count"] == 1
+    assert result.episodic_memory is not None
+    assert result.episodic_memory.long_term_memory.episodes == []
+    assert metrics["fallback_trigger_reason"] == "missing_tool_call"
+    assert metrics["orchestrator_tool_call_count"] == 0
     trace = metrics["orchestrator_trace"]
-    assert trace["tool_calls"][0]["tool_name"] == "memmachine_search"
-    assert trace["events"][-1]["event_type"] == "orchestration_completed"
+    assert trace["tool_calls"] == []
+    assert trace["events"][-1]["event_type"] == "fallback_applied"
 
 
 @pytest.mark.asyncio
@@ -171,7 +192,7 @@ async def test_inconclusive_plain_text_response_does_not_mark_sufficient(
     tmp_path,
 ) -> None:
     episode = _build_episode("ep-unclear", "unclear evidence")
-    memory = FakeEpisodicMemory({"hello": [episode]})
+    memory = FakeRestMemory({"hello": [episode]})
     model = FakeOpenAIInstalledAgentModel(
         [
             openai_tool_call_response(query="hello"),
@@ -182,7 +203,13 @@ async def test_inconclusive_plain_text_response_does_not_mark_sufficient(
 
     _, metrics = await retrieve_agent.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
+        QueryParam(
+            query="hello",
+            limit=5,
+            session_key="test-session",
+            rest_memory=memory,
+            target_memories=[MemoryType.Episodic],
+        ),
     )
 
     assert metrics["top_level_is_sufficient"] is False
@@ -195,7 +222,7 @@ async def test_legacy_tool_name_triggers_fallback(
     tmp_path,
 ) -> None:
     fallback_episode = _build_episode("ep-fallback", "fallback")
-    memory = FakeEpisodicMemory({"hello": [fallback_episode]})
+    memory = FakeRestMemory({"hello": [fallback_episode]})
     model = FakeOpenAIInstalledAgentModel(
         [
             openai_tool_call_response(
@@ -207,13 +234,18 @@ async def test_legacy_tool_name_triggers_fallback(
     )
     retrieve_agent = _build_skill(model, tmp_path=tmp_path)
 
-    episodes, metrics = await retrieve_agent.do_query(
+    result, metrics = await retrieve_agent.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
+        QueryParam(
+            query="hello",
+            limit=5,
+            session_key="test-session",
+            rest_memory=memory,
+            target_memories=[MemoryType.Episodic],
+        ),
     )
 
-    assert [item.uid for item in episodes] == ["ep-fallback"]
+    assert result.episodic_memory is not None
+    assert result.episodic_memory.long_term_memory.episodes == []
     assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
-    assert metrics["orchestrator_trace"]["tool_calls"][0]["tool_name"] == (
-        "memmachine_search"
-    )
+    assert metrics["orchestrator_trace"]["tool_calls"] == []

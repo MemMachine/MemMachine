@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -9,18 +8,8 @@ from memmachine_server.common.configuration.retrieval_config import (
     RetrievalAgentConf,
     RetrievalAgentSessionProvider,
 )
-from memmachine_server.common.episode_store import Episode, EpisodeResponse
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.episodic_memory import EpisodicMemory
-from memmachine_server.retrieval_agent.agents.memory_search import (
-    DIRECT_MEMORY_SELECTED_AGENT_NAME,
-    run_direct_memory_search,
-)
-from memmachine_server.retrieval_agent.common.agent_api import (
-    QueryParam,
-    QueryPolicy,
-)
 from memmachine_server.retrieval_agent.service_locator import create_retrieval_agent
 
 
@@ -75,132 +64,6 @@ class DummyReranker(Reranker):
         if self._scores and len(self._scores) == len(candidates):
             return list(self._scores)
         return [float(len(candidates) - idx) for idx in range(len(candidates))]
-
-
-class FakeEpisodicMemory(EpisodicMemory):
-    """EpisodicMemory stub that returns preset long-term episodes by query."""
-
-    def __init__(self, episodes_by_query: dict[str, list[Episode]]) -> None:
-        self._episodes_by_query = episodes_by_query
-        self._session_key = "test-session"
-        self.queries: list[str] = []
-        self.calls: list[dict[str, Any]] = []
-
-    async def query_memory(
-        self,
-        query: str,
-        *,
-        limit: int | None = None,
-        expand_context: int = 0,
-        score_threshold: float = -float("inf"),
-        property_filter: Any | None = None,
-        mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
-    ) -> EpisodicMemory.QueryResponse | None:
-        self.queries.append(query)
-        self.calls.append(
-            {
-                "query": query,
-                "limit": limit,
-                "expand_context": expand_context,
-                "score_threshold": score_threshold,
-                "property_filter": property_filter,
-                "mode": mode,
-            }
-        )
-        episodes = self._episodes_by_query.get(query, [])
-        search_limit = limit if limit is not None else len(episodes)
-        return EpisodicMemory.QueryResponse(
-            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(score=1.0, **episode.model_dump())
-                    for episode in episodes[:search_limit]
-                ]
-            ),
-            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[],
-                episode_summary=[],
-            ),
-        )
-
-
-@pytest.fixture
-def query_policy() -> QueryPolicy:
-    return QueryPolicy(
-        token_cost=0,
-        time_cost=0,
-        accuracy_score=0.0,
-        confidence_score=0.0,
-    )
-
-
-def _build_episode(*, uid: str, content: str, created_at: datetime) -> Episode:
-    return Episode(
-        uid=uid,
-        content=content,
-        session_key="test-session",
-        created_at=created_at,
-        producer_id="unit-test",
-        producer_role="assistant",
-    )
-
-
-@pytest.mark.asyncio
-async def test_direct_memory_search_returns_episodes(
-    query_policy: QueryPolicy,
-) -> None:
-    _ = query_policy
-    now = datetime.now(tz=UTC)
-    episode = _build_episode(uid="e1", content="hello", created_at=now)
-    memory = FakeEpisodicMemory({"hello": [episode]})
-
-    result, metrics = await run_direct_memory_search(
-        QueryParam(query="hello", limit=5, memory=memory),
-    )
-
-    assert result == [episode]
-    assert metrics["memory_search_called"] == 1
-    assert metrics["selected_agent"] == "direct_memory"
-    assert metrics["selected_agent_name"] == DIRECT_MEMORY_SELECTED_AGENT_NAME
-    assert isinstance(metrics.get("memory_search_latency_seconds"), list)
-    assert len(metrics["memory_search_latency_seconds"]) == 1
-    assert float(metrics["memory_retrieval_time"]) >= float(
-        metrics["memory_search_latency_seconds"][0]
-    )
-
-
-@pytest.mark.asyncio
-async def test_direct_memory_search_queries_long_term_memory_only(
-    query_policy: QueryPolicy,
-) -> None:
-    _ = query_policy
-    now = datetime.now(tz=UTC)
-    episode = _build_episode(uid="callback-e1", content="from-memory", created_at=now)
-    memory = FakeEpisodicMemory({"callback-query": [episode]})
-
-    result, metrics = await run_direct_memory_search(
-        QueryParam(
-            query="callback-query",
-            limit=3,
-            expand_context=2,
-            score_threshold=0.55,
-            memory=memory,
-        ),
-    )
-
-    assert result == [episode]
-    assert metrics["memory_search_called"] == 1
-    assert isinstance(metrics.get("memory_search_latency_seconds"), list)
-    assert len(metrics["memory_search_latency_seconds"]) == 1
-    assert memory.calls == [
-        {
-            "query": "callback-query",
-            "limit": 3,
-            "expand_context": 2,
-            "score_threshold": 0.55,
-            "property_filter": None,
-            "mode": EpisodicMemory.QueryMode.LONG_TERM_ONLY,
-        }
-    ]
 
 
 def test_service_locator_defaults_to_retrieve_agent() -> None:

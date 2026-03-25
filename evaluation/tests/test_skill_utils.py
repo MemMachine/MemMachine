@@ -51,12 +51,12 @@ class _FakeOpenAIClient:
         self.responses = _FakeResponsesAPI(responses)
 
 
-class _FakeDirectMemory:
+class _FakeRestMemory:
     def __init__(self, search_results: list[dict[str, object]]) -> None:
         self.calls: list[dict[str, object]] = []
         self._search_results = list(search_results)
 
-    async def query_memory(self, query: str, **kwargs):
+    async def search(self, query: str, **kwargs):
         self.calls.append({"query": query, **kwargs})
         return self._search_results.pop(0)
 
@@ -72,14 +72,18 @@ def _skill() -> Skill:
 
 def _search_result(*episodes: tuple[str, str]) -> dict[str, object]:
     return {
-        "short_term_memory": {
-            "episodes": [
-                {"uid": episode_uid, "content": episode_content}
-                for episode_uid, episode_content in episodes
-            ],
-            "episode_summary": [],
-        },
-        "long_term_memory": {"episodes": []},
+        "content": {
+            "episodic_memory": {
+                "short_term_memory": {
+                    "episodes": [
+                        {"uid": episode_uid, "content": episode_content}
+                        for episode_uid, episode_content in episodes
+                    ],
+                    "episode_summary": [],
+                },
+                "long_term_memory": {"episodes": []},
+            }
+        }
     }
 
 
@@ -124,7 +128,7 @@ async def test_process_question_with_runner_counts_unique_retrieved_episodes():
             ),
         ]
     )
-    memory = _FakeDirectMemory(
+    memory = _FakeRestMemory(
         [
             _search_result(("ep-1", "Paris is in France"), ("ep-2", "France is in Europe")),
             _search_result(("ep-1", "Paris is in France"), ("ep-2", "France is in Europe")),
@@ -134,8 +138,7 @@ async def test_process_question_with_runner_counts_unique_retrieved_episodes():
         _skill(),
         client=client,
         model="gpt-5-mini",
-        search_mode="direct",
-        direct_memory=memory,
+        rest_memory=memory,
         stage_result_mode=True,
     )
 

@@ -21,7 +21,6 @@ from memmachine_server.common.episode_store import (
     Episode,
     EpisodeEntry,
     EpisodeIdT,
-    EpisodeResponse,
 )
 from memmachine_server.common.errors import (
     ConfigurationError,
@@ -667,6 +666,151 @@ class MemMachine:
         semantic_memory: list[SemanticFeature] | None = None
         retrieval_trace: dict[str, JsonValue] | None = None
 
+    class _BoundRestSearch:
+        """Query-scoped REST-shaped search adapter used by SkillRunner."""
+
+        def __init__(
+            self,
+            *,
+            memmachine: "MemMachine",
+            session_data: InstanceOf["MemMachine.SessionData"],
+            target_memories: list[MemoryType],
+            set_metadata: Mapping[str, JsonValue] | None,
+            property_filter: FilterExpr | None,
+        ) -> None:
+            self._memmachine = memmachine
+            self._session_data = session_data
+            self._target_memories = list(target_memories)
+            self._set_metadata = (
+                dict(set_metadata) if set_metadata is not None else None
+            )
+            self._property_filter = property_filter
+
+        async def search(self, query: str, **kwargs: object) -> dict[str, object]:
+            limit = kwargs.get("limit")
+            score_threshold = kwargs.get("score_threshold")
+            result = await self._memmachine._query_search_direct(  # noqa: SLF001
+                session_data=self._session_data,
+                target_memories=self._target_memories,
+                set_metadata=self._set_metadata,
+                query=query,
+                limit=limit if isinstance(limit, int) else None,
+                expand_context=int(kwargs.get("expand_context", 0) or 0),
+                score_threshold=(
+                    float(score_threshold)
+                    if isinstance(score_threshold, int | float)
+                    and not isinstance(score_threshold, bool)
+                    else -float("inf")
+                ),
+                property_filter=self._property_filter,
+            )
+            content: dict[str, object] = {}
+            if result.episodic_memory is not None:
+                content["episodic_memory"] = result.episodic_memory.model_dump(
+                    mode="json"
+                )
+            if result.semantic_memory is not None:
+                content["semantic_memory"] = [
+                    feature.model_dump(mode="json") for feature in result.semantic_memory
+                ]
+            if result.retrieval_trace is not None:
+                content["retrieval_trace"] = result.retrieval_trace
+            return {"status": 0, "content": content}
+
+    async def _query_search_direct(
+        self,
+        session_data: InstanceOf[SessionData],
+        *,
+        target_memories: list[MemoryType],
+        set_metadata: Mapping[str, JsonValue] | None,
+        query: str,
+        limit: int | None,
+        expand_context: int,
+        score_threshold: float,
+        property_filter: FilterExpr | None,
+    ) -> SearchResponse:
+        episodic_task: Task | None = None
+        semantic_task: Task | None = None
+
+        if MemoryType.Episodic in target_memories:
+            episodic_task = asyncio.create_task(
+                self._search_episodic_memory(
+                    session_data=session_data,
+                    query=query,
+                    limit=limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    search_filter=property_filter,
+                )
+            )
+
+        if MemoryType.Semantic in target_memories:
+            semantic_session = await self._resources.get_semantic_session_manager()
+            semantic_task = asyncio.create_task(
+                semantic_session.search(
+                    message=query,
+                    session_data=session_data,
+                    set_metadata=set_metadata,
+                    limit=limit,
+                    search_filter=property_filter,
+                )
+            )
+
+        return MemMachine.SearchResponse(
+            episodic_memory=await episodic_task if episodic_task else None,
+            semantic_memory=await semantic_task if semantic_task else None,
+            retrieval_trace=None,
+        )
+
+    async def _query_search_with_retrieval_agent(
+        self,
+        session_data: InstanceOf[SessionData],
+        *,
+        target_memories: list[MemoryType],
+        set_metadata: Mapping[str, JsonValue] | None,
+        query: str,
+        limit: int | None,
+        expand_context: int,
+        score_threshold: float,
+        property_filter: FilterExpr | None,
+        retrieval_agent: RetrievalAgentProtocol,
+    ) -> SearchResponse:
+        agent_result, perf_metrics = await retrieval_agent.do_query(
+            QueryPolicy(
+                token_cost=10,
+                time_cost=10,
+                accuracy_score=10,
+                confidence_score=10,
+                max_attempts=3,
+                max_return_len=10000,
+            ),
+            QueryParam(
+                query=query,
+                limit=limit or 20,
+                expand_context=expand_context,
+                score_threshold=score_threshold,
+                property_filter=property_filter,
+                session_key=session_data.session_key,
+                rest_memory=MemMachine._BoundRestSearch(
+                    memmachine=self,
+                    session_data=session_data,
+                    target_memories=target_memories,
+                    set_metadata=set_metadata,
+                    property_filter=property_filter,
+                ),
+                target_memories=target_memories,
+            ),
+        )
+        retrieval_trace = self._build_retrieval_trace(
+            retrieval_agent=retrieval_agent,
+            perf_metrics=perf_metrics,
+        )
+        return MemMachine.SearchResponse(
+            episodic_memory=agent_result.episodic_memory,
+            semantic_memory=agent_result.semantic_memory,
+            retrieval_trace=retrieval_trace,
+        )
+
     async def _search_episodic_memory(
         self,
         *,
@@ -676,8 +820,6 @@ class MemMachine:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
-        retrieval_agent: RetrievalAgentProtocol | None = None,
-        retrieval_trace_out: dict[str, JsonValue] | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -689,8 +831,6 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
-            retrieval_agent: Optional top-level retrieval agent for long-term search.
-            retrieval_trace_out: Optional dict populated with retrieval trace metadata.
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -706,132 +846,15 @@ class MemMachine:
             ),
             metadata={},
         ) as episodic_session:
-            if retrieval_agent is None or episodic_session.long_term_memory is None:
-                response = await episodic_session.query_memory(
-                    query=query,
-                    limit=limit,
-                    expand_context=expand_context,
-                    score_threshold=score_threshold,
-                    property_filter=search_filter,
-                )
-            else:
-                response = await self._query_episodic_with_retrieval_agent(
-                    episodic_session=episodic_session,
-                    retrieval_agent=retrieval_agent,
-                    query=query,
-                    limit=limit,
-                    expand_context=expand_context,
-                    score_threshold=score_threshold,
-                    search_filter=search_filter,
-                    retrieval_trace_out=retrieval_trace_out,
-                )
+            response = await episodic_session.query_memory(
+                query=query,
+                limit=limit,
+                expand_context=expand_context,
+                score_threshold=score_threshold,
+                property_filter=search_filter,
+            )
 
         return response
-
-    async def _query_episodic_with_retrieval_agent(
-        self,
-        *,
-        episodic_session: EpisodicMemory,
-        retrieval_agent: RetrievalAgentProtocol,
-        query: str,
-        limit: int | None,
-        expand_context: int,
-        score_threshold: float,
-        search_filter: FilterExpr | None,
-        retrieval_trace_out: dict[str, JsonValue] | None = None,
-    ) -> EpisodicMemory.QueryResponse | None:
-        """Build episodic query response using retrieval-agent long-term search."""
-        if episodic_session.long_term_memory is None:
-            return await episodic_session.query_memory(
-                query=query,
-                limit=limit,
-                expand_context=expand_context,
-                score_threshold=score_threshold,
-                property_filter=search_filter,
-                mode=EpisodicMemory.QueryMode.SHORT_TERM_ONLY,
-            )
-
-        search_limit = limit if limit is not None else 20
-        normalized_long_episodes = await self._run_retrieval_agent_long_term_search(
-            episodic_session=episodic_session,
-            retrieval_agent=retrieval_agent,
-            query=query,
-            limit=search_limit,
-            expand_context=expand_context,
-            score_threshold=score_threshold,
-            search_filter=search_filter,
-            retrieval_trace_out=retrieval_trace_out,
-        )
-
-        short_response = await self._query_short_term_response_for_skill(
-            episodic_session=episodic_session,
-            query=query,
-            limit=search_limit,
-            expand_context=expand_context,
-            score_threshold=score_threshold,
-            search_filter=search_filter,
-        )
-
-        unique_scored_long_episodes = (
-            MemMachine._dedupe_and_score_skill_long_term_episodes(
-                normalized_long_episodes=normalized_long_episodes,
-                short_response=short_response,
-                score_threshold=score_threshold,
-            )
-        )
-
-        return EpisodicMemory.QueryResponse(
-            short_term_memory=short_response,
-            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(score=score, **episode.model_dump())
-                    for score, episode in unique_scored_long_episodes
-                ],
-            ),
-        )
-
-    async def _run_retrieval_agent_long_term_search(
-        self,
-        *,
-        episodic_session: EpisodicMemory,
-        retrieval_agent: RetrievalAgentProtocol,
-        query: str,
-        limit: int,
-        expand_context: int,
-        score_threshold: float,
-        search_filter: FilterExpr | None,
-        retrieval_trace_out: dict[str, JsonValue] | None = None,
-    ) -> list[Episode]:
-        if episodic_session.long_term_memory is None:
-            return []
-
-        long_episodes, perf_metrics = await retrieval_agent.do_query(
-            QueryPolicy(
-                token_cost=10,
-                time_cost=10,
-                accuracy_score=10,
-                confidence_score=10,
-                max_attempts=3,
-                max_return_len=10000,
-            ),
-            QueryParam(
-                query=query,
-                limit=limit,
-                expand_context=expand_context,
-                score_threshold=score_threshold,
-                property_filter=search_filter,
-                memory=episodic_session,
-            ),
-        )
-        if retrieval_trace_out is not None:
-            retrieval_trace_out.update(
-                self._build_retrieval_trace(
-                    retrieval_agent=retrieval_agent,
-                    perf_metrics=perf_metrics,
-                )
-            )
-
-        return long_episodes
 
     def _build_retrieval_trace(
         self,
@@ -885,58 +908,6 @@ class MemMachine:
                 trace[key] = cast(JsonValue, perf_metrics[key])
         return trace
 
-    async def _query_short_term_response_for_skill(
-        self,
-        *,
-        episodic_session: EpisodicMemory,
-        query: str,
-        limit: int,
-        expand_context: int,
-        score_threshold: float,
-        search_filter: FilterExpr | None,
-    ) -> EpisodicMemory.QueryResponse.ShortTermMemoryResponse:
-        if episodic_session.short_term_memory is None:
-            return EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[],
-                episode_summary=[""],
-            )
-
-        short_term_result = await episodic_session.query_memory(
-            query=query,
-            limit=limit,
-            expand_context=expand_context,
-            score_threshold=score_threshold,
-            property_filter=search_filter,
-            mode=EpisodicMemory.QueryMode.SHORT_TERM_ONLY,
-        )
-        if short_term_result is None:
-            return EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[],
-                episode_summary=[""],
-            )
-        return short_term_result.short_term_memory
-
-    @staticmethod
-    def _dedupe_and_score_skill_long_term_episodes(
-        *,
-        normalized_long_episodes: list[Episode],
-        short_response: EpisodicMemory.QueryResponse.ShortTermMemoryResponse,
-        score_threshold: float,
-    ) -> list[tuple[float, Episode]]:
-        scored_long_episodes = [
-            (1.0, episode)
-            for episode in normalized_long_episodes
-            if score_threshold <= 1.0
-        ]
-        episode_uid_set = {episode.uid for episode in short_response.episodes}
-        unique_scored_long_episodes: list[tuple[float, Episode]] = []
-        for score, episode in scored_long_episodes:
-            if episode.uid in episode_uid_set:
-                continue
-            episode_uid_set.add(episode.uid)
-            unique_scored_long_episodes.append((score, episode))
-        return unique_scored_long_episodes
-
     async def query_search(
         self,
         session_data: InstanceOf[SessionData],
@@ -969,43 +940,29 @@ class MemMachine:
             Aggregated search results across memory types.
 
         """
-        episodic_task: Task | None = None
-        semantic_task: Task | None = None
-        retrieval_trace: dict[str, JsonValue] | None = None
-
         property_filter = parse_filter(search_filter) if search_filter else None
-        if MemoryType.Episodic in target_memories:
-            retrieval_agent = await self._get_retrieval_agent() if agent_mode else None
-            retrieval_trace = {} if retrieval_agent is not None else None
-            episodic_task = asyncio.create_task(
-                self._search_episodic_memory(
-                    session_data=session_data,
-                    query=query,
-                    limit=limit,
-                    expand_context=expand_context,
-                    score_threshold=score_threshold,
-                    search_filter=property_filter,
-                    retrieval_agent=retrieval_agent,
-                    retrieval_trace_out=retrieval_trace,
-                )
+        retrieval_agent = await self._get_retrieval_agent() if agent_mode else None
+        if retrieval_agent is not None:
+            return await self._query_search_with_retrieval_agent(
+                session_data=session_data,
+                target_memories=target_memories,
+                set_metadata=set_metadata,
+                query=query,
+                limit=limit,
+                expand_context=expand_context,
+                score_threshold=score_threshold,
+                property_filter=property_filter,
+                retrieval_agent=retrieval_agent,
             )
-
-        if MemoryType.Semantic in target_memories:
-            semantic_session = await self._resources.get_semantic_session_manager()
-            semantic_task = asyncio.create_task(
-                semantic_session.search(
-                    message=query,
-                    session_data=session_data,
-                    set_metadata=set_metadata,
-                    limit=limit,
-                    search_filter=property_filter,
-                )
-            )
-
-        return MemMachine.SearchResponse(
-            episodic_memory=await episodic_task if episodic_task else None,
-            semantic_memory=await semantic_task if semantic_task else None,
-            retrieval_trace=retrieval_trace or None,
+        return await self._query_search_direct(
+            session_data=session_data,
+            target_memories=target_memories,
+            set_metadata=set_metadata,
+            query=query,
+            limit=limit,
+            expand_context=expand_context,
+            score_threshold=score_threshold,
+            property_filter=property_filter,
         )
 
     class ListResults(BaseModel):

@@ -1,24 +1,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 import pytest
 
-from memmachine_server.common.episode_store import Episode, EpisodeResponse
+from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.episodic_memory import EpisodicMemory
-from memmachine_server.retrieval_agent.agents.memory_search import (
-    DIRECT_MEMORY_SELECTED_AGENT_NAME,
-)
 from memmachine_server.retrieval_agent.agents.retrieve_agent import RetrievalAgent
 from memmachine_server.retrieval_agent.common.agent_api import (
-    QueryParam,
     QueryPolicy,
     RetrievalAgentParams,
 )
 from server_tests.memmachine_server.retrieval_agent.provider_runner_stub import (
     FakeOpenAIInstalledAgentModel,
+    FakeRestMemory,
+    build_query_param,
     openai_function_call,
     openai_multi_tool_call_response,
     openai_text_response,
@@ -30,38 +26,6 @@ class DummyReranker(Reranker):
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         _ = query
         return [float(len(candidates) - idx) for idx in range(len(candidates))]
-
-
-class FakeEpisodicMemory(EpisodicMemory):
-    def __init__(self, episodes_by_query: dict[str, list[Episode]]) -> None:
-        self._episodes_by_query = episodes_by_query
-        self._session_key = "test-session"
-
-    async def query_memory(
-        self,
-        query: str,
-        *,
-        limit: int | None = None,
-        expand_context: int = 0,
-        score_threshold: float = -float("inf"),
-        property_filter: Any | None = None,
-        mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
-    ) -> EpisodicMemory.QueryResponse | None:
-        _ = expand_context, score_threshold, property_filter, mode
-        episodes = self._episodes_by_query.get(query, [])
-        search_limit = limit if limit is not None else len(episodes)
-        return EpisodicMemory.QueryResponse(
-            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
-                episodes=[
-                    EpisodeResponse(score=1.0, **episode.model_dump())
-                    for episode in episodes[:search_limit]
-                ]
-            ),
-            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
-                episodes=[],
-                episode_summary=[],
-            ),
-        )
 
 
 @pytest.fixture
@@ -105,12 +69,12 @@ def _build_episode(uid: str) -> Episode:
 
 
 @pytest.mark.asyncio
-async def test_selected_agent_defaults_to_direct_memory_label(
+async def test_selected_agent_defaults_to_memmachine_search_label(
     query_policy: QueryPolicy,
     tmp_path,
 ) -> None:
     episode = _build_episode("route-direct")
-    memory = FakeEpisodicMemory({"hello": [episode]})
+    memory = FakeRestMemory({"hello": [episode]})
     model = FakeOpenAIInstalledAgentModel(
         [
             openai_tool_call_response(query="hello"),
@@ -121,11 +85,11 @@ async def test_selected_agent_defaults_to_direct_memory_label(
     skill = _build_skill(model, tmp_path=tmp_path)
     _, metrics = await skill.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
+        build_query_param(query="hello", rest_memory=memory),
     )
 
-    assert metrics["selected_agent"] == "direct_memory"
-    assert metrics["selected_agent_name"] == DIRECT_MEMORY_SELECTED_AGENT_NAME
+    assert metrics["selected_agent"] == "memmachine_search"
+    assert metrics["selected_agent_name"] == "MemMachineSearch"
     assert metrics["orchestrator_sub_agent_runs"] == []
 
 
@@ -136,7 +100,7 @@ async def test_plain_text_completion_keeps_raw_memory_episodes(
 ) -> None:
     episode_a = _build_episode("route-a")
     episode_b = _build_episode("route-b")
-    memory = FakeEpisodicMemory({"branch a": [episode_a], "branch b": [episode_b]})
+    memory = FakeRestMemory({"branch a": [episode_a], "branch b": [episode_b]})
     model = FakeOpenAIInstalledAgentModel(
         [
             openai_multi_tool_call_response(
@@ -150,11 +114,15 @@ async def test_plain_text_completion_keeps_raw_memory_episodes(
     )
 
     skill = _build_skill(model, tmp_path=tmp_path)
-    episodes, metrics = await skill.do_query(
+    result, metrics = await skill.do_query(
         query_policy,
-        QueryParam(query="hello", limit=5, memory=memory),
+        build_query_param(query="hello", rest_memory=memory),
     )
 
-    assert [item.uid for item in episodes] == ["route-a", "route-b"]
+    assert result.episodic_memory is not None
+    assert [item.uid for item in result.episodic_memory.long_term_memory.episodes] == [
+        "route-a",
+        "route-b",
+    ]
     assert metrics["stage_result_memory_returned"] is False
     assert metrics["memory_search_called"] == 2

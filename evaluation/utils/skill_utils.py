@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -8,7 +9,15 @@ from typing import Any
 import boto3
 import neo4j
 import openai
+import requests
+from memmachine_client import MemMachineClient
 from memmachine_common import SkillRunner, install_skill
+from memmachine_common.api import MemoryType
+from memmachine_common.api.spec import (
+    AddMemoriesResponse,
+    AddMemoriesSpec,
+    MemoryMessage,
+)
 from memmachine_server.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
@@ -40,6 +49,117 @@ RETRIEVAL_HINT_UNCERTAINTY_PATTERN = re.compile(
     r"(?i)\b(if|likely|probably|suggests?|inferred?|assum(?:e|ed|ption)|"
     r"traditional|uncertain|unknown|not explicit|no explicit|may be|might)\b"
 )
+EVALUATION_ORG_ID = "evaluation"
+
+
+def _new_evaluation_client() -> MemMachineClient:
+    base_url = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
+    return MemMachineClient(base_url=base_url)
+
+
+def _ensure_rest_evaluation_memory(
+    client: MemMachineClient,
+    session_id: str,
+):
+    try:
+        project = client.get_project(
+            org_id=EVALUATION_ORG_ID,
+            project_id=session_id,
+        )
+    except requests.HTTPError as err:
+        if err.response is None or err.response.status_code != 404:
+            raise
+        project = client.create_project(
+            org_id=EVALUATION_ORG_ID,
+            project_id=session_id,
+        )
+    return project.memory(metadata={"session_id": session_id})
+
+
+def init_rest_evaluation_memory(session_id: str):
+    client = _new_evaluation_client()
+    return _ensure_rest_evaluation_memory(client, session_id)
+
+
+def _add_messages_batch_sync(
+    *,
+    client: MemMachineClient,
+    session_id: str,
+    messages: list[MemoryMessage],
+) -> int:
+    spec = AddMemoriesSpec(
+        org_id=EVALUATION_ORG_ID,
+        project_id=session_id,
+        types=[MemoryType.Episodic, MemoryType.Semantic],
+        messages=messages,
+    )
+    response = client.request(
+        "POST",
+        f"{client.base_url}/api/v2/memories",
+        json=spec.model_dump(mode="json", exclude_none=True),
+    )
+    response.raise_for_status()
+    parsed = AddMemoriesResponse(**response.json())
+    return len(parsed.results)
+
+
+async def add_messages_via_rest(
+    *,
+    session_id: str,
+    messages: list[MemoryMessage],
+    batch_size: int = 250,
+) -> int:
+    if not messages:
+        return 0
+
+    client = _new_evaluation_client()
+    _ = _ensure_rest_evaluation_memory(client, session_id)
+    total_added = 0
+    for start in range(0, len(messages), batch_size):
+        batch = messages[start : start + batch_size]
+        total_added += await asyncio.to_thread(
+            _add_messages_batch_sync,
+            client=client,
+            session_id=session_id,
+            messages=batch,
+        )
+    return total_added
+
+
+class _RestEvaluationMemory:
+    def __init__(self, *, session_id: str) -> None:
+        self._memory = init_rest_evaluation_memory(session_id)
+        raw_timeout = os.getenv("MEMMACHINE_SEARCH_TIMEOUT_SECONDS", "120")
+        try:
+            self._timeout_seconds = max(1, int(raw_timeout))
+        except ValueError:
+            self._timeout_seconds = 120
+
+    async def search(self, query: str, **kwargs: object) -> dict[str, object]:
+        limit = kwargs.get("limit")
+        expand_context = kwargs.get("expand_context", 0)
+        score_threshold = kwargs.get("score_threshold")
+        agent_mode = kwargs.get("agent_mode", False)
+        set_metadata = kwargs.get("set_metadata")
+        result = await asyncio.to_thread(
+            self._memory.search,
+            query,
+            limit if isinstance(limit, int) else None,
+            expand_context if isinstance(expand_context, int) else 0,
+            (
+                float(score_threshold)
+                if isinstance(score_threshold, int | float)
+                and not isinstance(score_threshold, bool)
+                else None
+            ),
+            None,
+            self._timeout_seconds,
+            set_metadata=(
+                set_metadata if isinstance(set_metadata, dict) else None
+            ),
+            agent_mode=bool(agent_mode),
+        )
+        return result.model_dump(mode="json")
 
 
 def _normalize_sub_agent_name(raw_name: str) -> str | None:
@@ -54,8 +174,8 @@ def _normalize_sub_agent_name(raw_name: str) -> str | None:
         "chain_of_query_skill": "ChainOfQuerySkill",
         "split": "SplitSkill",
         "splitskill": "SplitSkill",
-        "direct_memory": "DirectMemorySkill",
-        "memmachineskill": "DirectMemorySkill",
+        "memmachine_search": "RetrieveSkill",
+        "memmachinesearch": "RetrieveSkill",
     }
     mapped = mapping.get(key)
     if mapped is not None:
@@ -314,7 +434,7 @@ def _count_runner_retrieved_episodes(search_results: list[dict[str, object]]) ->
     return max(fallback_counts, default=0)
 
 
-async def process_question_with_runner(  # noqa: C901
+async def process_question_with_runner(
     answer_prompt: str,
     runner: SkillRunner | None,
     model: openai.AsyncOpenAI,
@@ -964,8 +1084,7 @@ async def init_memmachine_params(
             installed_skill,
             client=answer_model,
             model=model_name,
-            search_mode="direct",
-            direct_memory=memory,
+            rest_memory=_RestEvaluationMemory(session_id=normalized_session_id),
             **(runner_config or {}),
         ),
     )

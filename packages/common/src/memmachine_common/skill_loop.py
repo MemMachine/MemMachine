@@ -151,10 +151,18 @@ def normalize_search_result(
 ) -> dict[str, object]:
     """Normalize a search response into the compact payload used by tool loops."""
     payload = as_dict(raw_result)
-    episodic_payload = as_dict(payload.get("content")).get("episodic_memory", payload)
+    content_payload = as_dict(payload.get("content")) or payload
+    episodic_payload = as_dict(
+        content_payload.get("episodic_memory")
+        if "episodic_memory" in content_payload
+        else payload
+    )
     episodic = as_dict(episodic_payload)
     short_term = as_dict(episodic.get("short_term_memory"))
     long_term = as_dict(episodic.get("long_term_memory"))
+    semantic_memory = normalize_semantic_memory(
+        content_payload.get("semantic_memory", payload.get("semantic_memory", []))
+    )
 
     episode_summary = [
         item
@@ -176,18 +184,45 @@ def normalize_search_result(
         for index, episode in enumerate(episodes, start=1)
         if isinstance(episode.get("content"), str) and episode["content"].strip()
     ]
+    semantic_lines = [
+        semantic_memory_line(feature)
+        for feature in semantic_memory
+        if semantic_memory_line(feature)
+    ]
     stage_result_memory = stage_result_memory_lines(
         stage_result_mode=stage_result_mode,
         stage_results=stage_results or [],
         stage_sub_queries=stage_sub_queries or [],
     )
+    episodic_memory: dict[str, object] = {
+        "short_term_memory": {
+            "episodes": normalize_episodes(
+                short_term.get("episodes", []),
+                score_threshold=score_threshold,
+            ),
+            "episode_summary": episode_summary,
+        },
+        "long_term_memory": {
+            "episodes": normalize_episodes(
+                long_term.get("episodes", []),
+                score_threshold=score_threshold,
+            ),
+        },
+    }
+    combined_text = "\n".join([*semantic_lines, *episode_summary, *episode_lines]).strip()
 
     normalized_payload: dict[str, object] = {
         "query": query,
+        "episodic_memory": episodic_memory,
+        "semantic_memory": semantic_memory,
         "episode_summary": episode_summary,
         "episodes": episodes,
-        "episodes_text": "\n".join([*episode_summary, *episode_lines]).strip(),
+        "episodes_text": combined_text,
+        "semantic_text": "\n".join(semantic_lines).strip(),
+        "memory_text": combined_text,
         "count": len(episodes),
+        "semantic_count": len(semantic_memory),
+        "total_count": len(episodes) + len(semantic_memory),
     }
     if stage_result_memory:
         normalized_payload["stage_result_memory"] = stage_result_memory
@@ -221,6 +256,39 @@ def episode_content(content: str, *, max_episode_chars: int | None) -> str:
     if max_episode_chars is None:
         return content
     return content[:max_episode_chars]
+
+
+def normalize_semantic_memory(raw_features: object) -> list[dict[str, object]]:
+    """Normalize semantic feature arrays into plain dicts."""
+    if not isinstance(raw_features, list):
+        return []
+    normalized: list[dict[str, object]] = []
+    for raw_feature in raw_features:
+        feature = as_dict(raw_feature)
+        if feature:
+            normalized.append(feature)
+    return normalized
+
+
+def semantic_memory_line(feature: dict[str, object]) -> str:
+    """Render one compact semantic-memory line for tool-loop context."""
+    feature_name = str(feature.get("feature_name") or "").strip()
+    value = str(feature.get("value") or "").strip()
+    category = str(feature.get("category") or "").strip()
+    tag = str(feature.get("tag") or "").strip()
+    if feature_name and value:
+        label = feature_name
+    elif value:
+        label = value
+    elif feature_name:
+        label = feature_name
+    else:
+        return ""
+    prefix_parts = [part for part in (category, tag) if part]
+    prefix = "/".join(prefix_parts)
+    if prefix:
+        return f"[Semantic] {prefix} | {label}: {value or feature_name}"
+    return f"[Semantic] {label}: {value or feature_name}"
 
 
 def stage_result_memory_lines(
@@ -284,7 +352,18 @@ def build_tool_search_result(
     compact_payload: dict[str, object] = {
         "query": payload.get("query", ""),
         "count": payload.get("count", 0),
+        "semantic_count": payload.get("semantic_count", 0),
+        "total_count": payload.get("total_count", payload.get("count", 0)),
     }
+    episodic_memory = payload.get("episodic_memory")
+    if isinstance(episodic_memory, dict) and episodic_memory:
+        compact_payload["episodic_memory"] = episodic_memory
+    semantic_memory = payload.get("semantic_memory")
+    if isinstance(semantic_memory, list) and semantic_memory:
+        compact_payload["semantic_memory"] = semantic_memory
+    semantic_text = payload.get("semantic_text")
+    if isinstance(semantic_text, str) and semantic_text.strip():
+        compact_payload["semantic_text"] = semantic_text
     stage_result_memory = payload.get("stage_result_memory")
     if isinstance(stage_result_memory, list) and stage_result_memory:
         compact_payload["stage_result_memory"] = stage_result_memory
@@ -297,6 +376,7 @@ def build_tool_search_result(
         stage_result_confidence_threshold=stage_result_confidence_threshold,
     ):
         compact_payload["episodes_text"] = payload.get("episodes_text", "")
+        compact_payload["memory_text"] = payload.get("memory_text", "")
     return compact_payload
 
 

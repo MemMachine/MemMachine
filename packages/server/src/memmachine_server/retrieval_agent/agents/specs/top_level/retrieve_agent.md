@@ -7,7 +7,7 @@ route_name: retrieve-agent
 timeout_seconds: 180
 max_return_len: 10000
 max_steps: 8
-fallback_hook: direct-memory-search
+fallback_hook: memmachine-search-only
 allowed_actions:
   - memmachine_search
 allowed_tools:
@@ -25,7 +25,7 @@ Act as the top-level retrieval orchestrator for MemMachine inside a single LLM
 session.
 
 Primary objective:
-- retrieve memory episodes relevant to the user query,
+- retrieve memory evidence relevant to the user query,
 - use the attached `coq` instructions internally when the query requires
   dependency-chain reasoning,
 - answer directly in plain text once the search is complete.
@@ -65,6 +65,8 @@ Use `memmachine_search(query=<targeted query>)` to gather evidence.
 
 Search rules:
 - run at least one `memmachine_search` before answering,
+- treat each tool call as a combined retrieval over all configured memory
+  backends and use both semantic and episodic evidence when present,
 - avoid duplicate searches unless a prior query was malformed or too broad,
 - rewrite follow-up searches to resolve the earliest missing dependency,
 - keep queries concrete and retrieval-friendly.

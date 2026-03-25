@@ -8,12 +8,14 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, InstanceOf
 
+from memmachine_common.api import MemoryType
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,24 @@ class QueryParam(BaseModel):
     expand_context: int = 0
     score_threshold: float = -float("inf")
     property_filter: FilterExpr | None = None
-    memory: InstanceOf[EpisodicMemory]
+    session_key: str
+    rest_memory: SearchToolMemoryProtocol
+    target_memories: list[MemoryType]
+
+
+class RetrievalAgentResult(BaseModel):
+    """Combined search results returned by the top-level retrieval agent."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    episodic_memory: EpisodicMemory.QueryResponse | None = None
+    semantic_memory: list[SemanticFeature] | None = None
+
+
+@runtime_checkable
+class SearchToolMemoryProtocol(Protocol):
+    """Minimal REST-style search dependency consumed by SkillRunner."""
+
+    def search(self, query: str, **kwargs: object) -> object: ...
 
 
 class RetrievalAgentParams(BaseModel):
@@ -73,7 +92,7 @@ class RetrievalAgentProtocol(Protocol):
         self,
         policy: QueryPolicy,
         query: QueryParam,
-    ) -> tuple[list[Episode], dict[str, Any]]: ...
+    ) -> tuple[RetrievalAgentResult, dict[str, Any]]: ...
 
 
 async def rerank_episodes(

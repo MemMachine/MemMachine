@@ -7,7 +7,7 @@ route_name: coq
 timeout_seconds: 120
 max_return_len: 10000
 max_steps: 8
-fallback_hook: direct-memory-search
+fallback_hook: memmachine-search-only
 allowed_actions:
   - memmachine_search
 allowed_tools:
@@ -68,6 +68,8 @@ Query rules:
 ### Step 3: Execute one retrieval hop
 
 - Call `memmachine_search` with the new targeted query.
+- Treat the returned semantic and episodic evidence as one combined retrieval
+  result for that hop.
 - Merge the returned evidence into cumulative state.
 - Append the query to `used_queries`.
 

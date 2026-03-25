@@ -32,7 +32,6 @@ if TYPE_CHECKING:
         def search(self, query: str, **kwargs: object) -> object: ...
 
 ProviderName = Literal["anthropic", "openai"]
-SearchMode = Literal["direct", "rest"]
 
 _CANONICAL_MEMMACHINE_SEARCH_TOOL = {
     "type": "function",
@@ -195,10 +194,7 @@ class SkillRunner:
         client: object,
         model: str,
         provider: ProviderName | None = None,
-        search_mode: SearchMode = "rest",
         rest_memory: RestMemoryProtocol | None = None,
-        direct_memory: object | None = None,
-        direct_search_extra_kwargs: dict[str, object] | None = None,
         max_turns: int = 10,
         search_limit: int = 20,
         expand_context: int = 0,
@@ -223,14 +219,7 @@ class SkillRunner:
             )
         self._client = client
         self._model = model
-        self._search_mode = search_mode
         self._rest_memory = rest_memory
-        self._direct_memory = direct_memory
-        self._direct_search_extra_kwargs = (
-            dict(direct_search_extra_kwargs)
-            if direct_search_extra_kwargs is not None
-            else {}
-        )
         self.max_turns = max_turns
         self.search_limit = search_limit
         self.expand_context = expand_context
@@ -282,10 +271,7 @@ class SkillRunner:
             client=self._client,
             model=self._model,
             provider=self.provider,
-            search_mode=self._search_mode,
             rest_memory=self._rest_memory,
-            direct_memory=self._direct_memory,
-            direct_search_extra_kwargs=dict(self._direct_search_extra_kwargs),
             max_turns=self.max_turns,
             search_limit=self.search_limit,
             expand_context=self.expand_context,
@@ -424,7 +410,7 @@ class SkillRunner:
             return {"type": "any"}
         return None
 
-    async def _run_search(  # noqa: C901
+    async def _run_search(
         self,
         query: str,
         state: SkillLoopState | None = None,
@@ -448,48 +434,37 @@ class SkillRunner:
                 return self._tool_search_result(
                     {
                         "query": query,
+                        "episodic_memory": {
+                            "short_term_memory": {
+                                "episodes": [],
+                                "episode_summary": [],
+                            },
+                            "long_term_memory": {"episodes": []},
+                        },
+                        "semantic_memory": [],
                         "episode_summary": [],
                         "episodes": [],
                         "episodes_text": "",
+                        "semantic_text": "",
+                        "memory_text": "",
                         "count": 0,
+                        "semantic_count": 0,
+                        "total_count": 0,
                     },
                     stage_results=state.stage_results,
                 )
             self._seen_queries.add(normalized_query)
 
-        if self._search_mode == "rest":
-            if self._rest_memory is None:
-                raise RuntimeError("rest_memory is required when search_mode='rest'.")
-            search_start = time.perf_counter()
-            result = self._rest_memory.search(
-                query,
-                limit=self._current_search_limit(),
-                expand_context=self.expand_context,
-                score_threshold=self.score_threshold,
-                agent_mode=False,
-            )
-        else:
-            if self._direct_memory is None:
-                raise RuntimeError(
-                    "direct_memory is required when search_mode='direct'."
-                )
-            query_memory = getattr(self._direct_memory, "query_memory", None)
-            if not callable(query_memory):
-                raise TypeError(
-                    "direct_memory must provide an async query_memory() method."
-                )
-            search_start = time.perf_counter()
-            result = query_memory(
-                query=query,
-                limit=self._current_search_limit(),
-                expand_context=self.expand_context,
-                score_threshold=(
-                    self.score_threshold
-                    if self.score_threshold is not None
-                    else -float("inf")
-                ),
-                **self._direct_search_extra_kwargs,
-            )
+        if self._rest_memory is None:
+            raise RuntimeError("rest_memory is required for SkillRunner.")
+        search_start = time.perf_counter()
+        result = self._rest_memory.search(
+            query,
+            limit=self._current_search_limit(),
+            expand_context=self.expand_context,
+            score_threshold=self.score_threshold,
+            agent_mode=False,
+        )
         if inspect.isawaitable(result):
             result = await result
         elapsed_seconds = time.perf_counter() - search_start

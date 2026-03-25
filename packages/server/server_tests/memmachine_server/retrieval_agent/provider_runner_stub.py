@@ -4,7 +4,12 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from memmachine_common.api import MemoryType
+
+from memmachine_server.common.episode_store import Episode, EpisodeResponse
 from memmachine_server.common.language_model.language_model import LanguageModel
+from memmachine_server.retrieval_agent.common.agent_api import QueryParam
+from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 
 @dataclass
@@ -90,6 +95,77 @@ class FakeOpenAIInstalledAgentModel(LanguageModel):
     ) -> tuple[str, Any, int, int]:
         _ = system_prompt, user_prompt, tools, tool_choice, max_attempts
         return "", [], 0, 0
+
+
+class FakeRestMemory:
+    def __init__(
+        self,
+        episodic_by_query: dict[str, list[Episode]] | None = None,
+        *,
+        semantic_by_query: dict[str, list[SemanticFeature]] | None = None,
+    ) -> None:
+        self._episodic_by_query = episodic_by_query or {}
+        self._semantic_by_query = semantic_by_query or {}
+        self.queries: list[str] = []
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        agent_mode: bool = False,
+    ) -> dict[str, object]:
+        _ = expand_context, score_threshold, agent_mode
+        self.queries.append(query)
+        content: dict[str, object] = {}
+
+        episodic = self._episodic_by_query.get(query, [])
+        search_limit = limit if limit is not None else len(episodic)
+        content["episodic_memory"] = {
+            "long_term_memory": {
+                "episodes": [
+                    EpisodeResponse(score=1.0, **episode.model_dump()).model_dump(
+                        mode="json"
+                    )
+                    for episode in episodic[:search_limit]
+                ]
+            },
+            "short_term_memory": {
+                "episodes": [],
+                "episode_summary": [],
+            },
+        }
+
+        semantic = self._semantic_by_query.get(query)
+        if semantic is not None:
+            content["semantic_memory"] = [
+                feature.model_dump(mode="json") for feature in semantic
+            ]
+
+        return {"content": content}
+
+
+def build_query_param(
+    *,
+    query: str,
+    rest_memory: FakeRestMemory,
+    limit: int = 5,
+    expand_context: int = 0,
+    score_threshold: float = -float("inf"),
+    session_key: str = "test-session",
+    target_memories: list[MemoryType] | None = None,
+) -> QueryParam:
+    return QueryParam(
+        query=query,
+        limit=limit,
+        expand_context=expand_context,
+        score_threshold=score_threshold,
+        session_key=session_key,
+        rest_memory=rest_memory,
+        target_memories=target_memories or [MemoryType.Episodic],
+    )
 
 
 def openai_text_response(

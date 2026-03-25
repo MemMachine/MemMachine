@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import re
 import tempfile
@@ -13,22 +14,18 @@ from pathlib import Path
 from typing import Any, cast
 
 from memmachine_common import SkillRunner, install_skill
+from memmachine_common.api import MemoryType
 from memmachine_common.skill_loop import SkillLoopContractError
 
 from memmachine_server.common.configuration.retrieval_config import (
     RetrievalAgentConf,
     RetrievalAgentSessionProvider,
 )
-from memmachine_server.common.episode_store import Episode
+from memmachine_server.common.episode_store import Episode, EpisodeResponse, EpisodeType
 from memmachine_server.common.language_model import (
     SkillLanguageModelError as AgentLanguageModelError,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
-from memmachine_server.retrieval_agent.agents.memory_search import (
-    DIRECT_MEMORY_SELECTED_AGENT,
-    DIRECT_MEMORY_SELECTED_AGENT_NAME,
-    run_direct_memory_search,
-)
 from memmachine_server.retrieval_agent.agents.runtime import (
     build_agent_request,
     fallback_for_downstream_error,
@@ -48,35 +45,35 @@ from memmachine_server.retrieval_agent.agents.types import (
 from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
+    RetrievalAgentResult,
     RetrievalAgentParams,
     rerank_episodes,
 )
+from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 DEFAULT_RETRIEVE_AGENT_SPEC = (
     Path(__file__).resolve().parent / "specs" / "top_level" / "retrieve_agent.md"
 )
 DEFAULT_SUB_AGENT_SPEC_ROOT = Path(__file__).resolve().parent / "specs" / "sub_agents"
 DEFAULT_AGENT_INSTALL_ROOT = Path(__file__).resolve().parent / "specs"
+TOOL_SELECTED_AGENT = "memmachine_search"
+TOOL_SELECTED_AGENT_NAME = "MemMachineSearch"
 
 
-class _RunnerMemoryProxy:
-    """Episodic-memory proxy that enforces server retrieval-agent search budgets."""
+class _RunnerSearchProxy:
+    """REST-style search proxy that enforces retrieval-agent tool-call budgets."""
 
     def __init__(
         self,
         *,
-        memory: EpisodicMemory,
+        memory: object,
         max_combined_calls: int,
     ) -> None:
         self._memory = memory
         self._max_combined_calls = max_combined_calls
         self.call_count = 0
 
-    @property
-    def session_key(self) -> str:
-        return self._memory.session_key
-
-    async def query_memory(self, *args: object, **kwargs: object) -> object:
+    async def search(self, *args: object, **kwargs: object) -> object:
         next_count = self.call_count + 1
         if next_count > self._max_combined_calls:
             raise AgentContractError(
@@ -97,7 +94,13 @@ class _RunnerMemoryProxy:
                 ),
             )
         self.call_count = next_count
-        return await self._memory.query_memory(*args, **kwargs)
+        search = getattr(self._memory, "search", None)
+        if not callable(search):
+            raise TypeError("rest_memory proxy requires a callable search() method.")
+        result = search(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
 
 class RetrievalAgent:
@@ -351,8 +354,6 @@ class RetrievalAgent:
     async def _build_runner(
         self,
         query: QueryParam,
-        *,
-        direct_memory: object | None = None,
     ) -> SkillRunner:
         provider, client, model_name = self._resolve_provider_runtime()
         installed_agent = await self._ensure_installed_agent()
@@ -365,12 +366,7 @@ class RetrievalAgent:
             client=client,
             model=model_name,
             provider=cast(Any, provider),
-            search_mode="direct",
-            direct_memory=direct_memory or query.memory,
-            direct_search_extra_kwargs={
-                "property_filter": query.property_filter,
-                "mode": EpisodicMemory.QueryMode.BOTH,
-            },
+            rest_memory=query.rest_memory,
             max_turns=self._spec.max_steps,
             search_limit=query.limit if query.limit > 0 else 20,
             expand_context=query.expand_context,
@@ -396,8 +392,9 @@ class RetrievalAgent:
     ) -> list[Episode]:
         if raw_result is None:
             return []
-        payload = cls._as_dict_for_episodes(raw_result)
-        long_term = cls._as_dict_for_episodes(payload.get("long_term_memory"))
+        payload = cls._search_content_from_raw_result(raw_result)
+        episodic_memory = cls._as_dict_for_episodes(payload.get("episodic_memory"))
+        long_term = cls._as_dict_for_episodes(episodic_memory.get("long_term_memory"))
         raw_episodes = long_term.get("episodes", [])
         if not isinstance(raw_episodes, list):
             return []
@@ -412,7 +409,7 @@ class RetrievalAgent:
                 Episode(
                     uid=uid,
                     content=content,
-                    session_key=query.memory.session_key,
+                    session_key=query.session_key,
                     created_at=cast(
                         datetime,
                         episode.get("created_at") or datetime.now(tz=UTC),
@@ -424,6 +421,165 @@ class RetrievalAgent:
                 )
             )
         return episodes
+
+    @classmethod
+    def _search_content_from_raw_result(cls, raw_result: object) -> dict[str, object]:
+        payload = cls._as_dict_for_episodes(raw_result)
+        content = cls._as_dict_for_episodes(payload.get("content"))
+        return content or payload
+
+    @classmethod
+    def _episodic_response_from_runner_raw_result(
+        cls,
+        raw_result: object,
+    ) -> EpisodicMemory.QueryResponse | None:
+        content = cls._search_content_from_raw_result(raw_result)
+        episodic_memory = cls._as_dict_for_episodes(content.get("episodic_memory"))
+        if not episodic_memory:
+            return None
+        return EpisodicMemory.QueryResponse.model_validate(episodic_memory)
+
+    @classmethod
+    def _semantic_memory_from_runner_raw_result(
+        cls,
+        raw_result: object,
+    ) -> list[SemanticFeature]:
+        content = cls._search_content_from_raw_result(raw_result)
+        raw_semantic = content.get("semantic_memory", [])
+        if not isinstance(raw_semantic, list):
+            return []
+        features: list[SemanticFeature] = []
+        for raw_feature in raw_semantic:
+            feature_dict = cls._as_dict_for_episodes(raw_feature)
+            if not feature_dict:
+                continue
+            features.append(SemanticFeature.model_validate(feature_dict))
+        return features
+
+    @staticmethod
+    def _episode_dedup_key(episode: Episode | EpisodeResponse) -> str:
+        if episode.uid:
+            return f"uid:{episode.uid}"
+        return f"content:{episode.content}"
+
+    @staticmethod
+    def _semantic_dedup_key(feature: SemanticFeature) -> str:
+        feature_id = feature.metadata.id
+        if isinstance(feature_id, str) and feature_id.strip():
+            return feature_id
+        return "|".join(
+            (
+                str(feature.set_id or ""),
+                feature.category,
+                feature.tag,
+                feature.feature_name,
+                feature.value,
+            )
+        )
+
+    async def _build_retrieval_result(
+        self,
+        *,
+        query: QueryParam,
+        raw_results: list[object],
+    ) -> tuple[RetrievalAgentResult, bool]:
+        semantic_memory: list[SemanticFeature] = []
+        seen_semantic: set[str] = set()
+        short_term_episodes: list[EpisodeResponse] = []
+        short_term_seen: set[str] = set()
+        short_term_summary: list[str] = []
+        short_term_summary_seen: set[str] = set()
+        long_term_episodes: list[EpisodeResponse] = []
+        long_term_seen: set[str] = set()
+
+        for raw_result in raw_results:
+            episodic_response = self._episodic_response_from_runner_raw_result(raw_result)
+            if episodic_response is not None:
+                for line in episodic_response.short_term_memory.episode_summary:
+                    stripped = line.strip()
+                    if stripped and stripped not in short_term_summary_seen:
+                        short_term_summary_seen.add(stripped)
+                        short_term_summary.append(stripped)
+                for episode in episodic_response.short_term_memory.episodes:
+                    dedup_key = self._episode_dedup_key(episode)
+                    if dedup_key in short_term_seen:
+                        continue
+                    short_term_seen.add(dedup_key)
+                    short_term_episodes.append(episode)
+                for episode in episodic_response.long_term_memory.episodes:
+                    dedup_key = self._episode_dedup_key(episode)
+                    if dedup_key in long_term_seen:
+                        continue
+                    long_term_seen.add(dedup_key)
+                    long_term_episodes.append(episode)
+
+            for feature in self._semantic_memory_from_runner_raw_result(raw_result):
+                dedup_key = self._semantic_dedup_key(feature)
+                if dedup_key in seen_semantic:
+                    continue
+                seen_semantic.add(dedup_key)
+                semantic_memory.append(feature)
+
+        rerank_applied = False
+        reranked_long_term = long_term_episodes
+        if long_term_episodes:
+            rerank_candidates = [
+                Episode(
+                    uid=episode.uid,
+                    content=episode.content,
+                    session_key=query.session_key,
+                    created_at=cast(
+                        datetime,
+                        episode.created_at or datetime.now(tz=UTC),
+                    ),
+                    producer_id=episode.producer_id,
+                    producer_role=episode.producer_role,
+                    produced_for_id=episode.produced_for_id,
+                    episode_type=episode.episode_type or EpisodeType.MESSAGE,
+                    metadata=episode.metadata,
+                )
+                for episode in long_term_episodes
+            ]
+            reranked_episodes, rerank_applied = await self._finalize_episodes(
+                query=query,
+                episodes=rerank_candidates,
+            )
+            reranked_long_term = [
+                EpisodeResponse(
+                    uid=episode.uid,
+                    content=episode.content,
+                    created_at=episode.created_at,
+                    producer_id=episode.producer_id,
+                    producer_role=episode.producer_role,
+                    produced_for_id=episode.produced_for_id,
+                    episode_type=episode.episode_type,
+                    metadata=episode.metadata,
+                    score=1.0,
+                )
+                for episode in reranked_episodes
+            ]
+
+        episodic_memory = None
+        if MemoryType.Episodic in query.target_memories:
+            episodic_memory = EpisodicMemory.QueryResponse(
+                long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                    episodes=reranked_long_term,
+                ),
+                short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                    episodes=short_term_episodes,
+                    episode_summary=short_term_summary,
+                ),
+            )
+
+        return (
+            RetrievalAgentResult(
+                episodic_memory=episodic_memory,
+                semantic_memory=(
+                    semantic_memory if MemoryType.Semantic in query.target_memories else None
+                ),
+            ),
+            rerank_applied,
+        )
 
     @staticmethod
     def _as_dict_for_episodes(raw_value: object) -> dict[str, object]:
@@ -957,7 +1113,7 @@ class RetrievalAgent:
     def _selected_agent_name_for_agent(agent_name: str) -> str:
         if agent_name == "coq":
             return "ChainOfQueryAgent"
-        return DIRECT_MEMORY_SELECTED_AGENT_NAME
+        return TOOL_SELECTED_AGENT_NAME
 
     @staticmethod
     def _response_looks_inconclusive(response: str) -> bool:
@@ -991,7 +1147,7 @@ class RetrievalAgent:
             return []
 
         created_at = datetime.now(tz=UTC)
-        session_key = query.memory.session_key
+        session_key = query.session_key
         episodes: list[Episode] = []
         for index, item in enumerate(stage_results, start=1):
             stage_query = str(item.get("query") or "").strip()
@@ -1080,46 +1236,26 @@ class RetrievalAgent:
         reason: str,
         code: str,
         aggregated_metrics: dict[str, Any] | None = None,
-    ) -> tuple[list[Episode], dict[str, object]]:
+    ) -> tuple[RetrievalAgentResult, dict[str, object]]:
         session.next_step()
         _ = policy
-        fallback_episodes, fallback_metrics = await run_direct_memory_search(query)
-        fallback_arguments: dict[str, object] = {
-            "query": query.query,
-            "rationale": f"runtime_fallback:{reason}",
-        }
-        fallback_raw_result: dict[str, object] = {
-            "query": query.query,
-            "episodes_returned": len(fallback_episodes),
-            "fallback_reason": reason,
-        }
-        if aggregated_metrics is not None:
-            raw_error = aggregated_metrics.get("error_diagnostics")
-            if isinstance(raw_error, dict):
-                fallback_raw_result["error_diagnostics"] = raw_error
-        session.record_tool_call(
-            tool_name="memmachine_search",
-            arguments=fallback_arguments,
-            status="success",
-            result_summary=f"episodes={len(fallback_episodes)}",
-            raw_result=fallback_raw_result,
-        )
         session.record_event(
             actor="top-level",
             event_type="fallback_applied",
-            detail=f"Fallback executed with reason={reason}.",
+            detail=(
+                f"Top-level retrieval session failed with reason={reason}; "
+                "returning empty combined result."
+            ),
         )
-        session.merge_episodes(fallback_episodes)
         session.finalize()
         metrics: dict[str, object] = {}
         if aggregated_metrics is not None:
             metrics.update(cast(dict[str, object], aggregated_metrics))
-        metrics.update(fallback_metrics)
         metrics["agent"] = self.agent_name
         metrics["route"] = self.agent_name
         selected_agent = metrics.get("selected_agent")
         if not isinstance(selected_agent, str) or not selected_agent.strip():
-            selected_agent = "direct_memory"
+            selected_agent = TOOL_SELECTED_AGENT
             metrics["selected_agent"] = selected_agent
         metrics["selected_agent_name"] = self._selected_agent_name_for_agent(
             selected_agent
@@ -1132,13 +1268,26 @@ class RetrievalAgent:
         metrics.setdefault("output_token", 0)
         metrics.setdefault("top_level_sufficiency_signal_seen", False)
         metrics.setdefault("top_level_is_sufficient", False)
-        final_episodes, rerank_applied = await self._finalize_episodes(
-            query=query,
-            episodes=session.merged_episodes,
-        )
-        metrics["rerank_applied"] = rerank_applied
-        metrics["final_episode_count"] = len(final_episodes)
-        return final_episodes, self._augment_metrics_with_session_state(
+        metrics["rerank_applied"] = False
+        metrics["final_episode_count"] = 0
+        return RetrievalAgentResult(
+            episodic_memory=(
+                EpisodicMemory.QueryResponse(
+                    long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                        episodes=[]
+                    ),
+                    short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                        episodes=[],
+                        episode_summary=[],
+                    ),
+                )
+                if MemoryType.Episodic in query.target_memories
+                else None
+            ),
+            semantic_memory=(
+                [] if MemoryType.Semantic in query.target_memories else None
+            ),
+        ), self._augment_metrics_with_session_state(
             metrics=metrics,
             session=session,
         )
@@ -1147,21 +1296,22 @@ class RetrievalAgent:
         self,
         policy: QueryPolicy,
         query: QueryParam,
-    ) -> tuple[list[Episode], dict[str, object]]:
+    ) -> tuple[RetrievalAgentResult, dict[str, object]]:
         route_name = self._spec.route_name
         session = self._new_session_state(query)
         aggregated_metrics: dict[str, Any] = {
             "session_call_budget_limit": self._max_combined_calls,
             "session_call_budget_consumed": 0,
         }
-        memory_proxy = _RunnerMemoryProxy(
-            memory=query.memory,
+        rest_memory_proxy = _RunnerSearchProxy(
+            memory=query.rest_memory,
             max_combined_calls=self._max_combined_calls,
         )
+        proxied_query = query.model_copy(update={"rest_memory": rest_memory_proxy})
 
         try:
             _ = build_agent_request(query, route_name=route_name)
-            runner = await self._build_runner(query, direct_memory=memory_proxy)
+            runner = await self._build_runner(proxied_query)
             partial_response_text = (
                 "Partial result: memmachine_search loop reached max_turns."
             )
@@ -1169,17 +1319,18 @@ class RetrievalAgent:
             async with asyncio.timeout(float(self._global_timeout_seconds)):
                 raw_final_response = (await runner.run(query.query)).strip()
                 if runner.last_memory_search_called == 0:
-                    session.record_event(
-                        actor="top-level",
-                        event_type="default_memmachine_search",
-                        detail=(
-                            "No function calls returned; performed direct memory search."
+                    raise self._contract_error(
+                        why=(
+                            "Top-level retrieval session returned final text without a "
+                            "memmachine_search tool call."
                         ),
+                        fallback_reason="missing_tool_call",
                     )
-                    await runner.search(query.query)
             retrieval_duration = time.perf_counter() - retrieval_started
 
-            aggregated_metrics["session_call_budget_consumed"] = memory_proxy.call_count
+            aggregated_metrics["session_call_budget_consumed"] = (
+                rest_memory_proxy.call_count
+            )
             aggregated_metrics["memory_search_called"] = runner.last_memory_search_called
             aggregated_metrics["memory_search_latency_seconds"] = list(
                 runner.last_memory_search_latency_seconds
@@ -1211,9 +1362,9 @@ class RetrievalAgent:
             aggregated_metrics["top_level_output_token"] = aggregated_metrics[
                 "output_token"
             ]
-            aggregated_metrics["selected_route"] = DIRECT_MEMORY_SELECTED_AGENT
-            aggregated_metrics["selected_agent"] = DIRECT_MEMORY_SELECTED_AGENT
-            aggregated_metrics["selected_agent_name"] = DIRECT_MEMORY_SELECTED_AGENT_NAME
+            aggregated_metrics["selected_route"] = TOOL_SELECTED_AGENT
+            aggregated_metrics["selected_agent"] = TOOL_SELECTED_AGENT
+            aggregated_metrics["selected_agent_name"] = TOOL_SELECTED_AGENT_NAME
             if runner.last_stage_results:
                 aggregated_metrics["stage_results"] = list(runner.last_stage_results)
                 aggregated_metrics["latest_stage_results"] = list(
@@ -1239,11 +1390,21 @@ class RetrievalAgent:
                     raw_result=raw_result,
                 )
                 session.merge_episodes(episodes)
+                semantic_count = len(
+                    self._semantic_memory_from_runner_raw_result(raw_result)
+                )
                 trace_payload: dict[str, object] = {
-                    "episodes_returned": int(payload.get("count", 0)),
+                    "episodic_count": int(payload.get("count", 0)),
+                    "semantic_count": semantic_count,
+                    "total_count": int(
+                        payload.get(
+                            "total_count",
+                            int(payload.get("count", 0)) + semantic_count,
+                        )
+                    ),
                     "query": payload.get("query", query.query),
-                    "episodes_human_readable": str(
-                        payload.get("episodes_text", "")
+                    "memory_human_readable": str(
+                        payload.get("memory_text", payload.get("episodes_text", ""))
                     ).splitlines(),
                     "wall_time_seconds": elapsed_seconds,
                     "reported_memory_retrieval_time": elapsed_seconds,
@@ -1254,7 +1415,8 @@ class RetrievalAgent:
                     arguments={"query": payload.get("query", query.query)},
                     status="success",
                     result_summary=(
-                        f"episodes={int(payload.get('count', 0))}"
+                        "episodic="
+                        f"{int(payload.get('count', 0))}; semantic={semantic_count}"
                     ),
                     raw_result=self._sanitize_tool_raw_result(trace_payload),
                 )
@@ -1263,7 +1425,8 @@ class RetrievalAgent:
                     event_type="memmachine_search_completed",
                     detail=(
                         f"step={session.current_step}; "
-                        f"episodes={int(payload.get('count', 0))}"
+                        f"episodic={int(payload.get('count', 0))}; "
+                        f"semantic={semantic_count}"
                     ),
                 )
 
@@ -1301,14 +1464,18 @@ class RetrievalAgent:
             metrics.setdefault("branch_success_count", 0)
             metrics.setdefault("branch_failure_count", 0)
             metrics.setdefault("branch_retry_count", 0)
-            final_episodes, rerank_applied = await self._finalize_episodes(
+            agent_result, rerank_applied = await self._build_retrieval_result(
                 query=query,
-                episodes=session.merged_episodes,
+                raw_results=runner.last_raw_search_results,
             )
             metrics["stage_result_memory_returned"] = False
             metrics["rerank_applied"] = rerank_applied
-            metrics["final_episode_count"] = len(final_episodes)
-            return final_episodes, self._augment_metrics_with_session_state(
+            metrics["final_episode_count"] = (
+                len(agent_result.episodic_memory.long_term_memory.episodes)
+                if agent_result.episodic_memory is not None
+                else 0
+            )
+            return agent_result, self._augment_metrics_with_session_state(
                 metrics=metrics,
                 session=session,
             )

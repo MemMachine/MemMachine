@@ -78,6 +78,7 @@ async def run_wiki(
     length: int | None = None,
     model_name: str = "gpt-5.2",
     runner_kwargs: dict | None = None,
+    session_id: str = "group1",
 ) -> tuple[str, dict[str, Any]]:
     if data_path is not None:
         _data_path = data_path
@@ -105,12 +106,19 @@ async def run_wiki(
             help="Testing with retrieval_skill or pure llm",
             choices=["retrieval_skill", "llm"],
         )
+        parser.add_argument(
+            "--session-id",
+            required=False,
+            default="group1",
+            help="Evaluation session/project identifier for REST-backed runs",
+        )
 
         args = parser.parse_args()
         _data_path = dpath or args.data_path
         _eval_result_path = epath or args.eval_result_path
         _length = args.length
         _test_target = args.test_target
+        session_id = args.session_id
 
     print("Starting WikiMultiHop test...")
     print(f"Data path: {_data_path}")
@@ -130,7 +138,7 @@ async def run_wiki(
     )
     _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
-        session_id="group1",  # Wikimultihop dataset does not have session concept
+        session_id=session_id,
         model_name=model_name,
         runner_config=effective_runner_kwargs,
         build_runner=_test_target == "retrieval_skill",
@@ -148,6 +156,7 @@ async def run_wiki(
     attribute_matrix = skill_utils.init_attribute_matrix()
     full_content = "\n".join(contexts)
     num_processed = 0
+    question_batch_size = 2 if _test_target == "retrieval_skill" else 25
     for q, a, t, f_list in zip(
         questions, answers, types, supporting_facts, strict=True
     ):
@@ -166,7 +175,7 @@ async def run_wiki(
             )
         )
 
-        if len(tasks) % 25 == 0 or (q == questions[-1]):
+        if len(tasks) % question_batch_size == 0 or (q == questions[-1]):
             responses = await asyncio.gather(*tasks)
             tasks = []
             skill_utils.update_results(responses, attribute_matrix, results)

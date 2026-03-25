@@ -46,14 +46,22 @@ def build_agent_request(query: QueryParam, *, route_name: str) -> AgentRequestV1
 
 def _normalize_result_from_tuple(raw_result: object, *, route_name: str) -> object:
     if isinstance(raw_result, tuple) and len(raw_result) == 2:
-        episodes, perf_metrics = raw_result
-        return {
+        retrieval_result, perf_metrics = raw_result
+        normalized: dict[str, object] = {
             "version": AGENT_CONTRACT_VERSION_V1,
             "route_name": route_name,
-            "episodes": episodes,
             "perf_metrics": perf_metrics,
             "fallback_trigger_reason": None,
         }
+        model_dump = getattr(retrieval_result, "model_dump", None)
+        if callable(model_dump):
+            payload = model_dump(mode="json")
+            if isinstance(payload, dict):
+                normalized.update(payload)
+                return normalized
+        if isinstance(retrieval_result, dict):
+            normalized.update(retrieval_result)
+            return normalized
     return raw_result
 
 

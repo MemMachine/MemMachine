@@ -41,12 +41,9 @@ class _FakeAnthropicClient:
 
 
 class _FakeRestMemory:
-    def __init__(self) -> None:
+    def __init__(self, result: dict[str, object] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
-
-    def search(self, query: str, **kwargs):
-        self.calls.append({"query": query, **kwargs})
-        return {
+        self._result = result or {
             "content": {
                 "episodic_memory": {
                     "short_term_memory": {
@@ -60,22 +57,9 @@ class _FakeRestMemory:
             }
         }
 
-
-class _FakeDirectMemory:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    async def query_memory(self, query: str, **kwargs):
+    def search(self, query: str, **kwargs):
         self.calls.append({"query": query, **kwargs})
-        return {
-            "short_term_memory": {
-                "episodes": [{"uid": "s1", "content": "short direct memory"}],
-                "episode_summary": ["direct summary"],
-            },
-            "long_term_memory": {
-                "episodes": [{"uid": "l1", "content": "long direct memory"}]
-            },
-        }
+        return self._result
 
 
 def _skill(provider: str = "openai") -> Skill:
@@ -92,7 +76,6 @@ def test_skill_messages_openai_uses_input_file_blocks():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
     )
 
@@ -110,8 +93,7 @@ def test_skill_messages_anthropic_uses_document_blocks():
         _skill("anthropic"),
         client=_FakeAnthropicClient(),
         model="claude-sonnet",
-        search_mode="direct",
-        direct_memory=_FakeDirectMemory(),
+        rest_memory=_FakeRestMemory(),
     )
 
     messages = runner.skill_messages("Where is the answer?", system_prompt="system")
@@ -128,15 +110,13 @@ def test_tools_are_provider_specific():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
     )
     anthropic_runner = SkillRunner(
         _skill("anthropic"),
         client=_FakeAnthropicClient(),
         model="claude-sonnet",
-        search_mode="direct",
-        direct_memory=_FakeDirectMemory(),
+        rest_memory=_FakeRestMemory(),
     )
 
     openai_tool = openai_runner.tools()[0]
@@ -158,7 +138,6 @@ async def test_handle_tool_loop_openai_rest_mode_uses_previous_response_id():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
     )
 
@@ -198,19 +177,32 @@ async def test_handle_tool_loop_openai_rest_mode_uses_previous_response_id():
 
 
 @pytest.mark.asyncio
-async def test_handle_tool_loop_anthropic_direct_mode_rebuilds_messages():
+async def test_handle_tool_loop_anthropic_rest_mode_rebuilds_messages():
     client = _FakeAnthropicClient(
         follow_up_responses=[
             {"content": [{"type": "text", "text": "Final answer"}]}
         ]
     )
-    memory = _FakeDirectMemory()
+    memory = _FakeRestMemory(
+        {
+            "content": {
+                "episodic_memory": {
+                    "short_term_memory": {
+                        "episodes": [{"uid": "s1", "content": "short memory"}],
+                        "episode_summary": ["summary line"],
+                    },
+                    "long_term_memory": {
+                        "episodes": [{"uid": "l1", "content": "long memory"}]
+                    },
+                }
+            }
+        }
+    )
     runner = SkillRunner(
         _skill("anthropic"),
         client=client,
         model="claude-sonnet",
-        search_mode="direct",
-        direct_memory=memory,
+        rest_memory=memory,
     )
     runner.skill_messages("Where is the answer?", system_prompt="system")
 
@@ -236,7 +228,8 @@ async def test_handle_tool_loop_anthropic_direct_mode_rebuilds_messages():
             "query": "hello",
             "limit": 20,
             "expand_context": 0,
-            "score_threshold": -float("inf"),
+            "score_threshold": None,
+            "agent_mode": False,
         }
     ]
     follow_up_call = client.messages.calls[0]
@@ -244,7 +237,7 @@ async def test_handle_tool_loop_anthropic_direct_mode_rebuilds_messages():
     assert len(follow_up_call["messages"]) == 3
     tool_result = follow_up_call["messages"][-1]["content"][0]
     assert tool_result["type"] == "tool_result"
-    assert "short direct memory" in tool_result["content"]
+    assert "short memory" in tool_result["content"]
 
 
 @pytest.mark.asyncio
@@ -254,7 +247,6 @@ async def test_handle_tool_loop_returns_partial_on_max_turns():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
         max_turns=1,
     )
@@ -332,7 +324,6 @@ async def test_adaptive_search_limit():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         adaptive_search_limit={"initial": 3, "escalated": 15},
     )
@@ -362,7 +353,6 @@ def test_fork_copies_configuration_but_resets_state():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
         search_limit=7,
         expand_context=2,
@@ -417,7 +407,6 @@ async def test_run_search_records_latency():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_SlowRestMemory(),
     )
 
@@ -441,7 +430,6 @@ async def test_max_episode_chars():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         max_episode_chars=5,
     )
@@ -467,7 +455,6 @@ async def test_client_side_score_threshold():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         score_threshold=0.7,
     )
@@ -503,7 +490,6 @@ async def test_early_exit_on_high_confidence():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         early_exit_confidence=True,
     )
@@ -557,7 +543,6 @@ async def test_query_deduplication():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         query_dedup=True,
     )
@@ -610,7 +595,6 @@ async def test_query_dedup_disabled_by_default():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
     )
 
@@ -662,7 +646,6 @@ async def test_dedup_does_not_escalate():
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         adaptive_search_limit={"initial": 3, "escalated": 15},
         query_dedup=True,
@@ -692,7 +675,6 @@ def test_stage_result_mode_appends_guidance_to_prompt():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
         stage_result_mode=True,
     )
@@ -724,7 +706,6 @@ async def test_stage_result_mode_records_stage_progress_and_cleans_final_answer(
         _skill("openai"),
         client=client,
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
         stage_result_mode=True,
     )
@@ -764,7 +745,6 @@ def test_normalize_search_result_includes_stage_result_memory():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=memory,
         stage_result_mode=True,
     )
@@ -798,7 +778,6 @@ async def test_run_search_omits_episode_text_when_stage_result_is_confident():
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
         stage_result_mode=True,
         omit_episode_text_on_confident_stage_result=True,
@@ -833,7 +812,6 @@ async def test_run_search_keeps_episode_text_when_stage_result_is_not_confident(
         _skill("openai"),
         client=_FakeOpenAIClient(),
         model="gpt-5-mini",
-        search_mode="rest",
         rest_memory=_FakeRestMemory(),
         stage_result_mode=True,
         omit_episode_text_on_confident_stage_result=True,

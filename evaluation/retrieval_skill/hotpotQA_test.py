@@ -8,15 +8,13 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
 
 from dotenv import load_dotenv
+from memmachine_common.api.spec import MemoryMessage
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
-
-from memmachine_server.common.episode_store import Episode  # noqa: E402
 
 from evaluation.utils import skill_utils  # noqa: E402
 
@@ -59,21 +57,14 @@ Question: {question}
 """
 
 
-async def hotpotqa_ingest(dataset: list[dict[str, any]]):
+async def hotpotqa_ingest(
+    dataset: list[dict[str, any]],
+    *,
+    session_id: str = "hotpotqa_group",
+):
     t1 = datetime.now(UTC)
     added_content = 0
     per_batch = 1000
-
-    vector_graph_store = skill_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-
-    # Notice that the index of items must align between ingestion and search
-    memory, _, _ = await skill_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
-        session_id="hotpotqa_group",
-        build_runner=False,
-    )
 
     all_content = []
     for data in dataset:
@@ -86,30 +77,33 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]]):
 
     # Fully randomize contents
     random.shuffle(all_content)
-    episodes = []
+    messages: list[MemoryMessage] = []
     for sent in all_content:
         added_content += 1
         ts = t1 + timedelta(minutes=added_content)
-        episodes.append(
-            Episode(
-                uid=str(uuid4()),
+        messages.append(
+            MemoryMessage(
                 content=sent,
-                session_key="hotpotqa_group",
-                created_at=ts,
-                producer_id="user",
-                producer_role="user",
+                producer="user",
+                role="user",
+                timestamp=ts,
+                metadata={"session_id": session_id},
             )
         )
         if added_content % per_batch == 0 or sent == all_content[-1]:
-            print(f"Adding batch of {len(episodes)} episodes...")
+            print(f"Adding batch of {len(messages)} memories...")
             t = time.perf_counter()
-            await memory.add_memory_episodes(episodes=episodes)
+            await skill_utils.add_messages_via_rest(
+                session_id=session_id,
+                messages=messages,
+                batch_size=per_batch,
+            )
             print(
-                f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
+                f"Gathered and added {len(messages)} memories in {(time.perf_counter() - t):.3f}s"
             )
             print(f"Total added episodes: {added_content}")
             print(f"Total episodes processed: {added_content}/{len(all_content)}")
-            episodes = []
+            messages = []
     print(
         f"Completed HotpotQA ingestion, added {len(dataset)} questions, {added_content} episodes."
     )
@@ -122,6 +116,7 @@ async def hotpotqa_search(
     result_path: Path | str | None = None,
     length: int | None = None,
     runner_kwargs: dict | None = None,
+    session_id: str = "hotpotqa_group",
 ):
     if dataset is None:
         _length = length or 100
@@ -141,13 +136,14 @@ async def hotpotqa_search(
     attribute_matrix = skill_utils.init_attribute_matrix()
     responses: list[tuple[int, dict[str, any]]] = []
     num_searched = 0
+    question_batch_size = 2 if not pure_llm else 30
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
     _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         model_name="gpt-5-mini",
-        session_id="hotpotqa_group",
+        session_id=session_id,
         runner_config=effective_runner_kwargs,
         build_runner=not pure_llm,
     )
@@ -186,7 +182,7 @@ async def hotpotqa_search(
             )
         )
 
-        if len(tasks) % 30 == 0 or data == dataset[-1]:
+        if len(tasks) % question_batch_size == 0 or data == dataset[-1]:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
@@ -250,12 +246,18 @@ async def main():
         help="Testing with retrieval_skill or pure llm",
         choices=["retrieval_skill", "llm"],
     )
+    parser.add_argument(
+        "--session-id",
+        required=False,
+        default="hotpotqa_group",
+        help="Evaluation session/project identifier for REST-backed runs",
+    )
     args = parser.parse_args()
 
     dataset = load_hotpotqa_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
-        await hotpotqa_ingest(dataset)
+        await hotpotqa_ingest(dataset, session_id=args.session_id)
     elif args.run_type == "search":
         print("Starting HotpotQA test...")
         print(f"Evaluation result path: {args.eval_result_path}")
@@ -267,6 +269,7 @@ async def main():
             dataset,
             args.eval_result_path,
             args.test_target == "llm",
+            session_id=args.session_id,
         )
     else:
         raise ValueError(
