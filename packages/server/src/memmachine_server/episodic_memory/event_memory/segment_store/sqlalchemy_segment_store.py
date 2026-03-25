@@ -7,8 +7,8 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal, cast, override
-from uuid import UUID, uuid4
+from typing import Any, cast, override
+from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
 from sqlalchemy import (
@@ -20,7 +20,6 @@ from sqlalchemy import (
     String,
     Uuid,
     and_,
-    case,
     delete,
     func,
     insert,
@@ -32,7 +31,6 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.engine.cursor import CursorResult
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -62,7 +60,6 @@ from memmachine_server.episodic_memory.extra_memory.data_types import (
     Segment,
 )
 from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store import (
-    DerivativeNotActiveError,
     SegmentLinker,
     SegmentLinkerPartition,
 )
@@ -83,14 +80,6 @@ class DerivativeState(StrEnum):
 
     ACTIVE = "A"
     PURGING = "P"
-
-
-class DeletionJobStatus(StrEnum):
-    """Lifecycle status of a deletion job."""
-
-    QUEUED = "Q"
-    ADDING = "A"
-    STAGED = "S"
 
 
 # ORM models
@@ -127,7 +116,6 @@ class SegmentRow(BaseSegmentLinker):
     created_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    deletion_job_uuid: MappedColumn[UUID | None] = mapped_column(Uuid, nullable=True)
 
     __table_args__ = (
         Index(
@@ -147,10 +135,6 @@ class SegmentRow(BaseSegmentLinker):
             "segment_linker_segments__pk_ca",
             "partition_key",
             "created_at",
-        ),
-        Index(
-            "segment_linker_segments__dj",
-            "deletion_job_uuid",
         ),
     )
 
@@ -204,61 +188,12 @@ class DerivativeRow(BaseSegmentLinker):
     )
 
 
-class DeletionByEpisodes(BaseModel):
-    """Delete segments belonging to specific episodes."""
-
-    type: Literal["by_episodes"] = "by_episodes"
-    episode_uuids: list[UUID]
-
-
-class DeletionAll(BaseModel):
-    """Delete all segments in the partition."""
-
-    type: Literal["all"] = "all"
-
-
-DeletionCriteria = Annotated[
-    DeletionByEpisodes | DeletionAll, Field(discriminator="type")
-]
-_DeletionCriteriaAdapter = TypeAdapter(DeletionCriteria)
-
-
-class DeletionJobRow(BaseSegmentLinker):
-    """A deletion job that logically marks segments for deletion."""
-
-    __tablename__ = "segment_linker_deletion_jobs"
-
-    partition_key: MappedColumn[str] = mapped_column(String, nullable=False)
-
-    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    status: MappedColumn[str] = mapped_column(
-        String(1), nullable=False, server_default=literal(str(DeletionJobStatus.QUEUED))
-    )
-    created_at: MappedColumn[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    criteria: MappedColumn[dict[str, JsonValue]] = mapped_column(
-        _JSON_AUTO, nullable=False
-    )
-
-    __table_args__ = (
-        Index(
-            "segment_linker_deletion_jobs__pk_st_ca",
-            "partition_key",
-            "status",
-            "created_at",
-        ),
-    )
-
-
 class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     """SQLAlchemy-backed partition handle."""
 
     def __init__(
         self,
         partition_key: str,
-        deletion_batch_size: int,
-        deletion_interval: float | None,
         create_session: async_sessionmaker[AsyncSession],
         write_lock: asyncio.Lock | None = None,
     ) -> None:
@@ -267,51 +202,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         self._create_session = create_session
         self._write_lock = write_lock
 
-        self._deletion_batch_size = deletion_batch_size
-        self._deletion_interval = deletion_interval
-        self._deletion_task: asyncio.Task[None] | None = None
-        self._shutdown_event = asyncio.Event()
-
     def _sqlite_write_lock(self) -> AbstractAsyncContextManager[None]:
         """Return the write lock if configured (SQLite), otherwise a no-op."""
         if self._write_lock is not None:
             return self._write_lock
         return nullcontext()
-
-    @override
-    async def startup(self) -> None:
-        if self._deletion_interval is not None:
-            self._shutdown_event.clear()
-            self._deletion_task = asyncio.create_task(
-                self._deletion_finalization_loop()
-            )
-
-    @override
-    async def shutdown(self) -> None:
-        if self._deletion_task is not None:
-            self._shutdown_event.set()
-            await self._deletion_task
-            self._deletion_task = None
-
-    async def _deletion_finalization_loop(self) -> None:
-        """Periodically finalize staged deletion jobs."""
-        assert self._deletion_interval is not None
-        while True:
-            try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(), timeout=self._deletion_interval
-                )
-            except TimeoutError:
-                pass
-            else:
-                # Shutdown event was set, so exit the loop.
-                return
-
-            try:
-                await self._process_one_deletion_job()
-                await self._finalize_one_staged_deletion_job()
-            except Exception:
-                logger.exception("Error during deletion processing cycle")
 
     # Registration
 
@@ -319,43 +214,39 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     async def register_segments(
         self,
         links: Mapping[Segment, Iterable[UUID]],
-        *,
-        active: Iterable[UUID] | None = None,
     ) -> None:
         links = {
             segment: set(derivative_uuids)
             for segment, derivative_uuids in links.items()
         }
-        active_derivative_uuids = set(active) if active is not None else set()
 
         all_derivative_uuids: set[UUID] = set()
         for derivative_uuids in links.values():
             all_derivative_uuids.update(derivative_uuids)
-
-        new_derivative_uuids = all_derivative_uuids - active_derivative_uuids
 
         async with (
             self._sqlite_write_lock(),
             self._create_session() as session,
             session.begin(),
         ):
+            # Find existing derivatives to distinguish new from existing.
+            existing_derivative_uuids: set[UUID] = set()
             orphaned_derivative_uuids: set[UUID] = set()
-            if active_derivative_uuids:
-                lock_statement = (
-                    select(DerivativeRow)
-                    .where(DerivativeRow.uuid.in_(active_derivative_uuids))
+            if all_derivative_uuids:
+                existing_query = (
+                    select(DerivativeRow.uuid, DerivativeRow.owner_segment_uuid)
+                    .where(DerivativeRow.uuid.in_(all_derivative_uuids))
                     .order_by(DerivativeRow.uuid)
                 )
                 if session.bind.dialect.name != "sqlite":
-                    lock_statement = lock_statement.with_for_update()
-                locked_rows = list(
-                    (await session.execute(lock_statement)).scalars().all()
-                )
-                self._validate_active_derivatives(active_derivative_uuids, locked_rows)
+                    existing_query = existing_query.with_for_update()
+                existing_rows = (await session.execute(existing_query)).all()
+                for row in existing_rows:
+                    existing_derivative_uuids.add(row.uuid)
+                    if row.owner_segment_uuid is None:
+                        orphaned_derivative_uuids.add(row.uuid)
 
-                orphaned_derivative_uuids = {
-                    row.uuid for row in locked_rows if row.owner_segment_uuid is None
-                }
+            new_derivative_uuids = all_derivative_uuids - existing_derivative_uuids
 
             new_derivative_owner_uuids, orphaned_derivative_owner_uuids = (
                 self._assign_owners(
@@ -529,11 +420,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             )
 
         async with self._create_session() as session:
-            not_deleted_filter = self._build_not_deleted_filter(self._partition_key)
-            segments_by_derivatives_query = segments_by_derivatives_query.where(
-                not_deleted_filter
-            )
-
             segment_rows = (await session.execute(segments_by_derivatives_query)).all()
 
         segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
@@ -616,11 +502,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             )
 
         async with self._create_session() as session:
-            not_deleted_filter = self._build_not_deleted_filter(self._partition_key)
-            numbered_derivative_segments_query = (
-                numbered_derivative_segments_query.where(not_deleted_filter)
-            )
-
             numbered_derivative_segments_subquery = (
                 numbered_derivative_segments_query.subquery()
             )
@@ -680,8 +561,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             return {}
 
         async with self._create_session() as session:
-            not_deleted_filter = self._build_not_deleted_filter(self._partition_key)
-
             seed_segments_query = select(SegmentRow).where(
                 SegmentRow.uuid.in_(seed_segment_uuids),
                 SegmentRow.partition_key == self._partition_key,
@@ -692,7 +571,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                         property_filter
                     )
                 )
-            seed_segments_query = seed_segments_query.where(not_deleted_filter)
             seed_segment_rows = (
                 (await session.execute(seed_segments_query)).scalars().all()
             )
@@ -722,7 +600,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     max_backward_segments,
                     max_forward_segments,
                     property_filter,
-                    not_deleted_filter,
                 )
             else:
                 context_rows_by_seed = await self._get_context_rows_loop(
@@ -731,7 +608,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     max_backward_segments,
                     max_forward_segments,
                     property_filter,
-                    not_deleted_filter,
                 )
 
             # Assemble results: [backward (reversed) + seed + forward].
@@ -754,7 +630,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         max_backward_segments: int,
         max_forward_segments: int,
         property_filter: FilterExpr | None,
-        not_deleted_filter: ColumnElement[bool],
     ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
         """Get backward/forward context using LATERAL joins (non-SQLite)."""
         seeds_subquery = (
@@ -804,7 +679,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                         property_filter
                     )
                 )
-            context_rows_query = context_rows_query.where(not_deleted_filter)
             lateral_subquery = context_rows_query.subquery().lateral("context")
 
             # Join each seed to its context rows via the LATERAL subquery.
@@ -883,7 +757,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         max_backward_segments: int,
         max_forward_segments: int,
         property_filter: FilterExpr | None,
-        not_deleted_filter: ColumnElement[bool],
     ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
         """Get backward/forward context per seed (SQLite fallback)."""
         context_rows_by_seed: dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]] = {}
@@ -929,7 +802,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     backward_rows_query = backward_rows_query.where(
                         compiled_property_filter
                     )
-                backward_rows_query = backward_rows_query.where(not_deleted_filter)
                 backward_rows = list(
                     (await session.execute(backward_rows_query)).scalars().all()
                 )
@@ -954,7 +826,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     forward_rows_query = forward_rows_query.where(
                         compiled_property_filter
                     )
-                forward_rows_query = forward_rows_query.where(not_deleted_filter)
                 forward_rows = list(
                     (await session.execute(forward_rows_query)).scalars().all()
                 )
@@ -973,294 +844,71 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         episode_uuids = set(episode_uuids)
         if not episode_uuids:
             return
-        job_uuid = uuid4()
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            await session.execute(
-                insert(DeletionJobRow).values(
-                    uuid=job_uuid,
-                    partition_key=self._partition_key,
-                    created_at=func.now(),
-                    status=DeletionJobStatus.QUEUED,
-                    criteria=DeletionByEpisodes(
-                        episode_uuids=list(episode_uuids)
-                    ).model_dump(mode="json"),
-                )
-            )
-        await self._process_deletion_jobs_through(job_uuid)
-
-    @override
-    async def delete_all_segments(self) -> None:
-        job_uuid = uuid4()
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            await session.execute(
-                insert(DeletionJobRow).values(
-                    uuid=job_uuid,
-                    partition_key=self._partition_key,
-                    created_at=func.now(),
-                    status=DeletionJobStatus.QUEUED,
-                    criteria=DeletionAll().model_dump(mode="json"),
-                )
-            )
-        await self._process_deletion_jobs_through(job_uuid)
-
-    async def _process_deletion_jobs_through(self, target_job_uuid: UUID) -> None:
-        """Process ADDING/QUEUED jobs up to and including the target job."""
-        async with self._create_session() as session:
-            target = (
-                await session.execute(
-                    select(DeletionJobRow.created_at).where(
-                        DeletionJobRow.uuid == target_job_uuid
-                    )
-                )
-            ).scalar_one()
-
-        while True:
-            deletion_job = await self._get_adding_or_queued_deletion_job(
-                created_at_lte=target
-            )
-            if deletion_job is None:
-                break
-            await self._stage_deletion_job(deletion_job)
-            if deletion_job.uuid == target_job_uuid:
-                break
-
-    async def _process_one_deletion_job(self) -> None:
-        """Process one ADDING/QUEUED job if any exists."""
-        deletion_job = await self._get_adding_or_queued_deletion_job()
-        if deletion_job is not None:
-            await self._stage_deletion_job(deletion_job)
-
-    async def _stage_deletion_job(self, deletion_job: DeletionJobRow) -> None:
-        """Stamp all matching segments, reassign owners, and mark job STAGED."""
-        while True:
-            stamped = await self._stamp_batch_for_deletion_job(deletion_job)
-            if stamped <= 0:
-                break
-
-        await self._reassign_owners_for_deletion_job(deletion_job)
 
         async with (
             self._sqlite_write_lock(),
             self._create_session() as session,
             session.begin(),
         ):
+            # Reassign derivative owners away from segments being deleted.
+            await self._reassign_derivative_owner_segments_for_episodes(
+                session, episode_uuids
+            )
+
+            # Delete segments (cascades to links via FK).
             await session.execute(
-                update(DeletionJobRow)
-                .where(
-                    DeletionJobRow.uuid == deletion_job.uuid,
-                    DeletionJobRow.status != DeletionJobStatus.STAGED,
+                delete(SegmentRow).where(
+                    SegmentRow.partition_key == self._partition_key,
+                    SegmentRow.episode_uuid.in_(episode_uuids),
                 )
-                .values(status=DeletionJobStatus.STAGED)
             )
 
-    async def _finalize_one_staged_deletion_job(self) -> None:
-        """Finally delete segments for one STAGED job and remove the job row."""
-        deletion_job = await self._get_staged_deletion_job()
-        if deletion_job is None:
-            return
-
-        while True:
-            deleted = await self._delete_stamped_batch_for_deletion_job(deletion_job)
-            if deleted <= 0:
-                break
-
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            await session.execute(
-                delete(DeletionJobRow).where(DeletionJobRow.uuid == deletion_job.uuid)
-            )
-
-    async def _get_adding_or_queued_deletion_job(
+    async def _reassign_derivative_owner_segments_for_episodes(
         self,
-        *,
-        created_at_lte: datetime | None = None,
-    ) -> DeletionJobRow | None:
-        """Find the next ADDING/QUEUED job, prioritizing ADDING over QUEUED."""
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            conditions: list[ColumnElement[bool]] = [
-                DeletionJobRow.partition_key == self._partition_key,
-                DeletionJobRow.status.in_(
-                    [DeletionJobStatus.ADDING, DeletionJobStatus.QUEUED]
-                ),
-            ]
-            if created_at_lte is not None:
-                conditions.append(DeletionJobRow.created_at <= created_at_lte)
-
-            adding_status_first = case(
-                (DeletionJobRow.status == DeletionJobStatus.ADDING, 0),
-                else_=1,
-            )
-
-            next_deletion_job_query = (
-                select(DeletionJobRow)
-                .where(*conditions)
-                .order_by(
-                    adding_status_first,
-                    DeletionJobRow.created_at,
-                    DeletionJobRow.uuid,
-                )
-                .limit(1)
-            )
-            if session.bind.dialect.name != "sqlite":
-                next_deletion_job_query = next_deletion_job_query.with_for_update()
-            next_deletion_job = (
-                (await session.execute(next_deletion_job_query)).scalars().first()
-            )
-            if (
-                next_deletion_job is not None
-                and next_deletion_job.status == DeletionJobStatus.QUEUED
-            ):
-                await session.execute(
-                    update(DeletionJobRow)
-                    .where(
-                        DeletionJobRow.uuid == next_deletion_job.uuid,
-                        DeletionJobRow.status == DeletionJobStatus.QUEUED,
-                    )
-                    .values(status=DeletionJobStatus.ADDING)
-                )
-                next_deletion_job.status = DeletionJobStatus.ADDING
-            return next_deletion_job
-
-    async def _get_staged_deletion_job(self) -> DeletionJobRow | None:
-        """Find the next STAGED job."""
-        async with self._create_session() as session:
-            staged_deletion_job_query = (
-                select(DeletionJobRow)
-                .where(
-                    DeletionJobRow.partition_key == self._partition_key,
-                    DeletionJobRow.status == DeletionJobStatus.STAGED,
-                )
-                .order_by(DeletionJobRow.created_at, DeletionJobRow.uuid)
-                .limit(1)
-            )
-            return (await session.execute(staged_deletion_job_query)).scalars().first()
-
-    async def _stamp_batch_for_deletion_job(self, deletion_job: DeletionJobRow) -> int:
-        """Stamp a batch of segments with the job's UUID. Returns count stamped."""
-        criteria = _DeletionCriteriaAdapter.validate_python(deletion_job.criteria)
-
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            criteria_conditions: list[ColumnElement[bool]] = [
-                SegmentRow.partition_key == self._partition_key,
-                SegmentRow.created_at < deletion_job.created_at,
-                SegmentRow.deletion_job_uuid.is_(None),
-            ]
-            match criteria:
-                case DeletionByEpisodes(episode_uuids=episode_uuids):
-                    criteria_conditions.append(
-                        SegmentRow.episode_uuid.in_(episode_uuids)
-                    )
-                case DeletionAll():
-                    pass
-
-            segment_uuids_to_stamp_subquery = (
-                select(SegmentRow.uuid)
-                .where(*criteria_conditions)
-                .limit(self._deletion_batch_size)
-            )
-
-            result = cast(
-                CursorResult[Any],
-                await session.execute(
-                    update(SegmentRow)
-                    .where(SegmentRow.uuid.in_(segment_uuids_to_stamp_subquery))
-                    .values(deletion_job_uuid=deletion_job.uuid)
-                ),
-            )
-            return result.rowcount
-
-    async def _reassign_owners_for_deletion_job(
-        self, deletion_job: DeletionJobRow
+        session: AsyncSession,
+        episode_uuids: set[UUID],
     ) -> None:
-        """Reassign derivative owners away from segments stamped by this job.
+        """Reassign derivative owners away from segments belonging to the given episodes.
 
-        Finds a replacement linked segment that isn't stamped by any deletion job,
+        Finds a replacement linked segment not belonging to the deleted episodes,
         or NULLs the owner if no replacement exists.
         """
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            # Find and lock derivatives whose owner is stamped by this job.
-            lock_statement = (
-                select(DerivativeRow.uuid)
-                .join(
-                    SegmentRow,
-                    DerivativeRow.owner_segment_uuid == SegmentRow.uuid,
-                )
-                .where(SegmentRow.deletion_job_uuid == deletion_job.uuid)
-                .order_by(DerivativeRow.uuid)
+        # Find derivatives whose owner segment belongs to the episodes being deleted.
+        affected_query = (
+            select(DerivativeRow.uuid)
+            .join(
+                SegmentRow,
+                DerivativeRow.owner_segment_uuid == SegmentRow.uuid,
             )
-            if session.bind.dialect.name != "sqlite":
-                lock_statement = lock_statement.with_for_update()
-            affected_uuids = list(
-                (await session.execute(lock_statement)).scalars().all()
+            .where(
+                SegmentRow.partition_key == self._partition_key,
+                SegmentRow.episode_uuid.in_(episode_uuids),
             )
-            if not affected_uuids:
-                return
+            .order_by(DerivativeRow.uuid)
+        )
+        if session.bind.dialect.name != "sqlite":
+            affected_query = affected_query.with_for_update()
+        affected_uuids = list((await session.execute(affected_query)).scalars().all())
+        if not affected_uuids:
+            return
 
-            # Correlated subquery: pick a linked segment not stamped by any job.
-            replacement_owner_subquery = (
-                select(LinkRow.segment_uuid)
-                .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
-                .where(
-                    LinkRow.derivative_uuid == DerivativeRow.uuid,
-                    SegmentRow.deletion_job_uuid.is_(None),
-                )
-                .limit(1)
-                .correlate(DerivativeRow)
-                .scalar_subquery()
+        # Correlated subquery: pick a linked segment not in the deleted episodes.
+        replacement_owner_subquery = (
+            select(LinkRow.segment_uuid)
+            .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
+            .where(
+                LinkRow.derivative_uuid == DerivativeRow.uuid,
+                SegmentRow.episode_uuid.not_in(episode_uuids),
             )
-            await session.execute(
-                update(DerivativeRow)
-                .where(DerivativeRow.uuid.in_(affected_uuids))
-                .values(owner_segment_uuid=replacement_owner_subquery)
-            )
-
-    async def _delete_stamped_batch_for_deletion_job(
-        self, deletion_job: DeletionJobRow
-    ) -> int:
-        """Finally delete a batch of segments stamped with the job's UUID."""
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            batch = (
-                (
-                    await session.execute(
-                        select(SegmentRow.uuid)
-                        .where(SegmentRow.deletion_job_uuid == deletion_job.uuid)
-                        .limit(self._deletion_batch_size)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            if not batch:
-                return 0
-            await session.execute(delete(SegmentRow).where(SegmentRow.uuid.in_(batch)))
-            return len(batch)
+            .limit(1)
+            .correlate(DerivativeRow)
+            .scalar_subquery()
+        )
+        await session.execute(
+            update(DerivativeRow)
+            .where(DerivativeRow.uuid.in_(affected_uuids))
+            .values(owner_segment_uuid=replacement_owner_subquery)
+        )
 
     # Garbage collection
 
@@ -1338,42 +986,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             )
 
     # Helpers
-
-    def _validate_active_derivatives(
-        self,
-        active: Iterable[UUID],
-        existing: Iterable[DerivativeRow],
-    ) -> None:
-        """Validate that every UUID in `active` exists, is in ACTIVE state, and belongs to the partition."""
-        active = set(active)
-        existing_map = {row.uuid: row for row in existing}
-        not_active = {
-            derivative_uuid
-            for derivative_uuid in active
-            if (row := existing_map.get(derivative_uuid)) is None
-            or row.state == DerivativeState.PURGING
-            or row.partition_key != self._partition_key
-        }
-        if not_active:
-            raise DerivativeNotActiveError(not_active)
-
-    def _build_not_deleted_filter(
-        self,
-        partition_key: str,
-    ) -> ColumnElement[bool]:
-        """
-        Build a WHERE clause that excludes segments stamped by staged deletion jobs.
-
-        Returns a constant-size SQL filter (subquery, not inlined UUIDs).
-        """
-        stamped_jobs_subquery = select(DeletionJobRow.uuid).where(
-            DeletionJobRow.partition_key == partition_key,
-            DeletionJobRow.status == DeletionJobStatus.STAGED,
-        )
-        return or_(
-            SegmentRow.deletion_job_uuid.is_(None),
-            SegmentRow.deletion_job_uuid.not_in(stamped_jobs_subquery),
-        )
 
     @staticmethod
     def _encode_properties(
@@ -1529,22 +1141,9 @@ class SQLAlchemySegmentLinkerParams(BaseModel):
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine.
-        deletion_batch_size (int):
-            Segments deleted per batch (default: 10,000).
-        deletion_interval (float | None):
-            Seconds between deletion finalization cycles. None disables periodic finalization (default: None).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
-    deletion_batch_size: int = Field(
-        10_000,
-        description="Segments deleted per batch",
-        gt=0,
-    )
-    deletion_interval: float | None = Field(
-        None,
-        description="Seconds between deletion finalization cycles. None disables periodic finalization.",
-    )
 
 
 class SQLAlchemySegmentLinker(SegmentLinker):
@@ -1554,8 +1153,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
-        self._deletion_batch_size = params.deletion_batch_size
-        self._deletion_interval = params.deletion_interval
 
         # SQLite does not isolate transactions within a single connection.
         # https://sqlite.org/isolation.html
@@ -1572,16 +1169,21 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         pass
 
     @override
-    def get_partition(self, partition_key: str) -> SQLAlchemySegmentLinkerPartition:
-        """Get a partition-scoped handle for the given partition key."""
+    async def open_partition(
+        self, partition_key: str
+    ) -> SQLAlchemySegmentLinkerPartition:
         if self._use_write_lock:
             write_lock = self._write_locks.setdefault(partition_key, asyncio.Lock())
         else:
             write_lock = None
         return SQLAlchemySegmentLinkerPartition(
             partition_key=partition_key,
-            deletion_batch_size=self._deletion_batch_size,
-            deletion_interval=self._deletion_interval,
             create_session=self._create_session,
             write_lock=write_lock,
         )
+
+    @override
+    async def close_partition(
+        self, segment_linker_partition: SegmentLinkerPartition
+    ) -> None:
+        pass
