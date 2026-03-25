@@ -172,16 +172,85 @@ async def test_handle_tool_loop_openai_rest_mode_uses_previous_response_id():
     follow_up_call = client.responses.calls[0]
     assert follow_up_call["previous_response_id"] == "resp-1"
     tool_output = json.loads(follow_up_call["input"][0]["output"])
-    assert tool_output["episodes_text"] == "summary line\n1. short memory\n2. long memory"
+    assert (
+        tool_output["episodes_text"] == "summary line\n1. short memory\n2. long memory"
+    )
     assert "episodes" not in tool_output
+
+
+@pytest.mark.asyncio
+async def test_handle_tool_loop_openai_rest_mode_includes_semantic_memory():
+    client = _FakeOpenAIClient(
+        follow_up_responses=[
+            {"id": "resp-2", "output_text": "Final answer", "output": []}
+        ]
+    )
+    memory = _FakeRestMemory(
+        {
+            "content": {
+                "episodic_memory": {
+                    "short_term_memory": {
+                        "episodes": [],
+                        "episode_summary": [],
+                    },
+                    "long_term_memory": {"episodes": []},
+                },
+                "semantic_memory": [
+                    {
+                        "category": "profile",
+                        "tag": "food",
+                        "feature_name": "favorite_food",
+                        "value": "pizza",
+                    }
+                ],
+            }
+        }
+    )
+    runner = SkillRunner(
+        _skill("openai"),
+        client=client,
+        model="gpt-5-mini",
+        rest_memory=memory,
+    )
+
+    response = {
+        "id": "resp-1",
+        "output_text": "",
+        "output": [
+            {
+                "type": "function_call",
+                "name": "memmachine_search",
+                "arguments": json.dumps({"query": "hello"}),
+                "call_id": "call-1",
+            }
+        ],
+    }
+
+    result = await runner.handle_tool_loop(response)
+
+    assert result == "Final answer"
+    follow_up_call = client.responses.calls[0]
+    tool_output = json.loads(follow_up_call["input"][0]["output"])
+    assert tool_output["semantic_memory"] == [
+        {
+            "category": "profile",
+            "tag": "food",
+            "feature_name": "favorite_food",
+            "value": "pizza",
+        }
+    ]
+    assert tool_output["semantic_text"] == (
+        "[Semantic] profile/food | favorite_food: pizza"
+    )
+    assert tool_output["episodes_text"] == (
+        "[Semantic] profile/food | favorite_food: pizza"
+    )
 
 
 @pytest.mark.asyncio
 async def test_handle_tool_loop_anthropic_rest_mode_rebuilds_messages():
     client = _FakeAnthropicClient(
-        follow_up_responses=[
-            {"content": [{"type": "text", "text": "Final answer"}]}
-        ]
+        follow_up_responses=[{"content": [{"type": "text", "text": "Final answer"}]}]
     )
     memory = _FakeRestMemory(
         {
@@ -366,7 +435,9 @@ def test_fork_copies_configuration_but_resets_state():
         omit_episode_text_on_confident_stage_result=True,
         use_answer_prompt_template=True,
     )
-    runner.last_search_results = [{"query": "hello", "episodes_text": "cached", "count": 1}]
+    runner.last_search_results = [
+        {"query": "hello", "episodes_text": "cached", "count": 1}
+    ]
     runner.last_memory_search_called = 2
     runner.last_memory_search_latency_seconds = [0.1, 0.2]
     runner.last_stage_results = [{"query": "hello", "stage_result": "world"}]
@@ -737,6 +808,155 @@ async def test_stage_result_mode_records_stage_progress_and_cleans_final_answer(
     assert runner.last_stage_sub_queries == ["country of Paris"]
     assert runner.last_follow_up_input_tokens == 13
     assert runner.last_follow_up_output_tokens == 7
+
+
+@pytest.mark.asyncio
+async def test_stage_result_mode_reads_stage_text_from_message_blocks_when_output_text_empty():
+    client = _FakeOpenAIClient(
+        follow_up_responses=[
+            {
+                "id": "resp-2",
+                "output_text": "Paris",
+                "output": [],
+                "usage": {"input_tokens": 13, "output_tokens": 7},
+            }
+        ]
+    )
+    runner = SkillRunner(
+        _skill("openai"),
+        client=client,
+        model="gpt-5-mini",
+        rest_memory=_FakeRestMemory(),
+        stage_result_mode=True,
+    )
+
+    response = {
+        "id": "resp-1",
+        "output_text": "",
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": (
+                            "[StageResult] Query: capital of France | Answer: Paris | "
+                            "Confidence: 0.93 | Reason: explicit memory\n"
+                            "[SubQuery] country of Paris"
+                        ),
+                    }
+                ],
+            },
+            {
+                "type": "function_call",
+                "name": "memmachine_search",
+                "arguments": json.dumps({"query": "capital of France"}),
+                "call_id": "call-1",
+            },
+        ],
+    }
+
+    result = await runner.handle_tool_loop(response)
+
+    assert result == "Paris"
+    assert runner.last_stage_results == [
+        {
+            "query": "capital of France",
+            "stage_result": "Paris",
+            "confidence_score": 0.93,
+            "reason_note": "explicit memory",
+        }
+    ]
+    assert runner.last_stage_sub_queries == ["country of Paris"]
+
+
+@pytest.mark.asyncio
+async def test_run_search_canonicalizes_relation_terminal_queries():
+    memory = _FakeRestMemory()
+    runner = SkillRunner(
+        _skill("openai"),
+        client=_FakeOpenAIClient(),
+        model="gpt-5-mini",
+        rest_memory=memory,
+    )
+
+    result = await runner._run_search("Alex Carter husband died when")
+
+    assert memory.calls[0]["query"] == "Alex Carter husband"
+    assert result["query"] == "Alex Carter husband"
+    assert runner.last_search_results[0]["query"] == "Alex Carter husband"
+
+    result = await runner._run_search("Alex Carter (1919 2004) husband death")
+
+    assert memory.calls[1]["query"] == "Alex Carter (1919 2004) husband"
+    assert result["query"] == "Alex Carter (1919 2004) husband"
+
+    result = await runner._run_search("cause of death Eleanor Vale")
+
+    assert (
+        memory.calls[2]["query"] == "What was the cause of death of Eleanor Vale?"
+    )
+    assert result["query"] == "What was the cause of death of Eleanor Vale?"
+
+    result = await runner._run_search("cause of death of Eleanor Vale")
+
+    assert (
+        memory.calls[3]["query"] == "What was the cause of death of Eleanor Vale?"
+    )
+    assert result["query"] == "What was the cause of death of Eleanor Vale?"
+
+
+@pytest.mark.asyncio
+async def test_stage_result_mode_canonicalizes_stage_queries_and_subqueries():
+    client = _FakeOpenAIClient(
+        follow_up_responses=[
+            {
+                "id": "resp-2",
+                "output_text": (
+                    "[StageResult] Query: Casey Nolan born where | "
+                    "Answer: Brooklyn, New York | Confidence: 0.55 | "
+                    "Reason: partial evidence\n"
+                    "[SubQuery] Dana Brooks husband died when\n"
+                    "Brooklyn, New York"
+                ),
+                "output": [],
+                "usage": {"input_tokens": 13, "output_tokens": 7},
+            }
+        ]
+    )
+    runner = SkillRunner(
+        _skill("openai"),
+        client=client,
+        model="gpt-5-mini",
+        rest_memory=_FakeRestMemory(),
+        stage_result_mode=True,
+    )
+
+    response = {
+        "id": "resp-1",
+        "output_text": "",
+        "output": [
+            {
+                "type": "function_call",
+                "name": "memmachine_search",
+                "arguments": json.dumps({"query": "director of Thomas Jefferson"}),
+                "call_id": "call-1",
+            }
+        ],
+    }
+
+    result = await runner.handle_tool_loop(response)
+
+    assert result == "Brooklyn, New York"
+    assert runner.last_stage_results == [
+        {
+            "query": "Where was Casey Nolan born?",
+            "stage_result": "Brooklyn, New York",
+            "confidence_score": 0.55,
+            "reason_note": "partial evidence",
+        }
+    ]
+    assert runner.last_stage_sub_queries == ["Dana Brooks husband"]
 
 
 def test_normalize_search_result_includes_stage_result_memory():

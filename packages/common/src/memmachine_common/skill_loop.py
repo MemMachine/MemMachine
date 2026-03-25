@@ -20,6 +20,29 @@ _STAGE_RESULT_LINE_PATTERN = re.compile(
     r"(?:\s*\|\s*Reason:\s*(?P<reason>.+))?$"
 )
 _SUBQUERY_LINE_PATTERN = re.compile(r"^\[SubQuery(?:\s+\d+)?\]\s*(?P<query>.+)$")
+_QUERY_WHITESPACE_PATTERN = re.compile(r"\s+")
+_RELATION_ATTRIBUTE_QUERY_PATTERN = re.compile(
+    r"^(?P<entity>.+?)\s+"
+    r"(?P<relation>father|mother|husband|wife|spouse|son|daughter|child|parent|brother|sister)\s+"
+    r"(?P<attribute>born where|died when|death|death date|death cause|cause of death)$",
+    re.IGNORECASE,
+)
+_BORN_WHERE_QUERY_PATTERN = re.compile(
+    r"^(?P<entity>.+?)\s+born where(?:\s+born)?$",
+    re.IGNORECASE,
+)
+_DIED_WHEN_QUERY_PATTERN = re.compile(
+    r"^(?P<entity>.+?)\s+died when$",
+    re.IGNORECASE,
+)
+_CAUSE_OF_DEATH_QUERY_PATTERN = re.compile(
+    r"^(?P<entity>.+?)\s+(?:death cause|cause of death)(?:\s+.+)?$",
+    re.IGNORECASE,
+)
+_CAUSE_OF_DEATH_PREFIX_QUERY_PATTERN = re.compile(
+    r"^(?:what was the\s+)?cause of death(?:\s+of)?\s+(?P<entity>.+?)$",
+    re.IGNORECASE,
+)
 
 STAGE_RESULT_GUIDANCE = (
     "If you continue after a memory search, first emit one compact line exactly as "
@@ -123,8 +146,43 @@ def extract_query_from_arguments(raw_arguments: object) -> str:
     arguments = normalize_tool_arguments(raw_arguments)
     if arguments:
         query = arguments.get("query")
-        return query.strip() if isinstance(query, str) else ""
+        return canonicalize_search_query(query) if isinstance(query, str) else ""
     return ""
+
+
+def canonicalize_search_query(query: str) -> str:
+    """Normalize common malformed search phrasings into stable retrieval queries."""
+    normalized = _QUERY_WHITESPACE_PATTERN.sub(" ", query).strip().rstrip("?").strip()
+    if not normalized:
+        return ""
+
+    relation_match = _RELATION_ATTRIBUTE_QUERY_PATTERN.match(normalized)
+    if relation_match:
+        entity = relation_match.group("entity").strip()
+        relation = relation_match.group("relation").strip().lower()
+        return f"{entity} {relation}"
+
+    born_match = _BORN_WHERE_QUERY_PATTERN.match(normalized)
+    if born_match:
+        entity = born_match.group("entity").strip()
+        return f"Where was {entity} born?"
+
+    died_match = _DIED_WHEN_QUERY_PATTERN.match(normalized)
+    if died_match:
+        entity = died_match.group("entity").strip()
+        return f"When did {entity} die?"
+
+    death_prefix_match = _CAUSE_OF_DEATH_PREFIX_QUERY_PATTERN.match(normalized)
+    if death_prefix_match:
+        entity = death_prefix_match.group("entity").strip()
+        return f"What was the cause of death of {entity}?"
+
+    death_match = _CAUSE_OF_DEATH_QUERY_PATTERN.match(normalized)
+    if death_match:
+        entity = death_match.group("entity").strip()
+        return f"What was the cause of death of {entity}?"
+
+    return normalized
 
 
 def normalize_tool_arguments(raw_arguments: object) -> dict[str, object]:
@@ -397,7 +455,7 @@ def record_stage_progress(  # noqa: C901
             continue
         stage_match = _STAGE_RESULT_LINE_PATTERN.match(line)
         if stage_match:
-            query = stage_match.group("query").strip()
+            query = canonicalize_search_query(stage_match.group("query"))
             answer = stage_match.group("answer").strip()
             if not query or not answer:
                 continue
@@ -426,7 +484,7 @@ def record_stage_progress(  # noqa: C901
 
         subquery_match = _SUBQUERY_LINE_PATTERN.match(line)
         if subquery_match:
-            subquery = subquery_match.group("query").strip()
+            subquery = canonicalize_search_query(subquery_match.group("query"))
             if subquery and subquery not in stage_sub_queries:
                 stage_sub_queries.append(subquery)
 

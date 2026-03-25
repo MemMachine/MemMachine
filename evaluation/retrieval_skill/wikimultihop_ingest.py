@@ -131,7 +131,7 @@ async def main():
             )
         )
 
-        if len(added_contexts) % num_batch == 0 or (c == contexts[-1]):
+        if len(added_contexts) % num_batch == 0:
             t = time.perf_counter()
             await skill_utils.add_messages_via_rest(
                 session_id=args.session_id,
@@ -144,6 +144,18 @@ async def main():
             messages = []
 
             print(f"Total added episodes: {len(added_contexts)}")
+
+    if messages:
+        t = time.perf_counter()
+        await skill_utils.add_messages_via_rest(
+            session_id=args.session_id,
+            messages=messages,
+            batch_size=num_batch,
+        )
+        print(
+            f"Gathered and added {len(messages)} memories in {(time.perf_counter() - t):.3f}s"
+        )
+        print(f"Total added episodes: {len(added_contexts)}")
 
     print(f"Completed WIKI-Multihop ingestion, added {len(added_contexts)} episodes.")
 

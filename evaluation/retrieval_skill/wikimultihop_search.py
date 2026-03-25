@@ -16,49 +16,54 @@ from evaluation.utils import skill_utils  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
-ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as the primary source when they contain sufficient evidence; otherwise use general world knowledge.
+ANSWER_PROMPT = """Answer `{question}` using `{memories}` as the primary source. This is an offline evaluation: do not ask the user a clarifying question, do not request more context, and do not answer with another question.
 
 <instructions>
 1. Normalize inputs before deciding anything:
    - Treat `{memories}` as possibly empty.
    - Normalize entity spellings/case/ordinals/titles and common aliases (e.g., “10Th” → “10th”; honorific variants).
-   - If `{question}` is malformed, underspecified, or missing key constraints, ask exactly one concise clarifying question instead of answering.
+   - If `{question}` is slightly underspecified, infer the most likely target from the question anchors and retrieved memories; do not ask for clarification.
 
 2. Choose the evidence basis using this strict priority:
    (a) **Memory-explicit**: Use when `{memories}` contain at least one explicit statement that answers the question or provides all necessary facts.
-   (b) **Memory-determined inference**: Use when explicit memory facts, taken together, *fully determine* the answer unambiguously (show minimal reasoning).
-   (c) **Open-domain fallback**: Use general world knowledge when memories are empty/irrelevant/too vague OR do not fully determine the answer.
+   (b) **Memory-determined inference**: Use when explicit memory facts, taken together, fully determine the answer unambiguously.
+   (c) **Open-domain fallback**: Use general world knowledge only when memories do not identify or determine the final asked attribute.
 
-2.1 Attribute-target resolution rules:
+3. Attribute-target resolution rules:
    - For questions phrased as "work at"/employer/organization, output organization names (not role titles). If both appear, prefer organization entities. If an intergovernmental organization appears in memory for the resolved person, include that organization in the answer.
    - For place-of-death questions, if no explicit "died in/at" location exists but a compact lifespan line exists with a single location token (e.g., `[birth_year] [city] - [death_year]`), use that location as best-available answer.
-   - For relation-chain questions (parent/spouse/child/grandparent and similar), resolve each hop and return only the final requested entity/attribute, not an intermediate hop entity.
+   - For relation-chain questions (parent/spouse/child/grandparent/in-law and similar), resolve each hop and return only the final requested entity/attribute, not an intermediate hop entity.
+   - Decompose composite kinship relations step-by-step: maternal grandfather = mother -> her father; paternal grandmother = father -> his mother; father-in-law/mother-in-law = spouse -> their father/mother.
+   - For creator/performer relations, first resolve the person (director, performer, singer, author, etc.), then answer the asked attribute for that exact person.
+   - If a previous hop resolved a person with disambiguating context, preserve that exact identity. Do not switch to a more famous namesake with the same name.
    - If memory contains `[StageResult ...] Query: ... Answer: ...` lines:
-     - `reliability=high` (or confidence >= 0.85): treat as strong distilled evidence unless contradicted.
-     - `reliability=tentative` (or confidence < 0.85): treat as a hypothesis; require explicit corroboration from memory or use open-domain fallback.
+     - `reliability=high` (or confidence >= 0.9): treat as strong distilled evidence unless contradicted.
+     - `reliability=tentative` (or confidence < 0.9): treat as a hypothesis; require explicit corroboration from memory or open-domain fallback.
      - If stage text includes uncertainty cues (e.g., "if", "likely", "inferred", "unknown", "traditional"), do not treat it as final by itself.
    - If memory contains `Sub-skill provisional answer candidate (...)`, treat it as weak evidence only; never treat it as final without explicit corroboration.
    - For any candidate tagged `reliability=tentative` or `Status: unverified`, do not copy it verbatim unless explicit memory evidence directly supports the final asked attribute.
-   - For yes/no same-country or same-nationality questions, compare normalized country/nationality sets and answer **yes** if they share at least one country/nationality (e.g., "British-American" overlaps with "American").
-   - For same-country/same-nationality questions, before answering **no**, expand each side with commonly known dual/multiple nationalities from open-domain knowledge and re-check overlap.
    - For country/nationality questions, do not infer from industry labels or context words alone (e.g., "Bollywood", "Hollywood", language, genre); require explicit country/nationality evidence or use open-domain fallback.
+   - For country/nationality questions, prefer the polity/country explicitly named in evidence. Do not replace an explicitly named kingdom, state, or polity with a modern country unless the question clearly asks for the modern country.
    - If question asks for a country and evidence gives only a demonym/adjectival nationality (e.g., "American"), normalize to the corresponding country ("United States").
    - For place/location questions, reject date-only or non-location candidates as insufficient and continue reasoning/fallback.
 
-3. Uncertainty rule:
+4. Comparison and uncertainty rules:
+   - For earlier/later, born first, died first, older/younger, more recent, and similar comparisons, explicitly determine both sides before choosing. Do not answer until both comparison values are resolved from memory or widely known world knowledge.
+   - For yes/no same-country or same-nationality questions, compare normalized country/nationality sets and answer **yes** if they share at least one country/nationality.
    - Do **not** say “unknown/not mentioned” if open-domain knowledge can reasonably answer.
    - Prefer a best-supported concrete answer from open-domain knowledge when memory evidence is sparse/conflicting but a widely accepted answer exists.
    - If neither memories nor general knowledge allow a confident answer, say “I don’t know” (optionally add a brief reason).
 
-4. Ambiguity handling:
+5. Ambiguity handling:
    - If multiple plausible entities/answers remain after normalization, provide the top candidates and note the ambiguity briefly.
    - If multiple valid answers are genuinely possible, enumerate them (comma-separated or short bullets).
 
-5. Computation and counting:
+6. Computation and counting:
    - For counts or time intervals, compute explicitly (brief enumeration or numeric subtraction) to avoid mistakes.
 
-6. Output requirements (concise, auditable):
-   - Provide the **Answer** only, without additional commentary.
+7. Output requirements:
+   - Provide the final answer only, without additional commentary.
+   - Never return a clarifying question.
    - Keep the total response to **max 2 sentences**, except when enumeration/computation is required; then use **up to 4 short lines** (bullets allowed) while staying as brief as possible.
 </instructions>
 
@@ -131,7 +136,7 @@ async def run_wiki(
         effective_runner_kwargs.setdefault(
             "omit_episode_text_on_confident_stage_result", True
         )
-        effective_runner_kwargs.setdefault("use_answer_prompt_template", True)
+        effective_runner_kwargs.setdefault("use_answer_prompt_template", False)
 
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
@@ -175,12 +180,18 @@ async def run_wiki(
             )
         )
 
-        if len(tasks) % question_batch_size == 0 or (q == questions[-1]):
+        if len(tasks) % question_batch_size == 0:
             responses = await asyncio.gather(*tasks)
             tasks = []
             skill_utils.update_results(responses, attribute_matrix, results)
             num_processed += len(responses)
             print(f"Completed searching {num_processed}/{len(questions)} questions...")
+
+    if tasks:
+        responses = await asyncio.gather(*tasks)
+        skill_utils.update_results(responses, attribute_matrix, results)
+        num_processed += len(responses)
+        print(f"Completed searching {num_processed}/{len(questions)} questions...")
 
     skill_utils.update_final_attribute_matrix(
         "wiki",

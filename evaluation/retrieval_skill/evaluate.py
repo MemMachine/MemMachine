@@ -46,6 +46,7 @@ def process_sample(group_key: str, item: dict):
             "golden_answer",
             "model_answer",
             "category",
+            "all_retrieved_memories",
         ]:
             if type(val) is float:
                 # Round to 3 decimal places

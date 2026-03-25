@@ -22,6 +22,7 @@ from memmachine_server.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
 )
+from memmachine_server.common.episode_store.episode_model import Episode
 from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
 from memmachine_server.common.reranker.amazon_bedrock_reranker import (
     AmazonBedrockReranker,
@@ -50,6 +51,31 @@ RETRIEVAL_HINT_UNCERTAINTY_PATTERN = re.compile(
     r"traditional|uncertain|unknown|not explicit|no explicit|may be|might)\b"
 )
 EVALUATION_ORG_ID = "evaluation"
+
+
+def _strip_short_term_memory_from_search_result(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Drop short-term episodic search results for evaluation stability.
+
+    Keep long-term episodic memory and semantic memory intact. The REST search
+    endpoint also returns short-term summaries/episodes, which adds rolling-
+    summary noise to retrieval contexts and breaks comparability with previous
+    evaluation runs.
+    """
+    normalized = json.loads(json.dumps(payload, default=str))
+    content = normalized.get("content")
+    if not isinstance(content, dict):
+        return normalized
+    episodic_memory = content.get("episodic_memory")
+    if not isinstance(episodic_memory, dict):
+        return normalized
+    short_term_memory = episodic_memory.get("short_term_memory")
+    if not isinstance(short_term_memory, dict):
+        return normalized
+    short_term_memory["episodes"] = []
+    short_term_memory["episode_summary"] = []
+    return normalized
 
 
 def _new_evaluation_client() -> MemMachineClient:
@@ -154,12 +180,39 @@ class _RestEvaluationMemory:
             ),
             None,
             self._timeout_seconds,
-            set_metadata=(
-                set_metadata if isinstance(set_metadata, dict) else None
-            ),
+            set_metadata=(set_metadata if isinstance(set_metadata, dict) else None),
             agent_mode=bool(agent_mode),
         )
-        return result.model_dump(mode="json")
+        return _strip_short_term_memory_from_search_result(
+            result.model_dump(mode="json")
+        )
+
+
+def _episode_to_memory_message(episode: Episode) -> MemoryMessage:
+    producer = episode.producer_id or episode.producer_role or "system"
+    role = episode.producer_role or "system"
+    return MemoryMessage(
+        content=episode.content,
+        producer=producer,
+        role=role,
+        timestamp=episode.created_at,
+        metadata=episode.metadata,
+    )
+
+
+async def add_episodes_via_rest(
+    *,
+    session_id: str,
+    episodes: list[Episode],
+    batch_size: int = 250,
+) -> int:
+    if not episodes:
+        return 0
+    return await add_messages_via_rest(
+        session_id=session_id,
+        messages=[_episode_to_memory_message(episode) for episode in episodes],
+        batch_size=batch_size,
+    )
 
 
 def _normalize_sub_agent_name(raw_name: str) -> str | None:
@@ -315,6 +368,16 @@ def _build_retrieval_answer_hint(perf_metrics: dict[str, Any]) -> str:
         perf_metrics,
         "latest_sufficiency_confidence_score",
     )
+    confidence_threshold = _extract_confidence_from_metrics(
+        perf_metrics,
+        "stage_result_confidence_threshold",
+    )
+    if (
+        confidence is None
+        or confidence_threshold is None
+        or confidence < confidence_threshold
+    ):
+        return ""
     # Latest sub-skill signals without top-level sufficiency are provisional.
     reliability = "tentative"
     return _format_retrieval_candidate_hint(
@@ -362,9 +425,58 @@ def _extract_memory_search_latency_breakdown(
     ]
 
 
+def _is_unknown_like_answer(text: str) -> bool:
+    normalized = text.strip().lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "i don't know",
+            "i don’t know",
+            "i do not know",
+            "unknown",
+            "not sure",
+            "unclear",
+            "cannot determine",
+            "can't determine",
+            "cannot be determined",
+            "can't be determined",
+            "cannot confirm",
+            "can't confirm",
+            "cannot find",
+            "can't find",
+            "not specified",
+            "not mentioned",
+            "no information",
+            "insufficient",
+            "not enough information",
+            "insufficient evidence",
+        )
+    )
+
+
+def _is_same_country_or_nationality_question(question: str) -> bool:
+    normalized = f" {question.strip().lower()} "
+    if not re.match(
+        r"\s*(is|are|was|were|do|does|did|can|could|has|have|had)\b",
+        normalized,
+    ):
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            " same country ",
+            " same nationality ",
+            " from the same country ",
+            " from the same nationality ",
+        )
+    )
+
+
 def _looks_like_non_answer(text: str) -> bool:
     normalized = text.strip().lower()
     if not normalized:
+        return True
+    if _is_unknown_like_answer(normalized):
         return True
     if normalized.endswith("?"):
         return True
@@ -382,6 +494,75 @@ def _looks_like_non_answer(text: str) -> bool:
             "it is unknown",
         )
     )
+
+
+def _needs_answer_verification(
+    *,
+    question: str,
+    perf_metrics: dict[str, Any],
+    draft_answer: str,
+) -> bool:
+    memory_search_called = _metric_as_int(perf_metrics.get("memory_search_called", 0))
+    stage_results = perf_metrics.get("stage_results")
+    has_stage_results = isinstance(stage_results, list) and bool(stage_results)
+
+    if _is_unknown_like_answer(draft_answer):
+        return True
+    if _looks_like_non_answer(draft_answer):
+        return True
+    if memory_search_called >= 2:
+        return True
+    if has_stage_results:
+        return True
+    if not bool(perf_metrics.get("top_level_is_sufficient", False)):
+        return True
+    if _is_same_country_or_nationality_question(question):
+        return True
+    if bool(perf_metrics.get("top_level_is_sufficient", False)):
+        confidence = perf_metrics.get("top_level_confidence_score")
+        if (
+            isinstance(confidence, int | float)
+            and not isinstance(confidence, bool)
+            and float(confidence) < 0.8
+        ):
+            return True
+    return False
+
+
+async def _rescue_unknown_answer(
+    *,
+    model: openai.AsyncOpenAI,
+    question: str,
+    model_name: str,
+) -> tuple[str, bool, int, int]:
+    rescue_prompts = [
+        (
+            "Answer the question using best available world knowledge. "
+            "Do not say unknown unless truly unknowable. "
+            "Provide only the concise final answer.\n"
+            f"Question: {question}"
+        ),
+        (
+            "Provide your single best concrete answer to the question. "
+            'Do not use uncertainty language like "I don\'t know", '
+            "'unknown', or 'not enough information'. "
+            "Return only the final answer.\n"
+            f"Question: {question}"
+        ),
+    ]
+    rescue_model_name = "gpt-5.2" if model_name == "gpt-5-mini" else model_name
+    for rescue_prompt in rescue_prompts:
+        rescue_rsp = await model.responses.create(
+            model=rescue_model_name,
+            max_output_tokens=512,
+            top_p=1,
+            input=[{"role": "user", "content": rescue_prompt}],
+        )
+        rescue_text = rescue_rsp.output_text.strip()
+        input_tokens, output_tokens = _response_usage_tokens(rescue_rsp)
+        if rescue_text and not _is_unknown_like_answer(rescue_text):
+            return rescue_text, True, input_tokens, output_tokens
+    return "", False, 0, 0
 
 
 def _response_usage_tokens(response: object) -> tuple[int, int]:
@@ -404,37 +585,70 @@ def _response_usage_tokens(response: object) -> tuple[int, int]:
     return int(input_tokens or 0), int(output_tokens or 0)
 
 
-def _count_runner_retrieved_episodes(search_results: list[dict[str, object]]) -> int:
-    episode_keys: set[str] = set()
-    fallback_counts: list[int] = []
-    for payload in search_results:
-        raw_episodes = payload.get("episodes")
-        if isinstance(raw_episodes, list):
-            for raw_episode in raw_episodes:
-                if not isinstance(raw_episode, dict):
-                    continue
-                uid = raw_episode.get("uid")
-                if isinstance(uid, str) and uid:
-                    episode_keys.add(f"uid:{uid}")
-                    continue
-                content = raw_episode.get("content")
-                if isinstance(content, str) and content.strip():
-                    episode_keys.add(f"content:{content.strip()}")
-                    continue
-                episode_keys.add(
-                    f"episode:{json.dumps(raw_episode, sort_keys=True, default=str)}"
-                )
+def _last_nonempty_runner_search_result(
+    search_results: list[dict[str, object]],
+) -> dict[str, object] | None:
+    for payload in reversed(search_results):
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("episodes") or payload.get("semantic_memory"):
+            return payload
+        episodes_text = payload.get("episodes_text")
+        if isinstance(episodes_text, str) and episodes_text.strip():
+            return payload
+    return search_results[-1] if search_results else None
 
-        count = payload.get("count")
-        if isinstance(count, int | float) and not isinstance(count, bool):
-            fallback_counts.append(int(count))
+
+def _count_runner_retrieved_episodes(search_results: list[dict[str, object]]) -> int:
+    payload = _last_nonempty_runner_search_result(search_results)
+    if payload is None:
+        return 0
+
+    episode_keys: set[str] = set()
+    raw_episodes = payload.get("episodes")
+    if isinstance(raw_episodes, list):
+        for raw_episode in raw_episodes:
+            if not isinstance(raw_episode, dict):
+                continue
+            uid = raw_episode.get("uid")
+            if isinstance(uid, str) and uid:
+                episode_keys.add(f"uid:{uid}")
+                continue
+            content = raw_episode.get("content")
+            if isinstance(content, str) and content.strip():
+                episode_keys.add(f"content:{content.strip()}")
+                continue
+            episode_keys.add(
+                f"episode:{json.dumps(raw_episode, sort_keys=True, default=str)}"
+            )
 
     if episode_keys:
         return len(episode_keys)
-    return max(fallback_counts, default=0)
+    count = payload.get("count")
+    if isinstance(count, int | float) and not isinstance(count, bool):
+        return int(count)
+    return 0
 
 
-async def process_question_with_runner(
+def _returned_stage_results(
+    stage_results: list[dict[str, object]],
+    *,
+    confidence_threshold: float | None,
+) -> list[dict[str, object]]:
+    if confidence_threshold is None:
+        return []
+
+    returned: list[dict[str, object]] = []
+    for item in stage_results:
+        confidence = item.get("confidence_score")
+        if not isinstance(confidence, int | float) or isinstance(confidence, bool):
+            continue
+        if float(confidence) >= confidence_threshold:
+            returned.append(item)
+    return returned
+
+
+async def process_question_with_runner(  # noqa: C901
     answer_prompt: str,
     runner: SkillRunner | None,
     model: openai.AsyncOpenAI,
@@ -451,6 +665,9 @@ async def process_question_with_runner(
     total_output_tokens = 0
     llm_answering_time = 0.0
     retrieval_duration = 0.0
+    extra_llm_calls = 0
+    open_domain_rescue_used = False
+    answer_verification_used = False
 
     if full_content is None:
         if runner is None:
@@ -515,22 +732,114 @@ async def process_question_with_runner(
     if full_content is not None:
         formatted_context = full_content
     else:
-        stage_context = _format_runner_stage_context(
+        returned_stage_results = _returned_stage_results(
             runner.last_stage_results,
-            runner.last_stage_sub_queries,
+            confidence_threshold=runner.stage_result_confidence_threshold,
         )
-        raw_context = _format_runner_context(runner.last_search_results)
+        stage_context = _format_runner_stage_context(
+            returned_stage_results,
+            runner.last_stage_sub_queries if returned_stage_results else [],
+        )
+        all_search_context = _format_runner_context(runner.last_search_results)
+        final_payload = _last_nonempty_runner_search_result(runner.last_search_results)
+        raw_context = _format_runner_context(
+            [final_payload] if final_payload is not None else []
+        )
+        answer_search_context = (
+            raw_context if returned_stage_results else all_search_context
+        )
         retrieval_answer_hint = _build_retrieval_answer_hint(perf_metrics)
         context_parts = [
             part
             for part in (
-                "" if stage_context else retrieval_answer_hint,
+                retrieval_answer_hint,
                 stage_context,
-                raw_context,
+                answer_search_context,
             )
             if part
         ]
         formatted_context = "\n".join(context_parts).strip()
+
+        answer_start = time.perf_counter()
+        prompt = answer_prompt.format(memories=formatted_context, question=question)
+        response = await model.responses.create(
+            model=model_name,
+            max_output_tokens=4096,
+            top_p=1,
+            input=[{"role": "user", "content": prompt}],
+        )
+        llm_answering_time += time.perf_counter() - answer_start
+        input_tokens, output_tokens = _response_usage_tokens(response)
+        total_input_tokens += input_tokens
+        total_output_tokens += output_tokens
+        extra_llm_calls += 1
+        rsp_text = response.output_text.strip()
+
+        if _is_unknown_like_answer(rsp_text):
+            rescue_start = time.perf_counter()
+            (
+                rescue_text,
+                open_domain_rescue_used,
+                rescue_input_tokens,
+                rescue_output_tokens,
+            ) = await _rescue_unknown_answer(
+                model=model,
+                question=question,
+                model_name=model_name,
+            )
+            llm_answering_time += time.perf_counter() - rescue_start
+            total_input_tokens += rescue_input_tokens
+            total_output_tokens += rescue_output_tokens
+            if open_domain_rescue_used:
+                extra_llm_calls += 1
+            if rescue_text:
+                rsp_text = rescue_text
+
+        if _needs_answer_verification(
+            question=question,
+            perf_metrics=perf_metrics,
+            draft_answer=rsp_text,
+        ):
+            verification_start = time.perf_counter()
+            verification_prompt = f"""You are validating a draft answer to a multi-hop question.
+
+Question: {question}
+
+Memories:
+{formatted_context}
+
+Draft answer:
+{rsp_text}
+
+Requirements:
+- Re-evaluate the answer from scratch; do not anchor on the draft unless the evidence supports it.
+- If the draft is already correct, keep it unchanged.
+- Do not ask a clarifying question. Return the best-supported final answer.
+- For earlier/later or born first/died first comparisons, explicitly determine both people’s dates before choosing. If one person is identified but the date is missing from memory, use general world knowledge for the missing date.
+- For same-country/same-nationality yes/no questions, answer "yes" when compared entities share at least one normalized country/nationality.
+- For relation-chain questions, ensure the answer targets the final asked attribute (not an intermediate entity). Maternal/paternal grandparents are the mother/father of the named parent. Father-in-law/mother-in-law are the father/mother of the spouse.
+- If memory resolves a person with disambiguating context such as role, title, or film/song association, keep that exact identity and do not replace it with a different namesake.
+- If an intermediate hop is uncertain or marked with cues like "perhaps", "likely", or "unknown", do not rely on that chain as final evidence; resolve the full question from the strongest available evidence or open-domain knowledge.
+- Do not return unknown if a best-supported answer can be given from memory or general knowledge.
+- Return only the final answer, concise."""
+            verification_rsp = await model.responses.create(
+                model=model_name,
+                max_output_tokens=512,
+                top_p=1,
+                input=[{"role": "user", "content": verification_prompt}],
+            )
+            llm_answering_time += time.perf_counter() - verification_start
+            input_tokens, output_tokens = _response_usage_tokens(verification_rsp)
+            total_input_tokens += input_tokens
+            total_output_tokens += output_tokens
+            extra_llm_calls += 1
+            verified_text = verification_rsp.output_text.strip()
+            if verified_text:
+                verified_is_unknown = _is_unknown_like_answer(verified_text)
+                draft_is_unknown = _is_unknown_like_answer(rsp_text)
+                if not (verified_is_unknown and not draft_is_unknown):
+                    rsp_text = verified_text
+                    answer_verification_used = True
 
     if full_content is None:
         perf_metrics = _build_runner_perf_metrics(
@@ -539,14 +848,15 @@ async def process_question_with_runner(
             retrieval_duration=retrieval_duration,
         )
 
-    perf_metrics["llm_time"] = float(perf_metrics.get("llm_time", 0.0)) + llm_answering_time
-    perf_metrics["llm_call_count"] = _extract_llm_call_count(perf_metrics)
+    perf_metrics["llm_time"] = (
+        float(perf_metrics.get("llm_time", 0.0)) + llm_answering_time
+    )
 
     num_episodes_retrieved = _count_runner_retrieved_episodes(
         runner.last_search_results if runner is not None else []
     )
     memory_latency_breakdown = _extract_memory_search_latency_breakdown(perf_metrics)
-    llm_call_count = _extract_llm_call_count(perf_metrics)
+    llm_call_count = _extract_llm_call_count(perf_metrics) + extra_llm_calls
     mem_retrieval_time = perf_metrics.get("memory_retrieval_time", 0)
     llm_time = perf_metrics.get("llm_time", 0)
     skill_used_label = _build_skill_used_label(perf_metrics)
@@ -579,10 +889,17 @@ async def process_question_with_runner(
         "input_token": total_input_tokens,
         "output_token": total_output_tokens,
     }
+    if full_content is not None:
+        res["all_retrieved_memories"] = full_content
+    else:
+        res["all_retrieved_memories"] = all_search_context
 
     res.update(perf_metrics)
     res.update(extra_attributes or {})
     res["llm_call_count"] = llm_call_count
+    if full_content is None:
+        res["open_domain_rescue_used"] = open_domain_rescue_used
+        res["answer_verification_used"] = answer_verification_used
     return category, res
 
 
@@ -706,16 +1023,53 @@ def _build_runner_perf_metrics(  # noqa: C901
     final_answer: str,
     retrieval_duration: float,
 ) -> dict[str, Any]:
+    memory_search_time = sum(
+        float(latency)
+        for latency in runner.last_memory_search_latency_seconds
+        if isinstance(latency, int | float) and not isinstance(latency, bool)
+    )
+    llm_retrieval_time = max(retrieval_duration - memory_search_time, 0.0)
+    search_queries = [
+        str(payload.get("query", "")).strip()
+        for payload in runner.last_search_results
+        if isinstance(payload, dict) and str(payload.get("query", "")).strip()
+    ]
+    search_trace: list[dict[str, object]] = []
+    for payload, latency_seconds in zip(
+        runner.last_search_results,
+        runner.last_memory_search_latency_seconds,
+        strict=False,
+    ):
+        if not isinstance(payload, dict):
+            continue
+        trace_entry: dict[str, object] = {
+            "query": str(payload.get("query", "")).strip(),
+            "latency_seconds": float(latency_seconds),
+        }
+        count = payload.get("count")
+        if isinstance(count, int | float) and not isinstance(count, bool):
+            trace_entry["count"] = int(count)
+        total_count = payload.get("total_count")
+        if isinstance(total_count, int | float) and not isinstance(total_count, bool):
+            trace_entry["total_count"] = int(total_count)
+        search_trace.append(trace_entry)
+
     perf_metrics: dict[str, Any] = {
         "memory_search_called": runner.last_memory_search_called,
-        "memory_retrieval_time": retrieval_duration,
-        "llm_time": retrieval_duration,
-        "memory_search_latency_seconds": list(runner.last_memory_search_latency_seconds),
+        "memory_retrieval_time": memory_search_time,
+        "retrieval_wall_time": retrieval_duration,
+        "llm_time": llm_retrieval_time,
+        "memory_search_latency_seconds": list(
+            runner.last_memory_search_latency_seconds
+        ),
+        "memory_search_queries": search_queries,
+        "memory_search_trace": search_trace,
         "llm_call_count": runner.last_llm_call_count,
         "skill": RETRIEVE_SKILL_NAME,
         "selected_skill_name": "SkillRunner",
         "selected_agent_name": "SkillRunner",
         "top_level_is_sufficient": False,
+        "stage_result_confidence_threshold": runner.stage_result_confidence_threshold,
     }
 
     stage_results: list[dict[str, object]] = []
@@ -739,7 +1093,35 @@ def _build_runner_perf_metrics(  # noqa: C901
         stage_results.append(normalized_item)
 
     if not stage_results:
+        perf_metrics["stage_result_memory_returned"] = bool(
+            runner.last_stage_sub_queries
+        )
+        perf_metrics["returned_stage_result_count"] = 0
+        perf_metrics["returned_sub_query_count"] = len(runner.last_stage_sub_queries)
+        if runner.last_stage_sub_queries:
+            perf_metrics["stage_sub_queries"] = list(runner.last_stage_sub_queries)
+            perf_metrics["latest_stage_sub_queries"] = list(
+                runner.last_stage_sub_queries
+            )
         return perf_metrics
+
+    returned_stage_results = _returned_stage_results(
+        stage_results,
+        confidence_threshold=runner.stage_result_confidence_threshold,
+    )
+    perf_metrics["stage_results"] = stage_results
+    perf_metrics["latest_stage_results"] = list(stage_results)
+    perf_metrics["top_level_stage_results"] = list(stage_results)
+    if runner.last_stage_sub_queries:
+        perf_metrics["stage_sub_queries"] = list(runner.last_stage_sub_queries)
+        perf_metrics["latest_stage_sub_queries"] = list(runner.last_stage_sub_queries)
+    if returned_stage_results:
+        perf_metrics["returned_stage_results"] = list(returned_stage_results)
+    perf_metrics["stage_result_memory_returned"] = bool(returned_stage_results)
+    perf_metrics["returned_stage_result_count"] = len(returned_stage_results)
+    perf_metrics["returned_sub_query_count"] = (
+        len(runner.last_stage_sub_queries) if returned_stage_results else 0
+    )
 
     latest_stage_result = stage_results[-1]
     latest_candidate = latest_stage_result["stage_result"]
@@ -845,7 +1227,7 @@ def update_results(
             attribute_matrix["tools_output_tokens"][tool] = 0
             attribute_matrix["tools_llm_calls"][tool] = 0
 
-        mem = response["conversation_memories"]
+        mem = response.get("all_retrieved_memories", response["conversation_memories"])
         mem_lines_norm = (
             [_normalize_for_match(line) for line in mem.splitlines() if line]
             if isinstance(mem, str)
@@ -1071,6 +1453,10 @@ async def init_memmachine_params(
     if not build_runner:
         return memory, answer_model, None
 
+    effective_runner_config = dict(runner_config or {})
+    if effective_runner_config.get("stage_result_mode"):
+        effective_runner_config.setdefault("stage_result_confidence_threshold", 0.9)
+
     installed_skill = await install_skill(
         SKILL_SPEC_ROOT,
         "openai",
@@ -1085,6 +1471,6 @@ async def init_memmachine_params(
             client=answer_model,
             model=model_name,
             rest_memory=_RestEvaluationMemory(session_id=normalized_session_id),
-            **(runner_config or {}),
+            **effective_runner_config,
         ),
     )

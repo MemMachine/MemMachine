@@ -90,7 +90,7 @@ async def hotpotqa_ingest(
                 metadata={"session_id": session_id},
             )
         )
-        if added_content % per_batch == 0 or sent == all_content[-1]:
+        if added_content % per_batch == 0:
             print(f"Adding batch of {len(messages)} memories...")
             t = time.perf_counter()
             await skill_utils.add_messages_via_rest(
@@ -104,6 +104,19 @@ async def hotpotqa_ingest(
             print(f"Total added episodes: {added_content}")
             print(f"Total episodes processed: {added_content}/{len(all_content)}")
             messages = []
+    if messages:
+        print(f"Adding batch of {len(messages)} memories...")
+        t = time.perf_counter()
+        await skill_utils.add_messages_via_rest(
+            session_id=session_id,
+            messages=messages,
+            batch_size=per_batch,
+        )
+        print(
+            f"Gathered and added {len(messages)} memories in {(time.perf_counter() - t):.3f}s"
+        )
+        print(f"Total added episodes: {added_content}")
+        print(f"Total episodes processed: {added_content}/{len(all_content)}")
     print(
         f"Completed HotpotQA ingestion, added {len(dataset)} questions, {added_content} episodes."
     )
@@ -182,13 +195,20 @@ async def hotpotqa_search(
             )
         )
 
-        if len(tasks) % question_batch_size == 0 or data == dataset[-1]:
+        if len(tasks) % question_batch_size == 0:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
                 f"Completed HotpotQA searching {num_searched}/{len(dataset)} questions..."
             )
             tasks = []
+
+    if tasks:
+        responses.extend(await asyncio.gather(*tasks))
+        num_searched += len(tasks)
+        print(
+            f"Completed HotpotQA searching {num_searched}/{len(dataset)} questions..."
+        )
 
     results: dict[str, any] = {}
     skill_utils.update_results(responses, attribute_matrix, results)

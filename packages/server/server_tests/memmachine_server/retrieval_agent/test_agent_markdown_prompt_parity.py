@@ -69,6 +69,9 @@ def test_coq_prompt_parity_anchors_are_preserved() -> None:
         [
             "Always prioritize the earliest blocking hop.",
             "avoid duplicate searches after normalization",
+            "preserve role/title/year disambiguators recovered from earlier hops",
+            "use natural English or compact noun phrases",
+            "Never use malformed inverted queries like `[person] born where`.",
             "Call `memmachine_search` with the new targeted query.",
             "Evaluate using all retrieved evidence, not only the latest search.",
             "answer in plain text directly in the assistant response.",

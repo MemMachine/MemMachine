@@ -101,36 +101,10 @@ def _collect_supporting_facts(sample: dict[str, Any]) -> list[str]:
     return facts
 
 
-def _set_safe_embedder_request_limits(memory: Any) -> None:
-    long_term_memory = getattr(memory, "long_term_memory", None)
-    declarative_memory = (
-        getattr(long_term_memory, "declarative_memory", None)
-        if long_term_memory is not None
-        else None
-    )
-    embedder = getattr(declarative_memory, "_embedder", None)
-    if embedder is None:
-        return
-    if hasattr(embedder, "max_total_input_length_per_request"):
-        # Keep cluster size below model token ceiling for embedding requests.
-        embedder.max_total_input_length_per_request = 30000
-
-
 async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
     t1 = datetime.now(UTC)
     added_content = 0
     per_batch = 1000
-
-    vector_graph_store = skill_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-
-    memory, _, _ = await skill_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
-        session_id=session_id,
-        build_runner=False,
-    )
-    _set_safe_embedder_request_limits(memory)
 
     all_content: list[str] = []
     for sample in dataset:
@@ -151,16 +125,34 @@ async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
             )
         )
 
-        if added_content % per_batch == 0 or content == all_content[-1]:
+        if added_content % per_batch == 0:
             print(f"Adding batch of {len(episodes)} episodes...")
             t = time.perf_counter()
-            await memory.add_memory_episodes(episodes=episodes)
+            await skill_utils.add_episodes_via_rest(
+                session_id=session_id,
+                episodes=episodes,
+                batch_size=per_batch,
+            )
             print(
                 f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
             )
             print(f"Total added episodes: {added_content}")
             print(f"Total episodes processed: {added_content}/{len(all_content)}")
             episodes = []
+
+    if episodes:
+        print(f"Adding batch of {len(episodes)} episodes...")
+        t = time.perf_counter()
+        await skill_utils.add_episodes_via_rest(
+            session_id=session_id,
+            episodes=episodes,
+            batch_size=per_batch,
+        )
+        print(
+            f"Gathered and added {len(episodes)} episodes in {(time.perf_counter() - t):.3f}s"
+        )
+        print(f"Total added episodes: {added_content}")
+        print(f"Total episodes processed: {added_content}/{len(all_content)}")
 
     print(
         f"Completed LongMemEval ingestion, added {len(dataset)} questions, {added_content} episodes."
@@ -181,7 +173,7 @@ async def longmemeval_search(
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
-    memory, model, query_skill = await skill_utils.init_memmachine_params(
+    _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         model_name="gpt-5-mini",
         session_id=session_id,
@@ -191,7 +183,6 @@ async def longmemeval_search(
         raise RuntimeError(
             "LongMemEval benchmark requires an initialized SkillRunner."
         )
-    _set_safe_embedder_request_limits(memory)
 
     for sample in dataset:
         question = str(sample.get("question", "")).strip()
@@ -221,13 +212,20 @@ async def longmemeval_search(
             )
         )
 
-        if len(tasks) % 30 == 0 or sample == dataset[-1]:
+        if len(tasks) % 30 == 0:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
                 f"Completed LongMemEval searching {num_searched}/{len(dataset)} questions..."
             )
             tasks = []
+
+    if tasks:
+        responses.extend(await asyncio.gather(*tasks))
+        num_searched += len(tasks)
+        print(
+            f"Completed LongMemEval searching {num_searched}/{len(dataset)} questions..."
+        )
 
     results: dict[str, Any] = {}
     skill_utils.update_results(responses, attribute_matrix, results)

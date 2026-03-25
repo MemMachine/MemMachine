@@ -16,6 +16,7 @@ from memmachine_common.skill_loop import (
     as_dict,
     augment_prompt,
     build_tool_search_result,
+    canonicalize_search_query,
     continue_tool_loop,
     extract_query_from_arguments,
     final_response_text,
@@ -26,10 +27,12 @@ from memmachine_common.skill_loop import (
 from .skill import Skill
 
 if TYPE_CHECKING:
+
     class RestMemoryProtocol(Protocol):
         """Minimal rest-memory interface used by the shared skill runner."""
 
         def search(self, query: str, **kwargs: object) -> object: ...
+
 
 ProviderName = Literal["anthropic", "openai"]
 
@@ -131,7 +134,9 @@ class _AnthropicToolLoopTransport:
                 SkillLoopToolCall(
                     name=str(block.get("name", "")),
                     query=extract_query_from_arguments(arguments),
-                    call_id=block.get("id") if isinstance(block.get("id"), str) else None,
+                    call_id=block.get("id")
+                    if isinstance(block.get("id"), str)
+                    else None,
                     arguments=arguments,
                 )
             )
@@ -415,6 +420,7 @@ class SkillRunner:
         query: str,
         state: SkillLoopState | None = None,
     ) -> dict[str, object]:
+        query = canonicalize_search_query(query)
         sync_back = state is None
         if state is None:
             state = SkillLoopState(
@@ -477,7 +483,9 @@ class SkillRunner:
         self.last_search_results.append(payload)
         state.memory_search_called += 1
         self.last_memory_search_latency_seconds.append(elapsed_seconds)
-        tool_result = self._tool_search_result(payload, stage_results=state.stage_results)
+        tool_result = self._tool_search_result(
+            payload, stage_results=state.stage_results
+        )
         if sync_back:
             self.last_memory_search_called = state.memory_search_called
             self.last_stage_results = list(state.stage_results)
@@ -514,7 +522,9 @@ class SkillRunner:
         else:
             _ = self.skill_messages(prompt, system_prompt=system_prompt)
             if self._anthropic_messages is None:
-                raise RuntimeError("Anthropic skill_messages() did not initialize messages.")
+                raise RuntimeError(
+                    "Anthropic skill_messages() did not initialize messages."
+                )
             request = {
                 "model": self._model,
                 "messages": self._anthropic_messages,
@@ -608,8 +618,10 @@ class SkillRunner:
         return "Partial result: memmachine_search loop reached max_turns."
 
     def _usage_tuple(self, response: object) -> tuple[int, int]:
-        usage = response.get("usage") if isinstance(response, dict) else getattr(
-            response, "usage", None
+        usage = (
+            response.get("usage")
+            if isinstance(response, dict)
+            else getattr(response, "usage", None)
         )
         if usage is None:
             return 0, 0
@@ -643,21 +655,34 @@ class SkillRunner:
     def _openai_response_output_text(response: object) -> str:
         if isinstance(response, dict):
             value = response.get("output_text")
-            return value if isinstance(value, str) else ""
-        value = getattr(response, "output_text", "")
-        return value if isinstance(value, str) else ""
+            if isinstance(value, str) and value.strip():
+                return value
+        else:
+            value = getattr(response, "output_text", "")
+            if isinstance(value, str) and value.strip():
+                return value
+
+        texts: list[str] = []
+        for item in SkillRunner._openai_raw_output_items(response):
+            texts.extend(SkillRunner._openai_output_item_text(item))
+        return "\n".join(text for text in texts if text).strip()
 
     @classmethod
-    def _openai_response_items(cls, response: object) -> list[dict[str, object]]:
+    def _openai_raw_output_items(cls, response: object) -> list[dict[str, object]]:
         if isinstance(response, dict):
             items = response.get("output", [])
-            return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+            return (
+                [item for item in items if isinstance(item, dict)]
+                if isinstance(items, list)
+                else []
+            )
 
-        items = getattr(response, "output", []) or []
+        raw_items = getattr(response, "output", []) or []
         normalized: list[dict[str, object]] = []
-        for item in items:
-            if isinstance(item, dict):
-                normalized.append(item)
+        for item in raw_items:
+            item_dict = cls._as_dict(item)
+            if item_dict:
+                normalized.append(item_dict)
                 continue
             if getattr(item, "type", None) == "function_call":
                 normalized.append(
@@ -669,6 +694,29 @@ class SkillRunner:
                     }
                 )
         return normalized
+
+    @classmethod
+    def _openai_output_item_text(cls, item: dict[str, object]) -> list[str]:
+        item_type = str(item.get("type", ""))
+        if item_type in {"output_text", "text"}:
+            text = item.get("text")
+            return [text] if isinstance(text, str) and text.strip() else []
+        if item_type == "message":
+            content = item.get("content", [])
+            if not isinstance(content, list):
+                return []
+            texts: list[str] = []
+            for block in content:
+                block_dict = cls._as_dict(block)
+                if block_dict:
+                    texts.extend(cls._openai_output_item_text(block_dict))
+            return texts
+        content = item.get("content")
+        return [content] if isinstance(content, str) and content.strip() else []
+
+    @classmethod
+    def _openai_response_items(cls, response: object) -> list[dict[str, object]]:
+        return cls._openai_raw_output_items(response)
 
     @classmethod
     def _anthropic_content_blocks(cls, response: object) -> list[dict[str, object]]:

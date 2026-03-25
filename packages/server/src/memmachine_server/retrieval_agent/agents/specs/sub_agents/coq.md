@@ -63,7 +63,20 @@ Query rules:
 - keep entity anchors from the original question,
 - preserve time and location constraints,
 - avoid duplicate searches after normalization,
-- prefer identity resolution before terminal attributes.
+- prefer identity resolution before terminal attributes,
+- preserve role/title/year disambiguators recovered from earlier hops,
+- use natural English or compact noun phrases, not inverted fragments,
+- never ask the user for clarification; choose the best-supported target from the
+  question anchors and retrieved evidence,
+- never put an unverified answer guess into the query text.
+
+Natural query wording rules:
+- good: `Where was [person] born?`
+- good: `When did [person] die?`
+- good: `What was the cause of death of [person]?`
+- bad: `[person] born where`
+- bad: `[person] spouse died when`
+- bad: `[person] death cause pneumonia`
 
 ### Step 3: Execute one retrieval hop
 
@@ -133,9 +146,36 @@ Question pattern:
 
 Good search order:
 1. `memmachine_search("[person] father")`
-2. `memmachine_search("[father name] born where")`
+2. `memmachine_search("Where was [father name] born?")`
 
-### Example 3: Stop when evidence stays insufficient
+### Example 3: Resolve spouse before terminal death attribute
+
+Question pattern:
+- "When did [person]'s husband die?"
+
+Good search order:
+1. `memmachine_search("[person] husband")`
+2. `memmachine_search("When did [husband name] die?")`
+
+### Example 4: Resolve composite kinship step-by-step
+
+Question pattern:
+- "Who is [person]'s maternal grandfather?"
+
+Good search order:
+1. `memmachine_search("[person] mother")`
+2. `memmachine_search("[mother name] father")`
+
+### Example 5: Preserve disambiguating role context
+
+Question pattern:
+- "Which country is the director of [film] from?"
+
+Good search order:
+1. `memmachine_search("director of [film]")`
+2. `memmachine_search("[director name] director nationality")`
+
+### Example 6: Stop when evidence stays insufficient
 
 If repeated targeted searches still do not reveal the final asked attribute:
 - stop,
@@ -146,5 +186,10 @@ If repeated targeted searches still do not reveal the final asked attribute:
 
 - Never invent entities absent from the query or retrieved evidence.
 - Never skip the earliest blocking hop in a dependency chain.
+- Never use malformed inverted queries like `[person] born where`.
+- Never collapse an unresolved relation chain into one speculative query like
+  `[person] husband died when`.
+- Never discard recovered disambiguating context and replace it with a different
+  more famous namesake.
 - Never answer with JSON or a tool payload.
 - Never finish without at least one `memmachine_search`.

@@ -35,10 +35,6 @@ async def main():
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    vector_graph_store = skill_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
-
     async def process_conversation(idx, item):
         if "conversation" not in item:
             return
@@ -52,12 +48,6 @@ async def main():
         )
 
         group_id = f"group_{idx}"
-
-        memory, _, _ = await skill_utils.init_memmachine_params(
-            vector_graph_store=vector_graph_store,
-            session_id=group_id,
-            build_runner=False,
-        )
 
         session_idx = 0
 
@@ -73,7 +63,8 @@ async def main():
                 conversation[f"{session_id}_date_time"]
             )
 
-            await memory.add_memory_episodes(
+            await skill_utils.add_episodes_via_rest(
+                session_id=group_id,
                 episodes=[
                     Episode(
                         uid=str(uuid4()),

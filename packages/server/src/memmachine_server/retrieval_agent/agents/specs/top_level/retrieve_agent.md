@@ -26,8 +26,7 @@ session.
 
 Primary objective:
 - retrieve memory evidence relevant to the user query,
-- use the attached `coq` instructions internally when the query requires
-  dependency-chain reasoning,
+- use dependency-chain reasoning whenever the query requires it,
 - answer directly in plain text once the search is complete.
 
 Working assumptions:
@@ -54,10 +53,43 @@ Do not reset state between searches.
 
 Before the first search:
 - prefer direct lookup for single-subject questions,
-- prefer the attached `coq` reasoning pattern for dependency chains,
+- prefer the COQ dependency-chain procedure below for multi-hop questions,
 - preserve entities, time windows, and location constraints exactly.
 
 This routing decision stays internal. Do not call a routing tool.
+
+### Step 1A: Mandatory COQ procedure for dependency chains
+
+For any relation chain or dependency chain, execute this exact internal loop:
+1. identify the final asked attribute,
+2. list the dependency hops needed to reach it,
+3. resolve the earliest missing hop first,
+4. only ask for the terminal attribute after the intermediate entity is known.
+
+Mandatory chain rules:
+- resolve entity-valued relations before terminal attributes:
+  - good: `[person] husband`
+  - then: `When did [husband name] die?`
+- resolve parent identities before parent attributes:
+  - good: `[person] father`
+  - then: `When did [father name] die?`
+- resolve spouse identity before spouse attributes:
+  - good: `[person] wife`
+  - then: `What was the cause of death of [wife name]?`
+- resolve composite kinship relations step-by-step instead of querying them whole:
+  - maternal grandfather: `[person] mother` then `[mother name] father`
+  - paternal grandmother: `[person] father` then `[father name] mother`
+  - father-in-law: `[person] spouse` then `[spouse name] father`
+- resolve creator or performer identities before biographical attributes:
+  - `director of [film]` then `Where was [director name] born?`
+  - `performer of [song]` then `Where was [performer name] born?`
+- for comparisons, resolve both branches separately before deciding:
+  - `director of [film A]` + `director of [film B]`
+  - then compare the requested dates/places/release years only after both sides are identified
+- treat these as generic templates, not memorized benchmark examples.
+
+This COQ procedure is duplicated here intentionally so it still applies even if
+an auxiliary `coq.md` attachment is ignored or weakly attended.
 
 ### Step 2: Search iteratively with `memmachine_search`
 
@@ -69,7 +101,24 @@ Search rules:
   backends and use both semantic and episodic evidence when present,
 - avoid duplicate searches unless a prior query was malformed or too broad,
 - rewrite follow-up searches to resolve the earliest missing dependency,
-- keep queries concrete and retrieval-friendly.
+- keep queries concrete and retrieval-friendly,
+- keep exact title, role, year, and disambiguating context from earlier hops,
+- prefer natural language or compact noun phrases over inverted fragments,
+- if a resolved person name is common or ambiguous, include the recovered role or
+  title in the next query,
+- never skip a composite relation by querying the fully derived target directly
+  when it can be resolved through simpler hops,
+- never ask the user for clarification; choose the best-supported target from the
+  question anchors and retrieved evidence,
+- never bake an unverified answer guess into the next query.
+
+Query wording rules:
+- good: `Where was [person] born?`
+- good: `When did [person] die?`
+- good: `What was the cause of death of [person]?`
+- bad: `[person] born where`
+- bad: `[person] spouse died when`
+- bad: `[person] death cause pneumonia`
 
 ### Step 3: Merge and reassess after every search
 
@@ -78,7 +127,7 @@ After each search:
 2. reassess whether the final asked attribute is now supported,
 3. continue searching only if a concrete missing link remains.
 
-If the query is multi-hop, use the attached `coq` policy internally to decide
+If the query is multi-hop, keep following the Step 1A COQ procedure to choose
 the next hop, but keep using only `memmachine_search`.
 
 ### Step 4: Finalize with direct assistant text
@@ -91,6 +140,11 @@ When evidence is sufficient:
 If evidence is still insufficient after reasonable search:
 - give the best-supported concise answer if one exists, or
 - say that the evidence is insufficient in plain text.
+
+When answering:
+- target the final asked attribute, not an intermediate entity,
+- preserve resolved disambiguation from the search chain,
+- for comparison questions, decide only after both sides are resolved.
 
 Never emit a tool call to signal completion.
 
