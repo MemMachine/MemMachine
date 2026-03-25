@@ -957,16 +957,110 @@ build_image() {
     docker build --build-arg GPU=$gpu --build-arg SCM_VERSION="$scm_version" -t "$name" .
 }
 
+# Configure reranker settings
+configure_reranker() {
+    if [ "$is_first_run" != true ]; then
+        return
+    fi
+
+    if [ ! -f "configuration.yml" ]; then
+        return
+    fi
+
+    local is_gpu=false
+    if [[ "$MEMMACHINE_IMAGE" == *"latest-gpu"* ]]; then
+        is_gpu=true
+    fi
+
+    if [ "$is_gpu" = true ]; then
+        print_info "Default reranker: RRF hybrid (identity + BM25 + cross-encoder)"
+        print_prompt
+        read -p "Replace cross-encoder provider? (None/Cohere/AWS) [None]: " reranker_choice
+    else
+        print_info "Default reranker: RRF hybrid (identity + BM25)"
+        print_prompt
+        read -p "Add optional neural reranker? (None/Cohere/AWS) [None]: " reranker_choice
+    fi
+
+    local reranker=$(echo "${reranker_choice:-None}" | tr '[:lower:]' '[:upper:]')
+
+    case "$reranker" in
+        COHERE)
+            print_prompt
+            read -p "Would you like to set your Cohere API key? (y/N) " reply
+            if [[ $reply =~ ^[Yy]$ ]]; then
+                print_prompt
+                read -sp "Enter your Cohere API key: " cohere_key
+                echo
+                safe_sed_inplace "s|cohere_key: <COHERE_API_KEY>|cohere_key: $cohere_key|g" configuration.yml
+                print_success "Set Cohere API key in configuration.yml"
+            else
+                safe_sed_inplace "s|cohere_key: <COHERE_API_KEY>|cohere_key: EMPTY|g" configuration.yml
+                print_warning "Cohere API key set to 'EMPTY'. Update it later if needed."
+            fi
+
+            print_prompt
+            read -p "Cohere reranker model [rerank-english-v3.0]: " cohere_model
+            cohere_model=${cohere_model:-rerank-english-v3.0}
+            safe_sed_inplace "/cohere_reranker_id:/,/model:/ s|model: .*|model: \"$cohere_model\"|" configuration.yml
+
+            if [ "$is_gpu" = true ]; then
+                safe_sed_inplace "s|- ce_ranker_id|- cohere_reranker_id|" configuration.yml
+            else
+                if ! grep -q "cohere_reranker_id" <(awk '/my_reranker_id:/,/^    [a-zA-Z]/' configuration.yml); then
+                    safe_sed_inplace "/reranker_ids:/,/^    [a-zA-Z]/ { /- bm_ranker_id/a\\          - cohere_reranker_id
+                    }" configuration.yml
+                fi
+            fi
+            print_success "Added Cohere reranker to hybrid configuration"
+            ;;
+        AWS)
+            print_prompt
+            read -sp "Enter your AWS Access Key ID: " aws_access_key
+            echo
+            print_prompt
+            read -sp "Enter your AWS Secret Access Key: " aws_secret_key
+            echo
+            print_prompt
+            read -p "Enter your AWS Region [us-west-2]: " aws_region
+            aws_region=${aws_region:-us-west-2}
+            print_prompt
+            read -p "AWS reranker model ID [amazon.rerank-v1:0]: " aws_model
+            aws_model=${aws_model:-amazon.rerank-v1:0}
+
+            safe_sed_inplace "s|aws_access_key_id: <AWS_ACCESS_KEY_ID>|aws_access_key_id: $aws_access_key|g" configuration.yml
+            safe_sed_inplace "s|aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>|aws_secret_access_key: $aws_secret_key|g" configuration.yml
+            safe_sed_inplace "/aws_reranker_id:/,/model_id:/ s|region: .*|region: \"$aws_region\"|" configuration.yml
+            safe_sed_inplace "/aws_reranker_id:/,/model_id:/ s|model_id: .*|model_id: \"$aws_model\"|" configuration.yml
+            print_success "Set AWS Bedrock reranker credentials in configuration.yml"
+
+            if [ "$is_gpu" = true ]; then
+                safe_sed_inplace "s|- ce_ranker_id|- aws_reranker_id|" configuration.yml
+            else
+                if ! grep -q "aws_reranker_id" <(awk '/my_reranker_id:/,/^    [a-zA-Z]/' configuration.yml); then
+                    safe_sed_inplace "/reranker_ids:/,/^    [a-zA-Z]/ { /- bm_ranker_id/a\\          - aws_reranker_id
+                    }" configuration.yml
+                fi
+            fi
+            print_success "Added AWS Bedrock reranker to hybrid configuration"
+            ;;
+        *)
+            print_success "Using default reranker configuration"
+            ;;
+    esac
+}
+
 # Main execution
 main() {
     echo "MemMachine Docker Startup Script"
     echo "===================================="
     echo ""
-    
+
     find_docker_compose
     check_env_file
     check_config_file
     set_provider_api_keys
+    configure_reranker
     check_required_env
     check_required_config
     start_services
