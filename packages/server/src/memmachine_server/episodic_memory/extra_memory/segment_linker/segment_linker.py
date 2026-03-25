@@ -14,16 +14,6 @@ from memmachine_server.episodic_memory.extra_memory.data_types import (
 )
 
 
-class DerivativeNotActiveError(Exception):
-    """Raised when an operation that requires an active derivative is attempted on a derivative that is not active."""
-
-    def __init__(self, not_active: Iterable[UUID]) -> None:
-        """Initialize the error with the UUIDs of the derivatives that are not active."""
-        self.not_active = set(not_active)
-        message = f"{len(self.not_active)} derivatives are not active"
-        super().__init__(message)
-
-
 class SegmentLinkerPartition(ABC):
     """
     Partition-scoped handle for a segment linker.
@@ -33,36 +23,16 @@ class SegmentLinkerPartition(ABC):
     """
 
     @abstractmethod
-    async def startup(self) -> None:
-        """Startup."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def shutdown(self) -> None:
-        """Shutdown."""
-        raise NotImplementedError
-
-    @abstractmethod
     async def register_segments(
         self,
         links: Mapping[Segment, Iterable[UUID]],
-        *,
-        active: Iterable[UUID] | None = None,
     ) -> None:
         """
         Register links between segments and their derivatives.
 
-        All UUIDs in `links` that are not in `active` will be registered in 'active' state.
-
         Args:
             links (Mapping[Segment, Iterable[UUID]]):
                 Mapping from each segment to the UUIDs of its derivatives.
-            active (Iterable[UUID] | None):
-                UUIDs of derivatives believed to be active (default: None).
-
-        Raises:
-            DerivativeNotActiveError:
-                If any derivative in `active` is not active.
         """
         raise NotImplementedError
 
@@ -146,14 +116,9 @@ class SegmentLinkerPartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_all_segments(self) -> None:
-        """Delete all segments for the partition."""
-        raise NotImplementedError
-
-    @abstractmethod
     async def mark_orphaned_derivatives_for_purging(self, limit: int = 10_000) -> None:
         """
-        Find and transition orphaned derivatives from 'active' to 'purging' state.
+        Mark derivatives that are orphaned for purging.
 
         A derivative is orphaned if it has no linked segments in this partition.
 
@@ -210,9 +175,9 @@ class SegmentLinker(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_partition(self, partition_key: str) -> SegmentLinkerPartition:
+    async def open_partition(self, partition_key: str) -> SegmentLinkerPartition:
         """
-        Get a partition-scoped handle for the given partition key.
+        Open a partition-scoped handle for the given partition key.
 
         Args:
             partition_key (str):
@@ -221,5 +186,18 @@ class SegmentLinker(ABC):
         Returns:
             SegmentLinkerPartition:
                 A partition-scoped handle.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def close_partition(
+        self, segment_linker_partition: SegmentLinkerPartition
+    ) -> None:
+        """
+        Close a partition-scoped handle.
+
+        Args:
+            segment_linker_partition (SegmentLinkerPartition):
+                The partition-scoped handle to close.
         """
         raise NotImplementedError
