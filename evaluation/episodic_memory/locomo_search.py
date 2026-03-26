@@ -106,6 +106,8 @@ async def process_question(
     summary = summaries[0] if summaries else ""
     memory_end = time.time()
 
+    await memory.close()
+
     formatted_context = format_memory(episodes, summary)
     prompt = ANSWER_PROMPT.format(
         conversation_memories=formatted_context,
