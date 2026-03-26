@@ -231,7 +231,9 @@ class SemanticService:
     async def add_messages(
         self, set_id: SetIdT, history_ids: Sequence[EpisodeIdT]
     ) -> None:
-        logger.info("Adding messages to set %s: %s", set_id, history_ids)
+        logger.debug(
+            "Adding %d messages to set %s", len(history_ids), set_id
+        )
 
         res = await asyncio.gather(
             *[
