@@ -17,6 +17,11 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data-path", required=True, help="Path to the data file")
+    parser.add_argument(
+        "--config-path",
+        default="locomo_config.yaml",
+        help="Path to configuration.yml",
+    )
 
     args = parser.parse_args()
 
@@ -25,7 +30,7 @@ async def main() -> None:
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    resource_manager = agent_utils.load_eval_config("locomo_config.yaml")
+    resource_manager = agent_utils.load_eval_config(args.config_path)
 
     async def process_conversation(
         idx,
