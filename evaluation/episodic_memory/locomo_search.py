@@ -62,7 +62,7 @@ def format_memory(episodes, summary) -> str:
         "<LONG TERM MEMORY EPISODES>\n"
         + "\n".join(
             [
-                f"[{episode.user_metadata['source_timestamp']}] {episode.user_metadata['source_speaker']}: {episode.content}{f' [ATTACHED: {episode.user_metadata["blip_caption"]}]' if episode.user_metadata.get('blip_caption') else ''}"
+                f"[{episode.metadata['source_timestamp']}] {episode.metadata['source_speaker']}: {episode.content}{f' [ATTACHED: {episode.metadata["blip_caption"]}]' if episode.metadata.get('blip_caption') else ''}"
                 for episode in episodes
             ],
         )
