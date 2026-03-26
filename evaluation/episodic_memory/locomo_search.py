@@ -160,6 +160,11 @@ async def main() -> None:
         help="Path to the source data file",
     )
     parser.add_argument(
+        "--config-path",
+        default="locomo_config.yaml",
+        help="Path to configuration.yml",
+    )
+    parser.add_argument(
         "--target-path",
         required=True,
         help="Path to the target data file",
@@ -173,7 +178,7 @@ async def main() -> None:
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    resource_manager = agent_utils.load_eval_config("locomo_config.yaml")
+    resource_manager = agent_utils.load_eval_config(args.config_path)
 
     model = AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
