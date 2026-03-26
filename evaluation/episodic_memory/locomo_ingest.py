@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import json
 from collections import deque
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 from dotenv import load_dotenv
@@ -11,6 +11,12 @@ from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
 from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
 )
+
+
+def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
+    return datetime.strptime(locomo_time_str, "%I:%M %p on %d %B, %Y").replace(
+        tzinfo=UTC
+    )
 
 
 async def main() -> None:
@@ -66,9 +72,10 @@ async def main() -> None:
 
             session = conversation[session_id]
             session_date_time = conversation[f"{session_id}_date_time"]
+            session_datetime = datetime_from_locomo_time(session_date_time)
 
             context_messages: deque[str] = deque(maxlen=5)
-            for message in session:
+            for message_index, message in enumerate(session):
                 speaker = message["speaker"]
                 blip_caption = message.get("blip_caption")
                 message_text = message["text"]
@@ -83,7 +90,8 @@ async def main() -> None:
                     episode_content=message_text,
                     episode_type="default",
                     content_type=ContentType.STRING,
-                    timestamp=datetime.now(tz=UTC),
+                    timestamp=session_datetime
+                    + message_index * timedelta(seconds=1),
                     metadata={
                         "source_timestamp": session_date_time,
                         "source_speaker": speaker,
