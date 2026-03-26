@@ -1,7 +1,0 @@
-interface:
-  display_name: "MemMachine"
-  short_description: "Auto-recall and ingest memory for every Codex session"
-  default_prompt: "Use the memmachine skill to search memory before answering and ingest exchanges after completing tasks."
-
-policy:
-  allow_implicit_invocation: true
