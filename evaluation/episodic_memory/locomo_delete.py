@@ -1,13 +1,16 @@
 import argparse
 import asyncio
 import json
-from typing import cast
+import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
-from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
-from memmachine_server.episodic_memory.episodic_memory_manager import (
-    EpisodicMemoryManager,
-)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from evaluation.utils import agent_utils  # noqa: E402
 
 
 async def main() -> None:
@@ -22,14 +25,11 @@ async def main() -> None:
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
-        "locomo_config.yaml",
-    )
+    resource_manager = agent_utils.load_eval_config("locomo_config.yaml")
 
     async def process_conversation(
         idx,
         item,
-        memory_manager: EpisodicMemoryManager,
     ) -> None:
         if "conversation" not in item:
             return
@@ -44,20 +44,16 @@ async def main() -> None:
 
         group_id = f"group_{idx}"
 
-        memory = cast(
-            "EpisodicMemory",
-            await memory_manager.get_episodic_memory_instance(
-                group_id=group_id,
-                session_id=group_id,
-                user_id=[speaker_a, speaker_b],
-            ),
+        memory, _, _ = await agent_utils.init_memmachine_params(
+            resource_manager=resource_manager,
+            session_id=group_id,
         )
 
         await memory.delete_session_episodes()
         await memory.close()
 
     tasks = [
-        process_conversation(idx, item, memory_manager)
+        process_conversation(idx, item)
         for idx, item in enumerate(locomo_data)
     ]
     await asyncio.gather(*tasks)
