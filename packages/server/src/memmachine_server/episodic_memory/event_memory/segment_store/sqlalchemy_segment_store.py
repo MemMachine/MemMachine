@@ -14,19 +14,19 @@ from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
 from sqlalchemy import (
     JSON,
     DateTime,
-    ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
     Uuid,
     and_,
+    bindparam,
     delete,
     func,
     insert,
     literal,
     or_,
     select,
-    text,
     true,
     tuple_,
     update,
@@ -97,7 +97,7 @@ class SegmentRow(BaseSegmentLinker):
 
     __tablename__ = "segment_linker_segments"
 
-    partition_key: MappedColumn[str] = mapped_column(String, nullable=False)
+    partition_key: MappedColumn[str] = mapped_column(String, primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     episode_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
@@ -116,10 +116,6 @@ class SegmentRow(BaseSegmentLinker):
         _JSON_AUTO, nullable=False, default=dict
     )
 
-    created_at: MappedColumn[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-
     __table_args__ = (
         Index(
             "segment_linker_segments__pk_ep",
@@ -134,11 +130,6 @@ class SegmentRow(BaseSegmentLinker):
             "index",
             "offset",
         ),
-        Index(
-            "segment_linker_segments__pk_ca",
-            "partition_key",
-            "created_at",
-        ),
     )
 
 
@@ -147,18 +138,30 @@ class LinkRow(BaseSegmentLinker):
 
     __tablename__ = "segment_linker_links"
 
-    segment_uuid: MappedColumn[UUID] = mapped_column(
-        Uuid,
-        ForeignKey("segment_linker_segments.uuid", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    derivative_uuid: MappedColumn[UUID] = mapped_column(
-        Uuid,
-        ForeignKey("segment_linker_derivatives.uuid", ondelete="CASCADE"),
-        primary_key=True,
-    )
+    partition_key: MappedColumn[str] = mapped_column(String, primary_key=True)
 
-    __table_args__ = (Index("segment_linker_links__du", "derivative_uuid"),)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    derivative_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["partition_key", "segment_uuid"],
+            [
+                "segment_linker_segments.partition_key",
+                "segment_linker_segments.uuid",
+            ],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["partition_key", "derivative_uuid"],
+            [
+                "segment_linker_derivatives.partition_key",
+                "segment_linker_derivatives.uuid",
+            ],
+            ondelete="CASCADE",
+        ),
+        Index("segment_linker_links__pk_du", "partition_key", "derivative_uuid"),
+    )
 
 
 class DerivativeRow(BaseSegmentLinker):
@@ -166,7 +169,7 @@ class DerivativeRow(BaseSegmentLinker):
 
     __tablename__ = "segment_linker_derivatives"
 
-    partition_key: MappedColumn[str] = mapped_column(String, nullable=False)
+    partition_key: MappedColumn[str] = mapped_column(String, primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
 
@@ -237,16 +240,18 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
 
                 # Retry if any are PURGING.
                 if any(row.state == DerivativeState.PURGING for row in locked.values()):
-                    await asyncio.sleep(0.1)
-                    continue
+                    await session.rollback()
+                else:
+                    # Insert segments and links.
+                    await self._insert_segments(session, links.keys())
+                    await self._insert_links(session, links)
 
-                # Insert segments and links.
-                await self._insert_segments(session, links.keys())
-                await self._insert_links(session, links)
+                    # Increment ref counts.
+                    await self._apply_ref_count_deltas(session, deltas)
+                    break
 
-                # Increment ref counts.
-                await self._apply_ref_count_deltas(session, deltas)
-                break
+            # Session and locks are released. Sleep before retrying.
+            await asyncio.sleep(0.1)
 
     async def _lock_derivatives(
         self,
@@ -257,20 +262,24 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         derivative_uuids = set(derivative_uuids)
         if not derivative_uuids:
             return {}
-        is_sqlite = session.bind.dialect.name == "sqlite"
-        rows: dict[UUID, DerivativeRow] = {}
-        for uuid in sorted(derivative_uuids):
-            query = (
-                select(DerivativeRow)
-                .where(DerivativeRow.uuid == uuid)
-                .order_by(DerivativeRow.uuid)
+
+        # We rely on the following behavior to avoid deadlocks:
+        # https://www.postgresql.org/docs/current/sql-select.html
+        # It is possible for a SELECT command running at the READ COMMITTED transaction isolation level
+        # and using ORDER BY and a locking clause to return rows out of order.
+        # This is because ORDER BY is applied first.
+        query = (
+            select(DerivativeRow)
+            .where(
+                DerivativeRow.partition_key == self._partition_key,
+                DerivativeRow.uuid.in_(derivative_uuids),
             )
-            if not is_sqlite:
-                query = query.with_for_update()
-            row = (await session.execute(query)).scalars().first()
-            if row is not None:
-                rows[uuid] = row
-        return rows
+            .order_by(DerivativeRow.uuid)
+        )
+        if session.bind.dialect.name != "sqlite":
+            query = query.with_for_update()
+        rows = (await session.execute(query)).scalars().all()
+        return {row.uuid: row for row in rows}
 
     async def _insert_segments(
         self,
@@ -323,12 +332,12 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         ]
         dialect = session.bind.dialect.name
         if dialect == "postgresql":
-            stmt = pg_insert(DerivativeRow).values(values).on_conflict_do_nothing()
+            insert_statement = pg_insert(DerivativeRow).on_conflict_do_nothing()
         elif dialect == "sqlite":
-            stmt = sqlite_insert(DerivativeRow).values(values).on_conflict_do_nothing()
+            insert_statement = sqlite_insert(DerivativeRow).on_conflict_do_nothing()
         else:
             raise NotImplementedError(f"Unsupported dialect: {dialect}")
-        await session.execute(stmt)
+        await session.execute(insert_statement, values)
 
     async def _insert_links(
         self,
@@ -337,7 +346,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     ) -> None:
         """Insert link rows between segments and derivatives."""
         link_rows = [
-            {"segment_uuid": segment.uuid, "derivative_uuid": derivative_uuid}
+            {
+                "partition_key": self._partition_key,
+                "segment_uuid": segment.uuid,
+                "derivative_uuid": derivative_uuid,
+            }
             for segment, derivative_uuids in links.items()
             for derivative_uuid in derivative_uuids
         ]
@@ -347,62 +360,27 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     async def _apply_ref_count_deltas(
         self, session: AsyncSession, deltas: Mapping[UUID, int]
     ) -> None:
-        """
-        Apply ref count deltas to derivative rows.
-
-        PostgreSQL: UPDATE FROM UNNEST (pg_unnest) — fastest.
-        SQLite: temp table + bulk INSERT + single UPDATE FROM — fastest.
-        """
+        """Apply ref count deltas to derivative rows."""
         if not deltas:
             return
 
         conn = await session.connection()
-        dialect = conn.dialect.name
-
-        if dialect == "postgresql":
-            pairs = list(deltas.items())
-            await conn.exec_driver_sql(
-                "UPDATE segment_linker_derivatives"
-                " SET ref_count = segment_linker_derivatives.ref_count + d.delta"
-                " FROM UNNEST($1::uuid[], $2::integer[]) AS d(uuid, delta)"
-                " WHERE segment_linker_derivatives.uuid = d.uuid",
-                (
-                    [str(derivative_uuid) for derivative_uuid, _ in pairs],
-                    [delta for _, delta in pairs],
-                ),
+        await conn.execute(
+            update(DerivativeRow)
+            .where(
+                DerivativeRow.partition_key == bindparam("b_partition_key"),
+                DerivativeRow.uuid == bindparam("derivative_uuid"),
             )
-        elif dialect == "sqlite":
-            # SQLAlchemy stores UUIDs as CHAR(32) hex (no dashes) on SQLite.
-            # SQLite shares a single connection, so use IF NOT EXISTS + DELETE
-            # to handle concurrent calls that may reuse the same temp table.
-            await conn.execute(
-                text(
-                    "CREATE TEMPORARY TABLE IF NOT EXISTS _ref_deltas"
-                    " (row_uuid CHAR(32) NOT NULL, delta INTEGER NOT NULL)"
-                )
-            )
-            await conn.execute(text("DELETE FROM _ref_deltas"))
-            await conn.execute(
-                text(
-                    "INSERT INTO _ref_deltas (row_uuid, delta)"
-                    " VALUES (:row_uuid, :delta)"
-                ),
-                [
-                    {"row_uuid": derivative_uuid.hex, "delta": delta}
-                    for derivative_uuid, delta in deltas.items()
-                ],
-            )
-            await conn.execute(
-                text(
-                    "UPDATE segment_linker_derivatives"
-                    " SET ref_count = segment_linker_derivatives.ref_count"
-                    " + _ref_deltas.delta"
-                    " FROM _ref_deltas"
-                    " WHERE segment_linker_derivatives.uuid = _ref_deltas.row_uuid"
-                )
-            )
-        else:
-            raise NotImplementedError(f"Unsupported dialect: {dialect}")
+            .values(ref_count=DerivativeRow.ref_count + bindparam("delta")),
+            [
+                {
+                    "b_partition_key": self._partition_key,
+                    "derivative_uuid": derivative_uuid,
+                    "delta": delta,
+                }
+                for derivative_uuid, delta in deltas.items()
+            ],
+        )
 
     # Retrieval
 
@@ -437,7 +415,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
 
         segments_by_derivatives_query = (
             select(LinkRow.derivative_uuid, SegmentRow)
-            .join(LinkRow, LinkRow.segment_uuid == SegmentRow.uuid)
+            .join(
+                LinkRow,
+                (LinkRow.partition_key == SegmentRow.partition_key)
+                & (LinkRow.segment_uuid == SegmentRow.uuid),
+            )
             .where(
                 SegmentRow.partition_key == self._partition_key,
                 LinkRow.derivative_uuid.in_(derivative_uuids),
@@ -524,7 +506,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 row_number_ascending,
                 row_number_descending,
             )
-            .join(LinkRow, LinkRow.segment_uuid == SegmentRow.uuid)
+            .join(
+                LinkRow,
+                (LinkRow.partition_key == SegmentRow.partition_key)
+                & (LinkRow.segment_uuid == SegmentRow.uuid),
+            )
             .where(
                 SegmentRow.partition_key == self._partition_key,
                 LinkRow.derivative_uuid.in_(derivative_uuids),
@@ -678,7 +664,10 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 SegmentRow.index.label("seed_index"),
                 SegmentRow.offset.label("seed_offset"),
             )
-            .where(SegmentRow.uuid.in_(seed_rows_by_uuid.keys()))
+            .where(
+                SegmentRow.partition_key == self._partition_key,
+                SegmentRow.uuid.in_(seed_rows_by_uuid.keys()),
+            )
             .subquery("seeds")
         )
 
@@ -891,7 +880,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             # Find derivative UUIDs linked to segments being deleted.
             derivative_uuids_query = (
                 select(LinkRow.derivative_uuid)
-                .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
+                .join(
+                    SegmentRow,
+                    (LinkRow.partition_key == SegmentRow.partition_key)
+                    & (LinkRow.segment_uuid == SegmentRow.uuid),
+                )
                 .where(
                     SegmentRow.partition_key == self._partition_key,
                     SegmentRow.episode_uuid.in_(episode_uuids),
@@ -918,7 +911,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                             LinkRow.derivative_uuid,
                             func.count().label("ref_count"),
                         )
-                        .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
+                        .join(
+                            SegmentRow,
+                            (LinkRow.partition_key == SegmentRow.partition_key)
+                            & (LinkRow.segment_uuid == SegmentRow.uuid),
+                        )
                         .where(
                             SegmentRow.partition_key == self._partition_key,
                             SegmentRow.episode_uuid.in_(episode_uuids),
@@ -978,7 +975,10 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             if orphan_uuids:
                 await session.execute(
                     update(DerivativeRow)
-                    .where(DerivativeRow.uuid.in_(orphan_uuids))
+                    .where(
+                        DerivativeRow.partition_key == self._partition_key,
+                        DerivativeRow.uuid.in_(orphan_uuids),
+                    )
                     .values(state=DerivativeState.PURGING)
                 )
 
