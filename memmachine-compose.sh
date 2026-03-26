@@ -544,22 +544,35 @@ check_config_file() {
 }
 
 select_openai_compatible_base_url() {
-    local base_url=""
+    local llm_base_url=""
+    local embedder_base_url=""
     local reply=""
 
     if [ "$is_first_run" = true ]; then
         print_prompt
-        read -p "Model base URL is not set. Would you like to configure a custom model base URL? (y/N) " reply
+        read -p "Model base URL is not set. Would you like to configure custom base URLs? (y/N) " reply
         if [[ $reply =~ ^[Yy]$ ]]; then
             print_prompt
-            read -p "OpenAI-compatible base URL [https://api.openai.com/v1]: " base_url
-            base_url=$(echo "${base_url:-https://api.openai.com/v1}" | tr -d '\n\r')
-            if [ -n "$base_url" ]; then
-                # Update base_url under openai_compatible_model / openai_compatible_embedder.
-                # Note: these entries exist in sample_configs/* and are included when provider=OPENAI_COMPATIBLE.
-                safe_sed_inplace "/openai_compatible_model:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-                safe_sed_inplace "/openai_compatible_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$base_url\"|" configuration.yml
-                print_success "Set OpenAI-compatible base URL to $base_url"
+            read -p "LLM base URL [https://api.openai.com/v1]: " llm_base_url
+            llm_base_url=$(echo "${llm_base_url:-https://api.openai.com/v1}" | tr -d '\n\r')
+
+            print_prompt
+            read -p "Use a different base URL for embedding? (y/N) " reply
+            if [[ $reply =~ ^[Yy]$ ]]; then
+                print_prompt
+                read -p "Embedding base URL [${llm_base_url}]: " embedder_base_url
+                embedder_base_url=$(echo "${embedder_base_url:-$llm_base_url}" | tr -d '\n\r')
+            else
+                embedder_base_url="$llm_base_url"
+            fi
+
+            if [ -n "$llm_base_url" ]; then
+                safe_sed_inplace "/openai_compatible_model:/,/base_url:/ s|base_url: .*|base_url: \"$llm_base_url\"|" configuration.yml
+                print_success "Set LLM base URL to $llm_base_url"
+            fi
+            if [ -n "$embedder_base_url" ]; then
+                safe_sed_inplace "/openai_compatible_embedder:/,/base_url:/ s|base_url: .*|base_url: \"$embedder_base_url\"|" configuration.yml
+                print_success "Set embedding base URL to $embedder_base_url"
             fi
         fi
     else
@@ -656,7 +669,7 @@ set_provider_api_keys() {
             print_prompt
             read -p "Ollama base URL [http://host.docker.internal:11434/v1]: " base_url
             base_url=${base_url:-http://host.docker.internal:11434/v1}
-            
+
             safe_sed_inplace "s|base_url: .*|base_url: \"$base_url\"|g" configuration.yml
             print_success "Set Ollama base URL: $base_url"
         fi
