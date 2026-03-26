@@ -23,7 +23,7 @@ def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
     )
 
 
-async def main():
+async def main():  # noqa: C901
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--data-path", required=True, help="Path to the data file")
@@ -37,7 +37,7 @@ async def main():
 
     async def process_conversation(idx, item):
         if "conversation" not in item:
-            return
+            return None
 
         conversation = item["conversation"]
         speaker_a = conversation["speaker_a"]
@@ -48,6 +48,14 @@ async def main():
         )
 
         group_id = f"group_{idx}"
+        warmup_query = ""
+        for qa in item.get("qa", []):
+            if str(qa.get("category")) == "5":
+                continue
+            question = str(qa.get("question", "")).strip()
+            if question:
+                warmup_query = question
+                break
 
         session_idx = 0
 
@@ -102,11 +110,29 @@ async def main():
                         },
                     )
                     for message_index, message in enumerate(session)
-                ]
+                ],
             )
 
+        return group_id, warmup_query
+
     tasks = [process_conversation(idx, item) for idx, item in enumerate(locomo_data)]
-    await asyncio.gather(*tasks)
+    session_warmups = await asyncio.gather(*tasks)
+    for session_warmup in session_warmups:
+        if session_warmup is None:
+            continue
+        group_id, warmup_query = session_warmup
+        if not warmup_query:
+            continue
+        elapsed = await skill_utils.warmup_rest_evaluation_search(
+            session_id=group_id,
+            query=warmup_query,
+        )
+        if elapsed is None:
+            print(
+                f"Warmup search for {group_id} did not finish before the retry budget was exhausted."
+            )
+        else:
+            print(f"Warmed up search for {group_id} in {elapsed:.3f}s")
 
 
 if __name__ == "__main__":

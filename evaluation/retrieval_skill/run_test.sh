@@ -9,7 +9,7 @@ usage_locomo() {
     echo "  TEST_TARGET       [retrieval_skill | llm]"
     echo "Options:"
     echo "  --search-concurrency N"
-    echo "                     Max concurrent search requests (default: 1)"
+    echo "                     Max concurrent search requests (default: 10)"
     echo "  --judge-concurrency N"
     echo "                     Max concurrent LLM judge workers (default: 30)"
     echo "  --config PATH      Path to benchmark_config.yml for answer/evaluation model"
@@ -46,7 +46,7 @@ usage_hotpotqa() {
     echo "  LENGTH            Number of examples to run [train set 1 - 90447 | validation set 1 - 7405]"
     echo "Options:"
     echo "  --search-concurrency N"
-    echo "                     Max concurrent search requests (default: 30)"
+    echo "                     Max concurrent search requests (default: 10)"
     echo "  --judge-concurrency N"
     echo "                     Max concurrent LLM judge workers (default: 30)"
     echo "  --config PATH      Path to benchmark_config.yml for answer/evaluation model"
@@ -64,7 +64,7 @@ usage_longmemeval() {
     echo "  LENGTH            Number of examples to run [1 - split size]"
     echo "Options:"
     echo "  --search-concurrency N"
-    echo "                     Max concurrent search requests (default: 30)"
+    echo "                     Max concurrent search requests (default: 10)"
     echo "  --judge-concurrency N"
     echo "                     Max concurrent LLM judge workers (default: 30)"
     echo "  --config PATH      Path to benchmark_config.yml for answer/evaluation model"
@@ -107,13 +107,13 @@ show_help() {
 }
 
 POSITIONAL_ARGS=()
-SEARCH_CONCURRENCY=""
+SEARCH_CONCURRENCY="10"
 JUDGE_CONCURRENCY=""
 BENCHMARK_CONFIG=""
 
 parse_optional_flags() {
     POSITIONAL_ARGS=()
-    SEARCH_CONCURRENCY=""
+    SEARCH_CONCURRENCY="10"
     JUDGE_CONCURRENCY=""
     BENCHMARK_CONFIG=""
 

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -59,6 +60,70 @@ class _FakeRestMemory:
     async def search(self, query: str, **kwargs):
         self.calls.append({"query": query, **kwargs})
         return self._search_results.pop(0)
+
+
+class _FakeWarmupMemory:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def search(
+        self,
+        query: str,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        filter_dict: dict[str, str] | None = None,
+        timeout: int | None = None,
+        *,
+        set_metadata: dict[str, object] | None = None,
+        agent_mode: bool = False,
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "query": query,
+                "limit": limit,
+                "expand_context": expand_context,
+                "score_threshold": score_threshold,
+                "filter_dict": filter_dict,
+                "timeout": timeout,
+                "set_metadata": set_metadata,
+                "agent_mode": agent_mode,
+            }
+        )
+        return {}
+
+
+class _FlakyWarmupMemory(_FakeWarmupMemory):
+    def __init__(self, failures: int) -> None:
+        super().__init__()
+        self._failures = failures
+
+    def search(
+        self,
+        query: str,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        filter_dict: dict[str, str] | None = None,
+        timeout: int | None = None,
+        *,
+        set_metadata: dict[str, object] | None = None,
+        agent_mode: bool = False,
+    ) -> dict[str, object]:
+        result = super().search(
+            query,
+            limit,
+            expand_context,
+            score_threshold,
+            filter_dict,
+            timeout,
+            set_metadata=set_metadata,
+            agent_mode=agent_mode,
+        )
+        if self._failures > 0:
+            self._failures -= 1
+            raise requests.ReadTimeout("timed out")
+        return result
 
 
 def _skill() -> Skill:
@@ -170,6 +235,145 @@ def test_strip_short_term_memory_from_search_result_preserves_semantic_payload()
             "value": "pizza",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_warmup_rest_evaluation_search_uses_low_cost_search(monkeypatch):
+    warmup_memory = _FakeWarmupMemory()
+
+    monkeypatch.setattr(
+        skill_utils,
+        "init_rest_evaluation_memory",
+        lambda session_id: warmup_memory,
+    )
+    monkeypatch.setenv("MEMMACHINE_SEARCH_TIMEOUT_SECONDS", "77")
+    monkeypatch.setenv("MEMMACHINE_SEARCH_WARMUP_TIMEOUT_SECONDS", "13")
+
+    elapsed = await skill_utils.warmup_rest_evaluation_search(
+        session_id="session-1",
+        query="warm up query",
+    )
+
+    assert elapsed >= 0.0
+    assert warmup_memory.calls == [
+        {
+            "query": "warm up query",
+            "limit": 1,
+            "expand_context": 0,
+            "score_threshold": None,
+            "filter_dict": None,
+            "timeout": 13,
+            "set_metadata": None,
+            "agent_mode": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_warmup_rest_evaluation_search_skips_blank_inputs(monkeypatch):
+    monkeypatch.setattr(
+        skill_utils,
+        "init_rest_evaluation_memory",
+        lambda session_id: (_ for _ in ()).throw(
+            AssertionError("should not initialize")
+        ),
+    )
+
+    assert (
+        await skill_utils.warmup_rest_evaluation_search(
+            session_id="",
+            query="warm up query",
+        )
+        == 0.0
+    )
+    assert (
+        await skill_utils.warmup_rest_evaluation_search(
+            session_id="session-1",
+            query="   ",
+        )
+        == 0.0
+    )
+
+
+@pytest.mark.asyncio
+async def test_warmup_rest_evaluation_search_retries_transient_timeouts(monkeypatch):
+    warmup_memory = _FlakyWarmupMemory(failures=2)
+    sleep_calls: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(
+        skill_utils,
+        "init_rest_evaluation_memory",
+        lambda session_id: warmup_memory,
+    )
+    monkeypatch.setattr(skill_utils.asyncio, "sleep", _fake_sleep)
+
+    elapsed = await skill_utils.warmup_rest_evaluation_search(
+        session_id="session-1",
+        query="warm up query",
+        timeout_seconds=9,
+        max_attempts=4,
+        retry_delay_seconds=0.25,
+    )
+
+    assert elapsed is not None
+    assert len(warmup_memory.calls) == 3
+    assert [call["timeout"] for call in warmup_memory.calls] == [9, 9, 9]
+    assert sleep_calls == [0.25, 0.25]
+
+
+@pytest.mark.asyncio
+async def test_warmup_rest_evaluation_search_returns_none_after_retry_budget(
+    monkeypatch,
+):
+    warmup_memory = _FlakyWarmupMemory(failures=3)
+    sleep_calls: list[float] = []
+
+    async def _fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(
+        skill_utils,
+        "init_rest_evaluation_memory",
+        lambda session_id: warmup_memory,
+    )
+    monkeypatch.setattr(skill_utils.asyncio, "sleep", _fake_sleep)
+
+    elapsed = await skill_utils.warmup_rest_evaluation_search(
+        session_id="session-1",
+        query="warm up query",
+        timeout_seconds=9,
+        max_attempts=3,
+        retry_delay_seconds=0.5,
+    )
+
+    assert elapsed is None
+    assert len(warmup_memory.calls) == 3
+    assert sleep_calls == [0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_warmup_rest_evaluation_search_raise_on_failure_propagates(
+    monkeypatch,
+):
+    warmup_memory = _FlakyWarmupMemory(failures=1)
+
+    monkeypatch.setattr(
+        skill_utils,
+        "init_rest_evaluation_memory",
+        lambda session_id: warmup_memory,
+    )
+
+    with pytest.raises(requests.ReadTimeout):
+        await skill_utils.warmup_rest_evaluation_search(
+            session_id="session-1",
+            query="warm up query",
+            timeout_seconds=9,
+            max_attempts=1,
+            raise_on_failure=True,
+        )
 
 
 @pytest.mark.asyncio

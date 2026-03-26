@@ -102,7 +102,7 @@ async def main():
 
     data_path = args.data_path
 
-    contexts, _, _, _, _ = load_data(
+    contexts, questions, _, _, _ = load_data(
         data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
     )
     print("Loaded", len(contexts), "contexts, start ingestion...")
@@ -158,6 +158,19 @@ async def main():
         print(f"Total added episodes: {len(added_contexts)}")
 
     print(f"Completed WIKI-Multihop ingestion, added {len(added_contexts)} episodes.")
+
+    warmup_query = next((question.strip() for question in questions if question), "")
+    if warmup_query:
+        elapsed = await skill_utils.warmup_rest_evaluation_search(
+            session_id=args.session_id,
+            query=warmup_query,
+        )
+        if elapsed is None:
+            print(
+                f"Warmup search for {args.session_id} did not finish before the retry budget was exhausted."
+            )
+        else:
+            print(f"Warmed up search for {args.session_id} in {elapsed:.3f}s")
 
 
 if __name__ == "__main__":

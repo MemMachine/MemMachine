@@ -940,19 +940,18 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             async with self._populate_index_state_cache_lock:
                 if not self._index_state_cache:
                     records, _, _ = await self._driver.execute_query(
-                        _neo4j_query("SHOW INDEXES YIELD name RETURN name"),
-                    )
-
-                    # This ensures that all the indexes in records are online.
-                    await self._driver.execute_query(
-                        _neo4j_query("CALL db.awaitIndexes()")
+                        _neo4j_query("SHOW INDEXES YIELD name, state RETURN name, state"),
                     )
 
                     # Synchronous code is atomic in asynchronous framework
                     # so double-checked locking works here.
                     self._index_state_cache.update(
                         {
-                            record["name"]: Neo4jVectorGraphStore.CacheIndexState.ONLINE
+                            record["name"]: (
+                                Neo4jVectorGraphStore.CacheIndexState.ONLINE
+                                if record["state"] == "ONLINE"
+                                else Neo4jVectorGraphStore.CacheIndexState.CREATING
+                            )
                             for record in records
                         },
                     )

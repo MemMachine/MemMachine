@@ -120,6 +120,25 @@ async def hotpotqa_ingest(
     print(
         f"Completed HotpotQA ingestion, added {len(dataset)} questions, {added_content} episodes."
     )
+    warmup_query = next(
+        (
+            str(record.get("question", "")).strip()
+            for record in dataset
+            if str(record.get("question", "")).strip()
+        ),
+        "",
+    )
+    if warmup_query:
+        elapsed = await skill_utils.warmup_rest_evaluation_search(
+            session_id=session_id,
+            query=warmup_query,
+        )
+        if elapsed is None:
+            print(
+                f"Warmup search for {session_id} did not finish before the retry budget was exhausted."
+            )
+        else:
+            print(f"Warmed up search for {session_id} in {elapsed:.3f}s")
 
 
 async def hotpotqa_search(
@@ -130,7 +149,7 @@ async def hotpotqa_search(
     length: int | None = None,
     runner_kwargs: dict | None = None,
     session_id: str = "hotpotqa_group",
-    concurrency: int | None = None,
+    concurrency: int = 10,
     answer_llm: object | None = None,
 ):
     if dataset is None:
@@ -151,12 +170,13 @@ async def hotpotqa_search(
     attribute_matrix = skill_utils.init_attribute_matrix()
     responses: list[tuple[int, dict[str, any]]] = []
     num_searched = 0
-    default_batch = 30 if pure_llm else 2
-    question_batch_size = concurrency if concurrency is not None else default_batch
+    question_batch_size = concurrency
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
-    answer_model_name = answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
+    answer_model_name = (
+        answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
+    )
     _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
         model_name=answer_model_name,
@@ -280,8 +300,8 @@ async def main():
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=None,
-        help="Maximum number of concurrent search requests (default: 2 for retrieval_skill, 30 for llm)",
+        default=10,
+        help="Maximum number of concurrent search requests (default: 10)",
     )
     parser.add_argument(
         "--config",
@@ -311,8 +331,7 @@ async def main():
         print(f"Length: {args.length}")
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
-        if args.concurrency is not None:
-            print(f"Concurrency: {args.concurrency}")
+        print(f"Concurrency: {args.concurrency}")
         if answer_llm is not None:
             print(f"Answer model: {answer_llm.provider} / {answer_llm.model_name}")
 

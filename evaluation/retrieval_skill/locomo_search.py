@@ -68,8 +68,8 @@ async def run_locomo(  # noqa: C901
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=1,
-        help="Maximum number of concurrent search requests (default: 1)",
+        default=10,
+        help="Maximum number of concurrent search requests (default: 10)",
     )
     parser.add_argument(
         "--config",

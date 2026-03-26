@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -51,6 +52,7 @@ RETRIEVAL_HINT_UNCERTAINTY_PATTERN = re.compile(
     r"traditional|uncertain|unknown|not explicit|no explicit|may be|might)\b"
 )
 EVALUATION_ORG_ID = "evaluation"
+logger = logging.getLogger(__name__)
 
 
 def _strip_short_term_memory_from_search_result(
@@ -81,6 +83,40 @@ def _strip_short_term_memory_from_search_result(
 def _new_evaluation_client() -> MemMachineClient:
     base_url = os.getenv("MEMORY_BACKEND_URL", "http://localhost:8080")
     return MemMachineClient(base_url=base_url)
+
+
+def _rest_search_timeout_seconds() -> int:
+    raw_timeout = os.getenv("MEMMACHINE_SEARCH_TIMEOUT_SECONDS", "120")
+    try:
+        return max(1, int(raw_timeout))
+    except ValueError:
+        return 120
+
+
+def _rest_warmup_timeout_seconds() -> int:
+    raw_timeout = os.getenv("MEMMACHINE_SEARCH_WARMUP_TIMEOUT_SECONDS")
+    if raw_timeout is None:
+        return min(_rest_search_timeout_seconds(), 30)
+    try:
+        return max(1, int(raw_timeout))
+    except ValueError:
+        return min(_rest_search_timeout_seconds(), 30)
+
+
+def _rest_warmup_max_attempts() -> int:
+    raw_attempts = os.getenv("MEMMACHINE_SEARCH_WARMUP_MAX_ATTEMPTS", "6")
+    try:
+        return max(1, int(raw_attempts))
+    except ValueError:
+        return 6
+
+
+def _rest_warmup_retry_delay_seconds() -> float:
+    raw_delay = os.getenv("MEMMACHINE_SEARCH_WARMUP_RETRY_DELAY_SECONDS", "10")
+    try:
+        return max(0.0, float(raw_delay))
+    except ValueError:
+        return 10.0
 
 
 def _ensure_rest_evaluation_memory(
@@ -152,14 +188,88 @@ async def add_messages_via_rest(
     return total_added
 
 
+async def warmup_rest_evaluation_search(
+    *,
+    session_id: str,
+    query: str,
+    limit: int = 1,
+    timeout_seconds: int | None = None,
+    max_attempts: int | None = None,
+    retry_delay_seconds: float | None = None,
+    raise_on_failure: bool = False,
+) -> float | None:
+    normalized_session_id = session_id.strip()
+    normalized_query = query.strip()
+    if not normalized_session_id or not normalized_query:
+        return 0.0
+
+    memory = init_rest_evaluation_memory(normalized_session_id)
+    effective_timeout_seconds = (
+        timeout_seconds
+        if timeout_seconds is not None
+        else _rest_warmup_timeout_seconds()
+    )
+    effective_max_attempts = (
+        max_attempts if max_attempts is not None else _rest_warmup_max_attempts()
+    )
+    effective_retry_delay_seconds = (
+        retry_delay_seconds
+        if retry_delay_seconds is not None
+        else _rest_warmup_retry_delay_seconds()
+    )
+
+    search_start = time.perf_counter()
+    last_error: requests.RequestException | None = None
+    memory_logger = logging.getLogger("memmachine_client.memory")
+    for attempt in range(1, effective_max_attempts + 1):
+        try:
+            previous_disabled = memory_logger.disabled
+            memory_logger.disabled = True
+            try:
+                await asyncio.to_thread(
+                    memory.search,
+                    normalized_query,
+                    max(1, limit),
+                    0,
+                    None,
+                    None,
+                    effective_timeout_seconds,
+                    agent_mode=False,
+                )
+            finally:
+                memory_logger.disabled = previous_disabled
+            return time.perf_counter() - search_start
+        except requests.RequestException as err:
+            last_error = err
+            if attempt >= effective_max_attempts:
+                if raise_on_failure:
+                    raise
+                logger.warning(
+                    "Warmup search failed after %d attempts for %s: %s",
+                    effective_max_attempts,
+                    normalized_session_id,
+                    err,
+                )
+                return None
+            logger.info(
+                "Warmup search attempt %d/%d failed for %s; retrying in %.1fs (%s)",
+                attempt,
+                effective_max_attempts,
+                normalized_session_id,
+                effective_retry_delay_seconds,
+                err,
+            )
+            await asyncio.sleep(effective_retry_delay_seconds)
+
+    if last_error is not None and raise_on_failure:
+        raise last_error
+    return None
+
+
 class _RestEvaluationMemory:
     def __init__(self, *, session_id: str) -> None:
         self._memory = init_rest_evaluation_memory(session_id)
-        raw_timeout = os.getenv("MEMMACHINE_SEARCH_TIMEOUT_SECONDS", "120")
-        try:
-            self._timeout_seconds = max(1, int(raw_timeout))
-        except ValueError:
-            self._timeout_seconds = 120
+        self._timeout_seconds = _rest_search_timeout_seconds()
 
     async def search(self, query: str, **kwargs: object) -> dict[str, object]:
         limit = kwargs.get("limit")

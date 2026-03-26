@@ -75,7 +75,7 @@ Question: {question}
 """
 
 
-async def run_wiki(
+async def run_wiki(  # noqa: C901
     dpath: str | None = None,
     epath: str | None = None,
     data_path: str | None = None,
@@ -84,6 +84,7 @@ async def run_wiki(
     model_name: str = "gpt-5.2",
     runner_kwargs: dict | None = None,
     session_id: str = "group1",
+    concurrency: int = 10,
     answer_llm: object | None = None,
 ) -> tuple[str, dict[str, Any]]:
     if data_path is not None:
@@ -91,6 +92,7 @@ async def run_wiki(
         _eval_result_path = eval_result_path
         _length = length or 100
         _test_target = "retrieval_skill"
+        _concurrency = concurrency
     else:
         parser = argparse.ArgumentParser()
 
@@ -121,8 +123,8 @@ async def run_wiki(
         parser.add_argument(
             "--concurrency",
             type=int,
-            default=None,
-            help="Maximum number of concurrent search requests (default: 2 for retrieval_skill, 10 for llm)",
+            default=10,
+            help="Maximum number of concurrent search requests (default: 10)",
         )
         parser.add_argument(
             "--config",
@@ -137,6 +139,7 @@ async def run_wiki(
         _length = args.length
         _test_target = args.test_target
         session_id = args.session_id
+        _concurrency = args.concurrency
 
         if answer_llm is None and args.config:
             from evaluation.retrieval_skill.benchmark_config import (
@@ -155,10 +158,9 @@ async def run_wiki(
     print(f"Evaluation result path: {_eval_result_path}")
     print(f"Length: {_length}")
     print(f"Test target: {_test_target}")
+    print(f"Concurrency: {_concurrency}")
     if answer_llm is not None:
         print(f"Answer model: {answer_llm.provider} / {answer_llm.model_name}")
-    if data_path is None and args.concurrency is not None:
-        print(f"Concurrency: {args.concurrency}")
     effective_runner_kwargs = dict(runner_kwargs or {})
     if _test_target == "retrieval_skill":
         effective_runner_kwargs.setdefault("stage_result_mode", True)
@@ -178,11 +180,22 @@ async def run_wiki(
         build_runner=_test_target == "retrieval_skill",
     )
     if _test_target == "retrieval_skill" and query_skill is None:
-        raise RuntimeError("WikiMultiHop benchmark requires an initialized SkillRunner.")
+        raise RuntimeError(
+            "WikiMultiHop benchmark requires an initialized SkillRunner."
+        )
 
     contexts, questions, answers, types, supporting_facts = load_data(
         data_path=_data_path, start_line=1, end_line=_length, randomize="NONE"
     )
+    warmup_query = next((question.strip() for question in questions if question), "")
+    if _test_target == "retrieval_skill" and warmup_query:
+        elapsed = await skill_utils.warmup_rest_evaluation_search(
+            session_id=session_id,
+            query=warmup_query,
+            raise_on_failure=True,
+        )
+        if elapsed is not None:
+            print(f"Search backend ready for {session_id} in {elapsed:.3f}s")
     print(f"Loaded {len(questions)} questions, start querying...")
 
     tasks = []
@@ -190,9 +203,7 @@ async def run_wiki(
     attribute_matrix = skill_utils.init_attribute_matrix()
     full_content = "\n".join(contexts)
     num_processed = 0
-    default_batch = 2 if _test_target == "retrieval_skill" else 10
-    _concurrency = (args.concurrency if data_path is None and args.concurrency is not None else None)
-    question_batch_size = _concurrency if _concurrency is not None else default_batch
+    question_batch_size = _concurrency
     for q, a, t, f_list in zip(
         questions, answers, types, supporting_facts, strict=True
     ):

@@ -157,6 +157,25 @@ async def longmemeval_ingest(dataset: list[dict[str, Any]], session_id: str):
     print(
         f"Completed LongMemEval ingestion, added {len(dataset)} questions, {added_content} episodes."
     )
+    warmup_query = next(
+        (
+            str(sample.get("question", "")).strip()
+            for sample in dataset
+            if str(sample.get("question", "")).strip()
+        ),
+        "",
+    )
+    if warmup_query:
+        elapsed = await skill_utils.warmup_rest_evaluation_search(
+            session_id=session_id,
+            query=warmup_query,
+        )
+        if elapsed is None:
+            print(
+                f"Warmup search for {session_id} did not finish before the retry budget was exhausted."
+            )
+        else:
+            print(f"Warmed up search for {session_id} in {elapsed:.3f}s")
 
 
 async def longmemeval_search(
@@ -164,7 +183,7 @@ async def longmemeval_search(
     session_id: str,
     eval_result_path: str | None = None,
     pure_llm: bool = False,
-    concurrency: int = 30,
+    concurrency: int = 10,
     answer_llm: object | None = None,
 ):
     tasks = []
@@ -172,7 +191,9 @@ async def longmemeval_search(
     responses: list[tuple[str, dict[str, Any]]] = []
     num_searched = 0
 
-    answer_model_name = answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
+    answer_model_name = (
+        answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
+    )
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
@@ -183,9 +204,7 @@ async def longmemeval_search(
         build_runner=not pure_llm,
     )
     if not pure_llm and query_skill is None:
-        raise RuntimeError(
-            "LongMemEval benchmark requires an initialized SkillRunner."
-        )
+        raise RuntimeError("LongMemEval benchmark requires an initialized SkillRunner.")
 
     for sample in dataset:
         question = str(sample.get("question", "")).strip()
@@ -333,8 +352,8 @@ async def main():
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=30,
-        help="Maximum number of concurrent search requests (default: 30)",
+        default=10,
+        help="Maximum number of concurrent search requests (default: 10)",
     )
     parser.add_argument(
         "--config",
