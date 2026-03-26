@@ -159,6 +159,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 ).responses.parse(
                     model=self._model,
                     input=input_prompts,
+                    store=False,
                     text_format=output_format,
                 )
             except openai.OpenAIError as e:
@@ -248,11 +249,13 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                         response = await self._client.responses.create(
                             model=self._model,
                             input=input_prompts,
+                            store=False,
                         )
                     else:
                         response = await self._client.responses.create(
                             model=self._model,
                             input=input_prompts,
+                            store=False,
                             tools=cast(list[ToolParam], tools),
                             tool_choice=cast(
                                 Any,

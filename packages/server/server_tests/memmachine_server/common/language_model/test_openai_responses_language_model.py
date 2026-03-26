@@ -184,6 +184,7 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
         {"role": "system", "content": "System prompt"},
         {"role": "user", "content": "User prompt"},
     ]
+    assert call_args.kwargs["store"] is False
 
 
 @pytest.mark.asyncio
@@ -219,6 +220,8 @@ async def test_generate_response_with_tool_calls(mock_async_openai, minimal_conf
             },
         },
     ]
+    call_args = mock_client.responses.create.call_args
+    assert call_args.kwargs["store"] is False
 
 
 @pytest.mark.asyncio
