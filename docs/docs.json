@@ -64,7 +64,8 @@
               "install_guide/integrate/n8n",
               "install_guide/integrate/dify",
               "install_guide/integrate/Google_ADK",
-              "install_guide/integrate/LlamaIndex"
+              "install_guide/integrate/LlamaIndex",
+              "install_guide/integrate/nebula_graph_integration_guide"
             ]
           },
           {

@@ -195,9 +195,9 @@ class YamlSerializableMixin(BaseModel):
     """Mixin that adds YAML-safe serialization for Pydantic models."""
 
     def to_yaml_dict(self) -> dict:
-        raw = self.model_dump()
+        raw = cast(YamlInputType, self.model_dump())
 
-        def unwrap(obj: YamlObjType) -> YamlObjType:
+        def unwrap(obj: YamlInputType) -> YamlObjType:
             """Recursively unwrap Pydantic models, SecretStr, Enums, and drop empty values."""
             if isinstance(obj, YamlSerializableMixin):
                 obj = obj.to_yaml_dict()
@@ -215,7 +215,10 @@ class YamlSerializableMixin(BaseModel):
 
             # Dict — recurse & drop empty
             if isinstance(obj, dict):
-                cleaned = {k: unwrap(v) for k, v in obj.items()}
+                obj_dict = cast(dict[str, YamlInputType], obj)
+                cleaned: dict[str, YamlObjType] = {
+                    k: unwrap(v) for k, v in obj_dict.items()
+                }
                 # drop keys whose values are None/empty
                 cleaned = {
                     k: v for k, v in cleaned.items() if v not in (None, "", [], {})
@@ -224,12 +227,13 @@ class YamlSerializableMixin(BaseModel):
 
             # List — recurse & drop empty
             if isinstance(obj, list):
-                cleaned = [unwrap(v) for v in obj]
+                obj_list = cast(list[YamlInputType], obj)
+                cleaned: list[YamlObjType] = [unwrap(v) for v in obj_list]
                 cleaned = [v for v in cleaned if v not in (None, "", [], {})]
                 return cast(YamlObjType, cleaned)
 
             # Base condition
-            return obj
+            return cast(YamlObjType, obj)
 
         ret = unwrap(raw)
         if not isinstance(ret, dict):
@@ -243,11 +247,16 @@ class YamlSerializableMixin(BaseModel):
 
 
 type YamlObjType = (
+    dict[str, "YamlObjType"] | list["YamlObjType"] | str | int | float | bool | None
+)
+
+type YamlInputType = (
     YamlSerializableMixin
     | SecretStr
     | Enum
-    | dict[str, "YamlObjType"]
-    | list["YamlObjType"]
+    | timedelta
+    | dict[str, "YamlInputType"]
+    | list["YamlInputType"]
     | str
     | int
     | float
