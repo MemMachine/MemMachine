@@ -13,16 +13,20 @@ from nltk import sent_tokenize
 T = TypeVar("T")
 P = ParamSpec("P")
 
+DEFAULT_MERGE_QUEUE_MAXSIZE = 1024
+
 
 async def merge_async_iterators[T](
     iterators: list[AsyncIterator[T]],
+    *,
+    max_queue_size: int = DEFAULT_MERGE_QUEUE_MAXSIZE,
 ) -> AsyncGenerator[T, None]:
     """Merge multiple async iterators into one, running them in parallel."""
     if not iterators:
         return
 
     done_sentinel = object()
-    queue: asyncio.Queue[T | object | BaseException] = asyncio.Queue()
+    queue: asyncio.Queue[T | object | BaseException] = asyncio.Queue(maxsize=max_queue_size)
     done_count = 0
     n = len(iterators)
 
