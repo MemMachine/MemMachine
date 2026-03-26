@@ -1,14 +1,12 @@
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -82,7 +80,6 @@ def format_memory(episodes, summary) -> str:
 
 async def process_question(
     resource_manager,
-    model: AsyncOpenAI,
     group_id,
     user,
     question,
@@ -92,7 +89,7 @@ async def process_question(
     adversarial_answer,
 ):
     memory_start = time.time()
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, answer_model, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=group_id,
     )
@@ -121,16 +118,8 @@ async def process_question(
     )
 
     llm_start = time.time()
-    rsp = await model.responses.create(
-        model="gpt-4o-mini",
-        max_output_tokens=4096,
-        temperature=0.0,
-        top_p=1,
-        input=[{"role": "user", "content": prompt}],
-    )
+    rsp_text, _ = await answer_model.generate_response(user_prompt=prompt)
     llm_end = time.time()
-
-    rsp_text = rsp.output_text
 
     print(
         f"Question: {question}\n"
@@ -180,10 +169,6 @@ async def main() -> None:
 
     resource_manager = agent_utils.load_eval_config(args.config_path)
 
-    model = AsyncOpenAI(
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-
     results: dict[str, Any] = {}
     for idx, item in enumerate(locomo_data):
         if "conversation" not in item:
@@ -208,7 +193,6 @@ async def main() -> None:
 
             question_response = await process_question(
                 resource_manager,
-                model,
                 group_id,
                 user,
                 question,
