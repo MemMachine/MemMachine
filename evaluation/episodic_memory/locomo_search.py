@@ -2,15 +2,19 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import time
+from pathlib import Path
 from typing import Any, cast
 
 from dotenv import load_dotenv
-from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
-from memmachine_server.episodic_memory.episodic_memory_manager import (
-    EpisodicMemoryManager,
-)
 from openai import AsyncOpenAI
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from evaluation.utils import agent_utils  # noqa: E402
 
 # This is adapted from Mem0 (https://github.com/mem0ai/mem0/blob/main/evaluation/prompts.py).
 # It is modified to work with MemMachine.
@@ -77,7 +81,7 @@ def format_memory(episodes, summary) -> str:
 
 
 async def process_question(
-    memory_manager: EpisodicMemoryManager,
+    resource_manager,
     model: AsyncOpenAI,
     group_id,
     user,
@@ -88,13 +92,9 @@ async def process_question(
     adversarial_answer,
 ):
     memory_start = time.time()
-    memory = cast(
-        "EpisodicMemory",
-        await memory_manager.get_episodic_memory_instance(
-            group_id=group_id,
-            session_id=group_id,
-            user_id=[user],
-        ),
+    memory, _, _ = await agent_utils.init_memmachine_params(
+        resource_manager=resource_manager,
+        session_id=group_id,
     )
 
     query_response = await memory.query_memory(query=question, limit=30, expand_context=3)
@@ -173,9 +173,7 @@ async def main() -> None:
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
-        "locomo_config.yaml",
-    )
+    resource_manager = agent_utils.load_eval_config("locomo_config.yaml")
 
     model = AsyncOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
@@ -204,7 +202,7 @@ async def main() -> None:
             adversarial_answer = qa.get("adversarial_answer", "")
 
             question_response = await process_question(
-                memory_manager,
+                resource_manager,
                 model,
                 group_id,
                 user,

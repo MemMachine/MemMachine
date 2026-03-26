@@ -1,16 +1,19 @@
 import argparse
 import asyncio
 import json
-from collections import deque
+import sys
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from memmachine_server.common.episode_store import ContentType
-from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
-from memmachine_server.episodic_memory.episodic_memory_manager import (
-    EpisodicMemoryManager,
-)
+from memmachine_server.common.episode_store.episode_model import Episode
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from evaluation.utils import agent_utils  # noqa: E402
 
 
 def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
@@ -31,14 +34,11 @@ async def main() -> None:
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
-        "locomo_config.yaml",
-    )
+    resource_manager = agent_utils.load_eval_config("locomo_config.yaml")
 
     async def process_conversation(
         idx,
         item,
-        memory_manager: EpisodicMemoryManager,
     ) -> None:
         if "conversation" not in item:
             return
@@ -53,13 +53,9 @@ async def main() -> None:
 
         group_id = f"group_{idx}"
 
-        memory = cast(
-            "EpisodicMemory",
-            await memory_manager.get_episodic_memory_instance(
-                group_id=group_id,
-                session_id=group_id,
-                user_id=[speaker_a, speaker_b],
-            ),
+        memory, _, _ = await agent_utils.init_memmachine_params(
+            resource_manager=resource_manager,
+            session_id=group_id,
         )
 
         session_idx = 0
@@ -101,7 +97,7 @@ async def main() -> None:
         await memory.close()
 
     tasks = [
-        process_conversation(idx, item, memory_manager)
+        process_conversation(idx, item)
         for idx, item in enumerate(locomo_data)
     ]
     await asyncio.gather(*tasks)
