@@ -21,6 +21,9 @@ from evaluation.retrieval_skill.llm_judge import evaluate_llm_judge  # noqa: E40
 load_dotenv()
 
 
+_eval_llm = None
+
+
 def process_sample(group_key: str, item: dict):
     question = str(item["question"])
     locomo_answer = str(item["golden_answer"])
@@ -31,7 +34,8 @@ def process_sample(group_key: str, item: dict):
     if category == "5":
         return group_key, None
 
-    llm_score = evaluate_llm_judge(question, locomo_answer, response)
+    llm_score = evaluate_llm_judge(question, locomo_answer, response,
+                                   eval_llm=_eval_llm)
 
     res = {
         "question": question,
@@ -57,6 +61,8 @@ def process_sample(group_key: str, item: dict):
 
 
 def main():
+    global _eval_llm
+
     parser = argparse.ArgumentParser(description="Evaluate results")
     parser.add_argument(
         "--data-path",
@@ -76,8 +82,23 @@ def main():
         default=30,
         help="Maximum number of worker threads",
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to benchmark_config.yml for evaluation model",
+    )
 
     args = parser.parse_args()
+
+    if args.config:
+        from evaluation.retrieval_skill.benchmark_config import (
+            LLMClient,
+            load_benchmark_config,
+        )
+
+        cfg = load_benchmark_config(args.config)
+        _eval_llm = LLMClient(cfg.evaluation_model)
 
     with open(args.data_path, "r") as f:
         data = json.load(f)

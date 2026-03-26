@@ -3,11 +3,12 @@
 
 import argparse
 import json
+import os
 from collections import defaultdict
-from collections.abc import Callable
 
 import json_repair
 import numpy as np
+import openai
 
 ACCURACY_PROMPT = """
 Your task is to label an answer to a question as 'CORRECT' or 'WRONG'. You will be given the following data:
@@ -35,115 +36,38 @@ Do NOT include both CORRECT and WRONG in your response, or it will break the eva
 Just return the label CORRECT or WRONG in a json format with the key as "label".
 """
 
+DEFAULT_JUDGE_MODEL = "gpt-5-mini"
 
-def create_judge_fn(config_path: str) -> Callable[[str], str]:
-    """Build a synchronous callable that sends a prompt to the configured LLM.
+_openai_client = None
 
-    Supports providers: ``openai-responses``, ``openai-chat-completions``,
-    and ``amazon-bedrock``.
 
-    Args:
-        config_path: Path to configuration.yml.
-
-    Returns:
-        A callable ``fn(prompt: str) -> str`` that returns the raw text reply.
-    """
-    from memmachine_server.common.configuration import Configuration
-
-    config = Configuration.load_yml_file(config_path)
-    lms = config.resources.language_models
-    llm_id = config.retrieval_agent.llm_model
-    if not llm_id:
-        raise ValueError("retrieval_agent.llm_model is not set in configuration.yml")
-
-    if llm_id in lms.openai_responses_language_model_confs:
-        from openai import OpenAI
-
-        conf = lms.openai_responses_language_model_confs[llm_id]
-        client = OpenAI(
-            api_key=conf.api_key.get_secret_value(),
-            base_url=conf.base_url,
-        )
-        model_name = conf.model
-
-        def _call_responses(prompt: str) -> str:
-            resp = client.responses.create(
-                model=model_name,
-                input=prompt,
-                text={"format": {"type": "json_object"}},
-            )
-            return resp.output_text or ""
-
-        return _call_responses
-
-    if llm_id in lms.openai_chat_completions_language_model_confs:
-        from openai import OpenAI
-
-        conf = lms.openai_chat_completions_language_model_confs[llm_id]
-        client = OpenAI(
-            api_key=conf.api_key.get_secret_value(),
-            base_url=conf.base_url,
-        )
-        model_name = conf.model
-
-        def _call_chat(prompt: str) -> str:
-            resp = client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            return resp.choices[0].message.content
-
-        return _call_chat
-
-    if llm_id in lms.amazon_bedrock_language_model_confs:
-        import boto3
-
-        conf = lms.amazon_bedrock_language_model_confs[llm_id]
-        bedrock_client = boto3.client(
-            "bedrock-runtime",
-            region_name=conf.region,
-            aws_access_key_id=(
-                conf.aws_access_key_id.get_secret_value()
-                if conf.aws_access_key_id
-                else None
-            ),
-            aws_secret_access_key=(
-                conf.aws_secret_access_key.get_secret_value()
-                if conf.aws_secret_access_key
-                else None
-            ),
-        )
-        model_id = conf.model_id
-
-        def _call_bedrock(prompt: str) -> str:
-            resp = bedrock_client.converse(
-                modelId=model_id,
-                messages=[{"role": "user", "content": [{"text": prompt}]}],
-            )
-            return resp["output"]["message"]["content"][0]["text"]
-
-        return _call_bedrock
-
-    raise ValueError(
-        f"Language model '{llm_id}' not found in configuration.yml under "
-        "resources.language_models. Check that the ID matches one of the defined models."
-    )
+def _get_openai_client() -> openai.OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _openai_client
 
 
 def evaluate_llm_judge(
     question: str,
     gold_answer: str,
     generated_answer: str,
-    call_fn: Callable[[str], str],
+    model_name: str = DEFAULT_JUDGE_MODEL,
+    eval_llm: object | None = None,
 ) -> int:
     """Evaluate a generated answer against the gold answer using an LLM judge.
+
+    When *eval_llm* (a
+    :class:`~evaluation.retrieval_skill.benchmark_config.LLMClient`) is
+    provided it is used for generation; otherwise falls back to the OpenAI
+    Responses API via ``OPENAI_API_KEY``.
 
     Args:
         question: The question being evaluated.
         gold_answer: The ground-truth answer.
         generated_answer: The model-produced answer.
-        call_fn: A synchronous callable returned by :func:`create_judge_fn`.
+        model_name: OpenAI model to use when *eval_llm* is ``None``.
+        eval_llm: Optional :class:`LLMClient` from benchmark config.
 
     Returns:
         1 if the answer is CORRECT, 0 if WRONG.
@@ -153,7 +77,17 @@ def evaluate_llm_judge(
         gold_answer=gold_answer,
         generated_answer=generated_answer,
     )
-    raw = call_fn(prompt)
+    if eval_llm is not None:
+        result = eval_llm.generate(prompt, json_mode=True)
+        raw = result.text or ""
+    else:
+        client = _get_openai_client()
+        rsp = client.responses.create(
+            model=model_name,
+            input=prompt,
+            text={"format": {"type": "json_object"}},
+        )
+        raw = rsp.output_text or ""
     label = json_repair.loads(raw)["label"]
     return 1 if label == "CORRECT" else 0
 
@@ -168,15 +102,30 @@ def main():
         help="Path to the input dataset file",
     )
     parser.add_argument(
-        "--config-path",
+        "--model",
         type=str,
-        required=True,
-        help="Path to configuration.yml",
+        default=DEFAULT_JUDGE_MODEL,
+        help=f"OpenAI model name for LLM judge (default: {DEFAULT_JUDGE_MODEL})",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to benchmark_config.yml for evaluation model",
     )
 
     args = parser.parse_args()
 
-    call_fn = create_judge_fn(args.config_path)
+    eval_llm = None
+    if args.config:
+        from evaluation.retrieval_skill.benchmark_config import (
+            LLMClient,
+            load_benchmark_config,
+        )
+
+        cfg = load_benchmark_config(args.config)
+        eval_llm = LLMClient(cfg.evaluation_model)
+
     dataset_path = args.input_file
     output_path = f"results/llm_judge_{dataset_path.split('/')[-1]}"
 
@@ -197,7 +146,10 @@ def main():
             if int(category) == 5:
                 continue
 
-            label = evaluate_llm_judge(question, gold_answer, generated_answer, call_fn)
+            label = evaluate_llm_judge(
+                question, gold_answer, generated_answer, args.model,
+                eval_llm=eval_llm,
+            )
             LLM_JUDGE[category].append(label)
 
             RESULTS[index].append(

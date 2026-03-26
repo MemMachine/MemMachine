@@ -46,6 +46,7 @@ def datetime_from_locomo_time(locomo_time_str: str) -> datetime:
 async def run_locomo(  # noqa: C901
     dpath: str | None = None,
     epath: str | None = None,
+    answer_llm: object | None = None,
 ) -> tuple[str, dict[str, Any]]:
     parser = argparse.ArgumentParser()
 
@@ -64,13 +65,37 @@ async def run_locomo(  # noqa: C901
         help="Testing with retrieval_skill or pure llm",
         choices=["retrieval_skill", "llm"],
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Maximum number of concurrent search requests (default: 1)",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to benchmark_config.yml for answer model",
+    )
 
     args = parser.parse_args()
+
+    if answer_llm is None and args.config:
+        from evaluation.retrieval_skill.benchmark_config import (
+            LLMClient,
+            load_benchmark_config,
+        )
+
+        cfg = load_benchmark_config(args.config)
+        answer_llm = LLMClient(cfg.answer_model)
 
     print("Starting locomo test...")
     print(f"Data path: {args.data_path}")
     print(f"Evaluation result path: {args.eval_result_path}")
     print(f"Test target: {args.test_target}")
+    print(f"Concurrency: {args.concurrency}")
+    if answer_llm is not None:
+        print(f"Answer model: {answer_llm.provider} / {answer_llm.model_name}")
 
     data_path = args.data_path
     eval_result_path = args.eval_result_path
@@ -132,10 +157,11 @@ async def run_locomo(  # noqa: C901
                 speaker = message["speaker"]
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
+        answer_model_name = answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
         _, model, query_skill = await skill_utils.init_memmachine_params(
             vector_graph_store=vector_graph_store,
             session_id=group_id,
-            model_name="gpt-5-mini",
+            model_name=answer_model_name,
             build_runner=args.test_target == "retrieval_skill",
         )
         if args.test_target == "retrieval_skill" and query_skill is None:
@@ -176,12 +202,13 @@ async def run_locomo(  # noqa: C901
                 category=category,
                 supporting_facts=stringified_evidence,
                 adversarial_answer=adversarial_answer,
-                model_name="gpt-5-mini",
+                model_name=answer_model_name,
                 full_content=full_content_str if args.test_target == "llm" else None,
+                answer_llm=answer_llm,
             )
             return question_response
 
-        semaphore = asyncio.Semaphore(30)
+        semaphore = asyncio.Semaphore(args.concurrency)
         response_tasks = [
             async_with(
                 semaphore,

@@ -164,18 +164,21 @@ async def longmemeval_search(
     session_id: str,
     eval_result_path: str | None = None,
     pure_llm: bool = False,
+    concurrency: int = 30,
+    answer_llm: object | None = None,
 ):
     tasks = []
     attribute_matrix = skill_utils.init_attribute_matrix()
     responses: list[tuple[str, dict[str, Any]]] = []
     num_searched = 0
 
+    answer_model_name = answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
     _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
-        model_name="gpt-5-mini",
+        model_name=answer_model_name,
         session_id=session_id,
         build_runner=not pure_llm,
     )
@@ -203,16 +206,17 @@ async def longmemeval_search(
                 answer=answer,
                 category=str(sample.get("question_type", "unknown")),
                 supporting_facts=supporting_facts,
-                model_name="gpt-5-mini",
+                model_name=answer_model_name,
                 full_content=full_content if pure_llm else None,
                 extra_attributes={
                     "question_id": sample.get("question_id", ""),
                     "split": sample.get("split", ""),
                 },
+                answer_llm=answer_llm,
             )
         )
 
-        if len(tasks) % 30 == 0:
+        if len(tasks) >= concurrency:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
@@ -326,7 +330,29 @@ async def main():
         help="Session id used for both ingestion and retrieval",
         default="longmemeval_group",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=30,
+        help="Maximum number of concurrent search requests (default: 30)",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to benchmark_config.yml for answer model",
+    )
     args = parser.parse_args()
+
+    answer_llm = None
+    if args.config:
+        from evaluation.retrieval_skill.benchmark_config import (
+            LLMClient,
+            load_benchmark_config,
+        )
+
+        cfg = load_benchmark_config(args.config)
+        answer_llm = LLMClient(cfg.answer_model)
 
     dataset = load_longmemeval_dataset(args.length, args.split_name)
 
@@ -338,12 +364,17 @@ async def main():
         print(f"Length: {args.length}")
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
+        print(f"Concurrency: {args.concurrency}")
+        if answer_llm is not None:
+            print(f"Answer model: {answer_llm.provider} / {answer_llm.model_name}")
 
         await longmemeval_search(
             dataset,
             args.session_id,
             args.eval_result_path,
             args.test_target == "llm",
+            concurrency=args.concurrency,
+            answer_llm=answer_llm,
         )
     else:
         raise ValueError(

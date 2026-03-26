@@ -529,11 +529,44 @@ def _needs_answer_verification(
     return False
 
 
+async def _answer_generate(
+    prompt: str,
+    *,
+    answer_llm: object | None = None,
+    model: openai.AsyncOpenAI | None = None,
+    model_name: str = "",
+    max_output_tokens: int = 4096,
+    top_p: float = 1,
+) -> tuple[str, int, int]:
+    """Generate answer text.
+
+    Returns ``(text, input_tokens, output_tokens)``.  When *answer_llm* (a
+    :class:`~evaluation.retrieval_skill.benchmark_config.LLMClient`) is
+    provided it is used; otherwise falls back to the OpenAI Responses API via
+    *model*.
+    """
+    if answer_llm is not None:
+        result = await answer_llm.agenerate(
+            prompt, max_output_tokens=max_output_tokens, top_p=top_p
+        )
+        return result.text.strip(), result.input_tokens, result.output_tokens
+
+    response = await model.responses.create(
+        model=model_name,
+        max_output_tokens=max_output_tokens,
+        top_p=top_p,
+        input=[{"role": "user", "content": prompt}],
+    )
+    in_tok, out_tok = _response_usage_tokens(response)
+    return (response.output_text or "").strip(), in_tok, out_tok
+
+
 async def _rescue_unknown_answer(
     *,
-    model: openai.AsyncOpenAI,
+    model: openai.AsyncOpenAI | None = None,
     question: str,
-    model_name: str,
+    model_name: str = "",
+    answer_llm: object | None = None,
 ) -> tuple[str, bool, int, int]:
     rescue_prompts = [
         (
@@ -550,18 +583,21 @@ async def _rescue_unknown_answer(
             f"Question: {question}"
         ),
     ]
-    rescue_model_name = "gpt-5.2" if model_name == "gpt-5-mini" else model_name
+    # When using the legacy OpenAI path, escalate to a stronger model.
+    rescue_model_name = model_name
+    if answer_llm is None:
+        rescue_model_name = "gpt-5.2" if model_name == "gpt-5-mini" else model_name
     for rescue_prompt in rescue_prompts:
-        rescue_rsp = await model.responses.create(
-            model=rescue_model_name,
+        rescue_text, in_tok, out_tok = await _answer_generate(
+            rescue_prompt,
+            answer_llm=answer_llm,
+            model=model,
+            model_name=rescue_model_name,
             max_output_tokens=512,
             top_p=1,
-            input=[{"role": "user", "content": rescue_prompt}],
         )
-        rescue_text = rescue_rsp.output_text.strip()
-        input_tokens, output_tokens = _response_usage_tokens(rescue_rsp)
         if rescue_text and not _is_unknown_like_answer(rescue_text):
-            return rescue_text, True, input_tokens, output_tokens
+            return rescue_text, True, in_tok, out_tok
     return "", False, 0, 0
 
 
@@ -660,6 +696,7 @@ async def process_question_with_runner(  # noqa: C901
     model_name: str = "gpt-5-mini",
     full_content: str | None = None,
     extra_attributes: dict[str, Any] | None = None,
+    answer_llm: object | None = None,
 ):
     total_input_tokens = 0
     total_output_tokens = 0
@@ -706,17 +743,17 @@ async def process_question_with_runner(  # noqa: C901
         formatted_context = full_content
         prompt = answer_prompt.format(memories=formatted_context, question=question)
         answer_start = time.perf_counter()
-        response = await model.responses.create(
-            model=model_name,
+        rsp_text, input_tokens, output_tokens = await _answer_generate(
+            prompt,
+            answer_llm=answer_llm,
+            model=model,
+            model_name=model_name,
             max_output_tokens=4096,
             top_p=1,
-            input=[{"role": "user", "content": prompt}],
         )
         llm_answering_time += time.perf_counter() - answer_start
-        input_tokens, output_tokens = _response_usage_tokens(response)
         total_input_tokens += input_tokens
         total_output_tokens += output_tokens
-        rsp_text = response.output_text.strip()
         perf_metrics = {
             "memory_search_called": 0,
             "memory_retrieval_time": 0.0,
@@ -762,18 +799,18 @@ async def process_question_with_runner(  # noqa: C901
 
         answer_start = time.perf_counter()
         prompt = answer_prompt.format(memories=formatted_context, question=question)
-        response = await model.responses.create(
-            model=model_name,
+        rsp_text, input_tokens, output_tokens = await _answer_generate(
+            prompt,
+            answer_llm=answer_llm,
+            model=model,
+            model_name=model_name,
             max_output_tokens=4096,
             top_p=1,
-            input=[{"role": "user", "content": prompt}],
         )
         llm_answering_time += time.perf_counter() - answer_start
-        input_tokens, output_tokens = _response_usage_tokens(response)
         total_input_tokens += input_tokens
         total_output_tokens += output_tokens
         extra_llm_calls += 1
-        rsp_text = response.output_text.strip()
 
         if _is_unknown_like_answer(rsp_text):
             rescue_start = time.perf_counter()
@@ -786,6 +823,7 @@ async def process_question_with_runner(  # noqa: C901
                 model=model,
                 question=question,
                 model_name=model_name,
+                answer_llm=answer_llm,
             )
             llm_answering_time += time.perf_counter() - rescue_start
             total_input_tokens += rescue_input_tokens
@@ -822,18 +860,18 @@ Requirements:
 - If an intermediate hop is uncertain or marked with cues like "perhaps", "likely", or "unknown", do not rely on that chain as final evidence; resolve the full question from the strongest available evidence or open-domain knowledge.
 - Do not return unknown if a best-supported answer can be given from memory or general knowledge.
 - Return only the final answer, concise."""
-            verification_rsp = await model.responses.create(
-                model=model_name,
+            verified_text, input_tokens, output_tokens = await _answer_generate(
+                verification_prompt,
+                answer_llm=answer_llm,
+                model=model,
+                model_name=model_name,
                 max_output_tokens=512,
                 top_p=1,
-                input=[{"role": "user", "content": verification_prompt}],
             )
             llm_answering_time += time.perf_counter() - verification_start
-            input_tokens, output_tokens = _response_usage_tokens(verification_rsp)
             total_input_tokens += input_tokens
             total_output_tokens += output_tokens
             extra_llm_calls += 1
-            verified_text = verification_rsp.output_text.strip()
             if verified_text:
                 verified_is_unknown = _is_unknown_like_answer(verified_text)
                 draft_is_unknown = _is_unknown_like_answer(rsp_text)

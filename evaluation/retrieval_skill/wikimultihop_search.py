@@ -84,6 +84,7 @@ async def run_wiki(
     model_name: str = "gpt-5.2",
     runner_kwargs: dict | None = None,
     session_id: str = "group1",
+    answer_llm: object | None = None,
 ) -> tuple[str, dict[str, Any]]:
     if data_path is not None:
         _data_path = data_path
@@ -117,6 +118,18 @@ async def run_wiki(
             default="group1",
             help="Evaluation session/project identifier for REST-backed runs",
         )
+        parser.add_argument(
+            "--concurrency",
+            type=int,
+            default=None,
+            help="Maximum number of concurrent search requests (default: 2 for retrieval_skill, 10 for llm)",
+        )
+        parser.add_argument(
+            "--config",
+            type=str,
+            default=None,
+            help="Path to benchmark_config.yml for answer model",
+        )
 
         args = parser.parse_args()
         _data_path = dpath or args.data_path
@@ -125,11 +138,27 @@ async def run_wiki(
         _test_target = args.test_target
         session_id = args.session_id
 
+        if answer_llm is None and args.config:
+            from evaluation.retrieval_skill.benchmark_config import (
+                LLMClient,
+                load_benchmark_config,
+            )
+
+            cfg = load_benchmark_config(args.config)
+            answer_llm = LLMClient(cfg.answer_model)
+
+    if answer_llm is not None:
+        model_name = answer_llm.model_name
+
     print("Starting WikiMultiHop test...")
     print(f"Data path: {_data_path}")
     print(f"Evaluation result path: {_eval_result_path}")
     print(f"Length: {_length}")
     print(f"Test target: {_test_target}")
+    if answer_llm is not None:
+        print(f"Answer model: {answer_llm.provider} / {answer_llm.model_name}")
+    if data_path is None and args.concurrency is not None:
+        print(f"Concurrency: {args.concurrency}")
     effective_runner_kwargs = dict(runner_kwargs or {})
     if _test_target == "retrieval_skill":
         effective_runner_kwargs.setdefault("stage_result_mode", True)
@@ -161,7 +190,9 @@ async def run_wiki(
     attribute_matrix = skill_utils.init_attribute_matrix()
     full_content = "\n".join(contexts)
     num_processed = 0
-    question_batch_size = 2 if _test_target == "retrieval_skill" else 25
+    default_batch = 2 if _test_target == "retrieval_skill" else 10
+    _concurrency = (args.concurrency if data_path is None and args.concurrency is not None else None)
+    question_batch_size = _concurrency if _concurrency is not None else default_batch
     for q, a, t, f_list in zip(
         questions, answers, types, supporting_facts, strict=True
     ):
@@ -177,10 +208,11 @@ async def run_wiki(
                 adversarial_answer="",
                 model_name=model_name,
                 full_content=full_content if _test_target == "llm" else None,
+                answer_llm=answer_llm,
             )
         )
 
-        if len(tasks) % question_batch_size == 0:
+        if len(tasks) >= question_batch_size:
             responses = await asyncio.gather(*tasks)
             tasks = []
             skill_utils.update_results(responses, attribute_matrix, results)

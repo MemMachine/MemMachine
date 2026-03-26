@@ -130,6 +130,8 @@ async def hotpotqa_search(
     length: int | None = None,
     runner_kwargs: dict | None = None,
     session_id: str = "hotpotqa_group",
+    concurrency: int | None = None,
+    answer_llm: object | None = None,
 ):
     if dataset is None:
         _length = length or 100
@@ -149,13 +151,15 @@ async def hotpotqa_search(
     attribute_matrix = skill_utils.init_attribute_matrix()
     responses: list[tuple[int, dict[str, any]]] = []
     num_searched = 0
-    question_batch_size = 2 if not pure_llm else 30
+    default_batch = 30 if pure_llm else 2
+    question_batch_size = concurrency if concurrency is not None else default_batch
     vector_graph_store = skill_utils.init_vector_graph_store(
         neo4j_uri="bolt://localhost:7687"
     )
+    answer_model_name = answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
     _, model, query_skill = await skill_utils.init_memmachine_params(
         vector_graph_store=vector_graph_store,
-        model_name="gpt-5-mini",
+        model_name=answer_model_name,
         session_id=session_id,
         runner_config=effective_runner_kwargs,
         build_runner=not pure_llm,
@@ -189,13 +193,14 @@ async def hotpotqa_search(
                 answer=data["answer"],
                 category=(data["type"]),
                 supporting_facts=supporting_facts,
-                model_name="gpt-5-mini",
+                model_name=answer_model_name,
                 full_content=full_content_str if pure_llm else None,
                 extra_attributes={"level": data["level"]},
+                answer_llm=answer_llm,
             )
         )
 
-        if len(tasks) % question_batch_size == 0:
+        if len(tasks) >= question_batch_size:
             responses.extend(await asyncio.gather(*tasks))
             num_searched += len(tasks)
             print(
@@ -272,7 +277,29 @@ async def main():
         default="hotpotqa_group",
         help="Evaluation session/project identifier for REST-backed runs",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="Maximum number of concurrent search requests (default: 2 for retrieval_skill, 30 for llm)",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to benchmark_config.yml for answer model",
+    )
     args = parser.parse_args()
+
+    answer_llm = None
+    if args.config:
+        from evaluation.retrieval_skill.benchmark_config import (
+            LLMClient,
+            load_benchmark_config,
+        )
+
+        cfg = load_benchmark_config(args.config)
+        answer_llm = LLMClient(cfg.answer_model)
 
     dataset = load_hotpotqa_dataset(args.length, args.split_name)
 
@@ -284,12 +311,18 @@ async def main():
         print(f"Length: {args.length}")
         print(f"Dataset split: {args.split_name}")
         print(f"Test target: {args.test_target}")
+        if args.concurrency is not None:
+            print(f"Concurrency: {args.concurrency}")
+        if answer_llm is not None:
+            print(f"Answer model: {answer_llm.provider} / {answer_llm.model_name}")
 
         await hotpotqa_search(
             dataset,
             args.eval_result_path,
             args.test_target == "llm",
             session_id=args.session_id,
+            concurrency=args.concurrency,
+            answer_llm=answer_llm,
         )
     else:
         raise ValueError(
