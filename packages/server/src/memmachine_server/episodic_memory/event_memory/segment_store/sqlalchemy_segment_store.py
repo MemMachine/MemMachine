@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, cast, override
+from typing import cast, override
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
@@ -26,11 +26,14 @@ from sqlalchemy import (
     literal,
     or_,
     select,
+    text,
     true,
     tuple_,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -168,22 +171,14 @@ class DerivativeRow(BaseSegmentLinker):
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
 
     state: MappedColumn[str] = mapped_column(String(1), nullable=False)
-    owner_segment_uuid: MappedColumn[UUID | None] = mapped_column(
-        Uuid,
-        ForeignKey("segment_linker_segments.uuid"),
-        nullable=True,
-    )
+    ref_count: MappedColumn[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         Index(
-            "segment_linker_derivatives__pk_st_os",
+            "segment_linker_derivatives__pk_st_rc",
             "partition_key",
             "state",
-            "owner_segment_uuid",
-        ),
-        Index(
-            "segment_linker_derivatives__os",
-            "owner_segment_uuid",
+            "ref_count",
         ),
     )
 
@@ -220,70 +215,62 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             for segment, derivative_uuids in links.items()
         }
 
-        all_derivative_uuids: set[UUID] = set()
+        # Compute ref count deltas per derivative.
+        deltas: dict[UUID, int] = defaultdict(int)
         for derivative_uuids in links.values():
-            all_derivative_uuids.update(derivative_uuids)
-
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            # Find existing derivatives to distinguish new from existing.
-            existing_derivative_uuids: set[UUID] = set()
-            orphaned_derivative_uuids: set[UUID] = set()
-            if all_derivative_uuids:
-                existing_query = (
-                    select(DerivativeRow.uuid, DerivativeRow.owner_segment_uuid)
-                    .where(DerivativeRow.uuid.in_(all_derivative_uuids))
-                    .order_by(DerivativeRow.uuid)
-                )
-                if session.bind.dialect.name != "sqlite":
-                    existing_query = existing_query.with_for_update()
-                existing_rows = (await session.execute(existing_query)).all()
-                for row in existing_rows:
-                    existing_derivative_uuids.add(row.uuid)
-                    if row.owner_segment_uuid is None:
-                        orphaned_derivative_uuids.add(row.uuid)
-
-            new_derivative_uuids = all_derivative_uuids - existing_derivative_uuids
-
-            new_derivative_owner_uuids, orphaned_derivative_owner_uuids = (
-                self._assign_owners(
-                    links, new_derivative_uuids, orphaned_derivative_uuids
-                )
-            )
-
-            await self._insert_segments(session, links.keys())
-            await self._insert_new_derivatives(session, new_derivative_owner_uuids)
-            await self._rescue_orphaned_derivatives(
-                session, orphaned_derivative_owner_uuids
-            )
-            await self._insert_links(session, links)
-
-    def _assign_owners(
-        self,
-        links: Mapping[Segment, Iterable[UUID]],
-        new_derivative_uuids: Iterable[UUID],
-        orphaned_derivative_uuids: Iterable[UUID],
-    ) -> tuple[dict[UUID, UUID], dict[UUID, UUID]]:
-        """Pick one owner segment per new/orphaned derivative (first seen)."""
-        new_derivative_uuids = set(new_derivative_uuids)
-        orphaned_derivative_uuids = set(orphaned_derivative_uuids)
-
-        new_derivative_owner_uuids: dict[UUID, UUID] = {}
-        orphaned_derivative_owner_uuids: dict[UUID, UUID] = {}
-
-        for segment, derivative_uuids in links.items():
             for derivative_uuid in derivative_uuids:
-                if derivative_uuid in new_derivative_uuids:
-                    new_derivative_owner_uuids.setdefault(derivative_uuid, segment.uuid)
-                elif derivative_uuid in orphaned_derivative_uuids:
-                    orphaned_derivative_owner_uuids.setdefault(
-                        derivative_uuid, segment.uuid
-                    )
+                deltas[derivative_uuid] += 1
 
-        return new_derivative_owner_uuids, orphaned_derivative_owner_uuids
+        derivative_uuids = set(deltas.keys())
+
+        while True:
+            async with (
+                self._sqlite_write_lock(),
+                self._create_session() as session,
+                session.begin(),
+            ):
+                # Insert all derivatives ON CONFLICT DO NOTHING.
+                await self._insert_new_derivatives(session, derivative_uuids)
+
+                # Lock derivatives.
+                locked = await self._lock_derivatives(session, derivative_uuids)
+
+                # Retry if any are PURGING.
+                if any(row.state == DerivativeState.PURGING for row in locked.values()):
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # Insert segments and links.
+                await self._insert_segments(session, links.keys())
+                await self._insert_links(session, links)
+
+                # Increment ref counts.
+                await self._apply_ref_count_deltas(session, deltas)
+                break
+
+    async def _lock_derivatives(
+        self,
+        session: AsyncSession,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, DerivativeRow]:
+        """Lock and return existing derivative rows, in consistent UUID order."""
+        derivative_uuids = set(derivative_uuids)
+        if not derivative_uuids:
+            return {}
+        is_sqlite = session.bind.dialect.name == "sqlite"
+        rows: dict[UUID, DerivativeRow] = {}
+        for uuid in sorted(derivative_uuids):
+            query = (
+                select(DerivativeRow)
+                .where(DerivativeRow.uuid == uuid)
+                .order_by(DerivativeRow.uuid)
+            )
+            if not is_sqlite:
+                query = query.with_for_update()
+            row = (await session.execute(query)).scalars().first()
+            if row is not None:
+                rows[uuid] = row
+        return rows
 
     async def _insert_segments(
         self,
@@ -319,38 +306,29 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     async def _insert_new_derivatives(
         self,
         session: AsyncSession,
-        new_derivative_owner_uuids: Mapping[UUID, UUID],
+        derivative_uuids: Iterable[UUID],
     ) -> None:
-        """Insert new derivative rows with their initial owners."""
-        if new_derivative_owner_uuids:
-            await session.execute(
-                insert(DerivativeRow),
-                [
-                    {
-                        "uuid": derivative_uuid,
-                        "partition_key": self._partition_key,
-                        "state": DerivativeState.ACTIVE,
-                        "owner_segment_uuid": owner_segment_uuid,
-                    }
-                    for derivative_uuid, owner_segment_uuid in new_derivative_owner_uuids.items()
-                ],
-            )
-
-    async def _rescue_orphaned_derivatives(
-        self,
-        session: AsyncSession,
-        orphaned_derivative_owner_uuids: Mapping[UUID, UUID],
-    ) -> None:
-        """Set owner for orphaned derivatives."""
-        if not orphaned_derivative_owner_uuids:
+        """Insert new derivative rows with ref_count=0, ON CONFLICT DO NOTHING."""
+        derivative_uuids = set(derivative_uuids)
+        if not derivative_uuids:
             return
-        await session.execute(
-            update(DerivativeRow).execution_options(synchronize_session=False),
-            [
-                {"uuid": derivative_uuid, "owner_segment_uuid": owner_segment_uuid}
-                for derivative_uuid, owner_segment_uuid in orphaned_derivative_owner_uuids.items()
-            ],
-        )
+        values = [
+            {
+                "uuid": derivative_uuid,
+                "partition_key": self._partition_key,
+                "state": DerivativeState.ACTIVE,
+                "ref_count": 0,
+            }
+            for derivative_uuid in sorted(derivative_uuids)
+        ]
+        dialect = session.bind.dialect.name
+        if dialect == "postgresql":
+            stmt = pg_insert(DerivativeRow).values(values).on_conflict_do_nothing()
+        elif dialect == "sqlite":
+            stmt = sqlite_insert(DerivativeRow).values(values).on_conflict_do_nothing()
+        else:
+            raise NotImplementedError(f"Unsupported dialect: {dialect}")
+        await session.execute(stmt)
 
     async def _insert_links(
         self,
@@ -365,6 +343,66 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         ]
         if link_rows:
             await session.execute(insert(LinkRow), link_rows)
+
+    async def _apply_ref_count_deltas(
+        self, session: AsyncSession, deltas: Mapping[UUID, int]
+    ) -> None:
+        """
+        Apply ref count deltas to derivative rows.
+
+        PostgreSQL: UPDATE FROM UNNEST (pg_unnest) — fastest.
+        SQLite: temp table + bulk INSERT + single UPDATE FROM — fastest.
+        """
+        if not deltas:
+            return
+
+        conn = await session.connection()
+        dialect = conn.dialect.name
+
+        if dialect == "postgresql":
+            pairs = list(deltas.items())
+            await conn.exec_driver_sql(
+                "UPDATE segment_linker_derivatives"
+                " SET ref_count = segment_linker_derivatives.ref_count + d.delta"
+                " FROM UNNEST($1::uuid[], $2::integer[]) AS d(uuid, delta)"
+                " WHERE segment_linker_derivatives.uuid = d.uuid",
+                (
+                    [str(derivative_uuid) for derivative_uuid, _ in pairs],
+                    [delta for _, delta in pairs],
+                ),
+            )
+        elif dialect == "sqlite":
+            # SQLAlchemy stores UUIDs as CHAR(32) hex (no dashes) on SQLite.
+            # SQLite shares a single connection, so use IF NOT EXISTS + DELETE
+            # to handle concurrent calls that may reuse the same temp table.
+            await conn.execute(
+                text(
+                    "CREATE TEMPORARY TABLE IF NOT EXISTS _ref_deltas"
+                    " (row_uuid CHAR(32) NOT NULL, delta INTEGER NOT NULL)"
+                )
+            )
+            await conn.execute(text("DELETE FROM _ref_deltas"))
+            await conn.execute(
+                text(
+                    "INSERT INTO _ref_deltas (row_uuid, delta)"
+                    " VALUES (:row_uuid, :delta)"
+                ),
+                [
+                    {"row_uuid": derivative_uuid.hex, "delta": delta}
+                    for derivative_uuid, delta in deltas.items()
+                ],
+            )
+            await conn.execute(
+                text(
+                    "UPDATE segment_linker_derivatives"
+                    " SET ref_count = segment_linker_derivatives.ref_count"
+                    " + _ref_deltas.delta"
+                    " FROM _ref_deltas"
+                    " WHERE segment_linker_derivatives.uuid = _ref_deltas.row_uuid"
+                )
+            )
+        else:
+            raise NotImplementedError(f"Unsupported dialect: {dialect}")
 
     # Retrieval
 
@@ -850,65 +888,61 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             self._create_session() as session,
             session.begin(),
         ):
-            # Reassign derivative owners away from segments being deleted.
-            await self._reassign_derivative_owner_segments_for_episodes(
-                session, episode_uuids
+            # Find derivative UUIDs linked to segments being deleted.
+            derivative_uuids_query = (
+                select(LinkRow.derivative_uuid)
+                .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
+                .where(
+                    SegmentRow.partition_key == self._partition_key,
+                    SegmentRow.episode_uuid.in_(episode_uuids),
+                )
+                .distinct()
+            )
+            derivative_uuids = set(
+                (await session.execute(derivative_uuids_query)).scalars().all()
             )
 
-            # Delete segments (cascades to links via FK).
+            if derivative_uuids:
+                # Lock derivatives.
+                locked = await self._lock_derivatives(session, derivative_uuids)
+                active_uuids = {
+                    uuid
+                    for uuid, row in locked.items()
+                    if row.state == DerivativeState.ACTIVE
+                }
+
+                # Compute ref count deltas (negative) from links being removed.
+                if active_uuids:
+                    ref_count_query = (
+                        select(
+                            LinkRow.derivative_uuid,
+                            func.count().label("ref_count"),
+                        )
+                        .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
+                        .where(
+                            SegmentRow.partition_key == self._partition_key,
+                            SegmentRow.episode_uuid.in_(episode_uuids),
+                            LinkRow.derivative_uuid.in_(active_uuids),
+                        )
+                        .group_by(LinkRow.derivative_uuid)
+                    )
+                    ref_count_rows = (await session.execute(ref_count_query)).all()
+
+                    deltas = {
+                        derivative_uuid: -ref_count
+                        for derivative_uuid, ref_count in ref_count_rows
+                    }
+
+                    # Decrement ref counts.
+                    await self._apply_ref_count_deltas(session, deltas)
+
+            # Delete segments (CASCADE deletes links via FK).
             await session.execute(
                 delete(SegmentRow).where(
                     SegmentRow.partition_key == self._partition_key,
                     SegmentRow.episode_uuid.in_(episode_uuids),
                 )
             )
-
-    async def _reassign_derivative_owner_segments_for_episodes(
-        self,
-        session: AsyncSession,
-        episode_uuids: set[UUID],
-    ) -> None:
-        """Reassign derivative owners away from segments belonging to the given episodes.
-
-        Finds a replacement linked segment not belonging to the deleted episodes,
-        or NULLs the owner if no replacement exists.
-        """
-        # Find derivatives whose owner segment belongs to the episodes being deleted.
-        affected_query = (
-            select(DerivativeRow.uuid)
-            .join(
-                SegmentRow,
-                DerivativeRow.owner_segment_uuid == SegmentRow.uuid,
-            )
-            .where(
-                SegmentRow.partition_key == self._partition_key,
-                SegmentRow.episode_uuid.in_(episode_uuids),
-            )
-            .order_by(DerivativeRow.uuid)
-        )
-        if session.bind.dialect.name != "sqlite":
-            affected_query = affected_query.with_for_update()
-        affected_uuids = list((await session.execute(affected_query)).scalars().all())
-        if not affected_uuids:
-            return
-
-        # Correlated subquery: pick a linked segment not in the deleted episodes.
-        replacement_owner_subquery = (
-            select(LinkRow.segment_uuid)
-            .join(SegmentRow, LinkRow.segment_uuid == SegmentRow.uuid)
-            .where(
-                LinkRow.derivative_uuid == DerivativeRow.uuid,
-                SegmentRow.episode_uuid.not_in(episode_uuids),
-            )
-            .limit(1)
-            .correlate(DerivativeRow)
-            .scalar_subquery()
-        )
-        await session.execute(
-            update(DerivativeRow)
-            .where(DerivativeRow.uuid.in_(affected_uuids))
-            .values(owner_segment_uuid=replacement_owner_subquery)
-        )
 
     # Garbage collection
 
@@ -925,7 +959,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 .where(
                     DerivativeRow.partition_key == self._partition_key,
                     DerivativeRow.state == DerivativeState.ACTIVE,
-                    DerivativeRow.owner_segment_uuid.is_(None),
+                    DerivativeRow.ref_count == 0,
                 )
                 .limit(limit)
             )
@@ -990,9 +1024,9 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     @staticmethod
     def _encode_properties(
         properties: Mapping[str, PropertyValue],
-    ) -> dict[str, dict[str, Any]]:
+    ) -> dict[str, dict[str, bool | int | float | str]]:
         """Encode properties as type-tagged JSONB: {"key": {_PROPERTY_VALUE_KEY: value, _PROPERTY_TYPE_KEY: type_name}}."""
-        encoded: dict[str, dict[str, Any]] = {}
+        encoded: dict[str, dict[str, bool | int | float | str]] = {}
         for key, value in properties.items():
             type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME.get(type(value))
             if type_name is None:
@@ -1012,18 +1046,22 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
 
     @staticmethod
     def _decode_properties(
-        encoded: dict[str, Any],
+        encoded: Mapping[str, JsonValue],
     ) -> dict[str, PropertyValue]:
         """Decode type-tagged JSONB properties back to Python values."""
         properties: dict[str, PropertyValue] = {}
         for key, entry in encoded.items():
-            type_name = entry[_PROPERTY_TYPE_KEY]
+            if not isinstance(entry, dict):
+                raise TypeError(
+                    f"Expected dict for property entry, got {type(entry)!r}"
+                )
+            type_name = str(entry[_PROPERTY_TYPE_KEY])
             raw_value = entry[_PROPERTY_VALUE_KEY]
             property_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
             if property_type is None:
                 raise ValueError(f"Unknown property type name: {type_name!r}")
             if property_type is datetime:
-                properties[key] = datetime.fromisoformat(raw_value)
+                properties[key] = datetime.fromisoformat(str(raw_value))
             else:
                 properties[key] = cast(type[bool | int | float | str], property_type)(
                     raw_value
@@ -1088,7 +1126,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         # Convert the value and cast the JSON element appropriately.
         if isinstance(value, bool):
             casted = value_element.as_boolean()
-            cmp_value: Any = value
+            cmp_value = value
         elif isinstance(value, int):
             casted = value_element.as_integer()
             cmp_value = value
