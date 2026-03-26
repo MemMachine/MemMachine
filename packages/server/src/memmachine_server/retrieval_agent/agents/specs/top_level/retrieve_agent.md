@@ -33,6 +33,7 @@ Working assumptions:
 - Treat MemMachine only as a searchable memory store.
 - `memmachine_search` is the only external tool.
 - Any decomposition or hop-by-hop reasoning happens inside this same session.
+- The attached `coq.md` branch is available, but only for multi-hop questions.
 
 ## Rules
 
@@ -53,43 +54,29 @@ Do not reset state between searches.
 
 Before the first search:
 - prefer direct lookup for single-subject questions,
-- prefer the COQ dependency-chain procedure below for multi-hop questions,
+- prefer the attached `coq.md` branch for multi-hop questions,
 - preserve entities, time windows, and location constraints exactly.
 
 This routing decision stays internal. Do not call a routing tool.
 
-### Step 1A: Mandatory COQ procedure for dependency chains
+### Step 1A: Enter the attached COQ branch only for multi-hop questions
 
-For any relation chain or dependency chain, execute this exact internal loop:
-1. identify the final asked attribute,
-2. list the dependency hops needed to reach it,
-3. resolve the earliest missing hop first,
-4. only ask for the terminal attribute after the intermediate entity is known.
+If the query is multi-hop:
+1. switch to the attached `coq.md` branch guidance,
+2. follow that dependency-ordered procedure exactly,
+3. keep all searches in this same session using only `memmachine_search`,
+4. stay in that branch until the final asked attribute is supported or the
+   remaining gap is still unsupported after reasonable targeted search.
 
-Mandatory chain rules:
-- resolve entity-valued relations before terminal attributes:
-  - good: `[person] husband`
-  - then: `When did [husband name] die?`
-- resolve parent identities before parent attributes:
-  - good: `[person] father`
-  - then: `When did [father name] die?`
-- resolve spouse identity before spouse attributes:
-  - good: `[person] wife`
-  - then: `What was the cause of death of [wife name]?`
-- resolve composite kinship relations step-by-step instead of querying them whole:
-  - maternal grandfather: `[person] mother` then `[mother name] father`
-  - paternal grandmother: `[person] father` then `[father name] mother`
-  - father-in-law: `[person] spouse` then `[spouse name] father`
-- resolve creator or performer identities before biographical attributes:
-  - `director of [film]` then `Where was [director name] born?`
-  - `performer of [song]` then `Where was [performer name] born?`
-- for comparisons, resolve both branches separately before deciding:
-  - `director of [film A]` + `director of [film B]`
-  - then compare the requested dates/places/release years only after both sides are identified
-- treat these as generic templates, not memorized benchmark examples.
-
-This COQ procedure is duplicated here intentionally so it still applies even if
-an auxiliary `coq.md` attachment is ignored or weakly attended.
+COQ branch rules:
+- invoke the branch only when the answer depends on unresolved intermediate
+  hops, a comparison that requires resolving both sides, or a compositional
+  relation,
+- do not enter the COQ branch for single-hop, single-subject, or direct
+  attribute lookup questions,
+- once inside the COQ branch, let `coq.md` determine the next hop instead of
+  improvising a speculative terminal query,
+- keep the routing decision internal. Do not mention `coq.md` to the user.
 
 ### Step 2: Search iteratively with `memmachine_search`
 
@@ -127,8 +114,8 @@ After each search:
 2. reassess whether the final asked attribute is now supported,
 3. continue searching only if a concrete missing link remains.
 
-If the query is multi-hop, keep following the Step 1A COQ procedure to choose
-the next hop, but keep using only `memmachine_search`.
+If the query is multi-hop, keep following the attached `coq.md` branch from
+Step 1A to choose the next hop, but keep using only `memmachine_search`.
 
 ### Step 4: Finalize with direct assistant text
 

@@ -2,7 +2,7 @@
 name: coq
 version: v1
 kind: sub-agent
-description: "Sequential chain-of-query guidance for single-session retrieval."
+description: "Sequential chain-of-query branch guidance for multi-hop retrieval."
 route_name: coq
 timeout_seconds: 120
 max_return_len: 10000
@@ -23,7 +23,9 @@ required_sections:
 
 ## Intent
 
-Use sequential chain-of-query reasoning inside the current LLM session.
+Use sequential chain-of-query reasoning inside the current LLM session, but
+only after the top-level retrieve-agent has classified the question as
+multi-hop.
 
 Your job:
 - break a multi-hop question into dependency-ordered searches,
@@ -31,13 +33,17 @@ Your job:
 - keep searching with `memmachine_search`,
 - answer directly in plain text once the chain is complete.
 
-This file is guidance for the same session. It is not a callable sub-session.
+This file is guidance for the same session. It is not a callable sub-session,
+and it is not for single-hop direct lookups.
 
 ## Rules
 
 Follow this step-by-step procedure exactly.
 
 ### Step 0: Establish internal state
+
+Enter this branch only when at least one intermediate hop still needs to be
+resolved before the final asked attribute can be answered.
 
 Maintain:
 - `original_query`,
@@ -54,6 +60,9 @@ For the current state, identify:
 - the earliest blocking hop that is still unresolved.
 
 Always prioritize the earliest blocking hop.
+
+If the question no longer has a blocking intermediate hop, leave this branch
+and let the top-level direct-lookup flow finish the answer.
 
 ### Step 2: Generate exactly one next search query
 

@@ -35,11 +35,22 @@ def test_load_markdown_top_level_spec_file() -> None:
     assert "spawn_sub_agent" not in spec.policy_markdown
     assert "return_final" not in spec.policy_markdown
     assert "answer directly in plain text" in spec.policy_markdown
-    assert "Mandatory COQ procedure for dependency chains" in spec.policy_markdown
+    assert "Enter the attached COQ branch only for multi-hop questions" in (
+        spec.policy_markdown
+    )
+    assert "prefer the attached `coq.md` branch for multi-hop questions" in (
+        spec.policy_markdown
+    )
+    assert "do not enter the COQ branch for single-hop" in spec.policy_markdown
+    assert "let `coq.md` determine the next hop" in spec.policy_markdown
     assert "[person] spouse died when" in spec.policy_markdown
     assert "[person] born where" in spec.policy_markdown
-    assert "generic templates, not memorized benchmark examples" in spec.policy_markdown
-    assert "maternal grandfather" in spec.policy_markdown
+    assert "The attached `coq.md` branch is available" in spec.policy_markdown
+    assert "Mandatory COQ procedure for dependency chains" not in spec.policy_markdown
+    assert "generic templates, not memorized benchmark examples" not in (
+        spec.policy_markdown
+    )
+    assert "maternal grandfather" not in spec.policy_markdown
     assert "disambiguating context" in spec.policy_markdown
 
 
@@ -54,6 +65,8 @@ def test_load_markdown_coq_sub_agent_spec_file() -> None:
     assert "## Examples" in spec.policy_markdown
     assert "## Failure Modes" in spec.policy_markdown
     assert "plain text" in spec.policy_markdown
+    assert "classified the question as" in spec.policy_markdown
+    assert "not for single-hop direct lookups" in spec.policy_markdown
     assert "return_sub_agent_result" not in spec.policy_markdown
 
 
