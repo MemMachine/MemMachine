@@ -5,7 +5,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import cast, override
 from uuid import UUID
@@ -57,6 +57,7 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
+from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
 from memmachine_server.episodic_memory.extra_memory.data_types import (
     Block,
     Context,
@@ -73,6 +74,8 @@ _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
 
 _PROPERTY_TYPE_KEY = "t"
 _PROPERTY_VALUE_KEY = "v"
+_PROPERTY_TIMEZONE_OFFSET_KEY = "tz"
+
 
 _ContextAdapter = TypeAdapter(Context | None)
 _BlockAdapter = TypeAdapter(Block)
@@ -105,6 +108,9 @@ class SegmentRow(BaseSegmentLinker):
     offset: MappedColumn[int] = mapped_column(Integer, nullable=False)
     timestamp: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    timestamp_timezone_offset: MappedColumn[int] = mapped_column(
+        Integer, nullable=False, default=0
     )
     context: MappedColumn[dict[str, JsonValue] | None] = mapped_column(
         _JSON_AUTO, nullable=True
@@ -296,7 +302,8 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 "episode_uuid": segment.episode_uuid,
                 "index": segment.index,
                 "offset": segment.offset,
-                "timestamp": segment.timestamp,
+                "timestamp": ensure_tz_aware(segment.timestamp),
+                "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
                 "context": (
                     segment.context.model_dump(mode="json")
                     if segment.context is not None
@@ -500,6 +507,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 SegmentRow.index,
                 SegmentRow.offset,
                 SegmentRow.timestamp,
+                SegmentRow.timestamp_timezone_offset,
                 SegmentRow.context,
                 SegmentRow.block,
                 SegmentRow.properties,
@@ -560,6 +568,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 index=row.index,
                 offset=row.offset,
                 timestamp=row.timestamp,
+                timestamp_timezone_offset=row.timestamp_timezone_offset,
                 context=row.context,
                 block=row.block,
                 properties=row.properties,
@@ -716,6 +725,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                 lateral_subquery.c.index,
                 lateral_subquery.c.offset,
                 lateral_subquery.c.timestamp,
+                lateral_subquery.c.timestamp_timezone_offset,
                 lateral_subquery.c.context,
                 lateral_subquery.c.block,
                 lateral_subquery.c.properties,
@@ -734,6 +744,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                         index=row.index,
                         offset=row.offset,
                         timestamp=row.timestamp,
+                        timestamp_timezone_offset=row.timestamp_timezone_offset,
                         context=row.context,
                         block=row.block,
                         properties=row.properties,
@@ -1032,10 +1043,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             if type_name is None:
                 raise ValueError(f"Unsupported property value type: {type(value)!r}")
             if isinstance(value, datetime):
-                utc_value = value.astimezone(UTC)
+                aware_value = ensure_tz_aware(value)
                 encoded[key] = {
-                    _PROPERTY_VALUE_KEY: utc_value.isoformat(),
+                    _PROPERTY_VALUE_KEY: aware_value.astimezone(UTC).isoformat(),
                     _PROPERTY_TYPE_KEY: type_name,
+                    _PROPERTY_TIMEZONE_OFFSET_KEY: utc_offset_seconds(value),
                 }
             else:
                 encoded[key] = {
@@ -1061,7 +1073,10 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             if property_type is None:
                 raise ValueError(f"Unknown property type name: {type_name!r}")
             if property_type is datetime:
-                properties[key] = datetime.fromisoformat(str(raw_value))
+                utc_dt = datetime.fromisoformat(str(raw_value))
+                tz_offset = entry.get(_PROPERTY_TIMEZONE_OFFSET_KEY, 0)
+                original_tz = timezone(timedelta(seconds=int(tz_offset)))
+                properties[key] = ensure_tz_aware(utc_dt).astimezone(original_tz)
             else:
                 properties[key] = cast(type[bool | int | float | str], property_type)(
                     raw_value
@@ -1138,7 +1153,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             cmp_value = value
         elif isinstance(value, datetime):
             casted = value_element.as_string()
-            cmp_value = value.astimezone(UTC).isoformat()
+            cmp_value = ensure_tz_aware(value).astimezone(UTC).isoformat()
         else:
             raise TypeError(f"Unsupported property value type: {type(value)!r}")
 
@@ -1160,12 +1175,14 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         context = _ContextAdapter.validate_python(row.context)
         block = _BlockAdapter.validate_python(row.block)
         properties = SQLAlchemySegmentLinkerPartition._decode_properties(row.properties)
+        original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
+        timestamp = ensure_tz_aware(row.timestamp).astimezone(original_timezone)
         return Segment(
             uuid=row.uuid,
             episode_uuid=row.episode_uuid,
             index=row.index,
             offset=row.offset,
-            timestamp=row.timestamp,
+            timestamp=timestamp,
             context=context,
             block=block,
             properties=properties,
