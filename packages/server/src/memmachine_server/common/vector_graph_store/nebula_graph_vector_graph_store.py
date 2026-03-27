@@ -48,7 +48,9 @@ logger = logging.getLogger(__name__)
 
 def _nebula_nvector_type() -> type[Any] | None:
     try:
-        nebula_types_module = importlib.import_module("nebulagraph_python.py_data_types")
+        nebula_types_module = importlib.import_module(
+            "nebulagraph_python.py_data_types"
+        )
     except ModuleNotFoundError:
         return None
     nvector_type = getattr(nebula_types_module, "NVector", None)

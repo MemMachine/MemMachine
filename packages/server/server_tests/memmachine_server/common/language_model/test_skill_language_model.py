@@ -110,7 +110,9 @@ async def test_run_live_session_raises_for_invalid_arguments_shape(
         await runtime.run_live_session(
             system_prompt="sys",
             user_prompt="hello",
-            tools=[{"type": "function", "name": "lookup", "parameters": {"type": "object"}}],
+            tools=[
+                {"type": "function", "name": "lookup", "parameters": {"type": "object"}}
+            ],
             tool_registry={"lookup": lambda args: args},
         )
 

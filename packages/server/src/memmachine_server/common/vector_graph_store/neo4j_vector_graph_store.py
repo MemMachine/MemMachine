@@ -940,7 +940,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             async with self._populate_index_state_cache_lock:
                 if not self._index_state_cache:
                     records, _, _ = await self._driver.execute_query(
-                        _neo4j_query("SHOW INDEXES YIELD name, state RETURN name, state"),
+                        _neo4j_query(
+                            "SHOW INDEXES YIELD name, state RETURN name, state"
+                        ),
                     )
 
                     # Synchronous code is atomic in asynchronous framework

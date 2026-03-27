@@ -318,9 +318,7 @@ class SkillAnthropicSessionLanguageModel:
                     diagnostics={
                         "provider": "anthropic",
                         "operation": (
-                            "beta.messages.create"
-                            if use_beta
-                            else "messages.create"
+                            "beta.messages.create" if use_beta else "messages.create"
                         ),
                         "attempt": attempt,
                         "error_type": type(err).__name__,
@@ -613,7 +611,9 @@ class SkillAnthropicSessionLanguageModel:
                 if rel_name.lower().endswith(".md")
                 else "application/octet-stream"
             )
-            multipart_files.append(("files", (rel_name, path.read_bytes(), content_type)))
+            multipart_files.append(
+                ("files", (rel_name, path.read_bytes(), content_type))
+            )
 
         async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
             response = await client.post(
@@ -645,7 +645,9 @@ class SkillAnthropicSessionLanguageModel:
     @staticmethod
     def _extract_skill_id(response: object) -> str:
         response_dict = SkillAnthropicSessionLanguageModel._as_dict(response)
-        raw_id = response_dict.get("id") if response_dict else getattr(response, "id", None)
+        raw_id = (
+            response_dict.get("id") if response_dict else getattr(response, "id", None)
+        )
         if isinstance(raw_id, str) and raw_id.strip():
             return raw_id
         raise SkillLanguageModelError("Anthropic skill upload returned no skill id.")

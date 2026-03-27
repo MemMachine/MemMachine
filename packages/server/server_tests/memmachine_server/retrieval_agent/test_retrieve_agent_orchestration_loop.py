@@ -60,9 +60,9 @@ class FakeRestMemory:
                 "episodic_memory": {
                     "long_term_memory": {
                         "episodes": [
-                            EpisodeResponse(score=1.0, **episode.model_dump()).model_dump(
-                                mode="json"
-                            )
+                            EpisodeResponse(
+                                score=1.0, **episode.model_dump()
+                            ).model_dump(mode="json")
                             for episode in episodes[:search_limit]
                         ]
                     },

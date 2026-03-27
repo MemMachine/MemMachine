@@ -81,7 +81,10 @@ async def test_max_steps_exceeded_returns_partial_result(
     episode = _build_episode("fb-steps", "fallback-steps")
     memory = FakeRestMemory({"hello": [episode]})
     model = FakeOpenAIInstalledAgentModel(
-        [openai_tool_call_response(query="hello", response_id=f"resp-{index}") for index in range(8)]
+        [
+            openai_tool_call_response(query="hello", response_id=f"resp-{index}")
+            for index in range(8)
+        ]
     )
 
     skill = _build_skill(model, tmp_path=tmp_path)

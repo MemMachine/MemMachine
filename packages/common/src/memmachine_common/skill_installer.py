@@ -31,6 +31,7 @@ class _OpenAIFilesAPI(Protocol):
 class _OpenAIClientProtocol(Protocol):
     files: _OpenAIFilesAPI
 
+
 ProviderName = Literal["anthropic", "openai"]
 
 _ANTHROPIC_FILES_BETA = "files-api-2025-04-14"

@@ -235,4 +235,6 @@ async def test_anthropic_live_session_attaches_container_skills_when_enabled(
     request = client.beta.messages.create.await_args_list[0].kwargs
     assert request["container"]["skills"][0]["type"] == "custom"
     assert request["container"]["skills"][0]["skill_id"] == "skill_123"
-    assert any(tool.get("type") == "code_execution_20250825" for tool in request["tools"])
+    assert any(
+        tool.get("type") == "code_execution_20250825" for tool in request["tools"]
+    )

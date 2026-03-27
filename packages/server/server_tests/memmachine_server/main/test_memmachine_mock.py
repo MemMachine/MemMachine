@@ -472,12 +472,12 @@ async def test_query_search_with_retrieval_agent_returns_combined_result(
     )
 
     assert response.episodic_memory is not None
-    assert [episode.uid for episode in response.episodic_memory.long_term_memory.episodes] == [
-        "long-1"
-    ]
-    assert [episode.uid for episode in response.episodic_memory.short_term_memory.episodes] == [
-        "short-1"
-    ]
+    assert [
+        episode.uid for episode in response.episodic_memory.long_term_memory.episodes
+    ] == ["long-1"]
+    assert [
+        episode.uid for episode in response.episodic_memory.short_term_memory.episodes
+    ] == ["short-1"]
     assert response.episodic_memory.short_term_memory.episode_summary == [
         "short-summary"
     ]

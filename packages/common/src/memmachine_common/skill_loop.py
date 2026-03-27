@@ -274,7 +274,9 @@ def normalize_search_result(
             ),
         },
     }
-    combined_text = "\n".join([*semantic_lines, *episode_summary, *episode_lines]).strip()
+    combined_text = "\n".join(
+        [*semantic_lines, *episode_summary, *episode_lines]
+    ).strip()
 
     normalized_payload: dict[str, object] = {
         "query": query,
@@ -551,10 +553,13 @@ async def continue_tool_loop(
         if not tool_calls:
             return final_response_text(latest_text, stage_result_mode=stage_result_mode)
         if turn_index + 1 >= max_turns:
-            return final_response_text(
-                latest_text,
-                stage_result_mode=stage_result_mode,
-            ) or partial_response_text
+            return (
+                final_response_text(
+                    latest_text,
+                    stage_result_mode=stage_result_mode,
+                )
+                or partial_response_text
+            )
 
         tool_results: list[SkillLoopToolResult] = []
         for call in tool_calls:

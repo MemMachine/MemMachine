@@ -926,16 +926,12 @@ async def test_run_search_canonicalizes_relation_terminal_queries():
 
     result = await runner._run_search("cause of death Eleanor Vale")
 
-    assert (
-        memory.calls[2]["query"] == "What was the cause of death of Eleanor Vale?"
-    )
+    assert memory.calls[2]["query"] == "What was the cause of death of Eleanor Vale?"
     assert result["query"] == "What was the cause of death of Eleanor Vale?"
 
     result = await runner._run_search("cause of death of Eleanor Vale")
 
-    assert (
-        memory.calls[3]["query"] == "What was the cause of death of Eleanor Vale?"
-    )
+    assert memory.calls[3]["query"] == "What was the cause of death of Eleanor Vale?"
     assert result["query"] == "What was the cause of death of Eleanor Vale?"
 
 

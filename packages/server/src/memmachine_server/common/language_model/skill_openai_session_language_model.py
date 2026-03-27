@@ -258,9 +258,7 @@ class SkillLanguageModel:
                 if str(item.get("type", "")) == "function_call"
             ]
             shell_calls = [
-                item
-                for item in response_items
-                if self._is_actionable_shell_call(item)
+                item for item in response_items if self._is_actionable_shell_call(item)
             ]
             if not function_calls and not shell_calls:
                 return SkillRunResult(
@@ -564,9 +562,7 @@ class SkillLanguageModel:
                         "shell_call",
                         "message",
                     }:
-                        warnings.append(
-                            f"unsupported_response_item_type:{item_type}"
-                        )
+                        warnings.append(f"unsupported_response_item_type:{item_type}")
                     normalized_items.append(item_dict)
             return normalized_items, warnings
 

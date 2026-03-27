@@ -692,7 +692,8 @@ class MemMachine:
             raw_expand_context = kwargs.get("expand_context")
             expand_context = (
                 int(raw_expand_context)
-                if isinstance(raw_expand_context, int) and not isinstance(raw_expand_context, bool)
+                if isinstance(raw_expand_context, int)
+                and not isinstance(raw_expand_context, bool)
                 else 0
             )
             result = await self._memmachine._query_search_direct(  # noqa: SLF001
@@ -717,7 +718,8 @@ class MemMachine:
                 )
             if result.semantic_memory is not None:
                 content["semantic_memory"] = [
-                    feature.model_dump(mode="json") for feature in result.semantic_memory
+                    feature.model_dump(mode="json")
+                    for feature in result.semantic_memory
                 ]
             if result.retrieval_trace is not None:
                 content["retrieval_trace"] = result.retrieval_trace
