@@ -10,6 +10,7 @@ from uuid import UUID, uuid4, uuid5
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -61,6 +62,8 @@ class ExtraMemoryParams(BaseModel):
             Reranker instance for reranking search results.
         derive_sentences (bool):
             Whether to derive sentence-level derivatives from content (default: False).
+        deduplicate_derivatives (bool):
+            Whether to deduplicate derivatives by content using uuid5 (default: False).
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation (default: 2000).
         purge_interval (float | None):
@@ -90,6 +93,10 @@ class ExtraMemoryParams(BaseModel):
     derive_sentences: bool = Field(
         False,
         description="Whether to derive sentence-level derivatives from content",
+    )
+    deduplicate_derivatives: bool = Field(
+        False,
+        description="Whether to deduplicate derivatives by content using uuid5.",
     )
     max_text_chunk_length: int = Field(
         2000,
@@ -122,6 +129,7 @@ class ExtraMemory:
         self._reranker = params.reranker
 
         self._derive_sentences = params.derive_sentences
+        self._deduplicate_derivatives = params.deduplicate_derivatives
 
         self._purge_interval = params.purge_interval
         self._purge_task: asyncio.Task[None] | None = None
@@ -250,21 +258,37 @@ class ExtraMemory:
             [derivative.text for derivative in derivatives],
         )
 
-        await self._segment_linker_partition.register_segments(
-            links={
-                segment: [derivative.uuid for derivative in segment_derivatives]
-                for segment, segment_derivatives in zip(
-                    segments,
-                    segments_derivatives,
-                    strict=True,
-                )
-            },
-        )
+        links = {
+            segment: [derivative.uuid for derivative in segment_derivatives]
+            for segment, segment_derivatives in zip(
+                segments,
+                segments_derivatives,
+                strict=True,
+            )
+        }
+
+        await self._segment_linker_partition.register_segments(links=links)
+
+        # In non-deduplication mode, attach segment properties to vector records.
+        derivative_properties: dict[UUID, dict[str, PropertyValue]] | None = None
+        if not self._deduplicate_derivatives:
+            derivative_properties = {}
+            for segment, segment_derivatives in zip(
+                segments, segments_derivatives, strict=True
+            ):
+                if segment.properties:
+                    for derivative in segment_derivatives:
+                        derivative_properties[derivative.uuid] = segment.properties
 
         derivative_records = [
             Record(
                 uuid=derivative.uuid,
                 vector=derivative_embedding,
+                properties=(
+                    derivative_properties.get(derivative.uuid)
+                    if derivative_properties is not None
+                    else None
+                ),
             )
             for derivative, derivative_embedding in zip(
                 derivatives,
@@ -395,10 +419,7 @@ class ExtraMemory:
             formatted = ExtraMemory._format_with_context(text, context)
             return [
                 Derivative(
-                    uuid=uuid5(
-                        _DERIVATIVE_UUID_NAMESPACE,
-                        json.dumps([self._partition_key, formatted]),
-                    ),
+                    uuid=self._derivative_uuid(formatted),
                     text=formatted,
                 )
             ]
@@ -408,14 +429,19 @@ class ExtraMemory:
             formatted = ExtraMemory._format_with_context(sentence, context)
             derivatives.append(
                 Derivative(
-                    uuid=uuid5(
-                        _DERIVATIVE_UUID_NAMESPACE,
-                        json.dumps([self._partition_key, formatted]),
-                    ),
+                    uuid=self._derivative_uuid(formatted),
                     text=formatted,
                 )
             )
         return derivatives
+
+    def _derivative_uuid(self, text: str) -> UUID:
+        if self._deduplicate_derivatives:
+            return uuid5(
+                _DERIVATIVE_UUID_NAMESPACE,
+                json.dumps([self._partition_key, text]),
+            )
+        return uuid4()
 
     async def query(
         self,
@@ -454,10 +480,14 @@ class ExtraMemory:
             )
         )[0]
 
+        # Filter at the vector DB level in non-dedup mode.
+        vector_filter = property_filter if not self._deduplicate_derivatives else None
+
         # Search derivative collection for matches.
         [query_result] = await self._collection.query(
             query_vectors=[query_embedding],
             limit=min(5 * max_num_segments, 200),
+            property_filter=vector_filter,
             return_vector=False,
             return_properties=False,
         )
