@@ -8,9 +8,10 @@ import MemMachineClient, {
 } from "@memmachine/client";
 import {
   jsonResult,
+  type MemoryPromptSectionBuilder,
+  type OpenClawPluginApi,
   readNumberParam,
   readStringParam,
-  type OpenClawPluginApi,
 } from "openclaw/plugin-sdk";
 
 type PluginConfig = {
@@ -37,6 +38,7 @@ const DEFAULT_TOP_K = 5;
 const DEFAULT_SEARCH_THRESHOLD = 0.5;
 const DEFAULT_FORGET_THRESHOLD = 0.85;
 const DEFAULT_PAGE_SIZE = 10;
+const DEFAULT_OPENCLAW_ID = "openclaw";
 
 const PluginConfigJsonSchema = {
   type: "object",
@@ -44,15 +46,62 @@ const PluginConfigJsonSchema = {
   properties: {
     apiKey: { type: "string" },
     baseUrl: { type: "string" },
-    userId: { type: "string" },
-    orgId: { type: "string" },
-    projectId: { type: "string" },
+    userId: { type: "string", default: DEFAULT_OPENCLAW_ID },
+    orgId: { type: "string", default: DEFAULT_OPENCLAW_ID },
+    projectId: { type: "string", default: DEFAULT_OPENCLAW_ID },
     autoCapture: { type: "boolean" },
     autoRecall: { type: "boolean" },
     searchThreshold: { type: "number" },
     topK: { type: "number" },
   },
   required: [],
+} as const;
+
+const PluginConfigUiHints = {
+  apiKey: {
+    label: "MemMachine API Key",
+    sensitive: true,
+    placeholder: "mm-...",
+    help: "API key from MemMachine Cloud or your self-hosted deployment.",
+  },
+  baseUrl: {
+    label: "MemMachine Base URL",
+    placeholder: "https://api.memmachine.ai",
+    help: "Base URL for the MemMachine service.",
+  },
+  userId: {
+    label: "Default User ID",
+    placeholder: DEFAULT_OPENCLAW_ID,
+    help: "User identifier used for long-term memory scoping.",
+  },
+  orgId: {
+    label: "Organization ID",
+    placeholder: DEFAULT_OPENCLAW_ID,
+    advanced: true,
+  },
+  projectId: {
+    label: "Project ID",
+    placeholder: DEFAULT_OPENCLAW_ID,
+    advanced: true,
+  },
+  autoCapture: {
+    label: "Auto-Capture",
+    help: "Automatically store recent conversation turns after each agent run.",
+  },
+  autoRecall: {
+    label: "Auto-Recall",
+    help: "Automatically inject relevant memories before each agent run.",
+  },
+  searchThreshold: {
+    label: "Search Score Threshold",
+    placeholder: "0.5",
+    help: "Minimum search score required for automatic recall and search results.",
+  },
+  topK: {
+    label: "Top K Results",
+    placeholder: "5",
+    help: "Maximum number of memories to retrieve per search.",
+  },
 } as const;
 
 const MemorySearchSchema = Type.Object({
@@ -118,9 +167,18 @@ function resolvePluginConfig(api: OpenClawPluginApi): PluginConfig {
   return {
     apiKey: typeof raw.apiKey === "string" ? raw.apiKey.trim() : undefined,
     baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : undefined,
-    userId: typeof raw.userId === "string" ? raw.userId.trim() : undefined,
-    orgId: typeof raw.orgId === "string" ? raw.orgId.trim() : undefined,
-    projectId: typeof raw.projectId === "string" ? raw.projectId.trim() : undefined,
+    userId:
+      typeof raw.userId === "string" && raw.userId.trim()
+        ? raw.userId.trim()
+        : DEFAULT_OPENCLAW_ID,
+    orgId:
+      typeof raw.orgId === "string" && raw.orgId.trim()
+        ? raw.orgId.trim()
+        : DEFAULT_OPENCLAW_ID,
+    projectId:
+      typeof raw.projectId === "string" && raw.projectId.trim()
+        ? raw.projectId.trim()
+        : DEFAULT_OPENCLAW_ID,
     autoCapture: typeof raw.autoCapture === "boolean" ? raw.autoCapture : undefined,
     autoRecall: typeof raw.autoRecall === "boolean" ? raw.autoRecall : undefined,
     searchThreshold:
@@ -396,17 +454,58 @@ async function autoCaptureMessages(params: {
   }
 }
 
-const memmachinePlugin = {
+const buildPromptSection: MemoryPromptSectionBuilder = ({ availableTools, citationsMode }) => {
+  const hasSearch = availableTools.has("memory_search");
+  const hasGet = availableTools.has("memory_get");
+  const hasStore = availableTools.has("memory_store");
+  const hasForget = availableTools.has("memory_forget");
+
+  if (!hasSearch && !hasGet) {
+    return [];
+  }
+
+  const lines = [
+    "## Memory Recall",
+    hasSearch
+      ? "Before answering questions about prior work, preferences, people, dates, or decisions, run memory_search first and only cite memories that are actually relevant."
+      : "Use memory_get only when the user already supplied a specific memory id you need to inspect.",
+  ];
+
+  if (hasGet) {
+    lines.push("Use memory_get when search returns a specific id that you need to inspect directly.");
+  }
+  if (hasStore) {
+    lines.push(
+      "Use memory_store sparingly for durable facts, preferences, or decisions worth keeping beyond the current reply.",
+    );
+  }
+  if (hasForget) {
+    lines.push(
+      "Use memory_forget only when the user asks to delete memory or when stale memory must be removed.",
+    );
+  }
+  lines.push(
+    citationsMode === "off"
+      ? "Citations are disabled, so do not mention internal memory ids unless the user asks."
+      : "When helpful, mention the memory id or result payload that supports the answer.",
+  );
+  lines.push("");
+  return lines;
+};
+
+export default {
   id: "openclaw-memmachine",
   name: "MemMachine",
   description: "MemMachine-backed memory tools with auto recall/capture",
-  kind: "memory" as const,
+  kind: "memory",
   configSchema: {
     jsonSchema: PluginConfigJsonSchema,
+    uiHints: PluginConfigUiHints,
   },
-
   register(api: OpenClawPluginApi) {
     const cfg = resolvePluginConfig(api);
+
+    api.registerMemoryPromptSection(buildPromptSection);
 
     // Tools
     api.registerTool(
@@ -746,5 +845,3 @@ const memmachinePlugin = {
     });
   },
 };
-
-export default memmachinePlugin;
