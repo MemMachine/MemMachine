@@ -44,7 +44,12 @@ _openai_client = None
 def _get_openai_client() -> openai.OpenAI:
     global _openai_client
     if _openai_client is None:
-        _openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY must be set when no eval_llm client is provided."
+            )
+        _openai_client = openai.OpenAI(api_key=api_key)
     return _openai_client
 
 
@@ -147,7 +152,10 @@ def main():
                 continue
 
             label = evaluate_llm_judge(
-                question, gold_answer, generated_answer, args.model,
+                question,
+                gold_answer,
+                generated_answer,
+                args.model,
                 eval_llm=eval_llm,
             )
             LLM_JUDGE[category].append(label)

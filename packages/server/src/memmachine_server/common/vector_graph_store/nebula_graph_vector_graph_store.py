@@ -11,15 +11,14 @@ interface using NebulaGraph Enterprise as the backend. It supports:
 """
 
 import asyncio
+import importlib
 import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
-
-from nebulagraph_python.py_data_types import NVector
+from typing import Any
 
 from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
@@ -44,10 +43,19 @@ from .data_types import (
 )
 from .vector_graph_store import VectorGraphStore
 
-if TYPE_CHECKING:
-    from nebulagraph_python.client import NebulaAsyncClient
-
 logger = logging.getLogger(__name__)
+
+
+def _nebula_nvector_type() -> type[Any] | None:
+    try:
+        nebula_types_module = importlib.import_module("nebulagraph_python.py_data_types")
+    except ModuleNotFoundError:
+        return None
+    nvector_type = getattr(nebula_types_module, "NVector", None)
+    return nvector_type if isinstance(nvector_type, type) else None
+
+
+_NEBULA_NVECTOR_TYPE = _nebula_nvector_type()
 
 
 @dataclass
@@ -80,7 +88,7 @@ class NebulaGraphVectorGraphStoreParams:
 
     """
 
-    client: "NebulaAsyncClient"
+    client: Any
     schema_name: str
     graph_type_name: str
     graph_name: str
@@ -1123,7 +1131,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
                 # Extract vector value
                 vec = None
-                if isinstance(value, NVector):
+                if _NEBULA_NVECTOR_TYPE is not None and isinstance(
+                    value, _NEBULA_NVECTOR_TYPE
+                ):
                     vec = value.get_values()
                 elif hasattr(value, "as_list"):
                     vec = value.as_list()

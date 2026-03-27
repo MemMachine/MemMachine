@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -152,12 +153,31 @@ def test_invalid_result_without_normalizer_raises_error_code() -> None:
     assert exc_info.value.payload.fallback_trigger_reason == "invalid_agent_output"
 
 
+def test_legacy_tuple_result_normalizes_without_explicit_normalizer() -> None:
+    episodic_memory = _build_episodic_response()
+
+    result = validate_agent_result(
+        raw_result=(
+            {"episodic_memory": episodic_memory},
+            {"selected_agent_name": "MemMachineSearch"},
+        ),
+        route_name="retrieve-agent",
+        normalizer=None,
+    )
+
+    assert result.version == "v1"
+    assert result.route_name == "retrieve-agent"
+    assert result.episodic_memory == episodic_memory
+    assert result.perf_metrics["selected_agent_name"] == "MemMachineSearch"
+
+
 def test_top_level_schema_exposes_only_memmachine_search() -> None:
     schemas = top_level_tool_schemas(["memmachine_search"], ["coq"])
     assert len(schemas) == 1
     search_schema = schemas[0]
     assert search_schema["name"] == "memmachine_search"
-    properties = search_schema["parameters"]["properties"]
+    parameters = cast(dict[str, object], search_schema["parameters"])
+    properties = cast(dict[str, object], parameters["properties"])
     assert "query" in properties
     assert "rationale" in properties
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any, cast
 
 import pytest
 
@@ -71,6 +72,16 @@ def _skill(provider: str = "openai") -> Skill:
     )
 
 
+def _as_any_dict(value: object) -> dict[str, Any]:
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
+
+
+def _as_any_list(value: object) -> list[Any]:
+    assert isinstance(value, list)
+    return cast(list[Any], value)
+
+
 def test_skill_messages_openai_uses_input_file_blocks():
     runner = SkillRunner(
         _skill("openai"),
@@ -121,9 +132,11 @@ def test_tools_are_provider_specific():
 
     openai_tool = openai_runner.tools()[0]
     anthropic_tool = anthropic_runner.tools()[0]
+    openai_parameters = _as_any_dict(openai_tool["parameters"])
+    anthropic_input_schema = _as_any_dict(anthropic_tool["input_schema"])
 
-    assert openai_tool["parameters"]["required"] == ["query"]
-    assert anthropic_tool["input_schema"]["required"] == ["query"]
+    assert openai_parameters["required"] == ["query"]
+    assert anthropic_input_schema["required"] == ["query"]
 
 
 @pytest.mark.asyncio
@@ -171,7 +184,10 @@ async def test_handle_tool_loop_openai_rest_mode_uses_previous_response_id():
     ]
     follow_up_call = client.responses.calls[0]
     assert follow_up_call["previous_response_id"] == "resp-1"
-    tool_output = json.loads(follow_up_call["input"][0]["output"])
+    follow_up_inputs = _as_any_list(follow_up_call["input"])
+    raw_output = _as_any_dict(follow_up_inputs[0])["output"]
+    assert isinstance(raw_output, str)
+    tool_output = json.loads(raw_output)
     assert (
         tool_output["episodes_text"] == "summary line\n1. short memory\n2. long memory"
     )
@@ -230,7 +246,10 @@ async def test_handle_tool_loop_openai_rest_mode_includes_semantic_memory():
 
     assert result == "Final answer"
     follow_up_call = client.responses.calls[0]
-    tool_output = json.loads(follow_up_call["input"][0]["output"])
+    follow_up_inputs = _as_any_list(follow_up_call["input"])
+    raw_output = _as_any_dict(follow_up_inputs[0])["output"]
+    assert isinstance(raw_output, str)
+    tool_output = json.loads(raw_output)
     assert tool_output["semantic_memory"] == [
         {
             "category": "profile",
@@ -303,10 +322,15 @@ async def test_handle_tool_loop_anthropic_rest_mode_rebuilds_messages():
     ]
     follow_up_call = client.messages.calls[0]
     assert follow_up_call["system"] == "system"
-    assert len(follow_up_call["messages"]) == 3
-    tool_result = follow_up_call["messages"][-1]["content"][0]
+    messages = _as_any_list(follow_up_call["messages"])
+    assert len(messages) == 3
+    tool_result_container = _as_any_dict(messages[-1])
+    tool_result_content = _as_any_list(tool_result_container["content"])
+    tool_result = _as_any_dict(tool_result_content[0])
     assert tool_result["type"] == "tool_result"
-    assert "short memory" in tool_result["content"]
+    tool_result_text = tool_result["content"]
+    assert isinstance(tool_result_text, str)
+    assert "short memory" in tool_result_text
 
 
 @pytest.mark.asyncio
@@ -489,7 +513,8 @@ async def test_run_search_records_latency():
     assert runner.last_memory_search_called == 1
     assert len(runner.last_memory_search_latency_seconds) == 1
     assert runner.last_memory_search_latency_seconds[0] > 0
-    assert runner.last_search_results[0]["episodes"][0]["uid"] == "s1"
+    episodes = _as_any_list(runner.last_search_results[0]["episodes"])
+    assert _as_any_dict(episodes[0])["uid"] == "s1"
 
 
 @pytest.mark.asyncio
@@ -510,8 +535,10 @@ async def test_max_episode_chars():
         raw_result=memory.search("test"),
     )
 
-    assert "hello" in result["episodes_text"]
-    assert "hello world" not in result["episodes_text"]
+    episodes_text = result["episodes_text"]
+    assert isinstance(episodes_text, str)
+    assert "hello" in episodes_text
+    assert "hello world" not in episodes_text
 
 
 @pytest.mark.asyncio
@@ -535,9 +562,12 @@ async def test_client_side_score_threshold():
         raw_result=memory.search("test"),
     )
 
-    assert len(result["episodes"]) == 1
-    assert result["episodes"][0]["uid"] == "high"
-    assert "low score ep" not in result["episodes_text"]
+    episodes = _as_any_list(result["episodes"])
+    assert len(episodes) == 1
+    assert _as_any_dict(episodes[0])["uid"] == "high"
+    episodes_text = result["episodes_text"]
+    assert isinstance(episodes_text, str)
+    assert "low score ep" not in episodes_text
 
 
 @pytest.mark.asyncio
@@ -751,9 +781,12 @@ def test_stage_result_mode_appends_guidance_to_prompt():
     )
 
     messages = runner.skill_messages("Where is the answer?")
+    message = _as_any_dict(messages[-1])
+    text = message["text"]
+    assert isinstance(text, str)
 
-    assert "[StageResult]" in messages[-1]["text"]
-    assert "Where is the answer?" in messages[-1]["text"]
+    assert "[StageResult]" in text
+    assert "Where is the answer?" in text
 
 
 @pytest.mark.asyncio

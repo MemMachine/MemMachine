@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import time
@@ -64,6 +63,20 @@ class SkillAnthropicSessionLanguageModel:
         self._temperature = params.temperature
         self._log_raw_output = params.log_raw_output
         self._skill_id_cache: dict[str, str] = {}
+
+    @staticmethod
+    def _as_dict(raw_value: object) -> dict[str, object]:
+        if isinstance(raw_value, dict):
+            return {str(key): value for key, value in raw_value.items()}
+        model_dump = getattr(raw_value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return {str(key): value for key, value in dumped.items()}
+        raw_dict = getattr(raw_value, "__dict__", None)
+        if isinstance(raw_dict, dict):
+            return {str(key): value for key, value in raw_dict.items()}
+        return {}
 
     async def run_live_session(  # noqa: C901
         self,
@@ -221,14 +234,15 @@ class SkillAnthropicSessionLanguageModel:
         self,
         raw_tool_use: object,
     ) -> tuple[str | None, str, dict[str, object]]:
-        if not isinstance(raw_tool_use, dict):
+        tool_use = self._as_dict(raw_tool_use)
+        if not tool_use:
             raise SkillToolCallFormatError("Tool call entry must be an object.")
-        if raw_tool_use.get("type") != "tool_use":
+        if tool_use.get("type") != "tool_use":
             raise SkillToolCallFormatError("Tool call entry must have type=tool_use.")
 
-        name = raw_tool_use.get("name")
-        tool_input = raw_tool_use.get("input", {})
-        call_id = raw_tool_use.get("id")
+        name = tool_use.get("name")
+        tool_input = tool_use.get("input", {})
+        call_id = tool_use.get("id")
         if not isinstance(name, str) or not name.strip():
             raise SkillToolCallFormatError("Tool call missing function name.")
         parsed_args = self._parse_arguments(tool_input)
@@ -349,16 +363,18 @@ class SkillAnthropicSessionLanguageModel:
     def _response_usage(self, response: object) -> tuple[dict[str, int], list[str]]:
         warnings: list[str] = []
         usage_raw: object = None
-        if isinstance(response, dict):
-            usage_raw = response.get("usage")
+        response_dict = self._as_dict(response)
+        if response_dict:
+            usage_raw = response_dict.get("usage")
         else:
             usage_raw = getattr(response, "usage", None)
 
         input_tokens = 0
         output_tokens = 0
-        if isinstance(usage_raw, dict):
-            raw_input = usage_raw.get("input_tokens")
-            raw_output = usage_raw.get("output_tokens")
+        usage_dict = self._as_dict(usage_raw)
+        if usage_dict:
+            raw_input = usage_dict.get("input_tokens")
+            raw_output = usage_dict.get("output_tokens")
             if isinstance(raw_input, int):
                 input_tokens = raw_input
             else:
@@ -395,8 +411,9 @@ class SkillAnthropicSessionLanguageModel:
     ) -> tuple[list[dict[str, object]], list[str]]:
         warnings: list[str] = []
         content_raw: object
-        if isinstance(response, dict):
-            content_raw = response.get("content", [])
+        response_dict = self._as_dict(response)
+        if response_dict:
+            content_raw = response_dict.get("content", [])
         else:
             content_raw = getattr(response, "content", [])
 
@@ -416,23 +433,24 @@ class SkillAnthropicSessionLanguageModel:
         self,
         raw_block: object,
     ) -> tuple[dict[str, object] | None, str | None]:
-        if isinstance(raw_block, dict):
-            block_type = raw_block.get("type")
+        raw_block_dict = self._as_dict(raw_block)
+        if raw_block_dict:
+            block_type = raw_block_dict.get("type")
             if block_type == "text":
-                text = raw_block.get("text")
+                text = raw_block_dict.get("text")
                 if not isinstance(text, str):
                     return None, "text_block_missing_text"
                 return {"type": "text", "text": text}, None
             if block_type == "tool_use":
-                name = raw_block.get("name")
+                name = raw_block_dict.get("name")
                 if not isinstance(name, str) or not name.strip():
                     return None, "tool_use_block_missing_name"
                 block: dict[str, object] = {
                     "type": "tool_use",
                     "name": name.strip(),
-                    "input": raw_block.get("input", {}),
+                    "input": raw_block_dict.get("input", {}),
                 }
-                call_id = raw_block.get("id")
+                call_id = raw_block_dict.get("id")
                 if isinstance(call_id, str):
                     block["id"] = call_id
                 return block, None
@@ -588,52 +606,46 @@ class SkillAnthropicSessionLanguageModel:
             "anthropic-version": "2023-06-01",
             "anthropic-beta": "skills-2025-10-02",
         }
-        with contextlib.ExitStack() as stack:
-            multipart_files: list[tuple[str, tuple[str, object, str]]] = []
-            for rel_name, path in files:
-                handle = stack.enter_context(path.open("rb"))
-                content_type = (
-                    "text/markdown"
-                    if rel_name.lower().endswith(".md")
-                    else "application/octet-stream"
-                )
-                multipart_files.append(
-                    ("files", (rel_name, handle, content_type))
-                )
+        multipart_files: list[tuple[str, tuple[str, bytes, str]]] = []
+        for rel_name, path in files:
+            content_type = (
+                "text/markdown"
+                if rel_name.lower().endswith(".md")
+                else "application/octet-stream"
+            )
+            multipart_files.append(("files", (rel_name, path.read_bytes(), content_type)))
 
-            async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
-                response = await client.post(
-                    "/v1/skills?beta=true",
-                    headers=headers,
-                    data={"display_title": bundle.name},
-                    files=multipart_files,
-                )
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as err:
-                    raise SkillLanguageModelError(
-                        "Anthropic native skill HTTP upload failed.",
-                        diagnostics={
-                            "provider": "anthropic",
-                            "operation": "skills.create.http_fallback",
-                            "error_type": type(err).__name__,
-                            "status_code": response.status_code,
-                            "response_body": self._serialize_object_for_diagnostics(
-                                response.text
-                            ),
-                            "skill_name": bundle.name,
-                            "bundle_path": bundle.path,
-                        },
-                    ) from err
-                payload = response.json()
+        async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
+            response = await client.post(
+                "/v1/skills?beta=true",
+                headers=headers,
+                data={"display_title": bundle.name},
+                files=multipart_files,
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as err:
+                raise SkillLanguageModelError(
+                    "Anthropic native skill HTTP upload failed.",
+                    diagnostics={
+                        "provider": "anthropic",
+                        "operation": "skills.create.http_fallback",
+                        "error_type": type(err).__name__,
+                        "status_code": response.status_code,
+                        "response_body": self._serialize_object_for_diagnostics(
+                            response.text
+                        ),
+                        "skill_name": bundle.name,
+                        "bundle_path": bundle.path,
+                    },
+                ) from err
+            payload = response.json()
         return self._extract_skill_id(payload)
 
     @staticmethod
     def _extract_skill_id(response: object) -> str:
-        if isinstance(response, dict):
-            raw_id = response.get("id")
-        else:
-            raw_id = getattr(response, "id", None)
+        response_dict = SkillAnthropicSessionLanguageModel._as_dict(response)
+        raw_id = response_dict.get("id") if response_dict else getattr(response, "id", None)
         if isinstance(raw_id, str) and raw_id.strip():
             return raw_id
         raise SkillLanguageModelError("Anthropic skill upload returned no skill id.")

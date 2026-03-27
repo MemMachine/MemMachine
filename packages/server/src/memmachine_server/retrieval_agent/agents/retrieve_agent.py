@@ -11,11 +11,12 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from memmachine_common import SkillRunner, install_skill
 from memmachine_common.api import MemoryType
 from memmachine_common.skill_loop import SkillLoopContractError
+from pydantic import JsonValue
 
 from memmachine_server.common.configuration.retrieval_config import (
     RetrievalAgentConf,
@@ -45,8 +46,8 @@ from memmachine_server.retrieval_agent.agents.types import (
 from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
-    RetrievalAgentResult,
     RetrievalAgentParams,
+    RetrievalAgentResult,
     rerank_episodes,
 )
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
@@ -214,7 +215,9 @@ class RetrievalAgent:
             DEFAULT_AGENT_INSTALL_ROOT,
         )
         self._agent_install_root = Path(str(raw_agent_install_root))
-        raw_agent_install_cache_path = self._extra_params.get("agent_install_cache_path")
+        raw_agent_install_cache_path = self._extra_params.get(
+            "agent_install_cache_path"
+        )
         self._agent_install_cache_path = (
             Path(str(raw_agent_install_cache_path))
             if raw_agent_install_cache_path is not None
@@ -223,7 +226,7 @@ class RetrievalAgent:
         )
         self._installed_agent: object | None = None
         self._provider_client: object | None = None
-        self._provider_name: str | None = None
+        self._provider_name: Literal["anthropic", "openai"] | None = None
         self._provider_model_name: str | None = None
         self._installed_agent_lock = asyncio.Lock()
 
@@ -263,10 +266,14 @@ class RetrievalAgent:
         )
         return session
 
-    def _resolve_provider_runtime(self) -> tuple[str, object, str]:
+    def _resolve_provider_runtime(
+        self,
+    ) -> tuple[Literal["anthropic", "openai"], object, str]:
         if self._provider_name is not None:
             if self._provider_client is None or self._provider_model_name is None:
-                raise RuntimeError("RetrievalAgent provider runtime cache is incomplete.")
+                raise RuntimeError(
+                    "RetrievalAgent provider runtime cache is incomplete."
+                )
             return (
                 self._provider_name,
                 self._provider_client,
@@ -335,20 +342,22 @@ class RetrievalAgent:
             if self._installed_agent is not None:
                 return self._installed_agent
             provider, client, _ = self._resolve_provider_runtime()
-            install_kwargs: dict[str, object] = {
-                "cache_path": self._agent_install_cache_path,
-            }
             if provider == "openai":
-                install_kwargs["openai_client"] = client
+                self._installed_agent = await install_skill(
+                    self._agent_install_root,
+                    "openai",
+                    openai_client=cast(Any, client),
+                    skill_name="retrieve-agent",
+                    cache_path=self._agent_install_cache_path,
+                )
             else:
-                install_kwargs["anthropic_client"] = client
-            install_name_key = "skill" + "_name"
-            install_kwargs[install_name_key] = "retrieve-agent"
-            self._installed_agent = await install_skill(
-                self._agent_install_root,
-                provider,  # type: ignore[arg-type]
-                **install_kwargs,
-            )
+                self._installed_agent = await install_skill(
+                    self._agent_install_root,
+                    "anthropic",
+                    anthropic_client=cast(Any, client),
+                    skill_name="retrieve-agent",
+                    cache_path=self._agent_install_cache_path,
+                )
         return self._installed_agent
 
     async def _build_runner(
@@ -414,10 +423,10 @@ class RetrievalAgent:
                         datetime,
                         episode.get("created_at") or datetime.now(tz=UTC),
                     ),
-                    producer_id=cast(str | None, episode.get("producer_id")),
-                    producer_role=cast(str | None, episode.get("producer_role")),
+                    producer_id=str(episode.get("producer_id") or ""),
+                    producer_role=str(episode.get("producer_role") or ""),
                     produced_for_id=cast(str | None, episode.get("produced_for_id")),
-                    metadata=cast(dict[str, object] | None, episode.get("metadata")),
+                    metadata=cls._json_metadata(episode.get("metadata")),
                 )
             )
         return episodes
@@ -477,7 +486,7 @@ class RetrievalAgent:
             )
         )
 
-    async def _build_retrieval_result(
+    async def _build_retrieval_result(  # noqa: C901
         self,
         *,
         query: QueryParam,
@@ -493,7 +502,9 @@ class RetrievalAgent:
         long_term_seen: set[str] = set()
 
         for raw_result in raw_results:
-            episodic_response = self._episodic_response_from_runner_raw_result(raw_result)
+            episodic_response = self._episodic_response_from_runner_raw_result(
+                raw_result
+            )
             if episodic_response is not None:
                 for line in episodic_response.short_term_memory.episode_summary:
                     stripped = line.strip()
@@ -528,10 +539,7 @@ class RetrievalAgent:
                     uid=episode.uid,
                     content=episode.content,
                     session_key=query.session_key,
-                    created_at=cast(
-                        datetime,
-                        episode.created_at or datetime.now(tz=UTC),
-                    ),
+                    created_at=episode.created_at or datetime.now(tz=UTC),
                     producer_id=episode.producer_id,
                     producer_role=episode.producer_role,
                     produced_for_id=episode.produced_for_id,
@@ -575,16 +583,18 @@ class RetrievalAgent:
             RetrievalAgentResult(
                 episodic_memory=episodic_memory,
                 semantic_memory=(
-                    semantic_memory if MemoryType.Semantic in query.target_memories else None
+                    semantic_memory
+                    if MemoryType.Semantic in query.target_memories
+                    else None
                 ),
             ),
             rerank_applied,
         )
 
     @staticmethod
-    def _as_dict_for_episodes(raw_value: object) -> dict[str, object]:
+    def _as_mapping(raw_value: object) -> dict[str, object] | None:
         if isinstance(raw_value, dict):
-            return raw_value
+            return {str(key): value for key, value in raw_value.items()}
         model_dump = getattr(raw_value, "model_dump", None)
         if callable(model_dump):
             dumped = model_dump(mode="json")
@@ -593,7 +603,18 @@ class RetrievalAgent:
         raw_dict = getattr(raw_value, "__dict__", None)
         if isinstance(raw_dict, dict):
             return {str(key): value for key, value in raw_dict.items()}
-        return {}
+        return None
+
+    @classmethod
+    def _as_dict_for_episodes(cls, raw_value: object) -> dict[str, object]:
+        return cls._as_mapping(raw_value) or {}
+
+    @classmethod
+    def _json_metadata(cls, raw_value: object) -> dict[str, JsonValue] | None:
+        metadata = cls._as_mapping(raw_value)
+        if not metadata:
+            return None
+        return cast(dict[str, JsonValue], metadata)
 
     def _augment_metrics_with_session_state(
         self,
@@ -692,13 +713,14 @@ class RetrievalAgent:
         *,
         function_call: object,
     ) -> tuple[str, dict[str, object]]:
-        if not isinstance(function_call, dict):
+        function_call_dict = self._as_mapping(function_call)
+        if function_call_dict is None:
             raise self._contract_error(
                 why="Each top-level function call must be an object.",
                 fallback_reason="invalid_tool_call",
             )
-        fn = function_call.get("function")
-        if not isinstance(fn, dict):
+        fn = self._as_mapping(function_call_dict.get("function"))
+        if fn is None:
             raise self._contract_error(
                 why="Top-level function call missing function object.",
                 fallback_reason="invalid_tool_call",
@@ -727,7 +749,10 @@ class RetrievalAgent:
         if not isinstance(raw, dict):
             return None
         sanitized: dict[str, object] = {}
-        for key, value in raw.items():
+        for raw_key, value in raw.items():
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key
             if key in {
                 "episodes",
                 "episodes_human_readable",
@@ -830,8 +855,9 @@ class RetrievalAgent:
             return []
         normalized: list[dict[str, object]] = []
         seen: set[tuple[str, str]] = set()
-        for item in raw:
-            if not isinstance(item, dict):
+        for raw_item in raw:
+            item = self._as_mapping(raw_item)
+            if item is None:
                 continue
             raw_query = item.get("query")
             raw_stage_result = item.get("stage_result")
@@ -1171,7 +1197,7 @@ class RetrievalAgent:
             uid_seed = f"stage:{stage_query}:{stage_result}:{index}"
             uid = (
                 f"stage-{index}-"
-                f"{hashlib.sha1(uid_seed.encode('utf-8')).hexdigest()[:12]}"
+                f"{hashlib.sha256(uid_seed.encode('utf-8')).hexdigest()[:12]}"
             )
             episodes.append(
                 Episode(
@@ -1192,7 +1218,7 @@ class RetrievalAgent:
             uid_seed = f"subquery:{normalized_sub_query}:{index}"
             uid = (
                 f"subquery-{index}-"
-                f"{hashlib.sha1(uid_seed.encode('utf-8')).hexdigest()[:12]}"
+                f"{hashlib.sha256(uid_seed.encode('utf-8')).hexdigest()[:12]}"
             )
             episodes.append(
                 Episode(
@@ -1319,7 +1345,7 @@ class RetrievalAgent:
             async with asyncio.timeout(float(self._global_timeout_seconds)):
                 raw_final_response = (await runner.run(query.query)).strip()
                 if runner.last_memory_search_called == 0:
-                    raise self._contract_error(
+                    self._raise_contract_error(
                         why=(
                             "Top-level retrieval session returned final text without a "
                             "memmachine_search tool call."
@@ -1331,7 +1357,9 @@ class RetrievalAgent:
             aggregated_metrics["session_call_budget_consumed"] = (
                 rest_memory_proxy.call_count
             )
-            aggregated_metrics["memory_search_called"] = runner.last_memory_search_called
+            aggregated_metrics["memory_search_called"] = (
+                runner.last_memory_search_called
+            )
             aggregated_metrics["memory_search_latency_seconds"] = list(
                 runner.last_memory_search_latency_seconds
             )
@@ -1353,9 +1381,7 @@ class RetrievalAgent:
             aggregated_metrics["top_level_session_turn_count"] = (
                 runner.last_llm_call_count
             )
-            aggregated_metrics["top_level_llm_call_count"] = (
-                runner.last_llm_call_count
-            )
+            aggregated_metrics["top_level_llm_call_count"] = runner.last_llm_call_count
             aggregated_metrics["top_level_input_token"] = aggregated_metrics[
                 "input_token"
             ]

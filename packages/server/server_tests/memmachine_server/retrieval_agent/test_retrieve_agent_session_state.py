@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
@@ -21,6 +22,10 @@ from server_tests.memmachine_server.retrieval_agent.provider_runner_stub import 
     openai_text_response,
     openai_tool_call_response,
 )
+
+
+def _as_int(value: object) -> int:
+    return cast(int, value)
 
 
 class DummyReranker(Reranker):
@@ -110,7 +115,7 @@ async def test_retrieve_agent_emits_session_state_metrics(
     assert metrics["route"] == "RetrievalAgent"
     assert metrics["orchestrator_step_count"] == 1
     assert metrics["orchestrator_sub_agent_count"] == 0
-    assert metrics["orchestrator_event_count"] >= 2
+    assert _as_int(metrics["orchestrator_event_count"]) >= 2
     assert metrics["orchestrator_episode_count"] == 1
     assert metrics["orchestrator_completed"] is True
     assert metrics["branch_total"] == 0

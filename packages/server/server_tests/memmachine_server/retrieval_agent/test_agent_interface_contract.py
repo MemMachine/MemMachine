@@ -6,6 +6,7 @@ from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
     RetrievalAgentProtocol,
+    RetrievalAgentResult,
 )
 
 
@@ -34,9 +35,9 @@ class DemoAgent:
         self,
         policy: QueryPolicy,
         query: QueryParam,
-    ) -> tuple[list[Any], dict[str, Any]]:
+    ) -> tuple[RetrievalAgentResult, dict[str, Any]]:
         _ = policy, query
-        return [], {}
+        return RetrievalAgentResult(), {}
 
 
 def test_retrieval_agent_protocol_uses_agent_naming() -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import openai
@@ -20,8 +20,18 @@ from memmachine_server.common.language_model import (
 def mock_async_openai_client():
     with patch("openai.AsyncOpenAI", spec=openai.AsyncOpenAI):
         client = openai.AsyncOpenAI(api_key="test-key")
-        client.responses.create = AsyncMock()
+        cast(Any, client.responses).create = AsyncMock()
         yield client
+
+
+def _as_any_dict(value: object) -> dict[str, Any]:
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
+
+
+def _as_any_list(value: object) -> list[Any]:
+    assert isinstance(value, list)
+    return cast(list[Any], value)
 
 
 @pytest.mark.asyncio
@@ -82,10 +92,11 @@ async def test_openai_live_session_chains_previous_response_id(
     second_call = mock_async_openai_client.responses.create.await_args_list[1]
     kwargs = second_call.kwargs
     assert kwargs["previous_response_id"] == "resp_1"
-    followup_input = kwargs["input"]
+    followup_input = _as_any_list(kwargs["input"])
     assert len(followup_input) == 1
-    assert followup_input[0]["type"] == "function_call_output"
-    assert followup_input[0]["call_id"] == "c1"
+    first_followup = _as_any_dict(followup_input[0])
+    assert first_followup["type"] == "function_call_output"
+    assert first_followup["call_id"] == "c1"
 
 
 @pytest.mark.asyncio
@@ -135,11 +146,12 @@ async def test_openai_live_session_uses_only_function_call_outputs_in_followup_i
     )
 
     second_call = mock_async_openai_client.responses.create.await_args_list[1]
-    followup_input = second_call.kwargs["input"]
+    followup_input = _as_any_list(second_call.kwargs["input"])
     assert len(followup_input) == 1
-    assert followup_input[0]["type"] == "function_call_output"
-    assert followup_input[0]["call_id"] == "c1"
-    assert '"hits": 9' in followup_input[0]["output"]
+    first_followup = _as_any_dict(followup_input[0])
+    assert first_followup["type"] == "function_call_output"
+    assert first_followup["call_id"] == "c1"
+    assert '"hits": 9' in str(first_followup["output"])
     assert not any(item.get("type") == "reasoning" for item in followup_input)
 
 
@@ -259,18 +271,22 @@ async def test_openai_live_session_attaches_local_skills_when_enabled(
     )
 
     first_call = mock_async_openai_client.responses.create.await_args_list[0]
-    request_tools = first_call.kwargs["tools"]
-    assert request_tools[0]["type"] == "shell"
-    assert request_tools[0]["environment"]["type"] == "local"
-    skills = request_tools[0]["environment"]["skills"]
+    request_tools = _as_any_list(first_call.kwargs["tools"])
+    first_tool = _as_any_dict(request_tools[0])
+    assert first_tool["type"] == "shell"
+    environment = _as_any_dict(first_tool["environment"])
+    assert environment["type"] == "local"
+    skills = environment["skills"]
     assert isinstance(skills, list)
     assert len(skills) == 1
-    assert skills[0]["name"] == "retrieve-skill"
-    assert skills[0]["description"] == "Retrieve skill bundle"
-    assert skills[0]["path"] == str(skill_dir)
-    first_input = first_call.kwargs["input"]
-    assert first_input[0]["role"] == "system"
-    assert first_input[0]["content"] == "sys"
+    first_skill = _as_any_dict(skills[0])
+    assert first_skill["name"] == "retrieve-skill"
+    assert first_skill["description"] == "Retrieve skill bundle"
+    assert first_skill["path"] == str(skill_dir)
+    first_input = _as_any_list(first_call.kwargs["input"])
+    first_message = _as_any_dict(first_input[0])
+    assert first_message["role"] == "system"
+    assert first_message["content"] == "sys"
 
 
 @pytest.mark.asyncio
@@ -362,10 +378,12 @@ async def test_openai_live_session_executes_shell_call_in_local_mode(
     assert len(result.tool_executions) == 1
     assert result.tool_executions[0].name == "shell_call"
     assert isinstance(result.tool_executions[0].output, dict)
-    tool_output = result.tool_executions[0].output
-    assert isinstance(tool_output.get("output"), list)
-    assert tool_output["output"][0]["outcome"]["type"] == "exit"
+    tool_output = _as_any_dict(result.tool_executions[0].output)
+    output_items = _as_any_list(tool_output.get("output"))
+    outcome = _as_any_dict(_as_any_dict(output_items[0])["outcome"])
+    assert outcome["type"] == "exit"
     second_call = mock_async_openai_client.responses.create.await_args_list[1]
-    followup_input = second_call.kwargs["input"]
-    assert followup_input[0]["type"] == "shell_call_output"
-    assert followup_input[0]["call_id"] == "sh_1"
+    followup_input = _as_any_list(second_call.kwargs["input"])
+    first_followup = _as_any_dict(followup_input[0])
+    assert first_followup["type"] == "shell_call_output"
+    assert first_followup["call_id"] == "sh_1"

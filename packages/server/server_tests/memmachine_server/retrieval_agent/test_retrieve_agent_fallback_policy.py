@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 
@@ -19,6 +20,11 @@ from server_tests.memmachine_server.retrieval_agent.provider_runner_stub import 
     openai_multi_tool_call_response,
     openai_tool_call_response,
 )
+
+
+def _as_any_dict(value: object) -> dict[str, Any]:
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
 
 
 class DummyReranker(Reranker):
@@ -158,5 +164,4 @@ async def test_invalid_tool_name_falls_back_with_raw_error_details(
     assert result.episodic_memory.long_term_memory.episodes == []
     assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
     error_diagnostics = metrics.get("error_diagnostics")
-    assert isinstance(error_diagnostics, dict)
-    assert error_diagnostics.get("context") == "top_level_tool_not_found"
+    assert _as_any_dict(error_diagnostics).get("context") == "top_level_tool_not_found"

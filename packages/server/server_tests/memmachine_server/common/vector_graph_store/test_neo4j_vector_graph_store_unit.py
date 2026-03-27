@@ -17,6 +17,7 @@ async def test_populate_index_state_cache_does_not_wait_for_all_indexes():
             [
                 {"name": "idx_online", "state": "ONLINE"},
                 {"name": "idx_populating", "state": "POPULATING"},
+                {"name": "idx_failed", "state": "FAILED"},
             ],
             None,
             None,

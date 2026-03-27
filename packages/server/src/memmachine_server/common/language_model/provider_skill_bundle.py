@@ -45,8 +45,11 @@ def materialize_provider_skill_bundle(
     skill_dir = root / f"{normalized_name}-{digest}"
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_file = skill_dir / "SKILL.md"
-    if not skill_file.exists():
-        skill_file.write_text(normalized_markdown, encoding="utf-8")
+    try:
+        with skill_file.open("x", encoding="utf-8") as handle:
+            handle.write(normalized_markdown)
+    except FileExistsError:
+        pass
 
     return ProviderSkillBundle(
         name=normalized_name,

@@ -7,19 +7,29 @@ import importlib
 import io
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import Literal, Protocol, cast
 
 from .skill import Skill
 
-if TYPE_CHECKING:
-    import anthropic
-    import openai
 
-    AnthropicClient: TypeAlias = anthropic.AsyncAnthropic
-    OpenAIClient: TypeAlias = openai.AsyncOpenAI
-else:
-    AnthropicClient: TypeAlias = object
-    OpenAIClient: TypeAlias = object
+class _AnthropicFilesAPI(Protocol):
+    async def upload(self, *, file: object, betas: list[str]) -> object: ...
+
+
+class _AnthropicBetaAPI(Protocol):
+    files: _AnthropicFilesAPI
+
+
+class _AnthropicClientProtocol(Protocol):
+    beta: _AnthropicBetaAPI
+
+
+class _OpenAIFilesAPI(Protocol):
+    async def create(self, *, file: object, purpose: str) -> object: ...
+
+
+class _OpenAIClientProtocol(Protocol):
+    files: _OpenAIFilesAPI
 
 ProviderName = Literal["anthropic", "openai"]
 
@@ -52,6 +62,26 @@ def _require_openai_sdk() -> object:
         raise ImportError(
             "openai SDK not installed. Install it with: pip install openai"
         ) from err
+
+
+def _new_anthropic_client() -> _AnthropicClientProtocol:
+    anthropic_module = _require_anthropic_sdk()
+    client_factory = getattr(anthropic_module, "AsyncAnthropic", None)
+    if not callable(client_factory):
+        raise TypeError(
+            "anthropic SDK does not expose AsyncAnthropic(). Upgrade the anthropic package."
+        )
+    return cast(_AnthropicClientProtocol, client_factory())
+
+
+def _new_openai_client() -> _OpenAIClientProtocol:
+    openai_module = _require_openai_sdk()
+    client_factory = getattr(openai_module, "AsyncOpenAI", None)
+    if not callable(client_factory):
+        raise TypeError(
+            "openai SDK does not expose AsyncOpenAI(). Upgrade the openai package."
+        )
+    return cast(_OpenAIClientProtocol, client_factory())
 
 
 def _resolve_skill_files(path: Path) -> list[Path]:
@@ -107,7 +137,10 @@ def _load_cache(cache_path: Path) -> dict[str, dict[str, str]]:
     if not cache_path.exists():
         return {}
 
-    raw = json.loads(cache_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
     if not isinstance(raw, dict):
         return {}
 
@@ -126,6 +159,7 @@ def _load_cache(cache_path: Path) -> dict[str, dict[str, str]]:
 
 
 def _save_cache(cache_path: Path, cache: dict[str, dict[str, str]]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
 
 
@@ -137,7 +171,7 @@ def _anthropic_upload_name(source_path: Path) -> str:
 
 
 async def _upload_anthropic(
-    client: object,
+    client: _AnthropicClientProtocol,
     *,
     filename: str,
     file_bytes: bytes,
@@ -153,7 +187,7 @@ async def _upload_anthropic(
 
 
 async def _upload_openai(
-    client: object,
+    client: _OpenAIClientProtocol,
     *,
     filename: str,
     file_bytes: bytes,
@@ -172,8 +206,8 @@ async def install_skill(
     path: str | Path,
     provider: ProviderName,
     *,
-    anthropic_client: AnthropicClient | None = None,
-    openai_client: OpenAIClient | None = None,
+    anthropic_client: _AnthropicClientProtocol | None = None,
+    openai_client: _OpenAIClientProtocol | None = None,
     skill_name: str | None = None,
     cache_path: str | Path | None = None,
 ) -> Skill:
@@ -193,8 +227,7 @@ async def install_skill(
 
     if provider == "anthropic":
         if anthropic_client is None:
-            anthropic_module = _require_anthropic_sdk()
-            anthropic_client = cast(AnthropicClient, anthropic_module.AsyncAnthropic())
+            anthropic_client = _new_anthropic_client()
         for file_path in files:
             file_bytes = file_path.read_bytes()
             digest = _content_hash(file_bytes)
@@ -211,8 +244,7 @@ async def install_skill(
             file_ids.append(cached_file_id)
     elif provider == "openai":
         if openai_client is None:
-            openai_module = _require_openai_sdk()
-            openai_client = cast(OpenAIClient, openai_module.AsyncOpenAI())
+            openai_client = _new_openai_client()
         for file_path in files:
             file_bytes = file_path.read_bytes()
             digest = _content_hash(file_bytes)

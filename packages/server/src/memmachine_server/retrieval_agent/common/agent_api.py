@@ -6,9 +6,9 @@ import asyncio
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from memmachine_common.api import MemoryType
 from pydantic import BaseModel, ConfigDict, InstanceOf
 
-from memmachine_common.api import MemoryType
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.filter.filter_parser import FilterExpr
@@ -57,7 +57,15 @@ class RetrievalAgentResult(BaseModel):
 class SearchToolMemoryProtocol(Protocol):
     """Minimal REST-style search dependency consumed by SkillRunner."""
 
-    def search(self, query: str, **kwargs: object) -> object: ...
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        agent_mode: bool = False,
+    ) -> object: ...
 
 
 class RetrievalAgentParams(BaseModel):

@@ -7,7 +7,7 @@ import re
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, cast
 
 _UNCERTAINTY_PATTERN = re.compile(
     r"(?i)\b(if|likely|probably|suggests?|inferred?|assum(?:e|ed|ption)|"
@@ -141,6 +141,11 @@ def as_dict(raw_value: object) -> dict[str, object]:
     return {}
 
 
+def as_list(raw_value: object) -> list[object]:
+    """Normalize supported list payloads into plain object lists."""
+    return cast(list[object], raw_value) if isinstance(raw_value, list) else []
+
+
 def extract_query_from_arguments(raw_arguments: object) -> str:
     """Best-effort extraction of a `query` field from tool arguments."""
     arguments = normalize_tool_arguments(raw_arguments)
@@ -224,7 +229,7 @@ def normalize_search_result(
 
     episode_summary = [
         item
-        for item in short_term.get("episode_summary", [])
+        for item in as_list(short_term.get("episode_summary"))
         if isinstance(item, str) and item.strip()
     ]
     episodes = [
@@ -237,11 +242,13 @@ def normalize_search_result(
             score_threshold=score_threshold,
         ),
     ]
-    episode_lines = [
-        f"{index}. {episode_content(episode['content'], max_episode_chars=max_episode_chars)}"
-        for index, episode in enumerate(episodes, start=1)
-        if isinstance(episode.get("content"), str) and episode["content"].strip()
-    ]
+    episode_lines: list[str] = []
+    for index, episode in enumerate(episodes, start=1):
+        content = episode.get("content")
+        if isinstance(content, str) and content.strip():
+            episode_lines.append(
+                f"{index}. {episode_content(content, max_episode_chars=max_episode_chars)}"
+            )
     semantic_lines = [
         semantic_memory_line(feature)
         for feature in semantic_memory
@@ -302,11 +309,24 @@ def normalize_episodes(
         if not episode:
             continue
         if score_threshold is not None:
-            score = float(episode.get("score", episode.get("relevance_score", 1.0)))
+            raw_score = episode.get("score", episode.get("relevance_score", 1.0))
+            score = _coerce_float(raw_score, default=1.0)
             if score < score_threshold:
                 continue
         normalized.append(episode)
     return normalized
+
+
+def _coerce_float(value: object, *, default: float) -> float:
+    """Best-effort float coercion for loosely typed provider payloads."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        with suppress(ValueError):
+            return float(value)
+    return default
 
 
 def episode_content(content: str, *, max_episode_chars: int | None) -> str:

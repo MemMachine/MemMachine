@@ -7,7 +7,7 @@ import inspect
 import json
 import re
 import time
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from memmachine_common.skill_loop import (
     SkillLoopState,
@@ -26,31 +26,56 @@ from memmachine_common.skill_loop import (
 
 from .skill import Skill
 
-if TYPE_CHECKING:
 
-    class RestMemoryProtocol(Protocol):
-        """Minimal rest-memory interface used by the shared skill runner."""
+class RestMemoryProtocol(Protocol):
+    """Minimal rest-memory interface used by the shared skill runner."""
 
-        def search(self, query: str, **kwargs: object) -> object: ...
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        agent_mode: bool = False,
+    ) -> object: ...
+
+
+class _OpenAIResponsesAPI(Protocol):
+    async def create(self, **kwargs: object) -> object: ...
+
+
+class _OpenAIClientProtocol(Protocol):
+    responses: _OpenAIResponsesAPI
+
+
+class _AnthropicMessagesAPI(Protocol):
+    async def create(self, **kwargs: object) -> object: ...
+
+
+class _AnthropicClientProtocol(Protocol):
+    messages: _AnthropicMessagesAPI
 
 
 ProviderName = Literal["anthropic", "openai"]
 
-_CANONICAL_MEMMACHINE_SEARCH_TOOL = {
+_CANONICAL_MEMMACHINE_SEARCH_PARAMETERS: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "The memory search query to run.",
+        }
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+_CANONICAL_MEMMACHINE_SEARCH_TOOL: dict[str, object] = {
     "type": "function",
     "name": "memmachine_search",
     "description": "Search MemMachine memory with the provided query.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The memory search query to run.",
-            }
-        },
-        "required": ["query"],
-        "additionalProperties": False,
-    },
+    "parameters": _CANONICAL_MEMMACHINE_SEARCH_PARAMETERS,
 }
 
 
@@ -69,13 +94,12 @@ class _OpenAIToolLoopTransport:
             if str(item.get("type", "")) != "function_call":
                 continue
             arguments = normalize_tool_arguments(item.get("arguments", {}))
+            raw_call_id = item.get("call_id")
             calls.append(
                 SkillLoopToolCall(
                     name=str(item.get("name", "")),
                     query=extract_query_from_arguments(arguments),
-                    call_id=item.get("call_id")
-                    if isinstance(item.get("call_id"), str)
-                    else None,
+                    call_id=raw_call_id if isinstance(raw_call_id, str) else None,
                     arguments=arguments,
                 )
             )
@@ -107,7 +131,7 @@ class _OpenAIToolLoopTransport:
         response_id = self._runner._openai_response_id(response)
         if response_id is not None:
             request["previous_response_id"] = response_id
-        return await self._runner._client.responses.create(**request)
+        return await self._runner._openai_client().responses.create(**request)
 
     def usage(self, response: object) -> tuple[int, int]:
         return self._runner._usage_tuple(response)
@@ -130,13 +154,12 @@ class _AnthropicToolLoopTransport:
             if block.get("type") != "tool_use":
                 continue
             arguments = normalize_tool_arguments(block.get("input"))
+            raw_call_id = block.get("id")
             calls.append(
                 SkillLoopToolCall(
                     name=str(block.get("name", "")),
                     query=extract_query_from_arguments(arguments),
-                    call_id=block.get("id")
-                    if isinstance(block.get("id"), str)
-                    else None,
+                    call_id=raw_call_id if isinstance(raw_call_id, str) else None,
                     arguments=arguments,
                 )
             )
@@ -183,7 +206,7 @@ class _AnthropicToolLoopTransport:
         anthropic_tool_choice = self._runner._anthropic_tool_choice()
         if anthropic_tool_choice is not None:
             request["tool_choice"] = anthropic_tool_choice
-        return await self._runner._client.messages.create(**request)
+        return await self._runner._anthropic_client().messages.create(**request)
 
     def usage(self, response: object) -> tuple[int, int]:
         return self._runner._usage_tuple(response)
@@ -310,6 +333,12 @@ class SkillRunner:
                 "Anthropic SkillRunner requires a client with messages.create()."
             )
 
+    def _openai_client(self) -> _OpenAIClientProtocol:
+        return cast(_OpenAIClientProtocol, self._client)
+
+    def _anthropic_client(self) -> _AnthropicClientProtocol:
+        return cast(_AnthropicClientProtocol, self._client)
+
     def skill_messages(
         self,
         prompt: str,
@@ -338,16 +367,14 @@ class SkillRunner:
         system_prompt: str | None = None,
     ) -> list[dict[str, object]]:
         prompt_text = self._augment_prompt(prompt)
-        content = [
-            *(
-                {
-                    "type": "document",
-                    "source": {"type": "file", "file_id": file_id},
-                }
-                for file_id in self.skill.file_ids
-            ),
-            {"type": "text", "text": prompt_text},
+        content: list[dict[str, object]] = [
+            {
+                "type": "document",
+                "source": {"type": "file", "file_id": file_id},
+            }
+            for file_id in self.skill.file_ids
         ]
+        content.append({"type": "text", "text": prompt_text})
         self._anthropic_messages = [{"role": "user", "content": content}]
         self._anthropic_system_prompt = system_prompt
         return content
@@ -360,7 +387,7 @@ class SkillRunner:
             {
                 "name": _CANONICAL_MEMMACHINE_SEARCH_TOOL["name"],
                 "description": _CANONICAL_MEMMACHINE_SEARCH_TOOL["description"],
-                "input_schema": dict(_CANONICAL_MEMMACHINE_SEARCH_TOOL["parameters"]),
+                "input_schema": dict(_CANONICAL_MEMMACHINE_SEARCH_PARAMETERS),
             }
         ]
 
@@ -518,7 +545,7 @@ class SkillRunner:
                 request["max_output_tokens"] = max_output_tokens
             if top_p is not None:
                 request["top_p"] = top_p
-            response = await self._client.responses.create(**request)
+            response = await self._openai_client().responses.create(**request)
         else:
             _ = self.skill_messages(prompt, system_prompt=system_prompt)
             if self._anthropic_messages is None:
@@ -540,7 +567,7 @@ class SkillRunner:
             anthropic_tool_choice = self._anthropic_tool_choice()
             if anthropic_tool_choice is not None:
                 request["tool_choice"] = anthropic_tool_choice
-            response = await self._client.messages.create(**request)
+            response = await self._anthropic_client().messages.create(**request)
         self.last_initial_input_tokens, self.last_initial_output_tokens = (
             self._usage_tuple(response)
         )
@@ -618,49 +645,38 @@ class SkillRunner:
         return "Partial result: memmachine_search loop reached max_turns."
 
     def _usage_tuple(self, response: object) -> tuple[int, int]:
-        usage = (
-            response.get("usage")
-            if isinstance(response, dict)
-            else getattr(response, "usage", None)
-        )
+        response_payload = self._as_dict(response)
+        usage = response_payload.get("usage") or getattr(response, "usage", None)
         if usage is None:
             return 0, 0
         usage_payload = self._as_dict(usage)
         return (
-            int(
-                usage_payload.get(
-                    "input_tokens",
-                    getattr(usage, "input_tokens", 0),
-                )
-                or 0
+            self._coerce_int(
+                usage_payload.get("input_tokens", getattr(usage, "input_tokens", 0))
             ),
-            int(
-                usage_payload.get(
-                    "output_tokens",
-                    getattr(usage, "output_tokens", 0),
-                )
-                or 0
+            self._coerce_int(
+                usage_payload.get("output_tokens", getattr(usage, "output_tokens", 0))
             ),
         )
 
     @staticmethod
     def _openai_response_id(response: object) -> str | None:
-        if isinstance(response, dict):
-            value = response.get("id")
-            return value if isinstance(value, str) else None
+        payload = SkillRunner._as_dict(response)
+        value = payload.get("id")
+        if isinstance(value, str):
+            return value
         value = getattr(response, "id", None)
         return value if isinstance(value, str) else None
 
     @staticmethod
     def _openai_response_output_text(response: object) -> str:
-        if isinstance(response, dict):
-            value = response.get("output_text")
-            if isinstance(value, str) and value.strip():
-                return value
-        else:
-            value = getattr(response, "output_text", "")
-            if isinstance(value, str) and value.strip():
-                return value
+        payload = SkillRunner._as_dict(response)
+        value = payload.get("output_text")
+        if isinstance(value, str) and value.strip():
+            return value
+        value = getattr(response, "output_text", "")
+        if isinstance(value, str) and value.strip():
+            return value
 
         texts: list[str] = []
         for item in SkillRunner._openai_raw_output_items(response):
@@ -669,13 +685,15 @@ class SkillRunner:
 
     @classmethod
     def _openai_raw_output_items(cls, response: object) -> list[dict[str, object]]:
-        if isinstance(response, dict):
-            items = response.get("output", [])
-            return (
-                [item for item in items if isinstance(item, dict)]
-                if isinstance(items, list)
-                else []
-            )
+        response_payload = cls._as_dict(response)
+        items = response_payload.get("output")
+        if isinstance(items, list):
+            normalized_items: list[dict[str, object]] = []
+            for item in items:
+                item_dict = cls._as_dict(item)
+                if item_dict:
+                    normalized_items.append(item_dict)
+            return normalized_items
 
         raw_items = getattr(response, "output", []) or []
         normalized: list[dict[str, object]] = []
@@ -720,9 +738,10 @@ class SkillRunner:
 
     @classmethod
     def _anthropic_content_blocks(cls, response: object) -> list[dict[str, object]]:
-        if isinstance(response, dict):
-            blocks = response.get("content", [])
-            raw_blocks = blocks if isinstance(blocks, list) else []
+        response_payload = cls._as_dict(response)
+        blocks = response_payload.get("content")
+        if isinstance(blocks, list):
+            raw_blocks = blocks
         else:
             raw_blocks = getattr(response, "content", []) or []
 
@@ -735,8 +754,9 @@ class SkillRunner:
 
     @staticmethod
     def _normalize_anthropic_block(raw_block: object) -> dict[str, object] | None:
-        if isinstance(raw_block, dict):
-            return SkillRunner._normalize_anthropic_block_dict(raw_block)
+        raw_block_dict = SkillRunner._as_dict(raw_block)
+        if raw_block_dict:
+            return SkillRunner._normalize_anthropic_block_dict(raw_block_dict)
 
         block_type = getattr(raw_block, "type", None)
         if block_type == "text":
@@ -786,8 +806,26 @@ class SkillRunner:
 
     @staticmethod
     def _anthropic_extract_text(content_blocks: list[dict[str, object]]) -> str:
-        return "\n".join(
-            block["text"]
-            for block in content_blocks
-            if block.get("type") == "text" and isinstance(block.get("text"), str)
-        ).strip()
+        texts: list[str] = []
+        for block in content_blocks:
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+        return "\n".join(texts).strip()
+
+    @staticmethod
+    def _coerce_int(value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return 0
+        return 0

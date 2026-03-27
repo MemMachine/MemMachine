@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import openai
 import pytest
@@ -22,7 +22,7 @@ from memmachine_server.common.language_model.openai_responses_language_model imp
 def mock_async_openai_client():
     with patch("openai.AsyncOpenAI", spec=openai.AsyncOpenAI):
         client = openai.AsyncOpenAI(api_key="test-key")
-        client.responses.create = AsyncMock()
+        cast(Any, client.responses).create = AsyncMock()
         yield client
 
 
@@ -143,4 +143,4 @@ async def test_run_live_session_raises_after_retry_exhausted(
         )
 
     assert mock_async_openai_client.responses.create.await_count == 3
-    mock_sleep.assert_has_awaits([((1,),), ((2,),)])
+    mock_sleep.assert_has_awaits([call(1), call(2)])

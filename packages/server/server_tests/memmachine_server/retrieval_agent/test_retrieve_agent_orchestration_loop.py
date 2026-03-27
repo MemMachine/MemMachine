@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 from memmachine_common.api import MemoryType
@@ -18,6 +19,16 @@ from server_tests.memmachine_server.retrieval_agent.provider_runner_stub import 
     openai_text_response,
     openai_tool_call_response,
 )
+
+
+def _as_any_dict(value: object) -> dict[str, Any]:
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
+
+
+def _as_any_list(value: object) -> list[Any]:
+    assert isinstance(value, list)
+    return cast(list[Any], value)
 
 
 class DummyReranker(Reranker):
@@ -144,14 +155,14 @@ async def test_memmachine_search_collects_episodes_and_final_response_metrics(
     assert metrics["orchestrator_final_response"] == "finalized"
     assert metrics["top_level_is_sufficient"] is True
     assert metrics["answer_candidate"] == "finalized"
-    trace = metrics["orchestrator_trace"]
-    assert isinstance(trace, dict)
-    search_call = trace["tool_calls"][0]
+    trace = _as_any_dict(metrics["orchestrator_trace"])
+    search_call = _as_any_dict(_as_any_list(trace["tool_calls"])[0])
     assert search_call["tool_name"] == "memmachine_search"
-    assert search_call["raw_result"]["episodic_count"] == 1
-    assert search_call["raw_result"]["semantic_count"] == 0
-    assert search_call["raw_result"]["query"] == "hello"
-    assert "memory_human_readable" in search_call["raw_result"]
+    raw_result = _as_any_dict(search_call["raw_result"])
+    assert raw_result["episodic_count"] == 1
+    assert raw_result["semantic_count"] == 0
+    assert raw_result["query"] == "hello"
+    assert "memory_human_readable" in raw_result
 
 
 @pytest.mark.asyncio
@@ -181,9 +192,10 @@ async def test_missing_tool_call_returns_empty_result(
     assert result.episodic_memory.long_term_memory.episodes == []
     assert metrics["fallback_trigger_reason"] == "missing_tool_call"
     assert metrics["orchestrator_tool_call_count"] == 0
-    trace = metrics["orchestrator_trace"]
+    trace = _as_any_dict(metrics["orchestrator_trace"])
     assert trace["tool_calls"] == []
-    assert trace["events"][-1]["event_type"] == "fallback_applied"
+    events = _as_any_list(trace["events"])
+    assert _as_any_dict(events[-1])["event_type"] == "fallback_applied"
 
 
 @pytest.mark.asyncio
@@ -248,4 +260,5 @@ async def test_legacy_tool_name_triggers_fallback(
     assert result.episodic_memory is not None
     assert result.episodic_memory.long_term_memory.episodes == []
     assert metrics["fallback_trigger_reason"] == "invalid_tool_call"
-    assert metrics["orchestrator_trace"]["tool_calls"] == []
+    trace = _as_any_dict(metrics["orchestrator_trace"])
+    assert trace["tool_calls"] == []

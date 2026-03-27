@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from memmachine_server.common.utils import async_with
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
+
+from memmachine_server.common.utils import async_with  # noqa: E402
 
 from evaluation.utils import skill_utils  # noqa: E402
 
@@ -157,7 +158,9 @@ async def run_locomo(  # noqa: C901
                 speaker = message["speaker"]
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
-        answer_model_name = answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
+        answer_model_name = (
+            answer_llm.model_name if answer_llm is not None else "gpt-5-mini"
+        )
         _, model, query_skill = await skill_utils.init_memmachine_params(
             vector_graph_store=vector_graph_store,
             session_id=group_id,

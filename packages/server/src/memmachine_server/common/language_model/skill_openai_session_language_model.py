@@ -9,7 +9,7 @@ import shlex
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, cast
 from uuid import uuid4
 
 import httpx
@@ -308,8 +308,8 @@ class SkillLanguageModel:
     def _is_actionable_shell_call(item: dict[str, object]) -> bool:
         if str(item.get("type", "")) != "shell_call":
             return False
-        action = item.get("action")
-        if not isinstance(action, dict):
+        action = SkillLanguageModel._as_dict(item.get("action"))
+        if not action:
             return False
         commands = action.get("commands")
         return isinstance(commands, list) and len(commands) > 0
@@ -348,16 +348,17 @@ class SkillLanguageModel:
         self,
         raw_call: object,
     ) -> tuple[str | None, str, dict[str, object]]:
-        if not isinstance(raw_call, dict):
+        call = self._as_dict(raw_call)
+        if not call:
             raise SkillToolCallFormatError("Tool call entry must be an object.")
-        if raw_call.get("type") != "function_call":
+        if call.get("type") != "function_call":
             raise SkillToolCallFormatError(
                 "Tool call entry must have type=function_call."
             )
 
-        name = raw_call.get("name")
-        arguments = raw_call.get("arguments", {})
-        call_id = raw_call.get("call_id")
+        name = call.get("name")
+        arguments = call.get("arguments", {})
+        call_id = call.get("call_id")
 
         if not isinstance(name, str) or not name.strip():
             raise SkillToolCallFormatError("Tool call missing function name.")
@@ -398,9 +399,10 @@ class SkillLanguageModel:
 
         call_uuid = uuid4()
         sleep_seconds = 1
+        create = cast(Callable[..., Awaitable[object]], self._client.responses.create)
         for attempt in range(1, max_attempts + 1):
             try:
-                return await self._client.responses.create(**kwargs)
+                return await create(**kwargs)
             except (
                 openai.RateLimitError,
                 openai.APITimeoutError,
@@ -458,24 +460,56 @@ class SkillLanguageModel:
             "responses.create retry loop exited unexpectedly."
         )
 
+    @staticmethod
+    def _as_dict(raw_value: object) -> dict[str, object]:
+        if isinstance(raw_value, dict):
+            return {str(key): value for key, value in raw_value.items()}
+        model_dump = getattr(raw_value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return {str(key): value for key, value in dumped.items()}
+        raw_dict = getattr(raw_value, "__dict__", None)
+        if isinstance(raw_dict, dict):
+            return {str(key): value for key, value in raw_dict.items()}
+        return {}
+
+    @staticmethod
+    def _coerce_int(value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return 0
+        return 0
+
     def _response_id(self, response: object) -> str | None:
-        if isinstance(response, dict):
-            value = response.get("id")
-            return str(value) if value is not None else None
+        payload = self._as_dict(response)
+        value = payload.get("id")
+        if value is not None:
+            return str(value)
         value = getattr(response, "id", None)
         return str(value) if value is not None else None
 
     def _response_output_text(self, response: object) -> str:
-        if isinstance(response, dict):
-            value = response.get("output_text")
-            return value if isinstance(value, str) else ""
+        payload = self._as_dict(response)
+        value = payload.get("output_text")
+        if isinstance(value, str):
+            return value
         value = getattr(response, "output_text", "")
         return value if isinstance(value, str) else ""
 
     def _response_usage(self, response: object) -> tuple[dict[str, int], list[str]]:
         warnings: list[str] = []
-        if isinstance(response, dict):
-            usage = response.get("usage", {}) or {}
+        payload = self._as_dict(response)
+        if payload:
+            usage = self._as_dict(payload.get("usage"))
             input_tokens = usage.get("input_tokens")
             output_tokens = usage.get("output_tokens")
             if not isinstance(input_tokens, int):
@@ -484,8 +518,8 @@ class SkillLanguageModel:
                 warnings.append("usage_output_tokens_missing_or_invalid")
             return (
                 {
-                    "input_tokens": int(input_tokens or 0),
-                    "output_tokens": int(output_tokens or 0),
+                    "input_tokens": self._coerce_int(input_tokens),
+                    "output_tokens": self._coerce_int(output_tokens),
                 },
                 warnings,
             )
@@ -503,8 +537,8 @@ class SkillLanguageModel:
             warnings.append("usage_output_tokens_missing_or_invalid")
         return (
             {
-                "input_tokens": int(input_tokens or 0),
-                "output_tokens": int(output_tokens or 0),
+                "input_tokens": self._coerce_int(input_tokens),
+                "output_tokens": self._coerce_int(output_tokens),
             },
             warnings,
         )
@@ -514,14 +548,16 @@ class SkillLanguageModel:
         response: object,
     ) -> tuple[list[dict[str, object]], list[str]]:
         warnings: list[str] = []
-        if isinstance(response, dict):
-            items = response.get("output", [])
+        payload = self._as_dict(response)
+        if payload:
+            items = payload.get("output", [])
             if not isinstance(items, list):
                 return [], ["response_output_missing_or_invalid"]
             normalized_items: list[dict[str, object]] = []
             for item in items:
-                if isinstance(item, dict):
-                    item_type = str(item.get("type", ""))
+                item_dict = self._as_dict(item)
+                if item_dict:
+                    item_type = str(item_dict.get("type", ""))
                     if item_type and item_type not in {
                         "function_call",
                         "reasoning",
@@ -531,7 +567,7 @@ class SkillLanguageModel:
                         warnings.append(
                             f"unsupported_response_item_type:{item_type}"
                         )
-                    normalized_items.append(item)
+                    normalized_items.append(item_dict)
             return normalized_items, warnings
 
         items = getattr(response, "output", []) or []
@@ -681,7 +717,7 @@ class SkillLanguageModel:
                     cwd=cwd,
                 )
                 command_results.append(result)
-            shell_output_item = {
+            shell_output_item: dict[str, object] = {
                 "type": "shell_call_output",
                 "call_id": call_id,
                 "output": command_results,
@@ -706,18 +742,19 @@ class SkillLanguageModel:
         self,
         raw_call: object,
     ) -> tuple[str, list[str], int, int, str | None]:
-        if not isinstance(raw_call, dict):
+        call = self._as_dict(raw_call)
+        if not call:
             raise SkillToolCallFormatError("shell_call entry must be an object.")
-        if raw_call.get("type") != "shell_call":
+        if call.get("type") != "shell_call":
             raise SkillToolCallFormatError("Tool call entry must have type=shell_call.")
 
-        raw_call_id = raw_call.get("call_id", raw_call.get("id"))
+        raw_call_id = call.get("call_id", call.get("id"))
         if not isinstance(raw_call_id, str) or not raw_call_id.strip():
             raise SkillToolCallFormatError("shell_call missing call identifier.")
         call_id = raw_call_id.strip()
 
-        raw_action = raw_call.get("action")
-        if not isinstance(raw_action, dict):
+        raw_action = self._as_dict(call.get("action"))
+        if not raw_action:
             raise SkillToolCallFormatError("shell_call missing action object.")
         action_type = raw_action.get("type")
         if action_type != "exec":
@@ -774,17 +811,13 @@ class SkillLanguageModel:
                 "outcome": {"type": "exit", "exit_code": 126},
             }
 
-        resolved_cwd = Path.cwd()
-        if isinstance(cwd, str) and cwd.strip():
-            candidate = Path(cwd.strip()).expanduser()
-            if candidate.exists() and candidate.is_dir():
-                resolved_cwd = candidate
-            else:
-                return {
-                    "stdout": "",
-                    "stderr": f"invalid cwd for local shell command: {candidate}",
-                    "outcome": {"type": "exit", "exit_code": 2},
-                }
+        resolved_cwd, invalid_cwd = self._resolve_local_shell_cwd(cwd)
+        if invalid_cwd is not None:
+            return {
+                "stdout": "",
+                "stderr": f"invalid cwd for local shell command: {invalid_cwd}",
+                "outcome": {"type": "exit", "exit_code": 2},
+            }
 
         try:
             process = await asyncio.create_subprocess_shell(
@@ -843,6 +876,16 @@ class SkillLanguageModel:
         if not parts:
             return False
         return parts[0] in self._LOCAL_SHELL_ALLOWED_BASE_COMMANDS
+
+    @staticmethod
+    def _resolve_local_shell_cwd(cwd: str | None) -> tuple[Path, str | None]:
+        resolved_cwd = Path.cwd()
+        if isinstance(cwd, str) and cwd.strip():
+            candidate = Path(cwd.strip()).expanduser()
+            if candidate.exists() and candidate.is_dir():
+                return candidate, None
+            return resolved_cwd, str(candidate)
+        return resolved_cwd, None
 
     @staticmethod
     def serialize_object_for_diagnostics(

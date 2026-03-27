@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -113,7 +113,7 @@ def test_service_locator_applies_retrieval_conf_budgets() -> None:
     reranker = DummyReranker()
     conf = RetrievalAgentConf(
         agent_session_provider=RetrievalAgentSessionProvider.ANTHROPIC,
-        anthropic_api_key="anthropic-key",
+        anthropic_api_key=cast(Any, "anthropic-key"),
         agent_session_timeout_seconds=180,
         agent_session_max_combined_calls=10,
     )
@@ -125,6 +125,7 @@ def test_service_locator_applies_retrieval_conf_budgets() -> None:
     )
 
     assert agent.agent_name == "RetrievalAgent"
-    assert agent._global_timeout_seconds == 180
-    assert agent._max_combined_calls == 10
-    assert agent._available_sub_agents == ["coq"]
+    runtime_agent = cast(Any, agent)
+    assert runtime_agent._global_timeout_seconds == 180
+    assert runtime_agent._max_combined_calls == 10
+    assert runtime_agent._available_sub_agents == ["coq"]

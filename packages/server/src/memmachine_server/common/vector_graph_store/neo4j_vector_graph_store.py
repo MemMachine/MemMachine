@@ -947,12 +947,20 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     # so double-checked locking works here.
                     self._index_state_cache.update(
                         {
-                            record["name"]: (
-                                Neo4jVectorGraphStore.CacheIndexState.ONLINE
-                                if record["state"] == "ONLINE"
-                                else Neo4jVectorGraphStore.CacheIndexState.CREATING
-                            )
+                            record["name"]: state
                             for record in records
+                            for state in [
+                                (
+                                    Neo4jVectorGraphStore.CacheIndexState.ONLINE
+                                    if record["state"] == "ONLINE"
+                                    else (
+                                        Neo4jVectorGraphStore.CacheIndexState.CREATING
+                                        if record["state"] == "POPULATING"
+                                        else None
+                                    )
+                                )
+                            ]
+                            if state is not None
                         },
                     )
 

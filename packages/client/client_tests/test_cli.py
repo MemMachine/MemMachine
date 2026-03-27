@@ -5,8 +5,7 @@ to avoid real HTTP calls.
 """
 
 import json
-import sys
-from io import StringIO
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -137,9 +136,8 @@ class TestGetClient:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with pytest.raises(SystemExit):
-                _get_client()
+        with patch.dict("os.environ", env, clear=True), pytest.raises(SystemExit):
+            _get_client()
         captured = capsys.readouterr()
         assert "MEMMACHINE_URL" in captured.err
 
@@ -149,14 +147,16 @@ class TestGetClient:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_instance = MagicMock()
-                mock_cls.return_value = mock_instance
-                client, org_id, project_id = _get_client()
-                assert org_id == "myorg"
-                assert project_id == "myproj"
-                assert client is mock_instance
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_instance = MagicMock()
+            mock_cls.return_value = mock_instance
+            client, org_id, project_id = _get_client()
+            assert org_id == "myorg"
+            assert project_id == "myproj"
+            assert client is mock_instance
 
     def test_api_key_optional(self):
         env = {
@@ -164,12 +164,14 @@ class TestGetClient:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_cls.return_value = MagicMock()
-                _get_client()
-                call_kwargs = mock_cls.call_args[1]
-                assert call_kwargs.get("api_key") is None
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_cls.return_value = MagicMock()
+            _get_client()
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs.get("api_key") is None
 
     def test_api_key_passed_when_set(self):
         env = {
@@ -178,12 +180,14 @@ class TestGetClient:
             "MEMMACHINE_PROJECT_ID": "myproj",
             "MEMMACHINE_API_KEY": "secret",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_cls.return_value = MagicMock()
-                _get_client()
-                call_kwargs = mock_cls.call_args[1]
-                assert call_kwargs.get("api_key") == "secret"
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_cls.return_value = MagicMock()
+            _get_client()
+            call_kwargs = mock_cls.call_args[1]
+            assert call_kwargs.get("api_key") == "secret"
 
 
 class TestCmdSearch:
@@ -205,7 +209,7 @@ class TestCmdSearch:
     def _make_args(self, query="test query", json_flag=False, limit=10):
         parser = _build_parser()
         extra = ["--json"] if json_flag else []
-        return parser.parse_args(["search", query, "--limit", str(limit)] + extra)
+        return parser.parse_args(["search", query, "--limit", str(limit), *extra])
 
     def test_missing_url_exits_nonzero(self):
         env = {
@@ -227,18 +231,20 @@ class TestCmdSearch:
         ep = self._make_episode(0.987, "my memory content")
         search_result = self._make_search_result([ep])
 
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.search.return_value = search_result
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.search.return_value = search_result
 
-                args = self._make_args()
-                cmd_search(args)
+            args = self._make_args()
+            cmd_search(args)
 
         captured = capsys.readouterr()
         assert "0.987" in captured.out
@@ -253,18 +259,20 @@ class TestCmdSearch:
         ep = self._make_episode(0.75, "episode content")
         search_result = self._make_search_result([ep])
 
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.search.return_value = search_result
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.search.return_value = search_result
 
-                args = self._make_args(json_flag=True)
-                cmd_search(args)
+            args = self._make_args(json_flag=True)
+            cmd_search(args)
 
         captured = capsys.readouterr()
         data = json.loads(captured.out)
@@ -280,18 +288,20 @@ class TestCmdSearch:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_client.get_or_create_project.side_effect = req.RequestException(
-                    "HTTP 500"
-                )
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.get_or_create_project.side_effect = req.RequestException(
+                "HTTP 500"
+            )
 
-                args = self._make_args()
-                with pytest.raises(SystemExit) as exc_info:
-                    cmd_search(args)
-                assert exc_info.value.code == 1
+            args = self._make_args()
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_search(args)
+            assert exc_info.value.code == 1
 
         captured = capsys.readouterr()
         assert captured.out == ""  # errors go to stderr, not stdout
@@ -304,17 +314,19 @@ class TestCmdSearch:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_client.get_or_create_project.side_effect = req.RequestException(
-                    "HTTP 500"
-                )
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.get_or_create_project.side_effect = req.RequestException(
+                "HTTP 500"
+            )
 
-                args = self._make_args()
-                with pytest.raises(SystemExit):
-                    cmd_search(args)
+            args = self._make_args()
+            with pytest.raises(SystemExit):
+                cmd_search(args)
 
         captured = capsys.readouterr()
         assert len(captured.err) > 0
@@ -332,18 +344,20 @@ class TestCmdSearch:
         result.content.episodic_memory.short_term_memory.episodes = [ep_stm]
         result.content.episodic_memory.long_term_memory.episodes = [ep_ltm]
 
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.search.return_value = result
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.search.return_value = result
 
-                args = self._make_args()
-                cmd_search(args)
+            args = self._make_args()
+            cmd_search(args)
 
         captured = capsys.readouterr()
         assert "short term" in captured.out
@@ -355,26 +369,28 @@ class TestCmdSearch:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
 
-                result = MagicMock()
-                result.content.episodic_memory.short_term_memory.episodes = []
-                result.content.episodic_memory.long_term_memory.episodes = []
-                mock_memory.search.return_value = result
+            result = MagicMock()
+            result.content.episodic_memory.short_term_memory.episodes = []
+            result.content.episodic_memory.long_term_memory.episodes = []
+            mock_memory.search.return_value = result
 
-                args = self._make_args(limit=7)
-                cmd_search(args)
+            args = self._make_args(limit=7)
+            cmd_search(args)
 
-                mock_memory.search.assert_called_once()
-                call_kwargs = mock_memory.search.call_args[1]
-                assert call_kwargs.get("limit") == 7
+            mock_memory.search.assert_called_once()
+            call_kwargs = mock_memory.search.call_args[1]
+            assert call_kwargs.get("limit") == 7
 
 
 class TestCmdIngest:
@@ -404,22 +420,20 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.add.return_value = [MagicMock(uid="abc123")]
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.add.return_value = [MagicMock(uid="abc123")]
 
-                args = self._make_args()
-                # Should not raise SystemExit or raise SystemExit(0)
-                try:
-                    cmd_ingest(args)
-                except SystemExit as e:
-                    assert e.code == 0
+            args = self._make_args()
+            cmd_ingest(args)
 
     def test_ingest_failure_exits_nonzero(self):
         import requests as req
@@ -429,18 +443,20 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_client.get_or_create_project.side_effect = req.RequestException(
-                    "connection error"
-                )
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.get_or_create_project.side_effect = req.RequestException(
+                "connection error"
+            )
 
-                args = self._make_args()
-                with pytest.raises(SystemExit) as exc_info:
-                    cmd_ingest(args)
-                assert exc_info.value.code == 1
+            args = self._make_args()
+            with pytest.raises(SystemExit) as exc_info:
+                cmd_ingest(args)
+            assert exc_info.value.code == 1
 
     def test_ingest_passes_session_id_as_metadata(self):
         env = {
@@ -448,21 +464,23 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.add.return_value = []
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.add.return_value = []
 
-                args = self._make_args(session_id="sess-xyz")
-                cmd_ingest(args)
+            args = self._make_args(session_id="sess-xyz")
+            cmd_ingest(args)
 
-                call_kwargs = mock_project.memory.call_args[1]
-                assert call_kwargs.get("metadata", {}).get("session_id") == "sess-xyz"
+            call_kwargs = mock_project.memory.call_args[1]
+            assert call_kwargs.get("metadata", {}).get("session_id") == "sess-xyz"
 
     def test_ingest_no_session_id_passes_none_metadata(self):
         env = {
@@ -470,21 +488,23 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.add.return_value = []
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.add.return_value = []
 
-                args = self._make_args()  # no session_id
-                cmd_ingest(args)
+            args = self._make_args()  # no session_id
+            cmd_ingest(args)
 
-                call_kwargs = mock_project.memory.call_args[1]
-                assert call_kwargs.get("metadata") is None
+            call_kwargs = mock_project.memory.call_args[1]
+            assert call_kwargs.get("metadata") is None
 
     def test_ingest_passes_producer_id(self):
         env = {
@@ -492,21 +512,23 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.add.return_value = []
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.add.return_value = []
 
-                args = self._make_args(producer_id="agent-1")
-                cmd_ingest(args)
+            args = self._make_args(producer_id="agent-1")
+            cmd_ingest(args)
 
-                add_kwargs = mock_memory.add.call_args[1]
-                assert add_kwargs.get("producer") == "agent-1"
+            add_kwargs = mock_memory.add.call_args[1]
+            assert add_kwargs.get("producer") == "agent-1"
 
     def test_ingest_parses_timestamp(self):
         env = {
@@ -514,23 +536,25 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        from datetime import datetime
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_project = MagicMock()
+            mock_client.get_or_create_project.return_value = mock_project
+            mock_memory = MagicMock()
+            mock_project.memory.return_value = mock_memory
+            mock_memory.add.return_value = []
 
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_project = MagicMock()
-                mock_client.get_or_create_project.return_value = mock_project
-                mock_memory = MagicMock()
-                mock_project.memory.return_value = mock_memory
-                mock_memory.add.return_value = []
+            args = self._make_args(timestamp="2024-06-15T12:00:00")
+            cmd_ingest(args)
 
-                args = self._make_args(timestamp="2024-06-15T12:00:00")
-                cmd_ingest(args)
-
-                add_kwargs = mock_memory.add.call_args[1]
-                assert add_kwargs.get("timestamp") == datetime(2024, 6, 15, 12, 0, 0)
+            add_kwargs = mock_memory.add.call_args[1]
+            assert add_kwargs.get("timestamp") == datetime.fromisoformat(
+                "2024-06-15T12:00:00"
+            )
 
     def test_ingest_error_goes_to_stderr(self, capsys):
         import requests as req
@@ -540,17 +564,17 @@ class TestCmdIngest:
             "MEMMACHINE_ORG_ID": "myorg",
             "MEMMACHINE_PROJECT_ID": "myproj",
         }
-        with patch.dict("os.environ", env, clear=True):
-            with patch("memmachine_client.cli.MemMachineClient") as mock_cls:
-                mock_client = MagicMock()
-                mock_cls.return_value = mock_client
-                mock_client.get_or_create_project.side_effect = req.RequestException(
-                    "fail"
-                )
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch("memmachine_client.cli.MemMachineClient") as mock_cls,
+        ):
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.get_or_create_project.side_effect = req.RequestException("fail")
 
-                args = self._make_args()
-                with pytest.raises(SystemExit):
-                    cmd_ingest(args)
+            args = self._make_args()
+            with pytest.raises(SystemExit):
+                cmd_ingest(args)
 
         captured = capsys.readouterr()
         assert captured.out == ""  # errors go to stderr, not stdout

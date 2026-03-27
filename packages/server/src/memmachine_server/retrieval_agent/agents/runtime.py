@@ -60,7 +60,9 @@ def _normalize_result_from_tuple(raw_result: object, *, route_name: str) -> obje
                 normalized.update(payload)
                 return normalized
         if isinstance(retrieval_result, dict):
-            normalized.update(retrieval_result)
+            normalized.update(
+                {str(key): value for key, value in retrieval_result.items()}
+            )
             return normalized
     return raw_result
 
@@ -75,6 +77,14 @@ def validate_agent_result(
     try:
         return AgentResultV1.model_validate(raw_result)
     except ValidationError as first_err:
+        tuple_normalized = _normalize_result_from_tuple(
+            raw_result, route_name=route_name
+        )
+        if tuple_normalized is not raw_result:
+            try:
+                return AgentResultV1.model_validate(tuple_normalized)
+            except ValidationError:
+                pass
         if normalizer is None:
             raise AgentContractError(
                 code=AgentContractErrorCode.INVALID_OUTPUT,
@@ -127,7 +137,9 @@ def validate_agent_result(
         ) from second_err
 
 
-def fallback_for_downstream_error(*, where: str, error: Exception) -> AgentContractError:
+def fallback_for_downstream_error(
+    *, where: str, error: Exception
+) -> AgentContractError:
     """Map downstream execution failures to a stable retrieval-agent contract error."""
     return AgentContractError(
         code=AgentContractErrorCode.DOWNSTREAM_FAILURE,
@@ -135,8 +147,7 @@ def fallback_for_downstream_error(*, where: str, error: Exception) -> AgentContr
             what_failed="Agent execution failed in downstream tool",
             why=str(error),
             how_to_fix=(
-                "Inspect downstream tool logs and return valid result "
-                "contracts."
+                "Inspect downstream tool logs and return valid result contracts."
             ),
             where=where,
             fallback_trigger_reason="downstream_tool_failure",

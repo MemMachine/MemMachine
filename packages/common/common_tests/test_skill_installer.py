@@ -198,3 +198,41 @@ async def test_missing_openai_import_error(tmp_path, monkeypatch):
 
     with pytest.raises(ImportError, match="pip install openai"):
         await install_skill(skill_file, "openai")
+
+
+@pytest.mark.asyncio
+async def test_corrupted_cache_is_treated_as_cache_miss(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    skill_file = tmp_path / "retrieve_skill.md"
+    skill_file.write_text("# Retrieve", encoding="utf-8")
+    cache_path = tmp_path / ".memmachine_skill_cache.json"
+    cache_path.write_text("{not valid json", encoding="utf-8")
+    client = _FakeOpenAIClient()
+
+    skill = await install_skill(
+        skill_file,
+        "openai",
+        openai_client=client,
+        cache_path=cache_path,
+    )
+
+    assert skill.file_ids == ("openai-file-1",)
+    assert len(client.files.create_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_save_cache_creates_missing_parent_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    skill_file = tmp_path / "retrieve_skill.md"
+    skill_file.write_text("# Retrieve", encoding="utf-8")
+    cache_path = tmp_path / "nested" / "cache" / "skill-cache.json"
+    client = _FakeOpenAIClient()
+
+    await install_skill(
+        skill_file,
+        "openai",
+        openai_client=client,
+        cache_path=cache_path,
+    )
+
+    assert cache_path.exists()

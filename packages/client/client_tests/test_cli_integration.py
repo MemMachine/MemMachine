@@ -7,10 +7,13 @@ Run with: pytest -m integration packages/client/client_tests/test_cli_integratio
 import json
 import os
 import subprocess
+import time
 from uuid import uuid4
 
 import pytest
 import requests
+
+from memmachine_client.cli import _build_parser, cmd_ingest, cmd_search
 
 
 def check_server_available():
@@ -47,10 +50,8 @@ class TestCLIIntegration:
         monkeypatch.setenv("MEMMACHINE_ORG_ID", org_id)
         monkeypatch.setenv("MEMMACHINE_PROJECT_ID", project_id)
 
-    def test_ingest_then_search(self, capsys, monkeypatch):
+    def test_ingest_then_search(self, capsys):
         """Ingest a unique episode, then search and assert it appears in results."""
-        from memmachine_client.cli import cmd_ingest, cmd_search, _build_parser
-
         unique_content = f"unique test memory {uuid4()}"
 
         # Ingest
@@ -59,18 +60,19 @@ class TestCLIIntegration:
         )
         cmd_ingest(ingest_args)
 
-        # Search
         search_args = _build_parser().parse_args(["search", unique_content[:30]])
-        cmd_search(search_args)
-
-        captured = capsys.readouterr()
-        # The content should appear somewhere in stdout
-        assert unique_content in captured.out or len(captured.out) >= 0  # results may vary
+        stdout = ""
+        for _ in range(5):
+            cmd_search(search_args)
+            captured = capsys.readouterr()
+            stdout = captured.out
+            if unique_content in stdout:
+                break
+            time.sleep(0.5)
+        assert unique_content in stdout
 
     def test_search_json_output(self, capsys, monkeypatch):
         """Verify that --json produces a valid JSON list."""
-        from memmachine_client.cli import cmd_search, _build_parser
-
         args = _build_parser().parse_args(["search", "test", "--json"])
         cmd_search(args)
 

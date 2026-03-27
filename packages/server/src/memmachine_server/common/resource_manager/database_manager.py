@@ -1,9 +1,11 @@
 """Manage database engines for SQL, Neo4j, and NebulaGraph backends."""
 
 import asyncio
+import importlib
 import logging
 from asyncio import Lock
-from typing import TYPE_CHECKING, Any, Self
+from collections.abc import Iterable
+from typing import Any, Protocol, Self, cast
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
@@ -23,13 +25,13 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 
-# TYPE_CHECKING is True only when type checkers (mypy, pyright) run, False at runtime.
-# This allows type hints without requiring nebulagraph_python to be installed
-# unless NebulaGraph is actually used. The actual import happens at use site.
-if TYPE_CHECKING:
-    from nebulagraph_python.client import NebulaAsyncClient
-
 logger = logging.getLogger(__name__)
+
+
+class _NebulaClientProtocol(Protocol):
+    async def close(self) -> None: ...
+
+    async def execute(self, query: str) -> object: ...
 
 
 class DatabaseManager:
@@ -44,7 +46,7 @@ class DatabaseManager:
         # String annotation "NebulaAsyncClient" (forward reference) because the type
         # is only imported under TYPE_CHECKING and doesn't exist at runtime.
         # Type checkers see it, but runtime treats it as a string literal.
-        self.nebula_clients: dict[str, NebulaAsyncClient] = {}
+        self.nebula_clients: dict[str, _NebulaClientProtocol] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
@@ -308,7 +310,10 @@ class DatabaseManager:
     # --- NebulaGraph ---
 
     @staticmethod
-    async def _close_nebula_client(name: str, client: "NebulaAsyncClient") -> None:
+    async def _close_nebula_client(
+        name: str,
+        client: _NebulaClientProtocol,
+    ) -> None:
         try:
             await client.close()
         except Exception as ex:
@@ -316,7 +321,7 @@ class DatabaseManager:
 
     async def async_get_nebula_client(
         self, name: str, validate: bool = False
-    ) -> "NebulaAsyncClient":
+    ) -> _NebulaClientProtocol:
         """Return a NebulaGraph async client, creating it if necessary (lazy)."""
         if name not in self._nebula_locks:
             async with self._lock:
@@ -333,20 +338,19 @@ class DatabaseManager:
             # Import at use site (not at module level) to make nebulagraph_python
             # an optional dependency - only required if NebulaGraph is actually used.
             # This avoids ImportError for users who only use Neo4j/PostgreSQL.
-            from nebulagraph_python.client import (
-                NebulaAsyncClient,
-                SessionConfig,
-                SessionPoolConfig,
-            )
+            nebula_client_module = importlib.import_module("nebulagraph_python.client")
+            nebula_async_client_cls = nebula_client_module.NebulaAsyncClient
+            session_config_cls = nebula_client_module.SessionConfig
+            session_pool_config_cls = nebula_client_module.SessionPoolConfig
 
             # Create session config
-            session_config = SessionConfig(
+            session_config = session_config_cls(
                 schema=conf.schema_name,
                 graph=conf.graph_name,
             )
 
             # Create session pool config
-            session_pool_config = SessionPoolConfig(
+            session_pool_config = session_pool_config_cls(
                 size=conf.session_pool_size,
                 wait_timeout=conf.session_pool_wait_timeout
                 if conf.session_pool_wait_timeout > 0
@@ -354,7 +358,7 @@ class DatabaseManager:
             )
 
             # Connect to NebulaGraph
-            client = await NebulaAsyncClient.connect(
+            client = await nebula_async_client_cls.connect(
                 hosts=conf.get_hosts(),
                 username=conf.username,
                 password=conf.password.get_secret_value(),
@@ -432,7 +436,10 @@ class DatabaseManager:
             return client
 
     @staticmethod
-    async def validate_nebula_client(name: str, client: "NebulaAsyncClient") -> None:
+    async def validate_nebula_client(
+        name: str,
+        client: _NebulaClientProtocol,
+    ) -> None:
         """Validate connectivity to a NebulaGraph instance."""
 
         def _check_query_results(rows: list) -> None:
@@ -445,10 +452,10 @@ class DatabaseManager:
             result = await client.execute("RETURN 1 AS ok")
 
             # Extract first row using iteration (consistent with vector_graph_store usage)
-            rows = list(result)
+            rows = list(cast(Iterable[object], result))
             _check_query_results(rows)
 
-            row = rows[0]
+            row = cast(Any, rows[0])
             ok = row["ok"]
             # Normalize wrapped values: some versions return ValueWrapper, others return primitives
             ok_value = ok.cast_primitive() if hasattr(ok, "cast_primitive") else ok

@@ -689,13 +689,19 @@ class MemMachine:
         async def search(self, query: str, **kwargs: object) -> dict[str, object]:
             limit = kwargs.get("limit")
             score_threshold = kwargs.get("score_threshold")
+            raw_expand_context = kwargs.get("expand_context")
+            expand_context = (
+                int(raw_expand_context)
+                if isinstance(raw_expand_context, int) and not isinstance(raw_expand_context, bool)
+                else 0
+            )
             result = await self._memmachine._query_search_direct(  # noqa: SLF001
                 session_data=self._session_data,
                 target_memories=self._target_memories,
                 set_metadata=self._set_metadata,
                 query=query,
                 limit=limit if isinstance(limit, int) else None,
-                expand_context=int(kwargs.get("expand_context", 0) or 0),
+                expand_context=expand_context,
                 score_threshold=(
                     float(score_threshold)
                     if isinstance(score_threshold, int | float)

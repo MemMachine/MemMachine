@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
 
@@ -22,6 +23,16 @@ from server_tests.memmachine_server.retrieval_agent.provider_runner_stub import 
     openai_text_response,
     openai_tool_call_response,
 )
+
+
+def _as_any_dict(value: object) -> dict[str, Any]:
+    assert isinstance(value, dict)
+    return cast(dict[str, Any], value)
+
+
+def _as_any_list(value: object) -> list[Any]:
+    assert isinstance(value, list)
+    return cast(list[Any], value)
 
 
 class DummyReranker(Reranker):
@@ -122,9 +133,9 @@ async def test_retrieve_agent_bootstrap_fallback_reason_for_errors(
     assert metrics["fallback_trigger_reason"] == "downstream_tool_failure"
     assert metrics["agent_contract_error_code"] == "AGENT_CONTRACT_DOWNSTREAM_FAILURE"
     error_diagnostics = metrics.get("error_diagnostics")
-    assert isinstance(error_diagnostics, dict)
-    assert error_diagnostics.get("context") == "top_level_unhandled_exception"
-    assert error_diagnostics.get("error_type") == "RuntimeError"
+    error_diagnostics_dict = _as_any_dict(error_diagnostics)
+    assert error_diagnostics_dict.get("context") == "top_level_unhandled_exception"
+    assert error_diagnostics_dict.get("error_type") == "RuntimeError"
     assert isinstance(metrics.get("agent_contract_error_payload"), dict)
 
 
@@ -172,16 +183,15 @@ async def test_retrieve_agent_attaches_all_skill_bundles_on_session_start(
     assert len(model.client.responses.calls) == 1
     first_call = model.client.responses.calls[0]
     first_input = first_call["input"]
-    assert isinstance(first_input, list)
-    user_message = first_input[0]
-    assert isinstance(user_message, dict)
-    content = user_message["content"]
-    assert content[:2] == [
+    content = _as_any_dict(_as_any_list(first_input)[0])["content"]
+    content_list = _as_any_list(content)
+    assert content_list[:2] == [
         {"type": "input_file", "file_id": "file-1"},
         {"type": "input_file", "file_id": "file-2"},
     ]
-    assert content[2]["type"] == "input_text"
-    assert "hello" in str(content[2]["text"])
+    third_content = _as_any_dict(content_list[2])
+    assert third_content["type"] == "input_text"
+    assert "hello" in str(third_content["text"])
 
 
 @pytest.mark.asyncio

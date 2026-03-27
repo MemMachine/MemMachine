@@ -28,30 +28,31 @@ def _read_sub_agent_spec_text(file_name: str) -> str:
 def test_load_markdown_top_level_spec_file() -> None:
     spec_path = SPEC_ROOT / "top_level" / "retrieve_agent.md"
     spec = load_agent_spec(spec_path)
+    policy_markdown = spec.policy_markdown or ""
 
     assert spec.name == "retrieve-agent"
     assert spec.kind == "top-level"
     assert spec.allowed_tools == ["memmachine_search"]
-    assert "spawn_sub_agent" not in spec.policy_markdown
-    assert "return_final" not in spec.policy_markdown
-    assert "answer directly in plain text" in spec.policy_markdown
+    assert "spawn_sub_agent" not in policy_markdown
+    assert "return_final" not in policy_markdown
+    assert "answer directly in plain text" in policy_markdown
     assert "Enter the attached COQ branch only for multi-hop questions" in (
-        spec.policy_markdown
+        policy_markdown
     )
     assert "prefer the attached `coq.md` branch for multi-hop questions" in (
-        spec.policy_markdown
+        policy_markdown
     )
-    assert "do not enter the COQ branch for single-hop" in spec.policy_markdown
-    assert "let `coq.md` determine the next hop" in spec.policy_markdown
-    assert "[person] spouse died when" in spec.policy_markdown
-    assert "[person] born where" in spec.policy_markdown
-    assert "The attached `coq.md` branch is available" in spec.policy_markdown
-    assert "Mandatory COQ procedure for dependency chains" not in spec.policy_markdown
+    assert "do not enter the COQ branch for single-hop" in policy_markdown
+    assert "let `coq.md` determine the next hop" in policy_markdown
+    assert "[person] spouse died when" in policy_markdown
+    assert "[person] born where" in policy_markdown
+    assert "The attached `coq.md` branch is available" in policy_markdown
+    assert "Mandatory COQ procedure for dependency chains" not in policy_markdown
     assert "generic templates, not memorized benchmark examples" not in (
-        spec.policy_markdown
+        policy_markdown
     )
-    assert "maternal grandfather" not in spec.policy_markdown
-    assert "disambiguating context" in spec.policy_markdown
+    assert "maternal grandfather" not in policy_markdown
+    assert "disambiguating context" in policy_markdown
 
 
 def test_load_markdown_coq_sub_agent_spec_file() -> None:

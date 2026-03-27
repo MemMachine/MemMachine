@@ -16,15 +16,26 @@ from memmachine_server.common.language_model import (
 
 class _FakeAnthropicClient:
     def __init__(self) -> None:
-        self.messages = type("_Messages", (), {})()
-        self.messages.create = AsyncMock()
-        self.beta = type("_Beta", (), {})()
-        self.beta.messages = type("_Messages", (), {})()
-        self.beta.messages.create = AsyncMock()
-        self.beta.skills = type("_Skills", (), {})()
-        self.beta.skills.create = AsyncMock()
+        self.messages = _FakeMessagesAPI()
+        self.beta = _FakeBetaAPI()
         self.api_key = "anthropic-test-key"
         self.base_url = "https://api.anthropic.com"
+
+
+class _FakeMessagesAPI:
+    def __init__(self) -> None:
+        self.create = AsyncMock()
+
+
+class _FakeSkillsAPI:
+    def __init__(self) -> None:
+        self.create = AsyncMock()
+
+
+class _FakeBetaAPI:
+    def __init__(self) -> None:
+        self.messages = _FakeMessagesAPI()
+        self.skills = _FakeSkillsAPI()
 
 
 @pytest.mark.asyncio

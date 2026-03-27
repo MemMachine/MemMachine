@@ -126,10 +126,14 @@ def cmd_search(args: argparse.Namespace) -> None:
         results = memory.search(args.query, limit=args.limit)
 
         # Collect episodes from both short-term and long-term memory
-        episodes = (
-            results.content.episodic_memory.short_term_memory.episodes
-            + results.content.episodic_memory.long_term_memory.episodes
-        )
+        episodic_memory = results.content.episodic_memory
+        if episodic_memory is None:
+            episodes = []
+        else:
+            episodes = [
+                *episodic_memory.short_term_memory.episodes,
+                *episodic_memory.long_term_memory.episodes,
+            ]
 
         if args.json:
             output = [{"score": e.score, "content": e.content} for e in episodes]
@@ -153,7 +157,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         project = client.get_or_create_project(org_id, project_id)
         memory = project.memory(metadata=metadata)
 
-        ts = datetime.fromisoformat(args.timestamp) if args.timestamp else None  # noqa: DTZ007
+        ts = datetime.fromisoformat(args.timestamp) if args.timestamp else None
 
         memory.add(
             args.content,
