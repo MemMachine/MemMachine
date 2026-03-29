@@ -94,7 +94,9 @@ async def process_question(
         session_id=group_id,
     )
 
-    query_response = await memory.query_memory(query=question, limit=30, expand_context=3)
+    query_response = await memory.query_memory(
+        query=question, limit=30, expand_context=3
+    )
 
     if query_response is None:
         long_term_episodes = []

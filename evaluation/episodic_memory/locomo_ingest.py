@@ -101,10 +101,7 @@ async def main() -> None:
 
         await memory.close()
 
-    tasks = [
-        process_conversation(idx, item)
-        for idx, item in enumerate(locomo_data)
-    ]
+    tasks = [process_conversation(idx, item) for idx, item in enumerate(locomo_data)]
     await asyncio.gather(*tasks)
 
 
