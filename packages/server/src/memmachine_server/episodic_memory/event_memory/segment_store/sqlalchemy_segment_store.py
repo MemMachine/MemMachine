@@ -1,4 +1,4 @@
-"""SQLAlchemy implementation of the SegmentLinker interface."""
+"""SQLAlchemy implementation of the SegmentStore interface."""
 
 import asyncio
 import logging
@@ -6,7 +6,6 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime, timedelta, timezone
-from enum import StrEnum
 from typing import cast, override
 from uuid import UUID
 
@@ -20,20 +19,17 @@ from sqlalchemy import (
     String,
     Uuid,
     and_,
-    bindparam,
     delete,
-    func,
+    event,
     insert,
     literal,
     or_,
     select,
     true,
     tuple_,
-    update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -41,6 +37,7 @@ from sqlalchemy.orm import (
     MappedColumn,
     mapped_column,
 )
+from sqlalchemy.pool import ConnectionPoolEntry
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.data_types import (
@@ -64,8 +61,8 @@ from memmachine_server.episodic_memory.extra_memory.data_types import (
     Segment,
 )
 from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store import (
-    SegmentLinker,
-    SegmentLinkerPartition,
+    SegmentStore,
+    SegmentStorePartition,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,26 +78,19 @@ _ContextAdapter = TypeAdapter(Context | None)
 _BlockAdapter = TypeAdapter(Block)
 
 
-class DerivativeState(StrEnum):
-    """Lifecycle state of a derivative."""
-
-    ACTIVE = "A"
-    PURGING = "P"
-
-
 # ORM models
 
 
-class BaseSegmentLinker(DeclarativeBase):
-    """Base class for segment linker tables."""
+class BaseSegmentStore(DeclarativeBase):
+    """Base class for segment store tables."""
 
 
-class SegmentRow(BaseSegmentLinker):
+class SegmentRow(BaseSegmentStore):
     """Persisted segment."""
 
-    __tablename__ = "segment_linker_segments"
+    __tablename__ = "segment_store_segments"
 
-    partition_key: MappedColumn[str] = mapped_column(String, primary_key=True)
+    partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     episode_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
@@ -124,12 +114,12 @@ class SegmentRow(BaseSegmentLinker):
 
     __table_args__ = (
         Index(
-            "segment_linker_segments__pk_ep",
+            "segment_store_segments__pk_ep",
             "partition_key",
             "episode_uuid",
         ),
         Index(
-            "segment_linker_segments__pk_ts_ep_bk_ix",
+            "segment_store_segments__pk_ts_ep_bk_ix",
             "partition_key",
             "timestamp",
             "episode_uuid",
@@ -139,60 +129,34 @@ class SegmentRow(BaseSegmentLinker):
     )
 
 
-class LinkRow(BaseSegmentLinker):
-    """Many-to-many join between segments and derivatives."""
+class DerivativeLinkRow(BaseSegmentStore):
+    """Maps a derivative UUID to its owning segment."""
 
-    __tablename__ = "segment_linker_links"
+    __tablename__ = "segment_store_derivative_links"
 
-    partition_key: MappedColumn[str] = mapped_column(String, primary_key=True)
+    partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
 
-    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    derivative_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
 
     __table_args__ = (
         ForeignKeyConstraint(
             ["partition_key", "segment_uuid"],
             [
-                "segment_linker_segments.partition_key",
-                "segment_linker_segments.uuid",
+                "segment_store_segments.partition_key",
+                "segment_store_segments.uuid",
             ],
             ondelete="CASCADE",
         ),
-        ForeignKeyConstraint(
-            ["partition_key", "derivative_uuid"],
-            [
-                "segment_linker_derivatives.partition_key",
-                "segment_linker_derivatives.uuid",
-            ],
-            ondelete="CASCADE",
-        ),
-        Index("segment_linker_links__pk_du", "partition_key", "derivative_uuid"),
-    )
-
-
-class DerivativeRow(BaseSegmentLinker):
-    """Derivative lifecycle record."""
-
-    __tablename__ = "segment_linker_derivatives"
-
-    partition_key: MappedColumn[str] = mapped_column(String, primary_key=True)
-
-    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-
-    state: MappedColumn[str] = mapped_column(String(1), nullable=False)
-    ref_count: MappedColumn[int] = mapped_column(Integer, nullable=False, default=0)
-
-    __table_args__ = (
         Index(
-            "segment_linker_derivatives__pk_st_rc",
+            "segment_store_derivative_links__pk_su",
             "partition_key",
-            "state",
-            "ref_count",
+            "segment_uuid",
         ),
     )
 
 
-class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
+class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     """SQLAlchemy-backed partition handle."""
 
     def __init__(
@@ -215,86 +179,24 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     # Registration
 
     @override
-    async def register_segments(
+    async def add_segments(
         self,
-        links: Mapping[Segment, Iterable[UUID]],
+        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
     ) -> None:
-        links = {
-            segment: set(derivative_uuids)
-            for segment, derivative_uuids in links.items()
-        }
-
-        # Compute ref count deltas per derivative.
-        deltas: dict[UUID, int] = defaultdict(int)
-        for derivative_uuids in links.values():
-            for derivative_uuid in derivative_uuids:
-                deltas[derivative_uuid] += 1
-
-        derivative_uuids = set(deltas.keys())
-
-        while True:
-            async with (
-                self._sqlite_write_lock(),
-                self._create_session() as session,
-                session.begin(),
-            ):
-                # Insert all derivatives ON CONFLICT DO NOTHING.
-                await self._insert_new_derivatives(session, derivative_uuids)
-
-                # Lock derivatives.
-                locked = await self._lock_derivatives(session, derivative_uuids)
-
-                # Retry if any are PURGING.
-                if any(row.state == DerivativeState.PURGING for row in locked.values()):
-                    await session.rollback()
-                else:
-                    # Insert segments and links.
-                    await self._insert_segments(session, links.keys())
-                    await self._insert_links(session, links)
-
-                    # Increment ref counts.
-                    await self._apply_ref_count_deltas(session, deltas)
-                    break
-
-            # Session and locks are released. Sleep before retrying.
-            await asyncio.sleep(0.1)
-
-    async def _lock_derivatives(
-        self,
-        session: AsyncSession,
-        derivative_uuids: Iterable[UUID],
-    ) -> dict[UUID, DerivativeRow]:
-        """Lock and return existing derivative rows, in consistent UUID order."""
-        derivative_uuids = set(derivative_uuids)
-        if not derivative_uuids:
-            return {}
-
-        # We rely on the following behavior to avoid deadlocks:
-        # https://www.postgresql.org/docs/current/sql-select.html
-        # It is possible for a SELECT command running at the READ COMMITTED transaction isolation level
-        # and using ORDER BY and a locking clause to return rows out of order.
-        # This is because ORDER BY is applied first.
-        query = (
-            select(DerivativeRow)
-            .where(
-                DerivativeRow.partition_key == self._partition_key,
-                DerivativeRow.uuid.in_(derivative_uuids),
-            )
-            .order_by(DerivativeRow.uuid)
-        )
-        if session.bind.dialect.name != "sqlite":
-            query = query.with_for_update()
-        rows = (await session.execute(query)).scalars().all()
-        return {row.uuid: row for row in rows}
+        async with (
+            self._sqlite_write_lock(),
+            self._create_session() as session,
+            session.begin(),
+        ):
+            await self._insert_segments(session, segments_to_derivative_uuids.keys())
+            await self._insert_derivative_links(session, segments_to_derivative_uuids)
 
     async def _insert_segments(
         self,
         session: AsyncSession,
         segments: Iterable[Segment],
     ) -> None:
-        """Insert segment rows and their property rows."""
-        segments = set(segments)
-
+        """Insert segment rows."""
         segment_row_values = [
             {
                 "uuid": segment.uuid,
@@ -310,7 +212,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     else None
                 ),
                 "block": segment.block.model_dump(mode="json"),
-                "properties": SQLAlchemySegmentLinkerPartition._encode_properties(
+                "properties": SQLAlchemySegmentStorePartition._encode_properties(
                     segment.properties
                 ),
             }
@@ -319,266 +221,25 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         if segment_row_values:
             await session.execute(insert(SegmentRow), segment_row_values)
 
-    async def _insert_new_derivatives(
+    async def _insert_derivative_links(
         self,
         session: AsyncSession,
-        derivative_uuids: Iterable[UUID],
+        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
     ) -> None:
-        """Insert new derivative rows with ref_count=0, ON CONFLICT DO NOTHING."""
-        derivative_uuids = set(derivative_uuids)
-        if not derivative_uuids:
-            return
-        values = [
+        """Insert derivative rows."""
+        derivative_row_values = [
             {
                 "uuid": derivative_uuid,
                 "partition_key": self._partition_key,
-                "state": DerivativeState.ACTIVE,
-                "ref_count": 0,
-            }
-            for derivative_uuid in sorted(derivative_uuids)
-        ]
-        dialect = session.bind.dialect.name
-        if dialect == "postgresql":
-            insert_statement = pg_insert(DerivativeRow).on_conflict_do_nothing()
-        elif dialect == "sqlite":
-            insert_statement = sqlite_insert(DerivativeRow).on_conflict_do_nothing()
-        else:
-            raise NotImplementedError(f"Unsupported dialect: {dialect}")
-        await session.execute(insert_statement, values)
-
-    async def _insert_links(
-        self,
-        session: AsyncSession,
-        links: Mapping[Segment, Iterable[UUID]],
-    ) -> None:
-        """Insert link rows between segments and derivatives."""
-        link_rows = [
-            {
-                "partition_key": self._partition_key,
                 "segment_uuid": segment.uuid,
-                "derivative_uuid": derivative_uuid,
             }
-            for segment, derivative_uuids in links.items()
+            for segment, derivative_uuids in segments_to_derivative_uuids.items()
             for derivative_uuid in derivative_uuids
         ]
-        if link_rows:
-            await session.execute(insert(LinkRow), link_rows)
-
-    async def _apply_ref_count_deltas(
-        self, session: AsyncSession, deltas: Mapping[UUID, int]
-    ) -> None:
-        """Apply ref count deltas to derivative rows."""
-        if not deltas:
-            return
-
-        conn = await session.connection()
-        await conn.execute(
-            update(DerivativeRow)
-            .where(
-                DerivativeRow.partition_key == bindparam("b_partition_key"),
-                DerivativeRow.uuid == bindparam("derivative_uuid"),
-            )
-            .values(ref_count=DerivativeRow.ref_count + bindparam("delta")),
-            [
-                {
-                    "b_partition_key": self._partition_key,
-                    "derivative_uuid": derivative_uuid,
-                    "delta": delta,
-                }
-                for derivative_uuid, delta in deltas.items()
-            ],
-        )
+        if derivative_row_values:
+            await session.execute(insert(DerivativeLinkRow), derivative_row_values)
 
     # Retrieval
-
-    @override
-    async def get_segments_by_derivatives(
-        self,
-        derivative_uuids: Iterable[UUID],
-        *,
-        limit_per_derivative: int | None = None,
-        property_filter: FilterExpr | None = None,
-    ) -> dict[UUID, list[Segment]]:
-        derivative_uuids = set(derivative_uuids)
-        if not derivative_uuids:
-            return {}
-
-        if limit_per_derivative is None:
-            return await self._get_segments_by_derivatives_all(
-                derivative_uuids, property_filter
-            )
-
-        return await self._get_segments_by_derivatives_windowed(
-            derivative_uuids, limit_per_derivative, property_filter
-        )
-
-    async def _get_segments_by_derivatives_all(
-        self,
-        derivative_uuids: Iterable[UUID],
-        property_filter: FilterExpr | None,
-    ) -> dict[UUID, list[Segment]]:
-        """Get all segments for each derivative."""
-        derivative_uuids = set(derivative_uuids)
-
-        segments_by_derivatives_query = (
-            select(LinkRow.derivative_uuid, SegmentRow)
-            .join(
-                LinkRow,
-                (LinkRow.partition_key == SegmentRow.partition_key)
-                & (LinkRow.segment_uuid == SegmentRow.uuid),
-            )
-            .where(
-                SegmentRow.partition_key == self._partition_key,
-                LinkRow.derivative_uuid.in_(derivative_uuids),
-            )
-            .order_by(
-                SegmentRow.timestamp,
-                SegmentRow.episode_uuid,
-                SegmentRow.index,
-                SegmentRow.offset,
-            )
-        )
-
-        if property_filter is not None:
-            segments_by_derivatives_query = segments_by_derivatives_query.where(
-                SQLAlchemySegmentLinkerPartition._compile_property_filter(
-                    property_filter
-                )
-            )
-
-        async with self._create_session() as session:
-            segment_rows = (await session.execute(segments_by_derivatives_query)).all()
-
-        segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
-        for derivative_uuid, segment_row in segment_rows:
-            segment = SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
-                segment_row
-            )
-            segments_by_derivatives[derivative_uuid].append(segment)
-
-        return dict(segments_by_derivatives)
-
-    async def _get_segments_by_derivatives_windowed(
-        self,
-        derivative_uuids: Iterable[UUID],
-        limit_per_derivative: int,
-        property_filter: FilterExpr | None,
-    ) -> dict[UUID, list[Segment]]:
-        """Get segments with limit_per_derivative applied via SQL window functions."""
-        derivative_uuids = set(derivative_uuids)
-        if not derivative_uuids:
-            return {}
-
-        limit_first = limit_per_derivative // 2
-        limit_last = limit_per_derivative - limit_first
-
-        row_number_ascending = (
-            func.row_number()
-            .over(
-                partition_by=LinkRow.derivative_uuid,
-                order_by=[
-                    SegmentRow.timestamp,
-                    SegmentRow.episode_uuid,
-                    SegmentRow.index,
-                    SegmentRow.offset,
-                ],
-            )
-            .label("row_number_ascending")
-        )
-        row_number_descending = (
-            func.row_number()
-            .over(
-                partition_by=LinkRow.derivative_uuid,
-                order_by=[
-                    SegmentRow.timestamp.desc(),
-                    SegmentRow.episode_uuid.desc(),
-                    SegmentRow.index.desc(),
-                    SegmentRow.offset.desc(),
-                ],
-            )
-            .label("row_number_descending")
-        )
-
-        numbered_derivative_segments_query = (
-            select(
-                LinkRow.derivative_uuid,
-                SegmentRow.uuid,
-                SegmentRow.episode_uuid,
-                SegmentRow.index,
-                SegmentRow.offset,
-                SegmentRow.timestamp,
-                SegmentRow.timestamp_timezone_offset,
-                SegmentRow.context,
-                SegmentRow.block,
-                SegmentRow.properties,
-                row_number_ascending,
-                row_number_descending,
-            )
-            .join(
-                LinkRow,
-                (LinkRow.partition_key == SegmentRow.partition_key)
-                & (LinkRow.segment_uuid == SegmentRow.uuid),
-            )
-            .where(
-                SegmentRow.partition_key == self._partition_key,
-                LinkRow.derivative_uuid.in_(derivative_uuids),
-            )
-        )
-        if property_filter is not None:
-            numbered_derivative_segments_query = (
-                numbered_derivative_segments_query.where(
-                    SQLAlchemySegmentLinkerPartition._compile_property_filter(
-                        property_filter
-                    )
-                )
-            )
-
-        async with self._create_session() as session:
-            numbered_derivative_segments_subquery = (
-                numbered_derivative_segments_query.subquery()
-            )
-
-            limited_derivative_segments_query = (
-                select(numbered_derivative_segments_subquery)
-                .where(
-                    or_(
-                        numbered_derivative_segments_subquery.c.row_number_ascending
-                        <= limit_first,
-                        numbered_derivative_segments_subquery.c.row_number_descending
-                        <= limit_last,
-                    )
-                )
-                .order_by(
-                    numbered_derivative_segments_subquery.c.timestamp,
-                    numbered_derivative_segments_subquery.c.episode_uuid,
-                    numbered_derivative_segments_subquery.c.index,
-                    numbered_derivative_segments_subquery.c.offset,
-                )
-            )
-
-            limited_derivative_segment_rows = (
-                await session.execute(limited_derivative_segments_query)
-            ).all()
-
-        segments_by_derivatives: defaultdict[UUID, list[Segment]] = defaultdict(list)
-        for row in limited_derivative_segment_rows:
-            segment_row = SegmentRow(
-                uuid=row.uuid,
-                episode_uuid=row.episode_uuid,
-                index=row.index,
-                offset=row.offset,
-                timestamp=row.timestamp,
-                timestamp_timezone_offset=row.timestamp_timezone_offset,
-                context=row.context,
-                block=row.block,
-                properties=row.properties,
-            )
-            segment = SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
-                segment_row
-            )
-            segments_by_derivatives[row.derivative_uuid].append(segment)
-
-        return dict(segments_by_derivatives)
 
     @override
     async def get_segment_contexts(
@@ -600,7 +261,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             )
             if property_filter is not None:
                 seed_segments_query = seed_segments_query.where(
-                    SQLAlchemySegmentLinkerPartition._compile_property_filter(
+                    SQLAlchemySegmentStorePartition._compile_property_filter(
                         property_filter
                     )
                 )
@@ -618,7 +279,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             if max_backward_segments <= 0 and max_forward_segments <= 0:
                 return {
                     seed_segment_uuid: [
-                        SQLAlchemySegmentLinkerPartition._segment_from_segment_row(
+                        SQLAlchemySegmentStorePartition._segment_from_segment_row(
                             seed_segment_row,
                         )
                     ]
@@ -650,7 +311,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
                     seed_uuid, ([], [])
                 )
                 segments_by_seed[seed_uuid] = [
-                    SQLAlchemySegmentLinkerPartition._segment_from_segment_row(row)
+                    SQLAlchemySegmentStorePartition._segment_from_segment_row(row)
                     for row in [*reversed(backward_rows), seed_row, *forward_rows]
                 ]
 
@@ -711,7 +372,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             )
             if property_filter is not None:
                 context_rows_query = context_rows_query.where(
-                    SQLAlchemySegmentLinkerPartition._compile_property_filter(
+                    SQLAlchemySegmentStorePartition._compile_property_filter(
                         property_filter
                     )
                 )
@@ -807,7 +468,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         )
 
         compiled_property_filter = (
-            SQLAlchemySegmentLinkerPartition._compile_property_filter(property_filter)
+            SQLAlchemySegmentStorePartition._compile_property_filter(property_filter)
             if property_filter is not None
             else None
         )
@@ -872,15 +533,59 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
 
         return context_rows_by_seed
 
+    @override
+    async def get_segment_uuids_by_episode_uuids(
+        self,
+        episode_uuids: Iterable[UUID],
+    ) -> dict[UUID, list[UUID]]:
+        episode_uuids = set(episode_uuids)
+        if not episode_uuids:
+            return {}
+
+        async with self._create_session() as session:
+            query = select(SegmentRow.episode_uuid, SegmentRow.uuid).where(
+                SegmentRow.partition_key == self._partition_key,
+                SegmentRow.episode_uuid.in_(episode_uuids),
+            )
+            rows = (await session.execute(query)).all()
+
+        result: defaultdict[UUID, list[UUID]] = defaultdict(list)
+        for episode_uuid, segment_uuid in rows:
+            result[episode_uuid].append(segment_uuid)
+        return dict(result)
+
+    @override
+    async def get_derivative_uuids_by_segment_uuids(
+        self,
+        segment_uuids: Iterable[UUID],
+    ) -> dict[UUID, list[UUID]]:
+        segment_uuids = set(segment_uuids)
+        if not segment_uuids:
+            return {}
+
+        async with self._create_session() as session:
+            query = select(
+                DerivativeLinkRow.segment_uuid, DerivativeLinkRow.uuid
+            ).where(
+                DerivativeLinkRow.partition_key == self._partition_key,
+                DerivativeLinkRow.segment_uuid.in_(segment_uuids),
+            )
+            rows = (await session.execute(query)).all()
+
+        result: defaultdict[UUID, list[UUID]] = defaultdict(list)
+        for segment_uuid, derivative_uuid in rows:
+            result[segment_uuid].append(derivative_uuid)
+        return dict(result)
+
     # Deletion
 
     @override
-    async def delete_segments_by_episodes(
+    async def delete_segments(
         self,
-        episode_uuids: Iterable[UUID],
+        segment_uuids: Iterable[UUID],
     ) -> None:
-        episode_uuids = set(episode_uuids)
-        if not episode_uuids:
+        segment_uuids = set(segment_uuids)
+        if not segment_uuids:
             return
 
         async with (
@@ -888,145 +593,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             self._create_session() as session,
             session.begin(),
         ):
-            # Find derivative UUIDs linked to segments being deleted.
-            derivative_uuids_query = (
-                select(LinkRow.derivative_uuid)
-                .join(
-                    SegmentRow,
-                    (LinkRow.partition_key == SegmentRow.partition_key)
-                    & (LinkRow.segment_uuid == SegmentRow.uuid),
-                )
-                .where(
-                    SegmentRow.partition_key == self._partition_key,
-                    SegmentRow.episode_uuid.in_(episode_uuids),
-                )
-                .distinct()
-            )
-            derivative_uuids = set(
-                (await session.execute(derivative_uuids_query)).scalars().all()
-            )
-
-            if derivative_uuids:
-                # Lock derivatives.
-                locked = await self._lock_derivatives(session, derivative_uuids)
-                active_uuids = {
-                    uuid
-                    for uuid, row in locked.items()
-                    if row.state == DerivativeState.ACTIVE
-                }
-
-                # Compute ref count deltas (negative) from links being removed.
-                if active_uuids:
-                    ref_count_query = (
-                        select(
-                            LinkRow.derivative_uuid,
-                            func.count().label("ref_count"),
-                        )
-                        .join(
-                            SegmentRow,
-                            (LinkRow.partition_key == SegmentRow.partition_key)
-                            & (LinkRow.segment_uuid == SegmentRow.uuid),
-                        )
-                        .where(
-                            SegmentRow.partition_key == self._partition_key,
-                            SegmentRow.episode_uuid.in_(episode_uuids),
-                            LinkRow.derivative_uuid.in_(active_uuids),
-                        )
-                        .group_by(LinkRow.derivative_uuid)
-                    )
-                    ref_count_rows = (await session.execute(ref_count_query)).all()
-
-                    deltas = {
-                        derivative_uuid: -ref_count
-                        for derivative_uuid, ref_count in ref_count_rows
-                    }
-
-                    # Decrement ref counts.
-                    await self._apply_ref_count_deltas(session, deltas)
-
-            # Delete segments (CASCADE deletes links via FK).
+            # CASCADE deletes derivatives via FK.
             await session.execute(
                 delete(SegmentRow).where(
                     SegmentRow.partition_key == self._partition_key,
-                    SegmentRow.episode_uuid.in_(episode_uuids),
-                )
-            )
-
-    # Garbage collection
-
-    @override
-    async def mark_orphaned_derivatives_for_purging(self, limit: int = 1000) -> None:
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            # Find and lock orphaned derivatives.
-            find_orphans_query = (
-                select(DerivativeRow.uuid)
-                .where(
-                    DerivativeRow.partition_key == self._partition_key,
-                    DerivativeRow.state == DerivativeState.ACTIVE,
-                    DerivativeRow.ref_count == 0,
-                )
-                .limit(limit)
-            )
-
-            if session.bind.dialect.name != "sqlite":
-                # SKIP LOCKED lets concurrent GC callers pick non-overlapping batches
-                # and avoids deadlocks without ordering (never waits).
-                find_orphans_query = find_orphans_query.with_for_update(
-                    skip_locked=True
-                )
-            orphan_uuids = list(
-                (await session.execute(find_orphans_query)).scalars().all()
-            )
-
-            # Mark locked orphans for purging.
-            if orphan_uuids:
-                await session.execute(
-                    update(DerivativeRow)
-                    .where(
-                        DerivativeRow.partition_key == self._partition_key,
-                        DerivativeRow.uuid.in_(orphan_uuids),
-                    )
-                    .values(state=DerivativeState.PURGING)
-                )
-
-    @override
-    async def get_derivatives_pending_purge(self, limit: int = 1000) -> set[UUID]:
-        async with self._create_session() as session:
-            return set(
-                (
-                    await session.execute(
-                        select(DerivativeRow.uuid)
-                        .where(
-                            DerivativeRow.partition_key == self._partition_key,
-                            DerivativeRow.state == DerivativeState.PURGING,
-                        )
-                        .limit(limit)
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-    @override
-    async def purge_derivatives(self, derivative_uuids: Iterable[UUID]) -> None:
-        derivative_uuids = set(derivative_uuids)
-        if not derivative_uuids:
-            return
-
-        async with (
-            self._sqlite_write_lock(),
-            self._create_session() as session,
-            session.begin(),
-        ):
-            await session.execute(
-                delete(DerivativeRow).where(
-                    DerivativeRow.partition_key == self._partition_key,
-                    DerivativeRow.uuid.in_(derivative_uuids),
-                    DerivativeRow.state == DerivativeState.PURGING,
+                    SegmentRow.uuid.in_(segment_uuids),
                 )
             )
 
@@ -1036,7 +607,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     def _encode_properties(
         properties: Mapping[str, PropertyValue],
     ) -> dict[str, dict[str, bool | int | float | str]]:
-        """Encode properties as type-tagged JSONB: {"key": {_PROPERTY_VALUE_KEY: value, _PROPERTY_TYPE_KEY: type_name}}."""
+        """Encode properties as type-tagged JSONB."""
         encoded: dict[str, dict[str, bool | int | float | str]] = {}
         for key, value in properties.items():
             type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME.get(type(value))
@@ -1087,12 +658,11 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
     def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
         """Compile a FilterExpr into a SQLAlchemy boolean expression against inline JSONB properties."""
         if isinstance(expr, Comparison):
-            return SQLAlchemySegmentLinkerPartition._compile_comparison(
+            return SQLAlchemySegmentStorePartition._compile_comparison(
                 expr.field, expr.op, expr.value
             )
 
         if isinstance(expr, In):
-            # IN is equivalent to OR of equalities on the same field.
             if not expr.values:
                 return literal(False)
             first_value = expr.values[0]
@@ -1107,22 +677,21 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             return and_(type_check, value_element.as_string().in_(expr.values))
 
         if isinstance(expr, IsNull):
-            # Property is null = key does not exist in the JSONB object.
             return SegmentRow.properties[expr.field].is_(None)
 
         if isinstance(expr, Not):
-            return ~SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.expr)
+            return ~SQLAlchemySegmentStorePartition._compile_property_filter(expr.expr)
 
         if isinstance(expr, And):
             return and_(
-                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.left),
-                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.right),
+                SQLAlchemySegmentStorePartition._compile_property_filter(expr.left),
+                SQLAlchemySegmentStorePartition._compile_property_filter(expr.right),
             )
 
         if isinstance(expr, Or):
             return or_(
-                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.left),
-                SQLAlchemySegmentLinkerPartition._compile_property_filter(expr.right),
+                SQLAlchemySegmentStorePartition._compile_property_filter(expr.left),
+                SQLAlchemySegmentStorePartition._compile_property_filter(expr.right),
             )
 
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
@@ -1138,7 +707,6 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
             SegmentRow.properties[field][_PROPERTY_TYPE_KEY].as_string() == type_name
         )
 
-        # Convert the value and cast the JSON element appropriately.
         if isinstance(value, bool):
             casted = value_element.as_boolean()
             cmp_value = value
@@ -1174,7 +742,7 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         """Convert a SegmentRow into a Segment."""
         context = _ContextAdapter.validate_python(row.context)
         block = _BlockAdapter.validate_python(row.block)
-        properties = SQLAlchemySegmentLinkerPartition._decode_properties(row.properties)
+        properties = SQLAlchemySegmentStorePartition._decode_properties(row.properties)
         original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
         timestamp = ensure_tz_aware(row.timestamp).astimezone(original_timezone)
         return Segment(
@@ -1189,9 +757,9 @@ class SQLAlchemySegmentLinkerPartition(SegmentLinkerPartition):
         )
 
 
-class SQLAlchemySegmentLinkerParams(BaseModel):
+class SQLAlchemySegmentStoreParams(BaseModel):
     """
-    Parameters for constructing a SQLAlchemySegmentLinker.
+    Parameters for constructing a SQLAlchemySegmentStore.
 
     Attributes:
         engine (AsyncEngine):
@@ -1201,10 +769,10 @@ class SQLAlchemySegmentLinkerParams(BaseModel):
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
 
 
-class SQLAlchemySegmentLinker(SegmentLinker):
-    """SQLAlchemy-backed SegmentLinker factory."""
+class SQLAlchemySegmentStore(SegmentStore):
+    """SQLAlchemy-backed SegmentStore factory."""
 
-    def __init__(self, params: SQLAlchemySegmentLinkerParams) -> None:
+    def __init__(self, params: SQLAlchemySegmentStoreParams) -> None:
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
@@ -1214,10 +782,22 @@ class SQLAlchemySegmentLinker(SegmentLinker):
         self._use_write_lock = self._engine.dialect.name == "sqlite"
         self._write_locks: dict[str, asyncio.Lock] = {}
 
+        # SQLite requires PRAGMA foreign_keys = ON for CASCADE deletes.
+        if self._engine.dialect.name == "sqlite":
+
+            @event.listens_for(self._engine.sync_engine, "connect")
+            def _enable_sqlite_fks(
+                dbapi_connection: DBAPIConnection,
+                _connection_record: ConnectionPoolEntry,
+            ) -> None:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
     @override
     async def startup(self) -> None:
         async with self._engine.begin() as conn:
-            await conn.run_sync(BaseSegmentLinker.metadata.create_all)
+            await conn.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override
     async def shutdown(self) -> None:
@@ -1226,12 +806,12 @@ class SQLAlchemySegmentLinker(SegmentLinker):
     @override
     async def open_partition(
         self, partition_key: str
-    ) -> SQLAlchemySegmentLinkerPartition:
+    ) -> SQLAlchemySegmentStorePartition:
         if self._use_write_lock:
             write_lock = self._write_locks.setdefault(partition_key, asyncio.Lock())
         else:
             write_lock = None
-        return SQLAlchemySegmentLinkerPartition(
+        return SQLAlchemySegmentStorePartition(
             partition_key=partition_key,
             create_session=self._create_session,
             write_lock=write_lock,
@@ -1239,6 +819,6 @@ class SQLAlchemySegmentLinker(SegmentLinker):
 
     @override
     async def close_partition(
-        self, segment_linker_partition: SegmentLinkerPartition
+        self, segment_store_partition: SegmentStorePartition
     ) -> None:
         pass
