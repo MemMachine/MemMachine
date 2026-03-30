@@ -851,8 +851,8 @@
     }
   },
   "info": {
-    "description": "REST API server for MemMachine memory system",
-    "title": "MemMachine Server",
+    "description": "Public REST API for the MemMachine memory system. Manages projects and memories.",
+    "title": "MemMachine Public API",
     "version": "0.1.0"
   },
   "openapi": "3.0.4",
