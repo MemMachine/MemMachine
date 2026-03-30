@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
+from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
     EpisodeIdT,
@@ -210,6 +211,49 @@ async def test_process_single_set_applies_commands(
     )
     assert list(ingested) == [message_id]
     assert embedder_double.ingest_calls == [["blue"]]
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_marks_context_length_errors_as_ingested(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    monkeypatch,
+):
+    class ContextLengthExceededError(Exception):
+        code = "context_length_exceeded"
+
+    message_id = await add_history(
+        episode_storage,
+        content="very long message that exceeds model context",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-context-overflow",
+        history_id=message_id,
+    )
+
+    async def mock_context_length_error(*args, **kwargs):
+        err = ContextLengthExceededError("input exceeds context window")
+        raise ExternalServiceAPIError("LLM request failed") from err
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        mock_context_length_error,
+    )
+
+    await ingestion_service._process_single_set("user-context-overflow")
+
+    assert (
+        await semantic_storage.get_history_messages(
+            set_ids=["user-context-overflow"],
+            is_ingested=False,
+        )
+        == []
+    )
+    assert await semantic_storage.get_history_messages(
+        set_ids=["user-context-overflow"],
+        is_ingested=True,
+    ) == [message_id]
 
 
 @pytest.mark.asyncio
