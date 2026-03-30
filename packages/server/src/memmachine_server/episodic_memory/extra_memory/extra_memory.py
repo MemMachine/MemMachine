@@ -1,11 +1,11 @@
 """Extra memory system for storing and retrieving episodic memory."""
 
-import asyncio
 import datetime
 import json
 import logging
-from collections.abc import Iterable
-from uuid import UUID, uuid4, uuid5
+from collections.abc import Iterable, Sequence
+from typing import cast
+from uuid import UUID, uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
@@ -38,11 +38,16 @@ from .data_types import (
     Segment,
     Text,
 )
-from .segment_linker import SegmentLinkerPartition
+from .segment_store import SegmentStorePartition
 
 logger = logging.getLogger(__name__)
 
-_DERIVATIVE_UUID_NAMESPACE = UUID("0af4a33f-57b4-4a38-a412-c03f9a9929bc")
+# System-defined metadata keys.
+# Underscore prefix is reserved.
+_SEGMENT_UUID_KEY = "_segment_uuid"
+_TIMESTAMP_KEY = "_timestamp"
+_CONTEXT_TYPE_KEY = "_context_type"
+_CONTEXT_SOURCE_KEY = "_context_source"
 
 
 class ExtraMemoryParams(BaseModel):
@@ -54,20 +59,16 @@ class ExtraMemoryParams(BaseModel):
             Partition key for scoping the memory.
         collection (Collection):
             Collection instance in a vector store.
-        segment_linker_partition (SegmentLinkerPartition):
-            Segment linker partition handle for managing segments.
+        segment_store_partition (SegmentStorePartition):
+            Segment store partition handle for managing segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
         reranker (Reranker):
             Reranker instance for reranking search results.
         derive_sentences (bool):
             Whether to derive sentence-level derivatives from content (default: False).
-        deduplicate_derivatives (bool):
-            Whether to deduplicate derivatives by content using uuid5 (default: False).
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation (default: 2000).
-        purge_interval (float | None):
-            Seconds between purge cycles. None disables periodic purging (default: None).
     """
 
     partition_key: str = Field(
@@ -78,9 +79,9 @@ class ExtraMemoryParams(BaseModel):
         ...,
         description="Collection instance in a vector store",
     )
-    segment_linker_partition: InstanceOf[SegmentLinkerPartition] = Field(
+    segment_store_partition: InstanceOf[SegmentStorePartition] = Field(
         ...,
-        description="Segment linker partition handle for managing segments",
+        description="Segment store partition handle for managing segments",
     )
     embedder: InstanceOf[Embedder] = Field(
         ...,
@@ -94,17 +95,9 @@ class ExtraMemoryParams(BaseModel):
         False,
         description="Whether to derive sentence-level derivatives from content",
     )
-    deduplicate_derivatives: bool = Field(
-        False,
-        description="Whether to deduplicate derivatives by content using uuid5.",
-    )
     max_text_chunk_length: int = Field(
         2000,
         description="Max code-point length for text chunking in segment creation",
-    )
-    purge_interval: float | None = Field(
-        None,
-        description="Seconds between purge cycles. None disables periodic purging.",
     )
 
 
@@ -123,17 +116,12 @@ class ExtraMemory:
         self._partition_key = params.partition_key
 
         self._collection = params.collection
-        self._segment_linker_partition = params.segment_linker_partition
+        self._segment_store_partition = params.segment_store_partition
 
         self._embedder = params.embedder
         self._reranker = params.reranker
 
         self._derive_sentences = params.derive_sentences
-        self._deduplicate_derivatives = params.deduplicate_derivatives
-
-        self._purge_interval = params.purge_interval
-        self._purge_task: asyncio.Task[None] | None = None
-        self._shutdown_event = asyncio.Event()
 
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=params.max_text_chunk_length,
@@ -173,51 +161,6 @@ class ExtraMemory:
             keep_separator="end",
         )
 
-    async def startup(self) -> None:
-        """Start the periodic purge loop if purge_interval is configured."""
-        if self._purge_interval is not None:
-            self._shutdown_event.clear()
-            self._purge_task = asyncio.create_task(self._purge_loop())
-
-    async def shutdown(self) -> None:
-        """Stop the periodic purge loop."""
-        if self._purge_task is not None:
-            self._shutdown_event.set()
-            await self._purge_task
-            self._purge_task = None
-
-    async def _purge_loop(self) -> None:
-        """Periodically purge orphaned derivatives."""
-        assert self._purge_interval is not None
-        while True:
-            try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(), timeout=self._purge_interval
-                )
-            except TimeoutError:
-                pass
-            else:
-                # Shutdown event was set, so exit the loop.
-                return
-
-            try:
-                await self._purge_orphaned_derivatives()
-            except Exception:
-                logger.exception("Error during derivative purge cycle")
-
-    async def _purge_orphaned_derivatives(self) -> None:
-        """Run a single purge cycle."""
-        await self._segment_linker_partition.mark_orphaned_derivatives_for_purging()
-
-        pending_uuids = (
-            await self._segment_linker_partition.get_derivatives_pending_purge()
-        )
-        if not pending_uuids:
-            return
-
-        await self._collection.delete(record_uuids=pending_uuids)
-        await self._segment_linker_partition.purge_derivatives(pending_uuids)
-
     async def encode_episodes(
         self,
         episodes: Iterable[Episode],
@@ -234,23 +177,19 @@ class ExtraMemory:
             key=lambda episode: (episode.timestamp, episode.uuid),
         )
 
-        episodes_segments = await asyncio.gather(
-            *[self._create_segments(episode) for episode in episodes]
-        )
-
         segments = [
             segment
-            for episode_segments in episodes_segments
-            for segment in episode_segments
+            for episode in episodes
+            for segment in self._create_segments(episode)
         ]
 
-        segments_derivatives = await asyncio.gather(
-            *[self._derive_derivatives(segment) for segment in segments]
-        )
+        segments_to_derivatives: dict[Segment, list[Derivative]] = {
+            segment: self._derive_derivatives(segment) for segment in segments
+        }
 
         derivatives = [
             derivative
-            for segment_derivatives in segments_derivatives
+            for segment_derivatives in segments_to_derivatives.values()
             for derivative in segment_derivatives
         ]
 
@@ -258,38 +197,15 @@ class ExtraMemory:
             [derivative.text for derivative in derivatives],
         )
 
-        links = {
-            segment: [derivative.uuid for derivative in segment_derivatives]
-            for segment, segment_derivatives in zip(
-                segments,
-                segments_derivatives,
-                strict=True,
-            )
-        }
-
-        await self._segment_linker_partition.register_segments(links=links)
-
-        # In non-deduplication mode, attach segment properties to vector records.
-        derivative_properties: dict[UUID, dict[str, PropertyValue]] | None = None
-        if not self._deduplicate_derivatives:
-            derivative_properties = {}
-            for segment, segment_derivatives in zip(
-                segments, segments_derivatives, strict=True
-            ):
-                if segment.properties:
-                    for derivative in segment_derivatives:
-                        derivative_properties[derivative.uuid] = segment.properties
+        await self._segment_store_partition.add_segments(
+            {
+                segment: [derivative.uuid for derivative in segment_derivatives]
+                for segment, segment_derivatives in segments_to_derivatives.items()
+            }
+        )
 
         derivative_records = [
-            Record(
-                uuid=derivative.uuid,
-                vector=derivative_embedding,
-                properties=(
-                    derivative_properties.get(derivative.uuid)
-                    if derivative_properties is not None
-                    else None
-                ),
-            )
+            ExtraMemory._build_derivative_record(derivative, derivative_embedding)
             for derivative, derivative_embedding in zip(
                 derivatives,
                 derivative_embeddings,
@@ -300,7 +216,36 @@ class ExtraMemory:
         if derivative_records:
             await self._collection.upsert(records=derivative_records)
 
-    async def _create_segments(
+    @staticmethod
+    def _build_derivative_record(
+        derivative: Derivative,
+        derivative_embedding: Sequence[float],
+    ) -> Record:
+        """Build a vector record from a derivative and its embedding."""
+        properties: dict[str, PropertyValue] = {}
+
+        # System-defined metadata (underscore-prefixed).
+        properties[_SEGMENT_UUID_KEY] = str(derivative.segment_uuid)
+        properties[_TIMESTAMP_KEY] = derivative.timestamp
+
+        match derivative.context:
+            case MessageContext(source=source):
+                properties[_CONTEXT_TYPE_KEY] = "message"
+                properties[_CONTEXT_SOURCE_KEY] = source
+            case CitationContext(source=source):
+                properties[_CONTEXT_TYPE_KEY] = "citation"
+                properties[_CONTEXT_SOURCE_KEY] = source
+
+        # User-defined properties.
+        properties.update(derivative.properties)
+
+        return Record(
+            uuid=derivative.uuid,
+            vector=list(derivative_embedding),
+            properties=properties,
+        )
+
+    def _create_segments(
         self,
         episode: Episode,
     ) -> list[Segment]:
@@ -378,7 +323,7 @@ class ExtraMemory:
                     )
         return segments
 
-    async def _derive_derivatives(
+    def _derive_derivatives(
         self,
         segment: Segment,
     ) -> list[Derivative]:
@@ -395,12 +340,26 @@ class ExtraMemory:
         """
         match segment.block:
             case Text(text=text):
-                return self._derive_from_text(text, segment.context)
+                derivative_texts = self._extract_derivative_texts(
+                    context=segment.context, text=text
+                )
             case FileRef():
                 return []
             case _:
                 logger.warning("Non-text primitive derivatives are not yet supported")
                 return []
+
+        return [
+            Derivative(
+                uuid=uuid4(),
+                segment_uuid=segment.uuid,
+                timestamp=segment.timestamp,
+                context=segment.context,
+                text=text,
+                properties=segment.properties,
+            )
+            for text in derivative_texts
+        ]
 
     @staticmethod
     def _format_with_context(text: str, context: Context | None) -> str:
@@ -413,35 +372,19 @@ class ExtraMemory:
             case _:
                 return text
 
-    def _derive_from_text(self, text: str, context: Context | None) -> list[Derivative]:
-        """Derive derivatives from a text string."""
+    def _extract_derivative_texts(
+        self,
+        *,
+        context: Context | None,
+        text: str,
+    ) -> list[str]:
+        """Derive formatted text strings from a text block."""
         if not self._derive_sentences:
-            formatted = ExtraMemory._format_with_context(text, context)
-            return [
-                Derivative(
-                    uuid=self._derivative_uuid(formatted),
-                    text=formatted,
-                )
-            ]
-        sentences = extract_sentences(text)
-        derivatives = []
-        for sentence in sentences:
-            formatted = ExtraMemory._format_with_context(sentence, context)
-            derivatives.append(
-                Derivative(
-                    uuid=self._derivative_uuid(formatted),
-                    text=formatted,
-                )
-            )
-        return derivatives
-
-    def _derivative_uuid(self, text: str) -> UUID:
-        if self._deduplicate_derivatives:
-            return uuid5(
-                _DERIVATIVE_UUID_NAMESPACE,
-                json.dumps([self._partition_key, text]),
-            )
-        return uuid4()
+            return [ExtraMemory._format_with_context(text, context)]
+        return [
+            ExtraMemory._format_with_context(sentence, context)
+            for sentence in extract_sentences(text)
+        ]
 
     async def query(
         self,
@@ -470,8 +413,8 @@ class ExtraMemory:
                 (default: None).
 
         Returns:
-            list[QueryResult]:
-                A list of query results containing segments relevant to the query, ordered chronologically.
+            QueryResult:
+                Query result containing segments relevant to the query, ordered chronologically.
 
         """
         query_embedding = (
@@ -480,60 +423,53 @@ class ExtraMemory:
             )
         )[0]
 
-        # Filter at the vector DB level in non-dedup mode.
-        vector_filter = property_filter if not self._deduplicate_derivatives else None
-
         # Search derivative collection for matches.
         [query_result] = await self._collection.query(
             query_vectors=[query_embedding],
             limit=min(5 * max_num_segments, 200),
-            property_filter=vector_filter,
+            property_filter=property_filter,
             return_vector=False,
-            return_properties=False,
+            return_properties=True,
         )
 
-        matched_derivative_uuids = [match.record.uuid for match in query_result.matches]
-
-        segments_by_derivatives = (
-            await self._segment_linker_partition.get_segments_by_derivatives(
-                derivative_uuids=matched_derivative_uuids,
-                property_filter=property_filter,
+        # Extract seed segment UUIDs from vector metadata, preserving similarity order.
+        # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
+        seed_segment_uuids = list(
+            dict.fromkeys(
+                UUID(
+                    str(
+                        cast(
+                            dict[str, PropertyValue],
+                            match.record.properties,
+                        )[_SEGMENT_UUID_KEY]
+                    )
+                )
+                for match in query_result.matches
             )
         )
-
-        # Preserve vector search similarity ordering.
-        seed_segments = [
-            segment
-            for derivative_uuid in matched_derivative_uuids
-            if derivative_uuid in segments_by_derivatives
-            for segment in segments_by_derivatives[derivative_uuid]
-        ]
 
         expand_context = min(max(0, expand_context), max_num_segments - 1)
         max_backward_segments = expand_context // 3
         max_forward_segments = expand_context - max_backward_segments
 
         segment_contexts_by_seed = (
-            await self._segment_linker_partition.get_segment_contexts(
-                seed_segment_uuids=[segment.uuid for segment in seed_segments],
+            await self._segment_store_partition.get_segment_contexts(
+                seed_segment_uuids=seed_segment_uuids,
                 max_backward_segments=max_backward_segments,
                 max_forward_segments=max_forward_segments,
                 property_filter=property_filter,
             )
         )
 
-        # Build aligned lists, preserving similarity ordering from seed_segments.
-        # Deduplicate by UUID (multiple derivatives can map to the same segment).
-        kept_seed_segments = list(
-            dict.fromkeys(
-                seed_segment
-                for seed_segment in seed_segments
-                if seed_segment.uuid in segment_contexts_by_seed
-            )
-        )
+        # Filter to seeds with results, preserving similarity order.
+        kept_seed_segment_uuids = [
+            seed_segment_uuid
+            for seed_segment_uuid in seed_segment_uuids
+            if seed_segment_uuid in segment_contexts_by_seed
+        ]
         segment_contexts: list[list[Segment]] = [
-            segment_contexts_by_seed[seed_segment.uuid]
-            for seed_segment in kept_seed_segments
+            segment_contexts_by_seed[seed_segment_uuid]
+            for seed_segment_uuid in kept_seed_segment_uuids
         ]
 
         # Rerank segment contexts.
@@ -543,11 +479,11 @@ class ExtraMemory:
         )
 
         reranked_anchored_segment_contexts = [
-            (seed_segment, segment_context)
-            for _, seed_segment, segment_context in sorted(
+            (seed_segment_uuid, segment_context)
+            for _, seed_segment_uuid, segment_context in sorted(
                 zip(
                     segment_context_scores,
-                    kept_seed_segments,
+                    kept_seed_segment_uuids,
                     segment_contexts,
                     strict=True,
                 ),
@@ -656,19 +592,53 @@ class ExtraMemory:
 
     async def forget_episodes(self, episode_uuids: Iterable[UUID]) -> None:
         """Forget episodes by their UUIDs."""
-        await self._segment_linker_partition.delete_segments_by_episodes(
-            episode_uuids=episode_uuids,
+        episode_uuids = set(episode_uuids)
+        if not episode_uuids:
+            return
+
+        # Snapshot segment UUIDs for these episodes.
+        segments_by_episode = (
+            await self._segment_store_partition.get_segment_uuids_by_episode_uuids(
+                episode_uuids=episode_uuids,
+            )
+        )
+        segment_uuids = {
+            segment_uuid
+            for episode_segment_uuids in segments_by_episode.values()
+            for segment_uuid in episode_segment_uuids
+        }
+        if not segment_uuids:
+            return
+
+        # Get derivative UUIDs for those segments.
+        derivatives_by_segment = (
+            await self._segment_store_partition.get_derivative_uuids_by_segment_uuids(
+                segment_uuids=segment_uuids,
+            )
+        )
+        derivative_uuids = {
+            derivative_uuid
+            for segment_derivative_uuids in derivatives_by_segment.values()
+            for derivative_uuid in segment_derivative_uuids
+        }
+
+        # Delete from vector DB first, then segment store.
+        if derivative_uuids:
+            await self._collection.delete(record_uuids=derivative_uuids)
+
+        await self._segment_store_partition.delete_segments(
+            segment_uuids=segment_uuids,
         )
 
     @staticmethod
     def _unify_anchored_segment_contexts(
-        anchored_segment_contexts: Iterable[tuple[Segment, Iterable[Segment]]],
+        anchored_segment_contexts: Iterable[tuple[UUID, Iterable[Segment]]],
         max_num_segments: int,
     ) -> list[Segment]:
         """Unify anchored segment contexts into a single list within the limit."""
         unified_segment_context_set: set[Segment] = set()
 
-        for seed_segment, context in anchored_segment_contexts:
+        for seed_segment_uuid, context in anchored_segment_contexts:
             context = list(context)
 
             if len(unified_segment_context_set) >= max_num_segments:
@@ -681,7 +651,11 @@ class ExtraMemory:
                 # Prioritize segments near the seed segment.
 
                 # Sort chronological segments by weighted index-proximity to the seed segment.
-                seed_index = context.index(seed_segment)
+                seed_index = next(
+                    index
+                    for index, segment in enumerate(context)
+                    if segment.uuid == seed_segment_uuid
+                )
 
                 seed_context = sorted(
                     context,
@@ -714,7 +688,7 @@ class ExtraMemory:
     @staticmethod
     def _weighted_index_proximity(
         segment: Segment,
-        context: list[Segment],
+        context: Sequence[Segment],
         seed_index: int,
     ) -> float:
         proximity = context.index(segment) - seed_index

@@ -135,7 +135,11 @@ class Derivative(BaseModel):
     """Information derived from a segment."""
 
     uuid: UUID
+    segment_uuid: UUID
+    timestamp: datetime
+    context: Context | None = None
     text: str
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
     def __hash__(self) -> int:
         """Hash a derivative by its UUID."""
