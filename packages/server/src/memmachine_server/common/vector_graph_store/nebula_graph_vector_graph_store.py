@@ -11,6 +11,7 @@ interface using NebulaGraph Enterprise as the backend. It supports:
 """
 
 import asyncio
+import hashlib
 import logging
 import re
 from collections.abc import Iterable
@@ -26,7 +27,9 @@ from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
     FilterExpr,
+    In,
     IsNull,
+    Not,
     Or,
 )
 
@@ -853,8 +856,18 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             param_name = f"start_{idx}"
             placeholder = f"{{{{{param_name}}}}}"
             if isinstance(value, datetime):
-                params[param_name] = value.strftime("%Y-%m-%dT%H:%M:%S")
-                return f"local_datetime({placeholder})"
+                if value.tzinfo is not None:
+                    formatted = value.strftime("%Y-%m-%dT%H:%M:%S.%f %z")
+                    # Insert colon for %Ez format
+                    if len(formatted) > 6:
+                        tz_part = formatted[-5:]
+                        rest = formatted[:-5]
+                        formatted = rest + tz_part[:3] + ":" + tz_part[3:]
+                    params[param_name] = formatted
+                else:
+                    # Default to UTC
+                    params[param_name] = value.strftime("%Y-%m-%dT%H:%M:%S.%f +00:00")
+                return f"zoned_datetime({placeholder}, \"%Y-%m-%dT%H:%M:%S %Ez\")"
             params[param_name] = value
             return placeholder
 
@@ -1099,6 +1112,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if is_mangled_property_name(key):
                 if key in metric_companion_keys:
                     continue  # Skip metric companions - read alongside embeddings below
+                # Skip NULL values - they represent absent properties from schema evolution
+                # PropertyValue type does not include None, so we filter them out
+                if value is None:
+                    continue
                 prop_name = demangle_property_name(key)
                 properties[prop_name] = value
             elif is_mangled_embedding_name(key):
@@ -1331,7 +1348,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if isinstance(value, str):
             return "STRING"
         if isinstance(value, datetime):
-            return "LOCAL DATETIME"
+            return "ZONED DATETIME"
         if isinstance(value, list):
             if not value:
                 return "LIST<STRING>"
@@ -1343,7 +1360,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             if all(isinstance(x, float) for x in value):
                 return "LIST<DOUBLE>"
             if all(isinstance(x, datetime) for x in value):
-                return "LIST<LOCAL DATETIME>"
+                return "LIST<ZONED DATETIME>"
             return "LIST<STRING>"
         raise ValueError(f"Unsupported property type: {type(value)}")
 
@@ -1369,10 +1386,22 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         ):
             return str(value)
         if isinstance(value, datetime):
-            # Use local_datetime() function for proper type conversion
-            # Format: YYYY-MM-DDTHH:MM:SS (no microseconds, no timezone)
-            formatted_str = value.strftime("%Y-%m-%dT%H:%M:%S")
-            return f'local_datetime("{formatted_str}")'
+            # Use zoned_datetime() function to preserve timezone information
+            # Format: YYYY-MM-DDTHH:MM:SS.microseconds+HH:MM
+            if value.tzinfo is not None:
+                # Format with timezone offset and microseconds
+                formatted_str = value.strftime("%Y-%m-%dT%H:%M:%S.%f %z")
+                # Insert colon in timezone offset for %Ez format (+08:00 instead of +0800)
+                if len(formatted_str) > 6:
+                    # Find the timezone offset part (last 5 chars: +0800 or -0800)
+                    tz_part = formatted_str[-5:]
+                    rest = formatted_str[:-5]
+                    formatted_str = rest + tz_part[:3] + ":" + tz_part[3:]
+                return f'zoned_datetime("{formatted_str}", "%Y-%m-%dT%H:%M:%S %Ez")'
+            else:
+                # No timezone info, default to UTC (+00:00)
+                formatted_str = value.strftime("%Y-%m-%dT%H:%M:%S.%f +00:00")
+                return f'zoned_datetime("{formatted_str}", "%Y-%m-%dT%H:%M:%S %Ez")'
         if isinstance(value, list):
             formatted = [self._format_value(v) for v in value]
             return f"[{', '.join(formatted)}]"
@@ -1406,6 +1435,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             Property name for the metric companion (e.g., "similarity_metric_for_vec")
 
         """
+        # Use hash for long embedding names to avoid exceeding NebulaGraph's
+        # 127 character identifier limit after mangling and sanitization
+        if len(embedding_name) > 30:
+            name_hash = hashlib.sha256(embedding_name.encode()).hexdigest()[:16]
+            return f"sim_metric_{name_hash}"
         return f"similarity_metric_for_{embedding_name}"
 
     @staticmethod
@@ -1520,11 +1554,23 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     return f"{prop_ref} IN [{values_list}]"
                 raise ValueError(f"Unsupported operator: {expr.op}")
 
+            if isinstance(expr, In):
+                prop_name = mangle_property_name(expr.field)
+                sanitized_prop = self._sanitize_name(prop_name)
+                prop_ref = f"{node_alias}.{sanitized_prop}"
+                value_strs = [self._format_value(v) for v in expr.values]
+                values_list = ", ".join(value_strs)
+                return f"{prop_ref} IN [{values_list}]"
+
             if isinstance(expr, IsNull):
                 prop_name = mangle_property_name(expr.field)
                 sanitized_prop = self._sanitize_name(prop_name)
                 prop_ref = f"{node_alias}.{sanitized_prop}"
                 return f"{prop_ref} IS NULL"
+
+            if isinstance(expr, Not):
+                inner_clause = render(expr.expr)
+                return f"NOT ({inner_clause})"
 
             if isinstance(expr, And):
                 left_clause = render(expr.left)
