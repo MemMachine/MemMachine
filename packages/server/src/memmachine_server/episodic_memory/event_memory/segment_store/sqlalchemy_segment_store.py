@@ -3,10 +3,10 @@
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
-from datetime import UTC, datetime, timedelta, timezone
-from typing import cast, override
+from datetime import datetime, timedelta, timezone
+from typing import override
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
@@ -18,12 +18,10 @@ from sqlalchemy import (
     Integer,
     String,
     Uuid,
-    and_,
     delete,
     event,
     insert,
     literal,
-    or_,
     select,
     true,
     tuple_,
@@ -40,19 +38,14 @@ from sqlalchemy.orm import (
 from sqlalchemy.pool import ConnectionPoolEntry
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
-    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
-    PropertyValue,
+from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter.sql_filter_util import (
+    FieldEncoding,
+    compile_sql_filter,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And,
-    Comparison,
-    FilterExpr,
-    In,
-    IsNull,
-    Not,
-    Or,
+from memmachine_server.common.properties_json import (
+    decode_properties,
+    encode_properties,
 )
 from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
 from memmachine_server.episodic_memory.extra_memory.data_types import (
@@ -68,10 +61,6 @@ from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store 
 logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
-
-_PROPERTY_TYPE_KEY = "t"
-_PROPERTY_VALUE_KEY = "v"
-_PROPERTY_TIMEZONE_OFFSET_KEY = "tz"
 
 
 _ContextAdapter = TypeAdapter(Context | None)
@@ -212,9 +201,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     else None
                 ),
                 "block": segment.block.model_dump(mode="json"),
-                "properties": SQLAlchemySegmentStorePartition._encode_properties(
-                    segment.properties
-                ),
+                "properties": encode_properties(segment.properties),
             }
             for segment in segments
         ]
@@ -261,8 +248,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             )
             if property_filter is not None:
                 seed_segments_query = seed_segments_query.where(
-                    SQLAlchemySegmentStorePartition._compile_property_filter(
-                        property_filter
+                    compile_sql_filter(
+                        property_filter,
+                        SQLAlchemySegmentStorePartition._resolve_segment_field,
                     )
                 )
             seed_segment_rows = (
@@ -372,8 +360,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             )
             if property_filter is not None:
                 context_rows_query = context_rows_query.where(
-                    SQLAlchemySegmentStorePartition._compile_property_filter(
-                        property_filter
+                    compile_sql_filter(
+                        property_filter,
+                        SQLAlchemySegmentStorePartition._resolve_segment_field,
                     )
                 )
             lateral_subquery = context_rows_query.subquery().lateral("context")
@@ -468,7 +457,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         )
 
         compiled_property_filter = (
-            SQLAlchemySegmentStorePartition._compile_property_filter(property_filter)
+            compile_sql_filter(
+                property_filter,
+                SQLAlchemySegmentStorePartition._resolve_segment_field,
+            )
             if property_filter is not None
             else None
         )
@@ -604,136 +596,16 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     # Helpers
 
     @staticmethod
-    def _encode_properties(
-        properties: Mapping[str, PropertyValue],
-    ) -> dict[str, dict[str, bool | int | float | str]]:
-        """Encode properties as type-tagged JSONB."""
-        encoded: dict[str, dict[str, bool | int | float | str]] = {}
-        for key, value in properties.items():
-            type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME.get(type(value))
-            if type_name is None:
-                raise ValueError(f"Unsupported property value type: {type(value)!r}")
-            if isinstance(value, datetime):
-                aware_value = ensure_tz_aware(value)
-                encoded[key] = {
-                    _PROPERTY_VALUE_KEY: aware_value.astimezone(UTC).isoformat(),
-                    _PROPERTY_TYPE_KEY: type_name,
-                    _PROPERTY_TIMEZONE_OFFSET_KEY: utc_offset_seconds(value),
-                }
-            else:
-                encoded[key] = {
-                    _PROPERTY_VALUE_KEY: value,
-                    _PROPERTY_TYPE_KEY: type_name,
-                }
-        return encoded
-
-    @staticmethod
-    def _decode_properties(
-        encoded: Mapping[str, JsonValue],
-    ) -> dict[str, PropertyValue]:
-        """Decode type-tagged JSONB properties back to Python values."""
-        properties: dict[str, PropertyValue] = {}
-        for key, entry in encoded.items():
-            if not isinstance(entry, dict):
-                raise TypeError(
-                    f"Expected dict for property entry, got {type(entry)!r}"
-                )
-            type_name = str(entry[_PROPERTY_TYPE_KEY])
-            raw_value = entry[_PROPERTY_VALUE_KEY]
-            property_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
-            if property_type is None:
-                raise ValueError(f"Unknown property type name: {type_name!r}")
-            if property_type is datetime:
-                utc_dt = datetime.fromisoformat(str(raw_value))
-                tz_offset = entry.get(_PROPERTY_TIMEZONE_OFFSET_KEY, 0)
-                original_tz = timezone(timedelta(seconds=int(tz_offset)))
-                properties[key] = ensure_tz_aware(utc_dt).astimezone(original_tz)
-            else:
-                properties[key] = cast(type[bool | int | float | str], property_type)(
-                    raw_value
-                )
-        return properties
-
-    @staticmethod
-    def _compile_property_filter(expr: FilterExpr) -> ColumnElement[bool]:
-        """Compile a FilterExpr into a SQLAlchemy boolean expression against inline JSONB properties."""
-        if isinstance(expr, Comparison):
-            return SQLAlchemySegmentStorePartition._compile_comparison(
-                expr.field, expr.op, expr.value
-            )
-
-        if isinstance(expr, In):
-            if not expr.values:
-                return literal(False)
-            first_value = expr.values[0]
-            type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[type(first_value)]
-            value_element = SegmentRow.properties[expr.field][_PROPERTY_VALUE_KEY]
-            type_check = (
-                SegmentRow.properties[expr.field][_PROPERTY_TYPE_KEY].as_string()
-                == type_name
-            )
-            if isinstance(first_value, int):
-                return and_(type_check, value_element.as_integer().in_(expr.values))
-            return and_(type_check, value_element.as_string().in_(expr.values))
-
-        if isinstance(expr, IsNull):
-            return SegmentRow.properties[expr.field].is_(None)
-
-        if isinstance(expr, Not):
-            return ~SQLAlchemySegmentStorePartition._compile_property_filter(expr.expr)
-
-        if isinstance(expr, And):
-            return and_(
-                SQLAlchemySegmentStorePartition._compile_property_filter(expr.left),
-                SQLAlchemySegmentStorePartition._compile_property_filter(expr.right),
-            )
-
-        if isinstance(expr, Or):
-            return or_(
-                SQLAlchemySegmentStorePartition._compile_property_filter(expr.left),
-                SQLAlchemySegmentStorePartition._compile_property_filter(expr.right),
-            )
-
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
-    @staticmethod
-    def _compile_comparison(
-        field: str, op: str, value: PropertyValue
-    ) -> ColumnElement[bool]:
-        """Compile a single comparison against a type-tagged JSONB property."""
-        type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[type(value)]
-        value_element = SegmentRow.properties[field][_PROPERTY_VALUE_KEY]
-        type_check = (
-            SegmentRow.properties[field][_PROPERTY_TYPE_KEY].as_string() == type_name
-        )
-
-        if isinstance(value, bool):
-            casted = value_element.as_boolean()
-            cmp_value = value
-        elif isinstance(value, int):
-            casted = value_element.as_integer()
-            cmp_value = value
-        elif isinstance(value, float):
-            casted = value_element.as_float()
-            cmp_value = value
-        elif isinstance(value, str):
-            casted = value_element.as_string()
-            cmp_value = value
-        elif isinstance(value, datetime):
-            casted = value_element.as_string()
-            cmp_value = ensure_tz_aware(value).astimezone(UTC).isoformat()
-        else:
-            raise TypeError(f"Unsupported property value type: {type(value)!r}")
-
-        ops: dict[str, Callable] = {
-            "=": lambda c, v: c == v,
-            "!=": lambda c, v: c != v,
-            ">": lambda c, v: c > v,
-            "<": lambda c, v: c < v,
-            ">=": lambda c, v: c >= v,
-            "<=": lambda c, v: c <= v,
-        }
-        return and_(type_check, ops[op](casted, cmp_value))
+    def _resolve_segment_field(
+        field: str,
+    ) -> tuple[ColumnElement, FieldEncoding]:
+        """Map a filter field name to a segment column and encoding."""
+        if field == "timestamp":
+            return SegmentRow.timestamp.expression, "column"
+        if field.startswith("context."):
+            key = field.removeprefix("context.")
+            return SegmentRow.context[key], "json"
+        return SegmentRow.properties[field], "properties_json"
 
     @staticmethod
     def _segment_from_segment_row(
@@ -742,7 +614,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         """Convert a SegmentRow into a Segment."""
         context = _ContextAdapter.validate_python(row.context)
         block = _BlockAdapter.validate_python(row.block)
-        properties = SQLAlchemySegmentStorePartition._decode_properties(row.properties)
+        properties = decode_properties(row.properties)
         original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
         timestamp = ensure_tz_aware(row.timestamp).astimezone(original_timezone)
         return Segment(
