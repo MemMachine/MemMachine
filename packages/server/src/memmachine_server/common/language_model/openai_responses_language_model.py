@@ -152,6 +152,12 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             )
 
             generate_response_call_uuid = uuid4()
+            request_data: dict[str, Any] = {
+                "model": self._model,
+                "input": input_prompts,
+                "text_format": output_format.__name__,
+                "max_attempts": max_attempts,
+            }
 
             try:
                 response = await self._client.with_options(
@@ -161,6 +167,14 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                     input=input_prompts,
                     text_format=output_format,
                 )
+            except openai.APITimeoutError as e:
+                error_message = (
+                    f"[call uuid: {generate_response_call_uuid}] "
+                    "OpenAI Responses API request timed out while generating "
+                    "a parsed response."
+                )
+                logger.exception("%s Request data: %s", error_message, request_data)
+                raise ExternalServiceAPIError(error_message) from e
             except openai.OpenAIError as e:
                 error_message = (
                     f"[call uuid: {generate_response_call_uuid}] "
@@ -231,6 +245,15 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             generate_response_call_uuid = uuid4()
 
             response: Response | None = None
+            request_data_base: dict[str, Any] = {
+                "model": self._model,
+                "input": input_prompts,
+            }
+            if tools is not None:
+                request_data_base["tools"] = tools
+                request_data_base["tool_choice"] = (
+                    tool_choice if tool_choice is not None else "auto"
+                )
 
             sleep_seconds = 1
             for attempt in range(1, max_attempts + 1):
@@ -260,9 +283,36 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                             ),
                         )
                     break
+                except openai.APITimeoutError as e:
+                    request_data = {
+                        **request_data_base,
+                        "attempt": attempt,
+                        "max_attempts": max_attempts,
+                    }
+                    logger.warning(
+                        "[call uuid: %s] "
+                        "OpenAI Responses API request timed out on attempt %d/%d. "
+                        "Request data: %s",
+                        generate_response_call_uuid,
+                        attempt,
+                        max_attempts,
+                        request_data,
+                    )
+                    if attempt >= max_attempts:
+                        error_message = (
+                            f"[call uuid: {generate_response_call_uuid}] "
+                            "OpenAI Responses API request timed out. "
+                            f"Giving up after {attempt} attempts."
+                        )
+                        logger.exception(error_message)
+                        raise ExternalServiceAPIError(error_message) from e
+
+                    await asyncio.sleep(sleep_seconds)
+                    sleep_seconds *= 2
+                    sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
+                    continue
                 except (
                     openai.RateLimitError,
-                    openai.APITimeoutError,
                     openai.APIConnectionError,
                     openai.InternalServerError,
                 ) as e:

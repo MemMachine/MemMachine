@@ -388,13 +388,24 @@ async def test_generate_response_fail_after_max_retries(
     mock_client.chat.completions.create.side_effect = openai.APITimeoutError(request)
 
     lm = OpenAIChatCompletionsLanguageModel(minimal_config)
-    with pytest.raises(ExternalServiceAPIError, match=r"max attempts"):
+    with (
+        patch(
+            "memmachine_server.common.language_model.openai_chat_completions_language_model.logger.warning"
+        ) as mock_warning,
+        pytest.raises(ExternalServiceAPIError, match=r"timed out"),
+    ):
         await lm.generate_response(max_attempts=3)
 
     assert mock_client.chat.completions.create.call_count == 3
     assert mock_sleep.call_count == 2
     mock_sleep.assert_any_await(1)
     mock_sleep.assert_any_await(2)
+    assert mock_warning.call_count == 3
+    for warning_call in mock_warning.call_args_list:
+        assert (
+            "OpenAI Chat Completions API request timed out on attempt %d/%d."
+            in warning_call.args[0]
+        )
 
 
 @pytest.mark.asyncio

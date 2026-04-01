@@ -134,6 +134,14 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                     messages=input_prompts,
                     response_format=output_format,
                 )
+            except openai.APITimeoutError as e:
+                error_message = (
+                    f"[call uuid: {generate_response_call_uuid}] "
+                    "OpenAI Chat Completions API request timed out while generating "
+                    "a parsed response."
+                )
+                logger.exception(error_message)
+                raise ExternalServiceAPIError(error_message) from e
             except openai.OpenAIError as e:
                 error_message = (
                     f"[call uuid: {generate_response_call_uuid}] "
@@ -218,9 +226,29 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                         )
                     response = await self._client.chat.completions.create(**args)
                     break
+                except openai.APITimeoutError as e:
+                    logger.warning(
+                        "[call uuid: %s] "
+                        "OpenAI Chat Completions API request timed out on attempt %d/%d.",
+                        generate_response_call_uuid,
+                        attempt,
+                        max_attempts,
+                    )
+                    if attempt >= max_attempts:
+                        error_message = (
+                            f"[call uuid: {generate_response_call_uuid}] "
+                            "OpenAI Chat Completions API request timed out. "
+                            f"Giving up after {attempt} attempts."
+                        )
+                        logger.exception(error_message)
+                        raise ExternalServiceAPIError(error_message) from e
+
+                    await asyncio.sleep(sleep_seconds)
+                    sleep_seconds *= 2
+                    sleep_seconds = min(sleep_seconds, self._max_retry_interval_seconds)
+                    continue
                 except (
                     openai.RateLimitError,
-                    openai.APITimeoutError,
                     openai.APIConnectionError,
                     openai.InternalServerError,
                 ) as e:

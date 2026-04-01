@@ -345,6 +345,9 @@ class SpecDoc:
     MAX_RETRY_INTERVAL = """
     Maximum retry interval in seconds for failed requests."""
 
+    API_TIMEOUT_SECONDS = """
+    Timeout in seconds for OpenAI API requests."""
+
     AWS_REGION = """
     AWS region where the service is hosted."""
 

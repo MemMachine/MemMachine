@@ -282,6 +282,10 @@ class AddOpenAIResponsesLanguageModelConfig(BaseModel):
         int,
         Field(default=120, description=SpecDoc.MAX_RETRY_INTERVAL),
     ]
+    timeout: Annotated[
+        int,
+        Field(default=600, description=SpecDoc.API_TIMEOUT_SECONDS),
+    ]
 
 
 class AddOpenAIChatCompletionsLanguageModelConfig(BaseModel):
@@ -302,6 +306,10 @@ class AddOpenAIChatCompletionsLanguageModelConfig(BaseModel):
     max_retry_interval_seconds: Annotated[
         int,
         Field(default=120, description=SpecDoc.MAX_RETRY_INTERVAL),
+    ]
+    timeout: Annotated[
+        int,
+        Field(default=600, description=SpecDoc.API_TIMEOUT_SECONDS),
     ]
 
 
