@@ -26,7 +26,9 @@ async def merge_async_iterators[T](
         return
 
     done_sentinel = object()
-    queue: asyncio.Queue[T | object | BaseException] = asyncio.Queue(maxsize=max_queue_size)
+    queue: asyncio.Queue[T | object | BaseException] = asyncio.Queue(
+        maxsize=max_queue_size
+    )
     done_count = 0
     n = len(iterators)
 
