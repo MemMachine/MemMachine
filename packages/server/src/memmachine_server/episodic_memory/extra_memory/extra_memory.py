@@ -4,7 +4,7 @@ import datetime
 import json
 import logging
 from collections.abc import Iterable, Sequence
-from typing import cast
+from typing import ClassVar, cast
 from uuid import UUID, uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -14,6 +14,9 @@ from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
+    demangle_user_metadata_key,
+    map_filter_fields,
+    normalize_filter_field,
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.utils import (
@@ -41,13 +44,6 @@ from .data_types import (
 from .segment_store import SegmentStorePartition
 
 logger = logging.getLogger(__name__)
-
-# System-defined metadata keys.
-# Underscore prefix is reserved.
-_SEGMENT_UUID_KEY = "_segment_uuid"
-_TIMESTAMP_KEY = "_timestamp"
-_CONTEXT_TYPE_KEY = "_context_type"
-_CONTEXT_SOURCE_KEY = "_context_source"
 
 
 class ExtraMemoryParams(BaseModel):
@@ -103,6 +99,18 @@ class ExtraMemoryParams(BaseModel):
 
 class ExtraMemory:
     """Extra memory system."""
+
+    # System-defined metadata keys. Underscore prefix is reserved.
+    _SEGMENT_UUID_KEY = "_segment_uuid"
+    _TIMESTAMP_KEY = "_timestamp"
+    _CONTEXT_TYPE_KEY = "_context_type"
+    _CONTEXT_SOURCE_KEY = "_context_source"
+
+    _COLLECTION_SYSTEM_FIELD_MAPPING: ClassVar[dict[str, str]] = {
+        "timestamp": _TIMESTAMP_KEY,
+        "context.type": _CONTEXT_TYPE_KEY,
+        "context.source": _CONTEXT_SOURCE_KEY,
+    }
 
     def __init__(self, params: ExtraMemoryParams) -> None:
         """
@@ -225,16 +233,16 @@ class ExtraMemory:
         properties: dict[str, PropertyValue] = {}
 
         # System-defined metadata (underscore-prefixed).
-        properties[_SEGMENT_UUID_KEY] = str(derivative.segment_uuid)
-        properties[_TIMESTAMP_KEY] = derivative.timestamp
+        properties[ExtraMemory._SEGMENT_UUID_KEY] = str(derivative.segment_uuid)
+        properties[ExtraMemory._TIMESTAMP_KEY] = derivative.timestamp
 
         match derivative.context:
             case MessageContext(source=source):
-                properties[_CONTEXT_TYPE_KEY] = "message"
-                properties[_CONTEXT_SOURCE_KEY] = source
+                properties[ExtraMemory._CONTEXT_TYPE_KEY] = "message"
+                properties[ExtraMemory._CONTEXT_SOURCE_KEY] = source
             case CitationContext(source=source):
-                properties[_CONTEXT_TYPE_KEY] = "citation"
-                properties[_CONTEXT_SOURCE_KEY] = source
+                properties[ExtraMemory._CONTEXT_TYPE_KEY] = "citation"
+                properties[ExtraMemory._CONTEXT_SOURCE_KEY] = source
 
         # User-defined properties.
         properties.update(derivative.properties)
@@ -386,6 +394,16 @@ class ExtraMemory:
             for sentence in extract_sentences(text)
         ]
 
+    @staticmethod
+    def _to_collection_field(field: str) -> str:
+        """Translate canonical filter field names to collection property keys."""
+        internal_name, is_user_metadata = normalize_filter_field(field)
+        if is_user_metadata:
+            return demangle_user_metadata_key(internal_name)
+        if field in ExtraMemory._COLLECTION_SYSTEM_FIELD_MAPPING:
+            return ExtraMemory._COLLECTION_SYSTEM_FIELD_MAPPING[field]
+        raise ValueError(f"Unknown filter field: {field!r}")
+
     async def query(
         self,
         query: str,
@@ -423,11 +441,18 @@ class ExtraMemory:
             )
         )[0]
 
+        # Translate filter fields for vector store.
+        collection_filter = (
+            map_filter_fields(property_filter, ExtraMemory._to_collection_field)
+            if property_filter is not None
+            else None
+        )
+
         # Search derivative collection for matches.
         [query_result] = await self._collection.query(
             query_vectors=[query_embedding],
             limit=min(5 * max_num_segments, 200),
-            property_filter=property_filter,
+            property_filter=collection_filter,
             return_vector=False,
             return_properties=True,
         )
@@ -441,7 +466,7 @@ class ExtraMemory:
                         cast(
                             dict[str, PropertyValue],
                             match.record.properties,
-                        )[_SEGMENT_UUID_KEY]
+                        )[ExtraMemory._SEGMENT_UUID_KEY]
                     )
                 )
                 for match in query_result.matches
