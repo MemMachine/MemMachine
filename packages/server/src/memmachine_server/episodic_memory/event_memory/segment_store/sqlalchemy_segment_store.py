@@ -8,6 +8,7 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import override
 from uuid import UUID
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
 from sqlalchemy import (
@@ -652,6 +653,13 @@ class SQLAlchemySegmentStoreParams(BaseModel):
 class SQLAlchemySegmentStore(SegmentStore):
     """SQLAlchemy-backed SegmentStore factory."""
 
+    # Shared across all instances so that stores using the same engine
+    # serialise SQLite writes through the same lock.
+    # Keyed by engine so locks are garbage-collected when the engine is.
+    _write_locks: WeakKeyDictionary[AsyncEngine, defaultdict[str, asyncio.Lock]] = (
+        WeakKeyDictionary()
+    )
+
     def __init__(self, params: SQLAlchemySegmentStoreParams) -> None:
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
@@ -660,7 +668,6 @@ class SQLAlchemySegmentStore(SegmentStore):
         # SQLite does not isolate transactions within a single connection.
         # https://sqlite.org/isolation.html
         self._use_write_lock = self._engine.dialect.name == "sqlite"
-        self._write_locks: dict[str, asyncio.Lock] = {}
 
         # SQLite requires PRAGMA foreign_keys = ON for CASCADE deletes.
         if self._engine.dialect.name == "sqlite":
@@ -688,7 +695,10 @@ class SQLAlchemySegmentStore(SegmentStore):
         self, partition_key: str
     ) -> SQLAlchemySegmentStorePartition:
         if self._use_write_lock:
-            write_lock = self._write_locks.setdefault(partition_key, asyncio.Lock())
+            engine_write_locks = SQLAlchemySegmentStore._write_locks.setdefault(
+                self._engine, defaultdict(asyncio.Lock)
+            )
+            write_lock = engine_write_locks[partition_key]
         else:
             write_lock = None
         return SQLAlchemySegmentStorePartition(
