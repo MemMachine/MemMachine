@@ -38,7 +38,11 @@ from sqlalchemy.orm import (
 from sqlalchemy.pool import ConnectionPoolEntry
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter.filter_parser import (
+    FilterExpr,
+    demangle_user_metadata_key,
+    normalize_filter_field,
+)
 from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
@@ -605,7 +609,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if field.startswith("context."):
             key = field.removeprefix("context.")
             return SegmentRow.context[key], "json"
-        return SegmentRow.properties[field], "properties_json"
+        internal_name, is_user_metadata = normalize_filter_field(field)
+        if is_user_metadata:
+            key = demangle_user_metadata_key(internal_name)
+            return SegmentRow.properties[key], "properties_json"
+        raise ValueError(f"Unknown filter field: {field!r}")
 
     @staticmethod
     def _segment_from_segment_row(

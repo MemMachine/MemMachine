@@ -366,7 +366,7 @@ async def test_contexts_property_filter(
     s3 = _seg(episode_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
     await partition.add_segments(_links(s0, s1, s2, s3))
 
-    filt = Comparison(field="tag", op="=", value="a")
+    filt = Comparison(field="m.tag", op="=", value="a")
     result = await partition.get_segment_contexts(
         [s2.uuid],
         max_backward_segments=5,
