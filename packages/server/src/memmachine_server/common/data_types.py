@@ -34,6 +34,11 @@ class SimilarityMetric(Enum):
     EUCLIDEAN = "euclidean"
     MANHATTAN = "manhattan"
 
+    @property
+    def higher_is_better(self) -> bool:
+        """Whether a higher score indicates a better match."""
+        return self in (SimilarityMetric.COSINE, SimilarityMetric.DOT)
+
 
 class ExternalServiceAPIError(Exception):
     """Raised when an API error occurs for an external service."""

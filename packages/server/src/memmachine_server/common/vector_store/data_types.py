@@ -137,13 +137,32 @@ class Record(BaseModel):
 
 
 class QueryMatch(BaseModel):
-    """A single vector store query match."""
+    """
+    A single vector store query match.
+
+    Attributes:
+        score (float):
+            The meaning depends on the collection's `SimilarityMetric`:
+            - *cosine*: cosine similarity in [-1, 1].
+            - *dot*: raw dot product [0, inf).
+            - *euclidean*: Euclidean distance [0, inf).
+            - *manhattan*: Manhattan distance [0, inf).
+
+            Use `SimilarityMetric.higher_is_better` to determine which
+            direction indicates a better match.
+        record (Record):
+            The matched record.
+    """
 
     score: float
     record: Record
 
 
 class QueryResult(BaseModel):
-    """Result of a vector store query."""
+    """
+    Result of a vector store query.
+
+    Matches are ordered from best to worst.
+    """
 
     matches: list[QueryMatch]
