@@ -5,19 +5,22 @@ memory quality on benchmark datasets.
 
 ## Benchmark Suites
 
-- `retrieval_agent` (recommended): Current evaluation pipeline for retrieval
-  behavior and answer quality. Uses MemMachine Python SDK.
+- `retrieval_skill` (recommended): Current evaluation pipeline for retrieval
+  behavior and answer quality. Uses the shared provider-native `SkillRunner`
+  against MemMachine search.
 - `episodic_memory` (legacy): Earlier LoCoMo dataset episodic memory benchmark workflow. Uses
   both MemMachine REST API and Python SDK.
 
 ## Retrieval-Agent Modes
 
-The retrieval-agent benchmarks support three test targets:
+The retrieval-skill benchmarks currently support two test targets:
 
-1. `memmachine`: MemMachine retrieval without retrieval-agent orchestration.
-2. `retrieval_agent`: MemMachine retrieval with retrieval-agent orchestration.
-3. `llm`: Pure LLM baseline without MemMachine retrieval
+1. `retrieval_skill`: MemMachine retrieval with top-level retrieval-agent
+   orchestration.
+2. `llm`: Pure LLM baseline without MemMachine retrieval
    (full session content provided by dataset context).
+
+`run_test.sh` no longer exposes the older non-agent `memmachine` target.
 
 ## Prerequisites
 
@@ -33,14 +36,7 @@ The retrieval-agent benchmarks support three test targets:
 
 ## Run Retrieval-Agent Benchmarks (Recommended)
 
-> **Configuration**: All retrieval-agent benchmarks require a
-> `configuration.yml` file placed in `evaluation/retrieval_agent/`. This file
-> controls the language model, embedder, reranker, and database for every run —
-> enabling non-OpenAI and local models. See
-> [evaluation/retrieval_agent/README.md](retrieval_agent/README.md) for full
-> details and ready-to-use configuration samples.
-
-Run from `evaluation/retrieval_agent/`:
+Run from `evaluation/retrieval_skill/`:
 
 ```sh
 ./run_test.sh <test> <test_specific_args> ...
@@ -55,30 +51,33 @@ For full argument details, run:
 ./run_test.sh hotpotqa --help
 ```
 
+For answer-model and judge-model configuration, see
+`evaluation/retrieval_skill/README.md`.
+
 Examples:
 
 - LoCoMo ingest:
 
 ```sh
-./run_test.sh locomo exp1 ingest retrieval_agent
+./run_test.sh locomo exp1 ingest retrieval_skill
 ```
 
 - LoCoMo search + scoring:
 
 ```sh
-./run_test.sh locomo exp1 search retrieval_agent
+./run_test.sh locomo exp1 search retrieval_skill
 ```
 
 - WikiMultiHop search (500 examples):
 
 ```sh
-./run_test.sh wikimultihop exp1 search retrieval_agent 500
+./run_test.sh wikimultihop exp1 search retrieval_skill 500
 ```
 
 - HotpotQA validation set search (200 examples):
 
 ```sh
-./run_test.sh hotpotqa exp1 search validation retrieval_agent 200
+./run_test.sh hotpotqa exp1 search validation retrieval_skill 200
 ```
 
 Sample output:
@@ -98,38 +97,32 @@ llm_score    0.932
 dtype: float64
 --------------------------------
 Tools Overall Accuracy:
-Tool: SplitQueryAgent
-  Accuracy: 111/118 = 94.07%
-Tool: MemMachineAgent
-  Accuracy: 188/201 = 93.53%
 Tool: ChainOfQueryAgent
   Accuracy: 167/181 = 92.27%
+Tool: MemMachineSearch
+  Accuracy: 299/319 = 93.73%
 --------------------------------
 HotpotQA Info Matrix:
 hotpotqa Recall: 1116/1209 = 92.31%
 hotpotqa Precision: 1116/4997 = 22.33%
 hotpotqa Average Episodes Retrieved per Question: 9.99
-Tool: SplitQueryAgent
-    Recall: 246/265 = 92.83%
-    Precision: 246/1180 = 20.85%
-    Avg Episodes Retrieved per Question: 10.00
-    Avg Input Tokens per Question: 1228.59
-    Avg Output Tokens per Question: 434.92
 Tool: ChainOfQueryAgent
     Recall: 427/448 = 95.31%
     Precision: 427/1810 = 23.59%
     Avg Episodes Retrieved per Question: 10.00
     Avg Input Tokens per Question: 2874.03
     Avg Output Tokens per Question: 1613.96
-Tool: MemMachineAgent
+Tool: MemMachineSearch
     Recall: 443/496 = 89.31%
     Precision: 443/2007 = 22.07%
     Avg Episodes Retrieved per Question: 9.99
     Avg Input Tokens per Question: 0.00
     Avg Output Tokens per Question: 0.00
-ToolSelectAgent Avg Input Tokens per Question: 1049.25
-ToolSelectAgent Avg Output Tokens per Question: 195.44
 ```
+
+In current retrieval traces, the direct path is reported as
+`selected_agent_name=MemMachineSearch`, while the multi-hop COQ branch is
+reported as `selected_agent_name=ChainOfQueryAgent`.
 
 ## Legacy Episodic Benchmark
 

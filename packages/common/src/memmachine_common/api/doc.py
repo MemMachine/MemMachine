@@ -155,6 +155,11 @@ class SpecDoc:
 
     SEARCH_SEMANTIC_MEMORY = "Semantic memory search results."
 
+    SEARCH_RETRIEVAL_TRACE = """
+    Optional retrieval-agent trace metadata emitted when `agent_mode` is true.
+    Includes route decisions and orchestration execution details.
+    """
+
     LIST_EPISODIC_MEMORY = "Listed episodic memory entries."
 
     LIST_SEMANTIC_MEMORY = "Listed semantic memory entries."

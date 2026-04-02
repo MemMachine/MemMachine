@@ -381,6 +381,41 @@ def test_search_memories_with_set_metadata(client, mock_memmachine):
         }
 
 
+def test_search_memories_returns_retrieval_trace(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "query": "hello",
+        "agent_mode": True,
+    }
+
+    with patch(
+        "memmachine_server.server.api_v2.router._search_target_memories"
+    ) as mock_search:
+        mock_search.return_value = SearchResult.model_validate(
+            {
+                "status": 0,
+                "content": {
+                    "retrieval_trace": {
+                        "agent": "RetrievalAgent",
+                        "selected_route": "decompose",
+                        "selected_agent": "coq",
+                        "orchestrator_step_count": 4,
+                    },
+                },
+            }
+        )
+
+        response = client.post("/api/v2/memories/search", json=payload)
+        assert response.status_code == 200
+        assert response.json()["content"]["retrieval_trace"] == {
+            "agent": "RetrievalAgent",
+            "selected_route": "decompose",
+            "selected_agent": "coq",
+            "orchestrator_step_count": 4,
+        }
+
+
 def test_list_memories(client, mock_memmachine):
     payload = {
         "org_id": "test_org",

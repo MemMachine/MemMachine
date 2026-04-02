@@ -1,223 +1,183 @@
 # MemMachine Client
 
-A Python client library for the MemMachine memory system.
+A Python REST client and CLI for MemMachine.
 
 ## Features
 
-- **Simple API**: Easy-to-use interface
-- **Memory Management**: Add and search episodic and profile memories
-- **Context Awareness**: Automatic context retrieval for better responses
-- **Error Handling**: Robust error handling with retry mechanisms
-- **Type Safety**: Full type hints for better development experience
+- **Project-scoped API**: Work with MemMachine through
+  `MemMachineClient -> Project -> Memory`.
+- **Unified search**: Query episodic and semantic memory through one
+  `memory.search()` call.
+- **Metadata scoping**: Attach default metadata filters to a `Memory` instance.
+- **Retrieval-agent support**: Turn on multi-hop retrieval with `agent_mode=True`.
+- **CLI for terminal agents**: Use the `memmachine` command for `search` and
+  `ingest`.
 
 ## Installation
 
 ```bash
-# Install from source (for development)
-pip install -e .
+pip install memmachine-client
+```
 
-# Or install dependencies
-pip install requests urllib3
+From this repo:
+
+```bash
+uv pip install -e packages/client
 ```
 
 ## Quick Start
 
-### Basic Usage
-
 ```python
 from memmachine_client import MemMachineClient
 
-# Initialize client
-client = MemMachineClient(
-    base_url="http://localhost:8080",
-    timeout=30
+client = MemMachineClient(base_url="http://localhost:8080")
+project = client.get_or_create_project(
+    org_id="my_org",
+    project_id="my_project",
 )
 
-# Create a memory instance
-memory = client.memory(
-    group_id="my_group",
-    agent_id="my_agent",
-    user_id="user123",
-    session_id="session456"
+memory = project.memory(
+    metadata={
+        "user_id": "alice",
+        "agent_id": "travel_agent",
+        "session_id": "session_001",
+    }
 )
 
-# Add memories
-memory.add("I like pizza", metadata={"type": "preference"})
-memory.add("I work as a software engineer", metadata={"type": "fact"})
+memory.add(
+    "I prefer aisle seats on flights.",
+    role="user",
+    metadata={"topic": "travel"},
+)
 
-# Search memories
-results = memory.search("What do I like to eat?")
-print(results)
+results = memory.search(
+    "What are my flight preferences?",
+    agent_mode=True,
+)
+
+episodes = results.content.episodic_memory.long_term_memory.episodes
+print(episodes[0].content)
+print(results.content.retrieval_trace)
 ```
 
 ## API Reference
 
 ### MemMachineClient
 
-The main client class for interacting with MemMachine.
+The main HTTP client for MemMachine.
 
-#### Constructor
+Common methods:
 
-```python
-MemMachineClient(
-    api_key: Optional[str] = None,
-    base_url: str = "http://localhost:8080",
-    timeout: int = 30,
-    max_retries: int = 3,
-    **kwargs
-)
-```
+- `get_or_create_project(org_id, project_id, ...)`
+- `get_project(org_id, project_id)`
+- `list_projects()`
+- `health_check()`
+- `get_metrics()`
 
-#### Methods
+### Project
 
-- `memory(group_id, agent_id, user_id, session_id)` - Create a Memory instance
-- `health_check()` - Check server health
+A project is the boundary for memory operations.
+
+Common methods:
+
+- `memory(metadata=...)`
+- `delete()`
+- `refresh()`
+- `get_episode_count()`
 
 ### Memory
 
-Interface for managing episodic and profile memory.
+The `Memory` object is where you ingest, search, list, and manage memory.
 
-#### Methods
+Common methods:
 
-- `add(content, producer, produced_for, episode_type, metadata)` - Add a memory
-- `search(query, limit, filter_dict)` - Search memories
-- `get_context()` - Get current context
+- `add(content, role="user", metadata=..., memory_types=...)`
+- `search(query, limit=..., filter_dict=..., set_metadata=..., agent_mode=...)`
+- `list(memory_type=..., filter_dict=..., set_metadata=...)`
+- `get_context()`
+- `get_current_metadata()`
 
-## Examples
+## Metadata and Filtering
 
-### Basic Memory Operations
+`Project.memory(metadata=...)` lets you attach default metadata to a memory
+view. Those values become built-in filters for `search()` and `list()`.
 
-```python
-from memmachine_client import MemMachineClient
-
-client = MemMachineClient(base_url="http://localhost:8080")
-
-# Create memory instance
-memory = client.memory(
-    group_id="demo_group",
-    agent_id="demo_agent",
-    user_id="user123",
-    session_id="demo_session"
-)
-
-# Add memories with metadata
-memory.add("I like pizza", metadata={"type": "preference", "category": "food"})
-memory.add("I work as a software engineer", metadata={"type": "fact", "category": "work"})
-
-# Search memories
-results = memory.search("What do I like to eat?")
-print(f"Episodic memory: {results.get('episodic_memory', [])}")
-print(f"Profile memory: {results.get('profile_memory', [])}")
-
-# Search with filters
-work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
-print(f"Work results: {work_results}")
-```
-
-### Multiple Users
+Example:
 
 ```python
-from memmachine_client import MemMachineClient
+memory = project.memory(metadata={"user_id": "alice", "session_id": "session_001"})
 
-client = MemMachineClient(base_url="http://localhost:8080")
-
-# Create memory instances for multiple users
-users = ["alice", "bob", "charlie"]
-memories = {}
-
-for user in users:
-    memories[user] = client.memory(
-        group_id="team_group",
-        agent_id="team_agent",
-        user_id=user
-    )
-
-# Add user-specific memories
-memories["alice"].add("I'm a frontend developer", metadata={"role": "frontend"})
-memories["bob"].add("I'm a backend developer", metadata={"role": "backend"})
-memories["charlie"].add("I'm a DevOps engineer", metadata={"role": "devops"})
-
-# Search across users
-for user, memory in memories.items():
-    results = memory.search("What is your role?")
-    print(f"{user}: {results}")
-```
-
-### Error Handling
-
-```python
-from memmachine_client import MemMachineClient
-
-try:
-    client = MemMachineClient(base_url="http://localhost:8080")
-
-    # Check server health
-    health = client.health_check()
-    print(f"Server health: {health}")
-
-    # Create memory instance
-    memory = client.memory(
-        group_id="demo_group",
-        agent_id="demo_agent",
-        user_id="user123"
-    )
-
-    # Add memory
-    memory.add("Test memory")
-
-except Exception as e:
-    print(f"Error: {e}")
-```
-
-### Context Manager Usage
-
-```python
-from memmachine_client import MemMachineClient
-
-# Use client as context manager
-with MemMachineClient(base_url="http://localhost:8080") as client:
-    memory = client.memory(
-        group_id="demo_group",
-        agent_id="demo_agent",
-        user_id="user123"
-    )
-
-    memory.add("This is a test memory")
-    results = memory.search("test")
-    print(f"Results: {results}")
-
-# Client is automatically closed
-```
-
-## Configuration
-
-### Environment Variables
-
-- `MEMORY_BACKEND_URL`: Base URL for MemMachine server (default: http://localhost:8080)
-- `MEMORY_API_KEY`: API key for authentication (optional for local development)
-
-### Client Configuration
-
-```python
-client = MemMachineClient(
-    api_key="your_api_key",  # Optional
-    base_url="http://localhost:8080",
-    timeout=30,  # Request timeout in seconds
-    max_retries=3  # Maximum retries for failed requests
+# Searches automatically include the metadata-based filters above.
+results = memory.search(
+    "What did Alice say about travel?",
+    filter_dict={"topic": "travel"},
 )
 ```
 
-<!-- Comparison section removed: no external product references -->
+If a key exists in both the instance metadata and `filter_dict`, the explicit
+`filter_dict` value wins.
 
-## Running Examples
+## Retrieval-Agent Search
+
+Set `agent_mode=True` to enable the top-level retrieval agent:
+
+```python
+results = memory.search(
+    "Where was the father of Rembrandt's wife born?",
+    agent_mode=True,
+)
+
+trace = results.content.retrieval_trace
+print(trace["selected_agent_name"])
+```
+
+The search response still contains the normal episodic and semantic payloads.
+When the retrieval agent runs, `results.content.retrieval_trace` includes
+diagnostic data about the orchestration path.
+
+## CLI
 
 ```bash
-# Start MemMachine server first
-python -m memmachine_server.server.app
-
-# Run examples
-python examples/memmachine_client_example.py
+memmachine search "<query>"
+memmachine ingest --content "<text>" --role user
 ```
+
+Required environment variables:
+
+- `MEMMACHINE_URL`
+- `MEMMACHINE_ORG_ID`
+- `MEMMACHINE_PROJECT_ID`
+
+Optional:
+
+- `MEMMACHINE_API_KEY`
+
+Examples:
+
+```bash
+memmachine search "What are Alice's flight preferences?" --limit 5 --json
+
+memmachine ingest \
+  --session-id "agent-session-20260326010101" \
+  --producer-id "assistant" \
+  --role user \
+  --content "User asked for the latest benchmark numbers"
+```
+
+The CLI is useful for terminal workflows, scripting, and custom agent
+integrations.
+
+## Shared Skill Helpers
+
+Provider-native skill primitives now live in `memmachine-common` and are shared
+by the client and server packages:
+
+```python
+from memmachine_common import Skill, SkillRunner, install_skill
+```
+
+These helpers are used by the retrieval-agent runtime and by evaluation
+harnesses that install markdown skill bundles into provider Files APIs.
 
 ## Contributing
 

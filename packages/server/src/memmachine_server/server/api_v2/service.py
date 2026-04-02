@@ -116,6 +116,7 @@ async def _search_target_memories(
     content = SearchResultContent(
         episodic_memory=None,
         semantic_memory=None,
+        retrieval_trace=None,
     )
     if results.episodic_memory is not None:
         content.episodic_memory = EpisodicSearchResult(
@@ -126,6 +127,8 @@ async def _search_target_memories(
             SemanticFeature(**f.model_dump(mode="json"))
             for f in results.semantic_memory
         ]
+    if results.retrieval_trace is not None:
+        content.retrieval_trace = results.retrieval_trace
     return SearchResult(
         status=0,
         content=content,

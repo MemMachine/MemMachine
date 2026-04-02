@@ -145,6 +145,12 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       retrieval_agent:
         llm_model: my-agent-llm
         reranker: my-rrf-reranker
+        agent_session_provider: openai
+        agent_session_timeout_seconds: 180
+        agent_session_max_combined_calls: 10
+        agent_session_log_raw_output: true
+        agent_session_max_retry_interval_seconds: 120
+        openai_native_agent_environment: local
       ```
       </Tab>
       <Tab title="With Comments">
@@ -152,15 +158,51 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       retrieval_agent:
         llm_model: my-agent-llm # ID of the Language Model from 'resources.language_models'
         reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
+        agent_session_provider: openai # Provider runtime for provider-native retrieval sessions
+        agent_session_timeout_seconds: 180 # Global timeout budget per retrieval-agent session
+        agent_session_max_combined_calls: 10 # Total memmachine_search call budget across the session
+        agent_session_log_raw_output: true # Emit raw provider payloads to debug logs
+        agent_session_max_retry_interval_seconds: 120 # Retry backoff cap for provider session calls
+        openai_native_agent_environment: local # OpenAI attachment shell environment (local | container_auto)
       ```
       </Tab>
     </Tabs>
 
     **Parameter Descriptions:**
-    | Parameter             | Description                                                                 | Default      |
-    |-----------------------|-----------------------------------------------------------------------------|--------------|
-    | `llm_model`           | The language model ID used by retrieval-agent routing/rewrite steps.       | Auto-resolved from configured memory models when omitted. |
-    | `reranker`            | The reranker ID used by retrieval-agent result reranking.                  | Auto-resolved from episodic long-term-memory reranker when omitted. |
+    | Parameter | Description | Default |
+    |-----------|-------------|---------|
+    | `llm_model` | Language-model ID used to enable the retrieval-agent path. When omitted, MemMachine falls back to the short-term-memory model, then the semantic-memory model if available. | Auto-resolved |
+    | `reranker` | Reranker ID used for retrieval-agent result reranking. When omitted, MemMachine falls back to the episodic long-term-memory reranker. | Auto-resolved |
+    | `agent_session_provider` | Provider runtime used for the provider-native retrieval session. Supported values: `openai`, `anthropic`. | `openai` |
+    | `agent_session_timeout_seconds` | Global timeout budget for one retrieval-agent session. | `180` |
+    | `agent_session_max_combined_calls` | Combined call budget for top-level and branch `memmachine_search` calls in one session. | `10` |
+    | `agent_session_log_raw_output` | Whether to write raw provider payloads to debug logs. Use with care in production. | `true` |
+    | `agent_native_bundle_root` | Optional directory used to materialize markdown bundles for provider attachments. | System temp dir |
+    | `agent_session_max_retry_interval_seconds` | Maximum retry backoff interval for provider session retries. | `120` |
+    | `openai_native_agent_environment` | Shell environment type used for OpenAI provider attachments. Supported values: `local`, `container_auto`. | `local` |
+    | `anthropic_model` | Anthropic model ID used when `agent_session_provider=anthropic`. | `claude-sonnet-4-5` |
+    | `anthropic_api_key` | Anthropic API key used when `agent_session_provider=anthropic`. Supports `$ENV` and `${ENV}` syntax. | `null` |
+    | `anthropic_base_url` | Optional Anthropic API base URL override. | `null` |
+    | `anthropic_max_output_tokens` | Max output tokens per Anthropic Messages call during a retrieval session. | `2048` |
+
+    <Note>
+    `retrieval_agent` is only used when a client sends `agent_mode=true`.
+    Even if you run the live provider session with Anthropic, `llm_model` and
+    `reranker` still need to resolve successfully so MemMachine can enable the
+    retrieval-agent path.
+    </Note>
+
+    Example Anthropic configuration:
+
+    ```yaml
+    retrieval_agent:
+      llm_model: my-agent-llm
+      reranker: my-rrf-reranker
+      agent_session_provider: anthropic
+      anthropic_model: claude-sonnet-4-5
+      anthropic_api_key: ${ANTHROPIC_API_KEY}
+      anthropic_max_output_tokens: 2048
+    ```
   </Accordion>
 
   <Accordion title="Semantic Memory">

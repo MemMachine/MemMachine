@@ -1,5 +1,6 @@
 """Shared test fixtures for episodic memory tests."""
 
+import importlib
 import os
 
 import pytest
@@ -50,17 +51,20 @@ async def nebula_client_factory():
 
     async def _create_client(connection_info: dict):
         try:
-            from nebulagraph_python.client import NebulaAsyncClient, SessionConfig
+            nebula_client_module = importlib.import_module("nebulagraph_python.client")
         except ImportError:
             pytest.skip("nebulagraph_python not installed")
 
+        nebula_async_client_cls = nebula_client_module.NebulaAsyncClient
+        session_config_cls = nebula_client_module.SessionConfig
+
         try:
             # Connect with empty SessionConfig
-            client = await NebulaAsyncClient.connect(
+            client = await nebula_async_client_cls.connect(
                 hosts=connection_info["hosts"],
                 username=connection_info["username"],
                 password=connection_info["password"],
-                session_config=SessionConfig(),
+                session_config=session_config_cls(),
             )
 
             # Initialize schema, graph type, and graph

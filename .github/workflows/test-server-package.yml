@@ -52,8 +52,9 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(ls dist/memmachine_server-*.whl | head -1)
-          pip install --find-links dist/ "$whl_name"
+          common_whl=$(ls dist/memmachine_common-*.whl | head -1)
+          server_whl=$(ls dist/memmachine_server-*.whl | head -1)
+          pip install --find-links dist/ "$common_whl" "$server_whl"
 
       - name: Test server package imports
         shell: bash
