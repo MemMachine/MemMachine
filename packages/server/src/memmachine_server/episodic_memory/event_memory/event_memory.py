@@ -1,4 +1,4 @@
-"""Extra memory system for storing and retrieving episodic memory."""
+"""Event memory system for storing and retrieving events."""
 
 import datetime
 import json
@@ -33,7 +33,7 @@ from .data_types import (
     Content,
     Context,
     Derivative,
-    Episode,
+    Event,
     FileRef,
     MessageContext,
     QueryResult,
@@ -46,9 +46,9 @@ from .segment_store import SegmentStorePartition
 logger = logging.getLogger(__name__)
 
 
-class ExtraMemoryParams(BaseModel):
+class EventMemoryParams(BaseModel):
     """
-    Parameters for ExtraMemory.
+    Parameters for EventMemory.
 
     Attributes:
         partition_key (str):
@@ -97,8 +97,8 @@ class ExtraMemoryParams(BaseModel):
     )
 
 
-class ExtraMemory:
-    """Extra memory system."""
+class EventMemory:
+    """Event memory system."""
 
     # System-defined metadata keys. Underscore prefix is reserved.
     _SEGMENT_UUID_KEY = "_segment_uuid"
@@ -112,13 +112,13 @@ class ExtraMemory:
         "context.source": _CONTEXT_SOURCE_KEY,
     }
 
-    def __init__(self, params: ExtraMemoryParams) -> None:
+    def __init__(self, params: EventMemoryParams) -> None:
         """
-        Initialize an ExtraMemory with the provided parameters.
+        Initialize an EventMemory with the provided parameters.
 
         Args:
-            params (ExtraMemoryParams):
-                Parameters for the ExtraMemory.
+            params (EventMemoryParams):
+                Parameters for the EventMemory.
 
         """
         self._partition_key = params.partition_key
@@ -169,26 +169,24 @@ class ExtraMemory:
             keep_separator="end",
         )
 
-    async def encode_episodes(
+    async def encode_events(
         self,
-        episodes: Iterable[Episode],
+        events: Iterable[Event],
     ) -> None:
         """
-        Encode episodes.
+        Encode events.
 
         Args:
-            episodes (Iterable[Episode]): The episodes to encode.
+            events (Iterable[Event]): The events to encode.
 
         """
-        episodes = sorted(
-            episodes,
-            key=lambda episode: (episode.timestamp, episode.uuid),
+        events = sorted(
+            events,
+            key=lambda event: (event.timestamp, event.uuid),
         )
 
         segments = [
-            segment
-            for episode in episodes
-            for segment in self._create_segments(episode)
+            segment for event in events for segment in self._create_segments(event)
         ]
 
         segments_to_derivatives: dict[Segment, list[Derivative]] = {
@@ -213,7 +211,7 @@ class ExtraMemory:
         )
 
         derivative_records = [
-            ExtraMemory._build_derivative_record(derivative, derivative_embedding)
+            EventMemory._build_derivative_record(derivative, derivative_embedding)
             for derivative, derivative_embedding in zip(
                 derivatives,
                 derivative_embeddings,
@@ -233,16 +231,16 @@ class ExtraMemory:
         properties: dict[str, PropertyValue] = {}
 
         # System-defined metadata (underscore-prefixed).
-        properties[ExtraMemory._SEGMENT_UUID_KEY] = str(derivative.segment_uuid)
-        properties[ExtraMemory._TIMESTAMP_KEY] = derivative.timestamp
+        properties[EventMemory._SEGMENT_UUID_KEY] = str(derivative.segment_uuid)
+        properties[EventMemory._TIMESTAMP_KEY] = derivative.timestamp
 
         match derivative.context:
             case MessageContext(source=source):
-                properties[ExtraMemory._CONTEXT_TYPE_KEY] = "message"
-                properties[ExtraMemory._CONTEXT_SOURCE_KEY] = source
+                properties[EventMemory._CONTEXT_TYPE_KEY] = "message"
+                properties[EventMemory._CONTEXT_SOURCE_KEY] = source
             case CitationContext(source=source):
-                properties[ExtraMemory._CONTEXT_TYPE_KEY] = "citation"
-                properties[ExtraMemory._CONTEXT_SOURCE_KEY] = source
+                properties[EventMemory._CONTEXT_TYPE_KEY] = "citation"
+                properties[EventMemory._CONTEXT_SOURCE_KEY] = source
 
         # User-defined properties.
         properties.update(derivative.properties)
@@ -255,23 +253,23 @@ class ExtraMemory:
 
     def _create_segments(
         self,
-        episode: Episode,
+        event: Event,
     ) -> list[Segment]:
         """
-        Create segments from an episode.
+        Create segments from an event.
 
         Args:
-            episode (Episode):
-                The episode from which to create segments.
+            event (Event):
+                The event from which to create segments.
 
         Returns:
             list[Segment]: A list of created segments.
 
         """
-        match episode.body:
+        match event.body:
             case Content(context=context, items=primitives):
-                return self._segment_episode_content_items(
-                    episode=episode,
+                return self._segment_event_content_items(
+                    event=event,
                     items=primitives,
                     context=context,
                 )
@@ -279,21 +277,21 @@ class ExtraMemory:
                 return [
                     Segment(
                         uuid=uuid4(),
-                        episode_uuid=episode.uuid,
+                        event_uuid=event.uuid,
                         index=0,
                         offset=0,
-                        timestamp=episode.timestamp,
+                        timestamp=event.timestamp,
                         block=file_ref,
-                        properties=episode.properties,
+                        properties=event.properties,
                     )
                 ]
             case _:
-                logger.warning("Unsupported body type: %s", type(episode.body))
+                logger.warning("Unsupported body type: %s", type(event.body))
                 return []
 
-    def _segment_episode_content_items(
+    def _segment_event_content_items(
         self,
-        episode: Episode,
+        event: Event,
         items: Iterable[Block],
         context: Context | None,
     ) -> list[Segment]:
@@ -306,13 +304,13 @@ class ExtraMemory:
                     segments.extend(
                         Segment(
                             uuid=uuid4(),
-                            episode_uuid=episode.uuid,
+                            event_uuid=event.uuid,
                             index=index,
                             offset=offset,
-                            timestamp=episode.timestamp,
+                            timestamp=event.timestamp,
                             block=Text(text=chunk),
                             context=context,
-                            properties=episode.properties,
+                            properties=event.properties,
                         )
                         for offset, chunk in enumerate(chunks)
                     )
@@ -320,13 +318,13 @@ class ExtraMemory:
                     segments.append(
                         Segment(
                             uuid=uuid4(),
-                            episode_uuid=episode.uuid,
+                            event_uuid=event.uuid,
                             index=index,
                             offset=0,
-                            timestamp=episode.timestamp,
+                            timestamp=event.timestamp,
                             block=item,
                             context=context,
-                            properties=episode.properties,
+                            properties=event.properties,
                         )
                     )
         return segments
@@ -388,9 +386,9 @@ class ExtraMemory:
     ) -> list[str]:
         """Derive formatted text strings from a text block."""
         if not self._derive_sentences:
-            return [ExtraMemory._format_with_context(text, context)]
+            return [EventMemory._format_with_context(text, context)]
         return [
-            ExtraMemory._format_with_context(sentence, context)
+            EventMemory._format_with_context(sentence, context)
             for sentence in extract_sentences(text)
         ]
 
@@ -400,8 +398,8 @@ class ExtraMemory:
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
-        if field in ExtraMemory._COLLECTION_SYSTEM_FIELD_MAPPING:
-            return ExtraMemory._COLLECTION_SYSTEM_FIELD_MAPPING[field]
+        if field in EventMemory._COLLECTION_SYSTEM_FIELD_MAPPING:
+            return EventMemory._COLLECTION_SYSTEM_FIELD_MAPPING[field]
         raise ValueError(f"Unknown filter field: {field!r}")
 
     async def query(
@@ -413,7 +411,7 @@ class ExtraMemory:
         property_filter: FilterExpr | None = None,
     ) -> QueryResult:
         """
-        Query extra memory for segments relevant to the query.
+        Query event memory for segments relevant to the query.
 
         Args:
             query (str):
@@ -443,7 +441,7 @@ class ExtraMemory:
 
         # Translate filter fields for vector store.
         collection_filter = (
-            map_filter_fields(property_filter, ExtraMemory._to_collection_field)
+            map_filter_fields(property_filter, EventMemory._to_collection_field)
             if property_filter is not None
             else None
         )
@@ -466,7 +464,7 @@ class ExtraMemory:
                         cast(
                             dict[str, PropertyValue],
                             match.record.properties,
-                        )[ExtraMemory._SEGMENT_UUID_KEY]
+                        )[EventMemory._SEGMENT_UUID_KEY]
                     )
                 )
                 for match in query_result.matches
@@ -518,12 +516,12 @@ class ExtraMemory:
         ]
 
         # Unify segment contexts.
-        unified_segment_context = ExtraMemory._unify_anchored_segment_contexts(
+        unified_segment_context = EventMemory._unify_anchored_segment_contexts(
             reranked_anchored_segment_contexts,
             max_num_segments=max_num_segments,
         )
 
-        unified_segment_context_string = ExtraMemory.string_from_segment_context(
+        unified_segment_context_string = EventMemory.string_from_segment_context(
             unified_segment_context
         )
 
@@ -540,7 +538,7 @@ class ExtraMemory:
         """Score segment contexts based on their relevance to the query."""
         context_strings = []
         for segment_context in segment_contexts:
-            context_string = ExtraMemory.string_from_segment_context(segment_context)
+            context_string = EventMemory.string_from_segment_context(segment_context)
             context_strings.append(context_string)
 
         segment_context_scores = await self._reranker.score(query, context_strings)
@@ -557,7 +555,7 @@ class ExtraMemory:
         for segment in segment_context:
             is_continuation = (
                 last_segment is not None
-                and segment.episode_uuid == last_segment.episode_uuid
+                and segment.event_uuid == last_segment.event_uuid
                 and segment.index == last_segment.index
             )
 
@@ -567,10 +565,10 @@ class ExtraMemory:
                 first = False
                 accumulated_text = ""
 
-                context_date = ExtraMemory._format_date(
+                context_date = EventMemory._format_date(
                     segment.timestamp.date(),
                 )
-                context_time = ExtraMemory._format_time(
+                context_time = EventMemory._format_time(
                     segment.timestamp.time(),
                 )
                 timestamp = f"[{context_date} at {context_time}]"
@@ -583,7 +581,7 @@ class ExtraMemory:
                     case _:
                         context_string += f"{timestamp} "
 
-            text = ExtraMemory._extract_text(segment.block)
+            text = EventMemory._extract_text(segment.block)
             if text is not None:
                 accumulated_text += text
             elif not is_continuation:
@@ -615,22 +613,22 @@ class ExtraMemory:
         """Format the time as a string."""
         return time.strftime("%I:%M %p")
 
-    async def forget_episodes(self, episode_uuids: Iterable[UUID]) -> None:
-        """Forget episodes by their UUIDs."""
-        episode_uuids = set(episode_uuids)
-        if not episode_uuids:
+    async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
+        """Forget events by their UUIDs."""
+        event_uuids = set(event_uuids)
+        if not event_uuids:
             return
 
-        # Snapshot segment UUIDs for these episodes.
-        segments_by_episode = (
-            await self._segment_store_partition.get_segment_uuids_by_episode_uuids(
-                episode_uuids=episode_uuids,
+        # Snapshot segment UUIDs for these events.
+        segments_by_event = (
+            await self._segment_store_partition.get_segment_uuids_by_event_uuids(
+                event_uuids=event_uuids,
             )
         )
         segment_uuids = {
             segment_uuid
-            for episode_segment_uuids in segments_by_episode.values()
-            for segment_uuid in episode_segment_uuids
+            for event_segment_uuids in segments_by_event.values()
+            for segment_uuid in event_segment_uuids
         }
         if not segment_uuids:
             return
@@ -684,7 +682,7 @@ class ExtraMemory:
 
                 seed_context = sorted(
                     context,
-                    key=lambda segment: ExtraMemory._weighted_index_proximity(
+                    key=lambda segment: EventMemory._weighted_index_proximity(
                         segment=segment,
                         context=context,
                         seed_index=seed_index,
@@ -702,7 +700,7 @@ class ExtraMemory:
             unified_segment_context_set,
             key=lambda segment: (
                 segment.timestamp,
-                segment.episode_uuid,
+                segment.event_uuid,
                 segment.index,
                 segment.offset,
             ),

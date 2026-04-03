@@ -1,7 +1,7 @@
 """
 Abstract base class for a segment store.
 
-Defines an interface for adding, retrieving, and deleting segments of episodes.
+Defines an interface for adding, retrieving, and deleting segments of events.
 """
 
 from abc import ABC, abstractmethod
@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from uuid import UUID
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.episodic_memory.extra_memory.data_types import (
+from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
 )
 
@@ -60,20 +60,20 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_segment_uuids_by_episode_uuids(
+    async def get_segment_uuids_by_event_uuids(
         self,
-        episode_uuids: Iterable[UUID],
+        event_uuids: Iterable[UUID],
     ) -> dict[UUID, list[UUID]]:
         """
-        Get segment UUIDs associated with the episodes given by their UUIDs.
+        Get segment UUIDs associated with the events given by their UUIDs.
 
         Args:
-            episode_uuids (Iterable[UUID]):
-                The UUIDs of the episodes for which to retrieve the UUIDs of associated segments.
+            event_uuids (Iterable[UUID]):
+                The UUIDs of the events for which to retrieve the UUIDs of associated segments.
 
         Returns:
             dict[UUID, list[UUID]]:
-                A mapping from each episode UUID to the UUIDs of its associated segments.
+                A mapping from each event UUID to the UUIDs of its associated segments.
         """
         raise NotImplementedError
 

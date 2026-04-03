@@ -1,4 +1,4 @@
-"""Data models for ExtraMemory."""
+"""Data types for EventMemory."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -73,7 +73,7 @@ Context = Annotated[
 ]
 
 
-# Body: top-level episode payload
+# Body: top-level event payload
 
 
 class Content(BaseModel):
@@ -97,11 +97,11 @@ Body = Annotated[
 ]
 
 
-# Episode, Segment, Derivative: core data models for ExtraMemory
+# Event, Segment, Derivative: core data models for EventMemory
 
 
-class Episode(BaseModel):
-    """Experience of an event."""
+class Event(BaseModel):
+    """An event."""
 
     uuid: UUID
     timestamp: datetime
@@ -110,15 +110,15 @@ class Episode(BaseModel):
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     def __hash__(self) -> int:
-        """Hash an episode by its UUID."""
+        """Hash an event by its UUID."""
         return hash(self.uuid)
 
 
 class Segment(BaseModel):
-    """Snapshot of an episode, representing a smaller unit of experience."""
+    """Snapshot of an event, representing a smaller unit of content."""
 
     uuid: UUID
-    episode_uuid: UUID
+    event_uuid: UUID
     index: int
     offset: int
     timestamp: datetime
