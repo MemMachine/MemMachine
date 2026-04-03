@@ -1,10 +1,10 @@
 """Data types for EventMemory."""
 
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, JsonValue
+from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
 
@@ -144,6 +144,16 @@ class Derivative(BaseModel):
     def __hash__(self) -> int:
         """Hash a derivative by its UUID."""
         return hash(self.uuid)
+
+
+# FormatOptions: options for formatting query result.
+
+
+class FormatOptions(BaseModel):
+    """Options for formatting query results."""
+
+    timezone: InstanceOf[tzinfo] | None = None
+    show_timezone_label: bool = True
 
 
 # QueryResult: the result of a memory query, containing relevant segments and their context-ready string representation.

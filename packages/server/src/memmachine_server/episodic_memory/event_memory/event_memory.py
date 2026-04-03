@@ -35,6 +35,7 @@ from .data_types import (
     Derivative,
     Event,
     FileRef,
+    FormatOptions,
     MessageContext,
     QueryResult,
     ReadFile,
@@ -409,6 +410,7 @@ class EventMemory:
         max_num_segments: int = 20,
         expand_context: int = 0,
         property_filter: FilterExpr | None = None,
+        format_options: FormatOptions | None = None,
     ) -> QueryResult:
         """
         Query event memory for segments relevant to the query.
@@ -427,12 +429,17 @@ class EventMemory:
                 Attribute keys and values
                 to use for filtering segments
                 (default: None).
+            format_options (FormatOptions | None):
+                Options for formatting timestamps in output
+                (default: None).
 
         Returns:
             QueryResult:
                 Query result containing segments relevant to the query, ordered chronologically.
 
         """
+        if format_options is None:
+            format_options = FormatOptions()
         query_embedding = (
             await self._embedder.search_embed(
                 [query],
@@ -499,6 +506,7 @@ class EventMemory:
         segment_context_scores = await self._score_segment_contexts(
             query,
             segment_contexts,
+            format_options,
         )
 
         reranked_anchored_segment_contexts = [
@@ -522,7 +530,7 @@ class EventMemory:
         )
 
         unified_segment_context_string = EventMemory.string_from_segment_context(
-            unified_segment_context
+            unified_segment_context, format_options=format_options
         )
 
         return QueryResult(
@@ -534,19 +542,29 @@ class EventMemory:
         self,
         query: str,
         segment_contexts: Iterable[Iterable[Segment]],
+        format_options: FormatOptions,
     ) -> list[float]:
         """Score segment contexts based on their relevance to the query."""
         context_strings = []
         for segment_context in segment_contexts:
-            context_string = EventMemory.string_from_segment_context(segment_context)
+            context_string = EventMemory.string_from_segment_context(
+                segment_context, format_options=format_options
+            )
             context_strings.append(context_string)
 
         segment_context_scores = await self._reranker.score(query, context_strings)
         return segment_context_scores
 
     @staticmethod
-    def string_from_segment_context(segment_context: Iterable[Segment]) -> str:
+    def string_from_segment_context(
+        segment_context: Iterable[Segment],
+        *,
+        format_options: FormatOptions | None = None,
+    ) -> str:
         """Format segment context as a string."""
+        if format_options is None:
+            format_options = FormatOptions()
+
         context_string = ""
         last_segment: Segment | None = None
         accumulated_text = ""
@@ -565,13 +583,9 @@ class EventMemory:
                 first = False
                 accumulated_text = ""
 
-                context_date = EventMemory._format_date(
-                    segment.timestamp.date(),
+                timestamp = EventMemory._format_timestamp(
+                    segment.timestamp, format_options
                 )
-                context_time = EventMemory._format_time(
-                    segment.timestamp.time(),
-                )
-                timestamp = f"[{context_date} at {context_time}]"
 
                 match segment.context:
                     case MessageContext(source=source):
@@ -604,6 +618,25 @@ class EventMemory:
                 return None
 
     @staticmethod
+    def _format_timestamp(
+        timestamp: datetime.datetime,
+        format_options: FormatOptions,
+    ) -> str:
+        """Format a timestamp as a bracketed date/time string."""
+        display_timestamp = (
+            timestamp.astimezone(format_options.timezone)
+            if format_options.timezone is not None
+            else timestamp
+        )
+        date = EventMemory._format_date(display_timestamp.date())
+        time = EventMemory._format_time(display_timestamp.time())
+        if format_options.show_timezone_label:
+            tz_label = EventMemory._format_timezone(display_timestamp)
+            if tz_label:
+                time += " " + tz_label
+        return f"[{date} at {time}]"
+
+    @staticmethod
     def _format_date(date: datetime.date) -> str:
         """Format the date as a string."""
         return date.strftime("%A, %B %d, %Y")
@@ -612,6 +645,21 @@ class EventMemory:
     def _format_time(time: datetime.time) -> str:
         """Format the time as a string."""
         return time.strftime("%I:%M %p")
+
+    @staticmethod
+    def _format_timezone(timestamp: datetime.datetime) -> str:
+        """Format the timezone of a datetime as a UTC offset string."""
+        offset = timestamp.utcoffset()
+        if offset is None:
+            return ""
+        total_seconds = int(offset.total_seconds())
+        sign = "+" if total_seconds >= 0 else "-"
+        total_seconds = abs(total_seconds)
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if seconds:
+            return f"UTC{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"UTC{sign}{hours:02d}:{minutes:02d}"
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
         """Forget events by their UUIDs."""
