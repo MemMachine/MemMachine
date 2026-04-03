@@ -3,6 +3,7 @@
 import asyncio
 import itertools
 import logging
+from collections.abc import Sequence
 from itertools import chain
 
 import numpy as np
@@ -108,11 +109,14 @@ class IngestionService:
     async def _process_single_set(self, set_id: str) -> None:  # noqa: C901
         resources = await self._resource_retriever(set_id)
 
-        history_ids = await self._semantic_storage.get_history_messages(
-            set_ids=[set_id],
-            limit=5,
-            is_ingested=False,
-        )
+        history_ids = [
+            h
+            async for h in self._semantic_storage.get_history_messages(
+                set_ids=[set_id],
+                limit=5,
+                is_ingested=False,
+            )
+        ]
 
         if len(resources.semantic_categories) == 0:
             logger.debug(
@@ -186,10 +190,13 @@ class IngestionService:
                     ),
                 )
 
-                features = await self._semantic_storage.get_feature_set(
-                    filter_expr=filter_expr,
-                    page_size=self._max_features_per_update,
-                )
+                features = [
+                    f
+                    async for f in self._semantic_storage.get_feature_set(
+                        filter_expr=filter_expr,
+                        page_size=self._max_features_per_update,
+                    )
+                ]
 
                 try:
                     commands = await llm_feature_update(
@@ -324,13 +331,16 @@ class IngestionService:
                 ),
             )
 
-            features = await self._semantic_storage.get_feature_set(
-                filter_expr=filter_expr,
-                tag_threshold=self._consolidation_threshold,
-                load_citations=True,
-            )
+            features = [
+                f
+                async for f in self._semantic_storage.get_feature_set(
+                    filter_expr=filter_expr,
+                    tag_threshold=self._consolidation_threshold,
+                    load_citations=True,
+                )
+            ]
 
-            consolidation_sections: list[list[SemanticFeature]] = list(
+            consolidation_sections: list[Sequence[SemanticFeature]] = list(
                 SemanticFeature.group_features_by_tag(features).values(),
             )
 
@@ -364,13 +374,13 @@ class IngestionService:
         self,
         *,
         set_id: str,
-        memories: list[SemanticFeature],
+        memories: Sequence[SemanticFeature],
         semantic_category: InstanceOf[SemanticCategory],
         resources: InstanceOf[Resources],
     ) -> None:
         try:
             consolidate_resp = await llm_consolidate_features(
-                features=memories,
+                features=list(memories),
                 model=resources.language_model,
                 consolidate_prompt=semantic_category.prompt.consolidation_prompt,
             )
