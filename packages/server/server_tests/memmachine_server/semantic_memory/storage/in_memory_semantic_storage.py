@@ -703,7 +703,7 @@ class InMemorySemanticStorage(SemanticStorage):
         if internal_name in field_mapping:
             return field_mapping[internal_name], False
 
-        return None, False
+        raise ValueError(f"Unknown filter field: {field!r}")
 
     def _apply_vector_filter(
         self,

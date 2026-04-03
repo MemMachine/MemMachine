@@ -1102,6 +1102,25 @@ class Neo4jSemanticStorage(SemanticStorage):
             return condition, inner_params
         raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
+    _KNOWN_FIELDS: frozenset[str] = frozenset(
+        {
+            "set_id",
+            "set",
+            "semantic_category_id",
+            "category_name",
+            "category",
+            "tag_id",
+            "tag",
+            "feature",
+            "feature_name",
+            "value",
+            "created_at",
+            "created_at_ts",
+            "updated_at",
+            "updated_at_ts",
+        }
+    )
+
     def _resolve_field_reference(
         self,
         alias: str,
@@ -1115,7 +1134,9 @@ class Neo4jSemanticStorage(SemanticStorage):
             key = field.split(".", 1)[1]
             prop_name = self._metadata_property_name(key)
             return f"{alias}.{prop_name}", None
-        return f"{alias}.{field}", None
+        if field in self._KNOWN_FIELDS:
+            return f"{alias}.{field}", None
+        raise ValueError(f"Unknown filter field: {field!r}")
 
     def _next_filter_param(self) -> str:
         self._filter_param_counter += 1
