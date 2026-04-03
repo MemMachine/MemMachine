@@ -1506,7 +1506,7 @@ wheels = [
 
 [[package]]
 name = "langchain-core"
-version = "1.2.11"
+version = "1.2.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpatch" },
@@ -1518,9 +1518,21 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uuid-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/17/1943cedfc118e04b8128e4c3e1dbf0fa0ea58eefddbb6198cfd699d19f01/langchain_core-1.2.11.tar.gz", hash = "sha256:f164bb36602dd74a3a50c1334fca75309ad5ed95767acdfdbb9fa95ce28a1e01", size = 831211, upload-time = "2026-02-10T20:35:28.35Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/93/36226f593df52b871fc24d494c274f3a6b2ac76763a2806e7d35611634a1/langchain_core-1.2.17.tar.gz", hash = "sha256:54aa267f3311e347fb2e50951fe08e53761cebfb999ab80e6748d70525bbe872", size = 836130, upload-time = "2026-03-02T22:47:55.846Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/30/1f80e3fc674353cad975ed5294353d42512535d2094ef032c06454c2c873/langchain_core-1.2.11-py3-none-any.whl", hash = "sha256:ae11ceb8dda60d0b9d09e763116e592f1683327c17be5b715f350fd29aee65d3", size = 500062, upload-time = "2026-02-10T20:35:26.698Z" },
+    { url = "https://files.pythonhosted.org/packages/be/90/073f33ab383a62908eca7ea699586dfea280e77182176e33199c80ddf22a/langchain_core-1.2.17-py3-none-any.whl", hash = "sha256:bf6bd6ce503874e9c2da1669a69383e967c3de1ea808921d19a9a6bff1a9fbbe", size = 502727, upload-time = "2026-03-02T22:47:54.537Z" },
+]
+
+[[package]]
+name = "langchain-text-splitters"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "langchain-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/38/14121ead61e0e75f79c3a35e5148ac7c2fe754a55f76eab3eed573269524/langchain_text_splitters-1.1.1.tar.gz", hash = "sha256:34861abe7c07d9e49d4dc852d0129e26b32738b60a74486853ec9b6d6a8e01d2", size = 279352, upload-time = "2026-02-18T23:02:42.798Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/66/d9e0c3b83b0ad75ee746c51ba347cacecb8d656b96e1d513f3e334d1ccab/langchain_text_splitters-1.1.1-py3-none-any.whl", hash = "sha256:5ed0d7bf314ba925041e7d7d17cd8b10f688300d5415fb26c29442f061e329dc", size = 35734, upload-time = "2026-02-18T23:02:41.913Z" },
 ]
 
 [[package]]
@@ -1716,6 +1728,7 @@ dependencies = [
     { name = "instructor", extra = ["bedrock"] },
     { name = "json-repair" },
     { name = "langchain-aws" },
+    { name = "langchain-text-splitters" },
     { name = "memmachine-common" },
     { name = "neo4j" },
     { name = "nltk" },
@@ -1755,6 +1768,7 @@ requires-dist = [
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
     { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
+    { name = "langchain-text-splitters", specifier = ">=1.1.1" },
     { name = "memmachine-common", editable = "packages/common" },
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1" },
     { name = "neo4j", specifier = ">=5.28.2" },

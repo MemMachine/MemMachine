@@ -779,10 +779,10 @@ async def test_get_feature_set_unknown_filter_column_errors(
         embedding=np.array([1.0], dtype=float),
     )
 
-    # No errors occurs
-    await semantic_storage.get_feature_set(
-        filter_expr=_expr("missing_column IN (foo)"),
-    )
+    with pytest.raises(ValueError, match="Unknown filter field"):
+        await semantic_storage.get_feature_set(
+            filter_expr=_expr("missing_column IN (foo)"),
+        )
 
 
 @pytest.mark.asyncio
@@ -798,10 +798,10 @@ async def test_delete_feature_set_unknown_filter_column_errors(
         embedding=np.array([1.0], dtype=float),
     )
 
-    # No errors occurs
-    await semantic_storage.delete_feature_set(
-        filter_expr=_expr("missing_column IN (foo)"),
-    )
+    with pytest.raises(ValueError, match="Unknown filter field"):
+        await semantic_storage.delete_feature_set(
+            filter_expr=_expr("missing_column IN (foo)"),
+        )
 
 
 @pytest.mark.asyncio
