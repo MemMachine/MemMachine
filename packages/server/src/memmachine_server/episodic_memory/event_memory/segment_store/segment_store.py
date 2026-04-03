@@ -114,7 +114,7 @@ class SegmentStore(ABC):
     """
     Abstract base class for a segment store.
 
-    Factory that creates partition-scoped handles.
+    Manages partition-scoped handles.
     """
 
     @abstractmethod
@@ -128,9 +128,40 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> SegmentStorePartition:
+    async def create_partition(self, partition_key: str) -> None:
         """
-        Open a partition-scoped handle for the given partition key.
+        Create a new partition.
+
+        Args:
+            partition_key (str):
+                The key of the partition to create.
+
+        Raises:
+            PartitionAlreadyExistsError: If the partition already exists.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def open_partition(self, partition_key: str) -> SegmentStorePartition | None:
+        """
+        Open a partition-scoped handle for an existing partition.
+
+        Args:
+            partition_key (str):
+                The key of the partition.
+
+        Returns:
+            SegmentStorePartition | None:
+                A partition-scoped handle, or None if the partition does not exist.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def open_or_create_partition(
+        self, partition_key: str
+    ) -> SegmentStorePartition:
+        """
+        Open the partition if it exists, or create it if it does not.
 
         Args:
             partition_key (str):
@@ -152,5 +183,19 @@ class SegmentStore(ABC):
         Args:
             segment_store_partition (SegmentStorePartition):
                 The partition-scoped handle to close.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_partition(self, partition_key: str) -> None:
+        """
+        Delete a partition.
+
+        This will delete all data in the partition.
+        for the given partition. It is idempotent.
+
+        Args:
+            partition_key (str):
+                The key of the partition to delete.
         """
         raise NotImplementedError
