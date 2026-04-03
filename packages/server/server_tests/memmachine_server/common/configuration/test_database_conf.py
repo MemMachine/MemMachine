@@ -5,6 +5,7 @@ from pydantic import SecretStr
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
+    QdrantConf,
     SqlAlchemyConf,
     SupportedDB,
 )
@@ -14,22 +15,25 @@ def test_parse_supported_db_enums():
     assert SupportedDB.from_provider("neo4j") == SupportedDB.NEO4J
     assert SupportedDB.from_provider("postgres") == SupportedDB.POSTGRES
     assert SupportedDB.from_provider("sqlite") == SupportedDB.SQLITE
+    assert SupportedDB.from_provider("qdrant") == SupportedDB.QDRANT
 
     neo4j_db = SupportedDB.NEO4J
-    assert neo4j_db.is_neo4j
     assert neo4j_db.conf_cls == Neo4jConf
 
     pg_db = SupportedDB.POSTGRES
-    assert not pg_db.is_neo4j
     assert pg_db.conf_cls == SqlAlchemyConf
     assert pg_db.dialect == "postgresql"
     assert pg_db.driver == "asyncpg"
 
     sqlite_db = SupportedDB.SQLITE
-    assert not sqlite_db.is_neo4j
     assert sqlite_db.conf_cls == SqlAlchemyConf
     assert sqlite_db.dialect == "sqlite"
     assert sqlite_db.driver == "aiosqlite"
+
+    qdrant_db = SupportedDB.QDRANT
+    assert qdrant_db.conf_cls == QdrantConf
+    assert qdrant_db.dialect is None
+    assert qdrant_db.driver is None
 
 
 def test_sqlite_without_path_raises():
@@ -80,6 +84,18 @@ def db_conf_dict() -> dict:
                     "path": "local.db",
                 },
             },
+            "my_qdrant": {
+                "provider": "qdrant",
+                "config": {
+                    "host": "qdrant.example.com",
+                    "port": 6333,
+                    "grpc_port": 6334,
+                    "prefer_grpc": True,
+                    "api_key": "test-key",
+                    "is_distributed": True,
+                    "registry_replication_factor": 3,
+                },
+            },
         },
     }
 
@@ -122,6 +138,17 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert isinstance(sqlite_conf, SqlAlchemyConf)
     assert sqlite_conf.uri == "sqlite+aiosqlite:///local.db"
 
+    # Qdrant check
+    qdrant_conf = storage_conf.qdrant_confs["my_qdrant"]
+    assert isinstance(qdrant_conf, QdrantConf)
+    assert qdrant_conf.host == "qdrant.example.com"
+    assert qdrant_conf.port == 6333
+    assert qdrant_conf.grpc_port == 6334
+    assert qdrant_conf.prefer_grpc is True
+    assert qdrant_conf.api_key == SecretStr("test-key")
+    assert qdrant_conf.is_distributed is True
+    assert qdrant_conf.registry_replication_factor == 3
+
 
 def test_read_db_password_from_env(monkeypatch, db_conf_dict):
     monkeypatch.setenv("MY_DB_PASSWORD", "env-db-password")
@@ -147,7 +174,7 @@ def test_parse_unknown_provider_raises():
     input_dict = {
         "databases": {"bad_storage": {"provider": "unknown_db", "host": "localhost"}},
     }
-    message = "Supported providers are: neo4j, postgres, sqlite"
+    message = "Supported providers are: neo4j, postgres, sqlite, nebula_graph, qdrant"
     with pytest.raises(ValueError, match=message):
         DatabasesConf.parse(input_dict)
 
@@ -212,3 +239,31 @@ def test_neo4j_uri_with_host_and_port():
 def test_neo4j_uri_with_special_host():
     conf = Neo4jConf(host="neo4j+s://xyz", port=3456)
     assert conf.get_uri() == "neo4j+s://xyz"
+
+
+def test_qdrant_conf_defaults():
+    conf = QdrantConf()
+    assert conf.host == "localhost"
+    assert conf.port == 6333
+    assert conf.grpc_port == 6334
+    assert conf.prefer_grpc is False
+    assert conf.https is False
+    assert conf.is_distributed is False
+    assert conf.registry_replication_factor == 1
+    assert conf.api_key.get_secret_value() == ""
+
+
+def test_qdrant_conf_api_key_from_env(monkeypatch):
+    monkeypatch.setenv("QDRANT_API_KEY", "env-qdrant-key")
+    conf = QdrantConf(api_key=SecretStr("$QDRANT_API_KEY"))
+    assert conf.api_key == SecretStr("env-qdrant-key")
+
+
+def test_qdrant_build_config():
+    config = SupportedDB.QDRANT.build_config(
+        {"host": "qdrant.local", "port": 9333, "is_distributed": True}
+    )
+    assert isinstance(config, QdrantConf)
+    assert config.host == "qdrant.local"
+    assert config.port == 9333
+    assert config.is_distributed is True

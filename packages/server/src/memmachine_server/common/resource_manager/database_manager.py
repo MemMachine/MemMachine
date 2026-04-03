@@ -15,6 +15,7 @@ from memmachine_server.common.configuration.database_conf import (
 )
 from memmachine_server.common.errors import (
     Neo4JConfigurationError,
+    QdrantConfigurationError,
     SQLConfigurationError,
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
@@ -22,12 +23,14 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
+from memmachine_server.common.vector_store import VectorStore
 
 # TYPE_CHECKING is True only when type checkers (mypy, pyright) run, False at runtime.
 # This allows type hints without requiring nebulagraph_python to be installed
 # unless NebulaGraph is actually used. The actual import happens at use site.
 if TYPE_CHECKING:
     from nebulagraph_python.client import NebulaAsyncClient
+    from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +48,14 @@ class DatabaseManager:
         # is only imported under TYPE_CHECKING and doesn't exist at runtime.
         # Type checkers see it, but runtime treats it as a string literal.
         self.nebula_clients: dict[str, NebulaAsyncClient] = {}
+        self.qdrant_clients: dict[str, AsyncQdrantClient] = {}
+        self.vector_stores: dict[str, VectorStore] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
         self._sql_locks: dict[str, Lock] = {}
         self._nebula_locks: dict[str, Lock] = {}
+        self._qdrant_locks: dict[str, Lock] = {}
 
     async def build_all(self, validate: bool = False) -> Self:
         """Optionally eagerly initialize all backends."""
@@ -65,8 +71,12 @@ class DatabaseManager:
             self.async_get_nebula_client(name, validate=validate)
             for name in self.conf.nebula_graph_confs
         ]
+        qdrant_tasks = [
+            self.async_get_qdrant_client(name, validate=validate)
+            for name in self.conf.qdrant_confs
+        ]
         # Lazy build will occur in get_* calls, but build_all can trigger them
-        tasks = neo4j_tasks + relation_db_tasks + nebula_tasks
+        tasks = neo4j_tasks + relation_db_tasks + nebula_tasks + qdrant_tasks
         await asyncio.gather(*tasks)
 
         if validate:
@@ -74,6 +84,7 @@ class DatabaseManager:
                 self._validate_neo4j_drivers(),
                 self._validate_sql_engines(),
                 self._validate_nebula_clients(),
+                self._validate_qdrant_clients(),
             )
 
         return self
@@ -88,14 +99,19 @@ class DatabaseManager:
                 tasks.append(self._close_async_engine(name, engine))
             for name, client in self.nebula_clients.items():
                 tasks.append(self._close_nebula_client(name, client))
+            for name, client in self.qdrant_clients.items():
+                tasks.append(self._close_qdrant_client(name, client))
             await asyncio.gather(*tasks)
             self.graph_stores.clear()
+            self.vector_stores.clear()
             self.neo4j_drivers.clear()
             self.sql_engines.clear()
             self.nebula_clients.clear()
+            self.qdrant_clients.clear()
             self._neo4j_locks.clear()
             self._sql_locks.clear()
             self._nebula_locks.clear()
+            self._qdrant_locks.clear()
 
     @staticmethod
     async def _close_async_driver(name: str, driver: AsyncDriver) -> None:
@@ -469,3 +485,91 @@ class DatabaseManager:
         """Validate connectivity to each NebulaGraph instance."""
         for name, client in self.nebula_clients.items():
             await self.validate_nebula_client(name, client)
+
+    # --- Qdrant ---
+
+    @staticmethod
+    async def _close_qdrant_client(name: str, client: "AsyncQdrantClient") -> None:
+        try:
+            await client.close()
+        except Exception as ex:
+            logger.warning("Error closing Qdrant client '%s': %s", name, ex)
+
+    async def async_get_qdrant_client(
+        self, name: str, validate: bool = False
+    ) -> "AsyncQdrantClient":
+        """Return a Qdrant async client, creating it if necessary (lazy)."""
+        if name not in self._qdrant_locks:
+            async with self._lock:
+                self._qdrant_locks.setdefault(name, Lock())
+
+        async with self._qdrant_locks[name]:
+            if name in self.qdrant_clients:
+                return self.qdrant_clients[name]
+
+            conf = self.conf.qdrant_confs.get(name)
+            if not conf:
+                raise ValueError(f"Qdrant config '{name}' not found.")
+
+            # Import at use site (not at module level) to make qdrant-client
+            # an optional dependency — only required if Qdrant is actually used.
+            from qdrant_client import AsyncQdrantClient
+
+            client_kwargs: dict[str, Any] = {
+                "host": conf.host,
+                "port": conf.port,
+                "grpc_port": conf.grpc_port,
+                "prefer_grpc": conf.prefer_grpc,
+                "https": conf.https,
+            }
+            if conf.api_key.get_secret_value():
+                client_kwargs["api_key"] = conf.api_key.get_secret_value()
+
+            client = AsyncQdrantClient(**client_kwargs)
+
+            if validate:
+                await self.validate_qdrant_client(name, client)
+
+            self.qdrant_clients[name] = client
+
+            from memmachine_server.common.vector_store.qdrant_vector_store import (
+                QdrantVectorStore,
+                QdrantVectorStoreParams,
+            )
+
+            params = QdrantVectorStoreParams(
+                client=client,
+                is_distributed=conf.is_distributed,
+                registry_replication_factor=conf.registry_replication_factor,
+            )
+            store = QdrantVectorStore(params)
+            await store.startup()
+            self.vector_stores[name] = store
+
+            return client
+
+    @staticmethod
+    async def validate_qdrant_client(name: str, client: "AsyncQdrantClient") -> None:
+        """Validate connectivity to a Qdrant instance."""
+        try:
+            logger.info("Validating Qdrant client '%s'", name)
+            await client.get_collections()
+            logger.info("Qdrant client '%s' validated successfully", name)
+        except Exception as e:
+            await client.close()
+            raise QdrantConfigurationError(
+                f"Qdrant config '{name}' failed verification: {e}",
+            ) from e
+
+    async def _validate_qdrant_clients(self) -> None:
+        """Validate connectivity to each Qdrant instance."""
+        for name, client in self.qdrant_clients.items():
+            await self.validate_qdrant_client(name, client)
+
+    async def get_vector_store(self, name: str) -> VectorStore:
+        """Return a vector store by name, auto-detecting the backend."""
+        if name in self.conf.qdrant_confs:
+            await self.async_get_qdrant_client(name, validate=True)
+            return self.vector_stores[name]
+
+        raise ValueError(f"VectorStore '{name}' not found in qdrant_confs")
