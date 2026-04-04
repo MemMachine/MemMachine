@@ -178,7 +178,10 @@ class RerankerManager(BaseResourceManager[Reranker]):
         conf = self.conf.cohere[name]
 
         cohere_api_key = conf.cohere_key.get_secret_value() if conf.cohere_key else None
-        client = ClientV2(api_key=cohere_api_key)
+        if conf.base_url is not None:
+            client = ClientV2(api_key=cohere_api_key, base_url=conf.base_url)
+        else:
+            client = ClientV2(api_key=cohere_api_key)
         params = CohereRerankerParams(
             client=client,
             model=conf.model,
