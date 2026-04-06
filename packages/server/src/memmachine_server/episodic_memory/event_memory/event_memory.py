@@ -23,8 +23,8 @@ from memmachine_server.common.utils import (
     extract_sentences,
 )
 from memmachine_server.common.vector_store import (
-    Collection,
     Record,
+    VectorStoreCollection,
 )
 
 from .data_types import (
@@ -52,10 +52,8 @@ class EventMemoryParams(BaseModel):
     Parameters for EventMemory.
 
     Attributes:
-        partition_key (str):
-            Partition key for scoping the memory.
-        collection (Collection):
-            Collection instance in a vector store.
+        vector_store_collection (VectorStoreCollection):
+            Vector store collection.
         segment_store_partition (SegmentStorePartition):
             Segment store partition handle for managing segments.
         embedder (Embedder):
@@ -68,13 +66,9 @@ class EventMemoryParams(BaseModel):
             Max code-point length for text chunking in segment creation (default: 2000).
     """
 
-    partition_key: str = Field(
+    vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
         ...,
-        description="Partition key for scoping the memory",
-    )
-    collection: InstanceOf[Collection] = Field(
-        ...,
-        description="Collection instance in a vector store",
+        description="Vector store collection",
     )
     segment_store_partition: InstanceOf[SegmentStorePartition] = Field(
         ...,
@@ -122,9 +116,7 @@ class EventMemory:
                 Parameters for the EventMemory.
 
         """
-        self._partition_key = params.partition_key
-
-        self._collection = params.collection
+        self._vector_store_collection = params.vector_store_collection
         self._segment_store_partition = params.segment_store_partition
 
         self._embedder = params.embedder
@@ -221,7 +213,7 @@ class EventMemory:
         ]
 
         if derivative_records:
-            await self._collection.upsert(records=derivative_records)
+            await self._vector_store_collection.upsert(records=derivative_records)
 
     @staticmethod
     def _build_derivative_record(
@@ -454,7 +446,7 @@ class EventMemory:
         )
 
         # Search derivative collection for matches.
-        [query_result] = await self._collection.query(
+        [query_result] = await self._vector_store_collection.query(
             query_vectors=[query_embedding],
             limit=min(5 * max_num_segments, 200),
             property_filter=collection_filter,
@@ -695,7 +687,7 @@ class EventMemory:
 
         # Delete from vector DB first, then segment store.
         if derivative_uuids:
-            await self._collection.delete(record_uuids=derivative_uuids)
+            await self._vector_store_collection.delete(record_uuids=derivative_uuids)
 
         await self._segment_store_partition.delete_segments(
             segment_uuids=segment_uuids,
