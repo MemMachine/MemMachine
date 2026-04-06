@@ -1,12 +1,24 @@
 """Data types for EventMemory."""
 
+from collections.abc import Mapping
 from datetime import datetime, tzinfo
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, InstanceOf, JsonValue
+from pydantic import (
+    BaseModel,
+    Field,
+    InstanceOf,
+    JsonValue,
+    field_serializer,
+    field_validator,
+)
 
 from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.properties_json import (
+    decode_properties,
+    encode_properties,
+)
 
 # Block: leaf content type
 
@@ -109,6 +121,22 @@ class Event(BaseModel):
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _deserialize_properties(cls, v: object) -> object:
+        if not isinstance(v, Mapping):
+            return v
+        try:
+            return decode_properties(v)
+        except (TypeError, ValueError):
+            return v
+
+    @field_serializer("properties")
+    def _serialize_properties(
+        self, v: dict[str, PropertyValue]
+    ) -> dict[str, dict[str, bool | int | float | str]]:
+        return encode_properties(v)
+
     def __hash__(self) -> int:
         """Hash an event by its UUID."""
         return hash(self.uuid)
@@ -126,6 +154,23 @@ class Segment(BaseModel):
     block: Block
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _deserialize_properties(cls, v: object) -> object:
+        if not isinstance(v, Mapping):
+            return v
+        try:
+            return decode_properties(v)
+        except (TypeError, ValueError):
+            # Not type-tagged data (e.g. plain PropertyValue from code).
+            return v
+
+    @field_serializer("properties")
+    def _serialize_properties(
+        self, v: dict[str, PropertyValue]
+    ) -> dict[str, dict[str, bool | int | float | str]]:
+        return encode_properties(v)
+
     def __hash__(self) -> int:
         """Hash a segment by its UUID."""
         return hash(self.uuid)
@@ -140,6 +185,22 @@ class Derivative(BaseModel):
     context: Context | None = None
     text: str
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
+
+    @field_validator("properties", mode="before")
+    @classmethod
+    def _deserialize_properties(cls, v: object) -> object:
+        if not isinstance(v, Mapping):
+            return v
+        try:
+            return decode_properties(v)
+        except (TypeError, ValueError):
+            return v
+
+    @field_serializer("properties")
+    def _serialize_properties(
+        self, v: dict[str, PropertyValue]
+    ) -> dict[str, dict[str, bool | int | float | str]]:
+        return encode_properties(v)
 
     def __hash__(self) -> int:
         """Hash a derivative by its UUID."""
