@@ -15,7 +15,7 @@ from memmachine_server.common.data_types import (
 from .utils import validate_identifier
 
 
-class CollectionConfig(BaseModel):
+class VectorStoreCollectionConfig(BaseModel):
     """Configuration for a logical collection in a vector store."""
 
     vector_dimensions: int
@@ -63,7 +63,7 @@ class CollectionConfig(BaseModel):
         }
 
 
-class CollectionAlreadyExistsError(Exception):
+class VectorStoreCollectionAlreadyExistsError(Exception):
     """Raised when creating a collection that already exists."""
 
     def __init__(self, namespace: str, name: str) -> None:
@@ -73,15 +73,15 @@ class CollectionAlreadyExistsError(Exception):
         super().__init__(f"Collection ({namespace!r}, {name!r}) already exists.")
 
 
-class CollectionConfigMismatchError(Exception):
+class VectorStoreCollectionConfigMismatchError(Exception):
     """Raised when opening a collection with a different configuration than it was created with."""
 
     def __init__(
         self,
         namespace: str,
         name: str,
-        existing_config: CollectionConfig,
-        requested_config: CollectionConfig,
+        existing_config: VectorStoreCollectionConfig,
+        requested_config: VectorStoreCollectionConfig,
     ) -> None:
         """Initialize with the namespace, name, and configurations."""
         self.namespace = namespace
