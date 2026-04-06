@@ -7,14 +7,14 @@ from .data_types import (
     QueryResult,
     Record,
 )
-from .vector_store import Collection, VectorStore
+from .vector_store import VectorStore, VectorStoreCollection
 
 __all__ = [
-    "Collection",
     "CollectionAlreadyExistsError",
     "CollectionConfig",
     "CollectionConfigMismatchError",
     "QueryResult",
     "Record",
     "VectorStore",
+    "VectorStoreCollection",
 ]

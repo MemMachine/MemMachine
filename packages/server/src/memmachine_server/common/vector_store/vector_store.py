@@ -19,7 +19,7 @@ from .data_types import (
 )
 
 
-class Collection(ABC):
+class VectorStoreCollection(ABC):
     """
     A logical collection in a vector store.
 
@@ -196,7 +196,7 @@ class VectorStore(ABC):
         namespace: str,
         name: str,
         config: CollectionConfig,
-    ) -> Collection:
+    ) -> VectorStoreCollection:
         """
         Open the collection if it exists, or create it if it does not.
 
@@ -220,7 +220,9 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_collection(self, *, namespace: str, name: str) -> Collection | None:
+    async def open_collection(
+        self, *, namespace: str, name: str
+    ) -> VectorStoreCollection | None:
         """
         Get a handle to a logical collection in the vector store.
 
@@ -237,7 +239,7 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def close_collection(self, *, collection: Collection) -> None:
+    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
         """
         Close a collection handle.
 
