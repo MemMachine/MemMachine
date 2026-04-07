@@ -115,6 +115,10 @@ class SegmentStore(ABC):
     Abstract base class for a segment store.
 
     Manages partition-scoped handles.
+
+    Partition keys must match `[a-z0-9_]+`
+    (lowercase alphanumeric and underscores only)
+    and be at most 32 bytes.
     """
 
     @abstractmethod
