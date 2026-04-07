@@ -137,7 +137,7 @@ class SegmentStore(ABC):
                 The key of the partition to create.
 
         Raises:
-            PartitionAlreadyExistsError: If the partition already exists.
+            SegmentStorePartitionAlreadyExistsError: If the partition already exists.
         """
         raise NotImplementedError
 
