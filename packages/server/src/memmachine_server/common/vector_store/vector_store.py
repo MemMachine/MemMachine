@@ -13,13 +13,13 @@ from memmachine_server.common.filter.filter_parser import (
 )
 
 from .data_types import (
-    CollectionConfig,
     QueryResult,
     Record,
+    VectorStoreCollectionConfig,
 )
 
 
-class Collection(ABC):
+class VectorStoreCollection(ABC):
     """
     A logical collection in a vector store.
 
@@ -165,7 +165,7 @@ class VectorStore(ABC):
         *,
         namespace: str,
         name: str,
-        config: CollectionConfig,
+        config: VectorStoreCollectionConfig,
     ) -> None:
         """
         Create a logical collection in the vector store and return a handle to it.
@@ -180,11 +180,11 @@ class VectorStore(ABC):
                 isolation at the native collection level.
             name (str):
                 Name to identify the collection within a namespace.
-            config (CollectionConfig):
+            config (VectorStoreCollectionConfig):
                 Configuration for the collection.
 
         Raises:
-            CollectionAlreadyExistsError: If a collection with the same
+            VectorStoreCollectionAlreadyExistsError: If a collection with the same
                 (namespace, name) already exists.
         """
         raise NotImplementedError
@@ -195,8 +195,8 @@ class VectorStore(ABC):
         *,
         namespace: str,
         name: str,
-        config: CollectionConfig,
-    ) -> Collection:
+        config: VectorStoreCollectionConfig,
+    ) -> VectorStoreCollection:
         """
         Open the collection if it exists, or create it if it does not.
 
@@ -206,7 +206,7 @@ class VectorStore(ABC):
                 isolation at the native collection level.
             name (str):
                 Name to identify the collection within a namespace.
-            config (CollectionConfig):
+            config (VectorStoreCollectionConfig):
                 Configuration for the collection.
 
         Returns:
@@ -214,13 +214,15 @@ class VectorStore(ABC):
                 A handle to the opened or created collection.
 
         Raises:
-            CollectionConfigMismatchError: If a collection with the same
+            VectorStoreCollectionConfigMismatchError: If a collection with the same
                 (namespace, name) already exists with a different configuration.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def open_collection(self, *, namespace: str, name: str) -> Collection | None:
+    async def open_collection(
+        self, *, namespace: str, name: str
+    ) -> VectorStoreCollection | None:
         """
         Get a handle to a logical collection in the vector store.
 
@@ -237,7 +239,7 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def close_collection(self, *, collection: Collection) -> None:
+    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
         """
         Close a collection handle.
 
