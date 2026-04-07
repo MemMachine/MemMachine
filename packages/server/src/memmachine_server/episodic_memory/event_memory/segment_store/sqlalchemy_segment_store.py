@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
@@ -24,12 +25,19 @@ from sqlalchemy import (
     insert,
     literal,
     select,
+    text,
     true,
     tuple_,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine.interfaces import DBAPIConnection
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+)
 from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
@@ -53,12 +61,15 @@ from memmachine_server.common.properties_json import (
     encode_properties,
 )
 from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
-from memmachine_server.episodic_memory.extra_memory.data_types import (
+from memmachine_server.episodic_memory.event_memory.data_types import (
     Block,
     Context,
     Segment,
 )
-from memmachine_server.episodic_memory.extra_memory.segment_store.segment_store import (
+from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
+    SegmentStorePartitionAlreadyExistsError,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store.segment_store import (
     SegmentStore,
     SegmentStorePartition,
 )
@@ -67,9 +78,27 @@ logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
 
-
 _ContextAdapter = TypeAdapter(Context | None)
 _BlockAdapter = TypeAdapter(Block)
+
+
+# SQLite does not isolate transactions within a single connection
+# (https://sqlite.org/isolation.html), so we serialise writes through per-partition asyncio locks.
+# Shared across all store instances so that stores using the same engine use the same lock.
+# Keyed by engine so locks are garbage-collected when the engine is.
+_sqlite_write_locks: WeakKeyDictionary[AsyncEngine, defaultdict[str, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
+
+
+def _get_sqlite_write_lock_context(
+    engine: AsyncEngine, partition_key: str
+) -> AbstractAsyncContextManager[None]:
+    """Return the SQLite write lock for the partition, or a no-op for other dialects."""
+    if engine.dialect.name == "sqlite":
+        engine_locks = _sqlite_write_locks.setdefault(engine, defaultdict(asyncio.Lock))
+        return engine_locks[partition_key]
+    return nullcontext()
 
 
 # ORM models
@@ -79,15 +108,23 @@ class BaseSegmentStore(DeclarativeBase):
     """Base class for segment store tables."""
 
 
+class PartitionRow(BaseSegmentStore):
+    """Tracks known partitions."""
+
+    __tablename__ = "segment_store_pt"
+
+    partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
+
+
 class SegmentRow(BaseSegmentStore):
     """Persisted segment."""
 
-    __tablename__ = "segment_store_segments"
+    __tablename__ = "segment_store_sg"
 
     partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    episode_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
+    event_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
     index: MappedColumn[int] = mapped_column(Integer, nullable=False)
     offset: MappedColumn[int] = mapped_column(Integer, nullable=False)
     timestamp: MappedColumn[datetime] = mapped_column(
@@ -107,26 +144,32 @@ class SegmentRow(BaseSegmentStore):
     )
 
     __table_args__ = (
-        Index(
-            "segment_store_segments__pk_ep",
-            "partition_key",
-            "episode_uuid",
+        ForeignKeyConstraint(
+            ["partition_key"],
+            ["segment_store_pt.partition_key"],
+            ondelete="CASCADE",
         ),
         Index(
-            "segment_store_segments__pk_ts_ep_bk_ix",
+            "segment_store_sg__pk_ev",
+            "partition_key",
+            "event_uuid",
+        ),
+        Index(
+            "segment_store_sg__pk_ts_ev_bk_ix",
             "partition_key",
             "timestamp",
-            "episode_uuid",
+            "event_uuid",
             "index",
             "offset",
         ),
+        {"postgresql_partition_by": "LIST (partition_key)"},
     )
 
 
 class DerivativeLinkRow(BaseSegmentStore):
     """Maps a derivative UUID to its owning segment."""
 
-    __tablename__ = "segment_store_derivative_links"
+    __tablename__ = "segment_store_dv_ln"
 
     partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
 
@@ -137,16 +180,17 @@ class DerivativeLinkRow(BaseSegmentStore):
         ForeignKeyConstraint(
             ["partition_key", "segment_uuid"],
             [
-                "segment_store_segments.partition_key",
-                "segment_store_segments.uuid",
+                "segment_store_sg.partition_key",
+                "segment_store_sg.uuid",
             ],
             ondelete="CASCADE",
         ),
         Index(
-            "segment_store_derivative_links__pk_su",
+            "segment_store_dv_ln__pk_su",
             "partition_key",
             "segment_uuid",
         ),
+        {"postgresql_partition_by": "LIST (partition_key)"},
     )
 
 
@@ -156,19 +200,26 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     def __init__(
         self,
         partition_key: str,
-        create_session: async_sessionmaker[AsyncSession],
-        write_lock: asyncio.Lock | None = None,
+        engine: AsyncEngine,
     ) -> None:
-        """Initialize with a partition key and session maker."""
+        """Initialize with a partition key and engine."""
         self._partition_key = partition_key
-        self._create_session = create_session
-        self._write_lock = write_lock
+        self._engine = engine
+        self._create_session = async_sessionmaker(engine, expire_on_commit=False)
+        self._is_sqlite = engine.dialect.name == "sqlite"
+        self._sqlite_write_lock = _get_sqlite_write_lock_context(engine, partition_key)
 
-    def _sqlite_write_lock(self) -> AbstractAsyncContextManager[None]:
-        """Return the write lock if configured (SQLite), otherwise a no-op."""
-        if self._write_lock is not None:
-            return self._write_lock
-        return nullcontext()
+    async def _lock_partition_for_write(self, session: AsyncSession) -> None:
+        """Acquire a shared lock on the partition row to prevent concurrent deletion."""
+        if not self._is_sqlite:
+            # Shared lock on the partition row blocks concurrent deletions
+            # (which hold exclusive locks) until write completes.
+            # SQLite relies on the asyncio write lock instead.
+            await session.execute(
+                select(PartitionRow.partition_key)
+                .where(PartitionRow.partition_key == self._partition_key)
+                .with_for_update(read=True)
+            )
 
     # Registration
 
@@ -178,10 +229,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
     ) -> None:
         async with (
-            self._sqlite_write_lock(),
+            self._sqlite_write_lock,
             self._create_session() as session,
             session.begin(),
         ):
+            await self._lock_partition_for_write(session)
             await self._insert_segments(session, segments_to_derivative_uuids.keys())
             await self._insert_derivative_links(session, segments_to_derivative_uuids)
 
@@ -195,7 +247,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             {
                 "uuid": segment.uuid,
                 "partition_key": self._partition_key,
-                "episode_uuid": segment.episode_uuid,
+                "event_uuid": segment.event_uuid,
                 "index": segment.index,
                 "offset": segment.offset,
                 "timestamp": ensure_tz_aware(segment.timestamp),
@@ -323,7 +375,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             select(
                 SegmentRow.uuid.label("seed_uuid"),
                 SegmentRow.timestamp.label("seed_timestamp"),
-                SegmentRow.episode_uuid.label("seed_episode_uuid"),
+                SegmentRow.event_uuid.label("seed_event_uuid"),
                 SegmentRow.index.label("seed_index"),
                 SegmentRow.offset.label("seed_offset"),
             )
@@ -336,13 +388,13 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         segment_ordering_columns = tuple_(
             SegmentRow.timestamp,
-            SegmentRow.episode_uuid,
+            SegmentRow.event_uuid,
             SegmentRow.index,
             SegmentRow.offset,
         )
         seed_ordering_columns = tuple_(
             seeds_subquery.c.seed_timestamp,
-            seeds_subquery.c.seed_episode_uuid,
+            seeds_subquery.c.seed_event_uuid,
             seeds_subquery.c.seed_index,
             seeds_subquery.c.seed_offset,
         )
@@ -376,7 +428,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             seed_context_join_query = select(
                 seeds_subquery.c.seed_uuid,
                 lateral_subquery.c.uuid,
-                lateral_subquery.c.episode_uuid,
+                lateral_subquery.c.event_uuid,
                 lateral_subquery.c.index,
                 lateral_subquery.c.offset,
                 lateral_subquery.c.timestamp,
@@ -395,7 +447,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     SegmentRow(
                         uuid=row.uuid,
                         partition_key=partition_key,
-                        episode_uuid=row.episode_uuid,
+                        event_uuid=row.event_uuid,
                         index=row.index,
                         offset=row.offset,
                         timestamp=row.timestamp,
@@ -409,7 +461,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         chronological_order = [
             SegmentRow.timestamp,
-            SegmentRow.episode_uuid,
+            SegmentRow.event_uuid,
             SegmentRow.index,
             SegmentRow.offset,
         ]
@@ -456,7 +508,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         segment_ordering_columns = tuple_(
             SegmentRow.timestamp,
-            SegmentRow.episode_uuid,
+            SegmentRow.event_uuid,
             SegmentRow.index,
             SegmentRow.offset,
         )
@@ -473,7 +525,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         for seed_uuid, seed_row in seed_rows_by_uuid.items():
             seed_ordering_values = tuple_(
                 literal(seed_row.timestamp),
-                literal(seed_row.episode_uuid),
+                literal(seed_row.event_uuid),
                 literal(seed_row.index),
                 literal(seed_row.offset),
             )
@@ -488,7 +540,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     )
                     .order_by(
                         SegmentRow.timestamp.desc(),
-                        SegmentRow.episode_uuid.desc(),
+                        SegmentRow.event_uuid.desc(),
                         SegmentRow.index.desc(),
                         SegmentRow.offset.desc(),
                     )
@@ -512,7 +564,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     )
                     .order_by(
                         SegmentRow.timestamp,
-                        SegmentRow.episode_uuid,
+                        SegmentRow.event_uuid,
                         SegmentRow.index,
                         SegmentRow.offset,
                     )
@@ -531,24 +583,24 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         return context_rows_by_seed
 
     @override
-    async def get_segment_uuids_by_episode_uuids(
+    async def get_segment_uuids_by_event_uuids(
         self,
-        episode_uuids: Iterable[UUID],
+        event_uuids: Iterable[UUID],
     ) -> dict[UUID, list[UUID]]:
-        episode_uuids = set(episode_uuids)
-        if not episode_uuids:
+        event_uuids = set(event_uuids)
+        if not event_uuids:
             return {}
 
         async with self._create_session() as session:
-            query = select(SegmentRow.episode_uuid, SegmentRow.uuid).where(
+            query = select(SegmentRow.event_uuid, SegmentRow.uuid).where(
                 SegmentRow.partition_key == self._partition_key,
-                SegmentRow.episode_uuid.in_(episode_uuids),
+                SegmentRow.event_uuid.in_(event_uuids),
             )
             rows = (await session.execute(query)).all()
 
         result: defaultdict[UUID, list[UUID]] = defaultdict(list)
-        for episode_uuid, segment_uuid in rows:
-            result[episode_uuid].append(segment_uuid)
+        for event_uuid, segment_uuid in rows:
+            result[event_uuid].append(segment_uuid)
         return dict(result)
 
     @override
@@ -586,10 +638,25 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             return
 
         async with (
-            self._sqlite_write_lock(),
+            self._sqlite_write_lock,
             self._create_session() as session,
             session.begin(),
         ):
+            await self._lock_partition_for_write(session)
+            if not self._is_sqlite:
+                # Lock rows in deterministic order to prevent deadlocks
+                # from concurrent deletions with overlapping UUID sets.
+                # SQLite relies on the asyncio write lock instead.
+                await session.execute(
+                    select(SegmentRow.uuid)
+                    .where(
+                        SegmentRow.partition_key == self._partition_key,
+                        SegmentRow.uuid.in_(segment_uuids),
+                    )
+                    .order_by(SegmentRow.uuid)
+                    .with_for_update()
+                )
+
             # CASCADE deletes derivatives via FK.
             await session.execute(
                 delete(SegmentRow).where(
@@ -628,7 +695,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         timestamp = ensure_tz_aware(row.timestamp).astimezone(original_timezone)
         return Segment(
             uuid=row.uuid,
-            episode_uuid=row.episode_uuid,
+            event_uuid=row.event_uuid,
             index=row.index,
             offset=row.offset,
             timestamp=timestamp,
@@ -653,24 +720,18 @@ class SQLAlchemySegmentStoreParams(BaseModel):
 class SQLAlchemySegmentStore(SegmentStore):
     """SQLAlchemy-backed SegmentStore factory."""
 
-    # Shared across all instances so that stores using the same engine
-    # serialise SQLite writes through the same lock.
-    # Keyed by engine so locks are garbage-collected when the engine is.
-    _write_locks: WeakKeyDictionary[AsyncEngine, defaultdict[str, asyncio.Lock]] = (
-        WeakKeyDictionary()
-    )
+    _PARTITION_KEY_RE = re.compile(r"^[a-z0-9_]+$")
 
     def __init__(self, params: SQLAlchemySegmentStoreParams) -> None:
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
 
-        # SQLite does not isolate transactions within a single connection.
-        # https://sqlite.org/isolation.html
-        self._use_write_lock = self._engine.dialect.name == "sqlite"
+        self._is_postgresql = self._engine.dialect.name == "postgresql"
+        self._is_sqlite = self._engine.dialect.name == "sqlite"
 
         # SQLite requires PRAGMA foreign_keys = ON for CASCADE deletes.
-        if self._engine.dialect.name == "sqlite":
+        if self._is_sqlite:
 
             @event.listens_for(self._engine.sync_engine, "connect")
             def _enable_sqlite_fks(
@@ -681,30 +742,107 @@ class SQLAlchemySegmentStore(SegmentStore):
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.close()
 
+    # Lifecycle
+
     @override
     async def startup(self) -> None:
-        async with self._engine.begin() as conn:
-            await conn.run_sync(BaseSegmentStore.metadata.create_all)
+        async with self._engine.begin() as connection:
+            await connection.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override
     async def shutdown(self) -> None:
         pass
 
+    # Partition management
+
+    _PG_LOCK_PARTITIONS_TABLE = text(
+        "LOCK TABLE segment_store_pt IN SHARE ROW EXCLUSIVE MODE"
+    )
+
+    @override
+    async def create_partition(self, partition_key: str) -> None:
+        SQLAlchemySegmentStore._validate_partition_key(partition_key)
+        async with (
+            _get_sqlite_write_lock_context(self._engine, partition_key),
+            self._engine.begin() as connection,
+        ):
+            if self._is_postgresql:
+                await connection.execute(
+                    SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
+                )
+
+            exists = (
+                await connection.execute(
+                    select(PartitionRow.partition_key).where(
+                        PartitionRow.partition_key == partition_key
+                    )
+                )
+            ).scalar()
+            if exists is not None:
+                raise SegmentStorePartitionAlreadyExistsError(partition_key)
+
+            await connection.execute(
+                insert(PartitionRow).values(partition_key=partition_key)
+            )
+            if self._is_postgresql:
+                await self._create_pg_child_tables(connection, partition_key)
+
     @override
     async def open_partition(
         self, partition_key: str
-    ) -> SQLAlchemySegmentStorePartition:
-        if self._use_write_lock:
-            engine_write_locks = SQLAlchemySegmentStore._write_locks.setdefault(
-                self._engine, defaultdict(asyncio.Lock)
-            )
-            write_lock = engine_write_locks[partition_key]
-        else:
-            write_lock = None
+    ) -> SQLAlchemySegmentStorePartition | None:
+        SQLAlchemySegmentStore._validate_partition_key(partition_key)
+        async with self._create_session() as session:
+            exists = (
+                await session.execute(
+                    select(PartitionRow.partition_key).where(
+                        PartitionRow.partition_key == partition_key
+                    )
+                )
+            ).scalar()
+        if exists is None:
+            return None
+
         return SQLAlchemySegmentStorePartition(
             partition_key=partition_key,
-            create_session=self._create_session,
-            write_lock=write_lock,
+            engine=self._engine,
+        )
+
+    @override
+    async def open_or_create_partition(
+        self, partition_key: str
+    ) -> SQLAlchemySegmentStorePartition:
+        SQLAlchemySegmentStore._validate_partition_key(partition_key)
+        try:
+            async with (
+                _get_sqlite_write_lock_context(self._engine, partition_key),
+                self._engine.begin() as connection,
+            ):
+                if self._is_postgresql:
+                    await connection.execute(
+                        SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
+                    )
+
+                exists = (
+                    await connection.execute(
+                        select(PartitionRow.partition_key).where(
+                            PartitionRow.partition_key == partition_key
+                        )
+                    )
+                ).scalar()
+                if exists is None:
+                    await connection.execute(
+                        insert(PartitionRow).values(partition_key=partition_key)
+                    )
+                    if self._is_postgresql:
+                        await self._create_pg_child_tables(connection, partition_key)
+
+        except IntegrityError:
+            pass  # Concurrent creation: partition now exists.
+
+        return SQLAlchemySegmentStorePartition(
+            partition_key=partition_key,
+            engine=self._engine,
         )
 
     @override
@@ -712,3 +850,77 @@ class SQLAlchemySegmentStore(SegmentStore):
         self, segment_store_partition: SegmentStorePartition
     ) -> None:
         pass
+
+    @override
+    async def delete_partition(self, partition_key: str) -> None:
+        SQLAlchemySegmentStore._validate_partition_key(partition_key)
+        async with (
+            _get_sqlite_write_lock_context(self._engine, partition_key),
+            self._engine.begin() as connection,
+        ):
+            if not self._is_sqlite:
+                # Exclusive lock on the partition row blocks concurrent writes
+                # (which hold shared locks) until deletion completes.
+                # SQLite relies on the asyncio write lock instead.
+                await connection.execute(
+                    select(PartitionRow.partition_key)
+                    .where(PartitionRow.partition_key == partition_key)
+                    .with_for_update()
+                )
+            if self._is_postgresql:
+                await self._drop_pg_child_tables(connection, partition_key)
+
+            # CASCADE from PartitionRow deletes segments and derivatives.
+            await connection.execute(
+                delete(PartitionRow).where(PartitionRow.partition_key == partition_key)
+            )
+
+    # Helpers
+
+    @staticmethod
+    def _validate_partition_key(partition_key: str) -> None:
+        """Validate that a partition key is safe for use in SQL identifiers."""
+        if not SQLAlchemySegmentStore._PARTITION_KEY_RE.match(partition_key):
+            raise ValueError(
+                f"Partition key {partition_key!r} contains invalid characters. "
+                "Only lowercase alphanumeric and underscores are allowed."
+            )
+        if len(partition_key) > 32:
+            raise ValueError(
+                f"Partition key {partition_key!r} is too long "
+                f"({len(partition_key)} characters). Maximum is 32."
+            )
+
+    @staticmethod
+    async def _create_pg_child_tables(
+        connection: AsyncConnection, partition_key: str
+    ) -> None:
+        """Create PostgreSQL child partition tables for the given key."""
+        segments_child = f'"segment_store_sg_p_{partition_key}"'
+        derivative_links_child = f'"segment_store_dv_ln_p_{partition_key}"'
+        await connection.execute(
+            text(
+                f"CREATE TABLE {segments_child} PARTITION OF"
+                f" segment_store_sg FOR VALUES IN ('{partition_key}')"
+            )
+        )
+        await connection.execute(
+            text(
+                f"CREATE TABLE {derivative_links_child} PARTITION OF"
+                f" segment_store_dv_ln FOR VALUES IN ('{partition_key}')"
+            )
+        )
+
+    @staticmethod
+    async def _drop_pg_child_tables(
+        connection: AsyncConnection, partition_key: str
+    ) -> None:
+        """Drop PostgreSQL child partition tables for the given key."""
+        derivative_links_child = f'"segment_store_dv_ln_p_{partition_key}"'
+        segments_child = f'"segment_store_sg_p_{partition_key}"'
+
+        # CASCADE drops cross-partition FK constraint dependencies.
+        await connection.execute(
+            text(f"DROP TABLE IF EXISTS {derivative_links_child} CASCADE")
+        )
+        await connection.execute(text(f"DROP TABLE IF EXISTS {segments_child} CASCADE"))
