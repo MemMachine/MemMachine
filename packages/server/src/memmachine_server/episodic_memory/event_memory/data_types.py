@@ -217,11 +217,18 @@ class FormatOptions(BaseModel):
     show_timezone_label: bool = True
 
 
-# QueryResult: the result of a memory query, containing relevant segments and their context-ready string representation.
+# QueryResult: the result of a memory query.
+
+
+class ScoredSegmentContext(BaseModel):
+    """A segment context anchored on a seed segment, with a score."""
+
+    score: float
+    seed_segment_uuid: UUID
+    segments: list[Segment]
 
 
 class QueryResult(BaseModel):
-    """Memory query result."""
+    """Memory query result, ordered by reranker score."""
 
-    unified_segment_context: list[Segment]
-    unified_segment_context_string: str
+    scored_segment_contexts: list[ScoredSegmentContext]

@@ -39,6 +39,7 @@ from .data_types import (
     MessageContext,
     QueryResult,
     ReadFile,
+    ScoredSegmentContext,
     Segment,
     Text,
 )
@@ -58,8 +59,9 @@ class EventMemoryParams(BaseModel):
             Segment store partition handle for managing segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
-        reranker (Reranker):
-            Reranker instance for reranking search results.
+        reranker (Reranker | None):
+            Reranker instance for scoring search results.
+            If None, embedding similarity scores are used instead.
         derive_sentences (bool):
             Whether to derive sentence-level derivatives from content (default: False).
         max_text_chunk_length (int):
@@ -78,9 +80,10 @@ class EventMemoryParams(BaseModel):
         ...,
         description="Embedder instance for creating embeddings",
     )
-    reranker: InstanceOf[Reranker] = Field(
-        ...,
-        description="Reranker instance for reranking search results",
+    reranker: InstanceOf[Reranker] | None = Field(
+        None,
+        description="Reranker instance for scoring search results. "
+        "If None, embedding similarity scores are used instead.",
     )
     derive_sentences: bool = Field(
         False,
@@ -101,6 +104,27 @@ class EventMemory:
     _CONTEXT_TYPE_KEY = "_context_type"
     _CONTEXT_SOURCE_KEY = "_context_source"
 
+    # Properties schema that the vector store collection should include.
+    # Callers should merge this with any user-defined properties when
+    # creating the collection.
+    SYSTEM_PROPERTIES_SCHEMA: ClassVar[dict[str, type[PropertyValue]]] = {
+        _SEGMENT_UUID_KEY: str,
+        _TIMESTAMP_KEY: datetime.datetime,
+        _CONTEXT_TYPE_KEY: str,
+        _CONTEXT_SOURCE_KEY: str,
+    }
+
+    # Base properties required for every derivative.
+    _BASE_REQUIRED_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {_SEGMENT_UUID_KEY, _TIMESTAMP_KEY}
+    )
+
+    # Additional properties required by each context type.
+    _CONTEXT_TYPE_REQUIRED_KEYS: ClassVar[dict[type, frozenset[str]]] = {
+        MessageContext: frozenset({_CONTEXT_TYPE_KEY, _CONTEXT_SOURCE_KEY}),
+        CitationContext: frozenset({_CONTEXT_TYPE_KEY, _CONTEXT_SOURCE_KEY}),
+    }
+
     _COLLECTION_SYSTEM_FIELD_MAPPING: ClassVar[dict[str, str]] = {
         "timestamp": _TIMESTAMP_KEY,
         "context.type": _CONTEXT_TYPE_KEY,
@@ -118,6 +142,9 @@ class EventMemory:
         """
         self._vector_store_collection = params.vector_store_collection
         self._segment_store_partition = params.segment_store_partition
+        self._schema_keys = frozenset(
+            params.vector_store_collection.config.properties_schema
+        )
 
         self._embedder = params.embedder
         self._reranker = params.reranker
@@ -162,6 +189,17 @@ class EventMemory:
             keep_separator="end",
         )
 
+    def _missing_schema_keys(self, events: Iterable[Event]) -> frozenset[str]:
+        """Return schema keys required by the events but missing from the collection."""
+        required: set[str] = set(EventMemory._BASE_REQUIRED_KEYS)
+        for event in events:
+            match event.body:
+                case Content(context=context) if context is not None:
+                    keys = EventMemory._CONTEXT_TYPE_REQUIRED_KEYS.get(type(context))
+                    if keys is not None:
+                        required.update(keys)
+        return frozenset(required - self._schema_keys)
+
     async def encode_events(
         self,
         events: Iterable[Event],
@@ -172,7 +210,18 @@ class EventMemory:
         Args:
             events (Iterable[Event]): The events to encode.
 
+        Raises:
+            ValueError: If any event has a context type that requires
+                properties not in the collection schema.
         """
+        events = list(events)
+        missing = self._missing_schema_keys(events)
+        if missing:
+            raise ValueError(
+                f"Events require properties missing from the collection schema: "
+                f"{', '.join(sorted(missing))}"
+            )
+
         events = sorted(
             events,
             key=lambda event: (event.timestamp, event.uuid),
@@ -204,7 +253,7 @@ class EventMemory:
         )
 
         derivative_records = [
-            EventMemory._build_derivative_record(derivative, derivative_embedding)
+            self._build_derivative_record(derivative, derivative_embedding)
             for derivative, derivative_embedding in zip(
                 derivatives,
                 derivative_embeddings,
@@ -399,7 +448,7 @@ class EventMemory:
         self,
         query: str,
         *,
-        max_num_segments: int = 20,
+        vector_search_limit: int = 20,
         expand_context: int = 0,
         property_filter: FilterExpr | None = None,
         format_options: FormatOptions | None = None,
@@ -410,8 +459,9 @@ class EventMemory:
         Args:
             query (str):
                 The search query.
-            max_num_segments (int):
-                The maximum number of segments to return
+            vector_search_limit (int):
+                The maximum number of seed segments
+                to retrieve from the vector search
                 (default: 20).
             expand_context (int):
                 The number of additional segments to include
@@ -427,7 +477,7 @@ class EventMemory:
 
         Returns:
             QueryResult:
-                Query result containing segments relevant to the query, ordered chronologically.
+                The query result.
 
         """
         if format_options is None:
@@ -448,29 +498,30 @@ class EventMemory:
         # Search derivative collection for matches.
         [query_result] = await self._vector_store_collection.query(
             query_vectors=[query_embedding],
-            limit=min(5 * max_num_segments, 200),
+            limit=vector_search_limit,
             property_filter=collection_filter,
             return_vector=False,
             return_properties=True,
         )
 
-        # Extract seed segment UUIDs from vector metadata, preserving similarity order.
+        # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
-        seed_segment_uuids = list(
-            dict.fromkeys(
-                UUID(
-                    str(
-                        cast(
-                            dict[str, PropertyValue],
-                            match.record.properties,
-                        )[EventMemory._SEGMENT_UUID_KEY]
-                    )
+        # First occurrence has the best score since matches are ordered best-to-worst.
+        seed_embedding_scores: dict[UUID, float] = {}
+        for match in query_result.matches:
+            segment_uuid = UUID(
+                str(
+                    cast(
+                        dict[str, PropertyValue],
+                        match.record.properties,
+                    )[EventMemory._SEGMENT_UUID_KEY]
                 )
-                for match in query_result.matches
             )
-        )
+            if segment_uuid not in seed_embedding_scores:
+                seed_embedding_scores[segment_uuid] = match.score
 
-        expand_context = min(max(0, expand_context), max_num_segments - 1)
+        seed_segment_uuids = list(seed_embedding_scores)
+
         max_backward_segments = expand_context // 3
         max_forward_segments = expand_context - max_backward_segments
 
@@ -494,41 +545,42 @@ class EventMemory:
             for seed_segment_uuid in kept_seed_segment_uuids
         ]
 
-        # Rerank segment contexts.
-        segment_context_scores = await self._score_segment_contexts(
-            query,
-            segment_contexts,
-            format_options,
+        # Use embedding scores if reranker is not available.
+        if self._reranker is None:
+            scores = [
+                seed_embedding_scores[seed_uuid]
+                for seed_uuid in kept_seed_segment_uuids
+            ]
+        else:
+            scores = await self._score_segment_contexts(
+                query, segment_contexts, format_options
+            )
+
+        # Reranker scores are always higher-is-better.
+        # Embedding scores depend on the similarity metric.
+        higher_is_better = (
+            self._reranker is not None
+            or self._vector_store_collection.config.similarity_metric.higher_is_better
         )
 
-        reranked_anchored_segment_contexts = [
-            (seed_segment_uuid, segment_context)
-            for _, seed_segment_uuid, segment_context in sorted(
+        # Return scored contexts ordered by score.
+        scored_segment_contexts = [
+            ScoredSegmentContext(
+                score=score, seed_segment_uuid=seed_uuid, segments=context
+            )
+            for score, seed_uuid, context in sorted(
                 zip(
-                    segment_context_scores,
+                    scores,
                     kept_seed_segment_uuids,
                     segment_contexts,
                     strict=True,
                 ),
                 key=lambda triple: triple[0],
-                reverse=True,
+                reverse=higher_is_better,
             )
         ]
 
-        # Unify segment contexts.
-        unified_segment_context = EventMemory._unify_anchored_segment_contexts(
-            reranked_anchored_segment_contexts,
-            max_num_segments=max_num_segments,
-        )
-
-        unified_segment_context_string = EventMemory.string_from_segment_context(
-            unified_segment_context, format_options=format_options
-        )
-
-        return QueryResult(
-            unified_segment_context=unified_segment_context,
-            unified_segment_context_string=unified_segment_context_string,
-        )
+        return QueryResult(scored_segment_contexts=scored_segment_contexts)
 
     async def _score_segment_contexts(
         self,
@@ -536,16 +588,15 @@ class EventMemory:
         segment_contexts: Iterable[Iterable[Segment]],
         format_options: FormatOptions,
     ) -> list[float]:
-        """Score segment contexts based on their relevance to the query."""
-        context_strings = []
-        for segment_context in segment_contexts:
-            context_string = EventMemory.string_from_segment_context(
+        """Score segment contexts using the reranker. Requires reranker."""
+        assert self._reranker is not None
+        context_strings = [
+            EventMemory.string_from_segment_context(
                 segment_context, format_options=format_options
             )
-            context_strings.append(context_string)
-
-        segment_context_scores = await self._reranker.score(query, context_strings)
-        return segment_context_scores
+            for segment_context in segment_contexts
+        ]
+        return await self._reranker.score(query, context_strings)
 
     @staticmethod
     def string_from_segment_context(
@@ -694,50 +745,54 @@ class EventMemory:
         )
 
     @staticmethod
-    def _unify_anchored_segment_contexts(
-        anchored_segment_contexts: Iterable[tuple[UUID, Iterable[Segment]]],
+    def build_query_result_context(
+        query_result: QueryResult,
         max_num_segments: int,
     ) -> list[Segment]:
-        """Unify anchored segment contexts into a single list within the limit."""
-        unified_segment_context_set: set[Segment] = set()
+        """
+        Build a single segment context from the query result within the limit.
 
-        for seed_segment_uuid, context in anchored_segment_contexts:
-            context = list(context)
+        Iterates contexts in score order, accumulating segments until the limit is reached.
+        When a context would exceed the limit, segments nearest the seed are prioritized.
+        Deduplicates across segment contexts in the query result.
 
-            if len(unified_segment_context_set) >= max_num_segments:
+        Args:
+            query_result (QueryResult):
+                The query result with scored anchored segment contexts.
+            max_num_segments (int):
+                The maximum number of segments to return.
+
+        Returns:
+            list[Segment]:
+                Deduplicated segments ordered chronologically.
+        """
+        unified: set[Segment] = set()
+
+        for scored_context in query_result.scored_segment_contexts:
+            context = scored_context.segments
+
+            if len(unified) >= max_num_segments:
                 break
-            if (len(unified_segment_context_set) + len(context)) <= max_num_segments:
-                # It is impossible that the context exceeds the limit.
-                unified_segment_context_set.update(context)
+            if (len(unified) + len(context)) <= max_num_segments:
+                unified.update(context)
             else:
-                # It is possible that the context exceeds the limit.
                 # Prioritize segments near the seed segment.
-
-                # Sort chronological segments by weighted index-proximity to the seed segment.
                 seed_index = next(
                     index
                     for index, segment in enumerate(context)
-                    if segment.uuid == seed_segment_uuid
+                    if segment.uuid == scored_context.seed_segment_uuid
                 )
 
-                seed_context = sorted(
+                for segment in sorted(
                     context,
-                    key=lambda segment: EventMemory._weighted_index_proximity(
-                        segment=segment,
-                        context=context,
-                        seed_index=seed_index,
-                    ),
-                )
-
-                # Add segments to unified context until limit is reached,
-                # or until the context is exhausted.
-                for segment in seed_context:
-                    if len(unified_segment_context_set) >= max_num_segments:
+                    key=lambda s: EventMemory._seed_proximity(s, context, seed_index),
+                ):
+                    if len(unified) >= max_num_segments:
                         break
-                    unified_segment_context_set.add(segment)
+                    unified.add(segment)
 
-        unified_segment_context = sorted(
-            unified_segment_context_set,
+        return sorted(
+            unified,
             key=lambda segment: (
                 segment.timestamp,
                 segment.event_uuid,
@@ -746,16 +801,15 @@ class EventMemory:
             ),
         )
 
-        return unified_segment_context
-
     @staticmethod
-    def _weighted_index_proximity(
+    def _seed_proximity(
         segment: Segment,
-        context: Sequence[Segment],
+        context: list[Segment],
         seed_index: int,
     ) -> float:
-        proximity = context.index(segment) - seed_index
-        if proximity >= 0:
-            # Forward recall is better than backward recall.
-            return (proximity - 0.5) / 2
-        return -proximity
+        """Score a segment by its proximity to the seed. Lower is closer."""
+        offset = context.index(segment) - seed_index
+        if offset >= 0:
+            # Forward context is more useful than backward.
+            return (offset - 0.5) / 2
+        return -offset
