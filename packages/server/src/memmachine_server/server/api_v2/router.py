@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Response
 from memmachine_common.api.doc import RouterDoc
+from memmachine_common.api.event_memory.config import EventMemoryConf
 from memmachine_common.api.spec import (
     AddFeatureResponse,
     AddFeatureSpec,
@@ -16,6 +17,7 @@ from memmachine_common.api.spec import (
     AddSemanticTagResponse,
     AddSemanticTagSpec,
     ConfigureEpisodicMemorySpec,
+    ConfigureEventMemorySpec,
     ConfigureLongTermMemorySpec,
     ConfigureSemanticSetSpec,
     ConfigureShortTermMemorySpec,
@@ -31,7 +33,9 @@ from memmachine_common.api.spec import (
     DisableSemanticCategorySpec,
     EpisodeCountResponse,
     EpisodicMemoryConfigEntry,
+    EventMemoryConfigEntry,
     GetEpisodicMemoryConfigSpec,
+    GetEventMemoryConfigSpec,
     GetFeatureSpec,
     GetLongTermMemoryConfigSpec,
     GetProjectSpec,
@@ -900,6 +904,61 @@ async def configure_episodic_memory(
     except Exception as e:
         raise RestError(
             code=500, message="Unable to configure episodic memory", ex=e
+        ) from e
+
+
+@router.post(
+    "/memory/event/config/get",
+    description=RouterDoc.GET_EVENT_MEMORY_CONFIG,
+    tags=["Event Memory Configuration"],
+)
+async def get_event_memory_config(
+    spec: GetEventMemoryConfigSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> EventMemoryConfigEntry:
+    """Get event memory configuration for a project."""
+    session_data = _SessionData(org_id=spec.org_id, project_id=spec.project_id)
+    try:
+        conf = await memmachine.get_event_memory_config(session_data)
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project not found", ex=e) from e
+    except Exception as e:
+        raise RestError(
+            code=500, message="Unable to get event memory config", ex=e
+        ) from e
+    if conf is None:
+        raise RestError(code=404, message="No event memory configuration found")
+    return EventMemoryConfigEntry(**conf.model_dump())
+
+
+@router.post(
+    "/memory/event/config",
+    status_code=204,
+    description=RouterDoc.CONFIGURE_EVENT_MEMORY,
+    tags=["Event Memory Configuration"],
+)
+async def configure_event_memory(
+    spec: ConfigureEventMemorySpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> None:
+    """Configure event memory for a project."""
+    session_data = _SessionData(org_id=spec.org_id, project_id=spec.project_id)
+    conf = EventMemoryConf(
+        vector_store=spec.vector_store,
+        segment_store=spec.segment_store,
+        embedder=spec.embedder,
+        reranker=spec.reranker,
+        properties_schema=spec.properties_schema,
+        segmenter=spec.segmenter,
+        deriver=spec.deriver,
+    )
+    try:
+        await memmachine.configure_event_memory(session_data, conf)
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project not found", ex=e) from e
+    except Exception as e:
+        raise RestError(
+            code=500, message="Unable to configure event memory", ex=e
         ) from e
 
 

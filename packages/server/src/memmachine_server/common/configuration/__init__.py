@@ -16,6 +16,9 @@ from memmachine_server.common.configuration.embedder_conf import EmbeddersConf
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
 )
+from memmachine_server.common.configuration.event_memory_config import (
+    EventMemoryConf,
+)
 from memmachine_server.common.configuration.language_model_conf import (
     LanguageModelsConf,
 )
@@ -316,6 +319,7 @@ class Configuration(BaseModel):
     """Aggregate configuration for MemMachine services."""
 
     episodic_memory: EpisodicMemoryConfPartial
+    event_memory: EventMemoryConf | None = None
     retrieval_agent: RetrievalAgentConf = RetrievalAgentConf()
     semantic_memory: SemanticMemoryConf
     logging: LogConf

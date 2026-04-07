@@ -1800,6 +1800,7 @@ requires-dist = [
 name = "memmachine-common"
 source = { editable = "packages/common" }
 dependencies = [
+    { name = "babel" },
     { name = "pydantic" },
     { name = "regex" },
     { name = "typing-extensions" },
@@ -1807,6 +1808,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "babel", specifier = ">=2.18.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "regex", specifier = ">=2023.0.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },

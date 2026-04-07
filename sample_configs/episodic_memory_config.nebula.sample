@@ -14,6 +14,22 @@ episodic_memory:
     llm_model: openai_model
     message_capacity: 500
 
+# Event memory (optional — omit this section to disable event memory).
+#
+# event_memory:
+#   vector_store: event_vector_store     # references resources.databases (e.g. Qdrant)
+#   segment_store: profile_storage       # references a relational DB; segment store is created from it
+#   embedder: openai_embedder
+#   reranker: my_reranker_id             # optional — omit to use embedding scores
+#   properties_schema:                   # optional — user-defined filterable properties
+#     source_role: str
+#     target_id: str
+#   segmenter:                           # optional — defaults to text segmenter
+#     type: text
+#     max_chunk_length: 2000
+#   deriver:                             # optional — defaults to whole-text deriver
+#     type: whole_text                   # or: sentence_text
+
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
@@ -88,6 +104,25 @@ resources:
       provider: sqlite
       config:
         path: sqlite_test.db
+
+    # Vector stores live alongside relational/graph databases under `resources.databases`.
+    # Pick one for `event_memory.vector_store`. Postgres above can serve as the
+    # `event_memory.segment_store` (the SegmentStore is created implicitly from it).
+    event_vector_store:
+      provider: qdrant
+      config:
+        host: localhost
+        port: 6333
+        # Alternative SQLite-backed vector stores (two engine choices):
+    # event_vector_store:
+    #   provider: sqlite_vector_store
+    #   config:
+    #     path: event_vectors.db
+    #     vector_search_engine: usearch        # or: hnswlib
+    # event_vector_store:
+    #   provider: sqlite_vec_vector_store
+    #   config:
+    #     path: event_vectors.db
 
   embedders:
     openai_embedder:

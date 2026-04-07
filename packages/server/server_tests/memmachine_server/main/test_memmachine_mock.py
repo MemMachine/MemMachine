@@ -118,6 +118,7 @@ def _minimal_conf(
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    ret.event_memory = None
     ret.retrieval_agent = RetrievalAgentConf()
     semantic_conf = MagicMock()
     semantic_conf.llm_model = None
@@ -147,6 +148,14 @@ def patched_resource_manager(monkeypatch):
     """Replace :class:`ResourceManagerImpl` with a controllable double."""
 
     fake_manager = AsyncMock()
+    # Default: no per-tenant event memory override → fall back to server-level
+    # `conf.event_memory` (which is None in `_minimal_conf`, so event memory is
+    # disabled). Tests can override this if they need a tenant conf.
+    fake_session_data_manager = AsyncMock()
+    fake_session_data_manager.get_event_memory_conf = AsyncMock(return_value=None)
+    fake_manager.get_session_data_manager = AsyncMock(
+        return_value=fake_session_data_manager
+    )
     monkeypatch.setattr(
         "memmachine_server.main.memmachine.ResourceManagerImpl",
         MagicMock(return_value=fake_manager),

@@ -204,10 +204,11 @@ class TestEncodeEvents:
         record = next(iter(fake_vector_store_collection.records.values()))
         assert _record_properties(record)["color"] == "red"
 
-    async def test_missing_context_schema_fields_still_allows_ingest(
-        self, fake_embedder
+    async def test_minimal_schema_allows_ingest(
+        self,
+        fake_embedder,
     ):
-        # Collection without context fields.
+        # Collection with only the required base fields.
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
@@ -231,10 +232,11 @@ class TestEncodeEvents:
         await em.encode_events([event])
 
         assert len(collection.records) == 1
+        segment = next(iter(partition.segments.values()))
         record = next(iter(collection.records.values()))
         props = _record_properties(record)
-        assert "_context_type" not in props
-        assert "_context_producer" not in props
+        assert props["_segment_uuid"] == str(segment.uuid)
+        assert props["_timestamp"] == event.timestamp
 
     async def test_init_raises_on_missing_base_field(self, fake_embedder):
         # Collection without _timestamp — base field required at init.
@@ -867,21 +869,6 @@ class TestQueryWithFilter:
         result = await event_memory.query(
             "thing",
             property_filter=Comparison(field="m.color", op="=", value="purple"),
-        )
-        assert result.scored_segment_contexts == []
-
-    async def test_context_filter_returns_no_results(self, event_memory: EventMemory):
-        """Context fields are no longer filterable."""
-        event = _make_event("hi", context=ProducerContext(producer="Alice"))
-        await event_memory.encode_events([event])
-
-        result = await event_memory.query(
-            "hi",
-            property_filter=Comparison(
-                field="context.producer",
-                op="=",
-                value="Alice",
-            ),
         )
         assert result.scored_segment_contexts == []
 

@@ -4,8 +4,10 @@ import asyncio
 import contextlib
 import logging
 from asyncio import Task
+from collections import defaultdict
 from collections.abc import Callable, Coroutine, Iterable, Mapping
-from typing import Any, Final, Protocol
+from typing import Any, ClassVar, Final, Protocol
+from uuid import UUID, uuid5
 
 from memmachine_common.api import MemoryType
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -17,7 +19,19 @@ from memmachine_server.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
+from memmachine_server.common.configuration.event_memory_config import (
+    DeriverConf,
+    EventMemoryConf,
+    SegmenterConf,
+    SentenceTextDeriverConf,
+    TextSegmenterConf,
+    WholeTextDeriverConf,
+)
 from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
+    PropertyValue,
+)
 from memmachine_server.common.episode_store import (
     Episode,
     EpisodeEntry,
@@ -46,7 +60,38 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.vector_store import (
+    VectorStoreCollectionConfig,
+)
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    Event,
+)
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    ProducerContext as EventProducerContext,
+)
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    QueryResult as EventMemoryQueryResult,
+)
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    TextBlock as EventTextBlock,
+)
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
+from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
+    SentenceTextDeriver,
+    WholeTextDeriver,
+)
+from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
+    EventMemoryParams,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStorePartitionConfig,
+)
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
+from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
+    TextSegmenter,
+)
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -75,9 +120,20 @@ logger = logging.getLogger(__name__)
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
 EPISODE_DELETE_BATCH_SIZE: Final[int] = 1000
 
+# Fixed namespace for deterministic Episode UID → Event UUID mapping.
+_EVENT_UUID_NAMESPACE = UUID("e7a1c3d5-9f2b-4e6a-8d0c-3b5f7a2e1d4c")
+
 
 class MemMachine:
     """MemMachine class."""
+
+    _EVENT_MEMORY_COLLECTION_NAMESPACE = "event_memory"
+
+    # Shared across all MemMachine instances to prevent concurrent
+    # event memory lifecycle operations on the same partition key.
+    _event_memory_partition_locks: ClassVar[defaultdict[str, asyncio.Lock]] = (
+        defaultdict(asyncio.Lock)
+    )
 
     class SessionData(Protocol):
         """Protocol describing session-scoped context used by memories."""
@@ -322,6 +378,9 @@ class MemMachine:
                 self._deletion_queue.task_done()
 
     async def _delete_queued_session(self, session: SessionData) -> None:
+        # Delete event memory partition first (removes from search before other cleanup).
+        await self._delete_event_memory_partition(session.session_key)
+
         tasks = [self._delete_session_episode_store(session.session_key)]
         if self._conf.episodic_memory.enabled:
             tasks.append(self._delete_session_episodic_memory(session.session_key))
@@ -624,6 +683,28 @@ class MemMachine:
             short_term_memory_enabled=short_term_memory_enabled,
         )
 
+    async def get_event_memory_config(
+        self,
+        session_data: SessionData,
+    ) -> EventMemoryConf | None:
+        """Get the event memory configuration for a session."""
+        session_data_manager = await self._resources.get_session_data_manager()
+        return await session_data_manager.get_event_memory_conf(
+            session_data.session_key,
+        )
+
+    async def configure_event_memory(
+        self,
+        session_data: SessionData,
+        conf: EventMemoryConf | None,
+    ) -> None:
+        """Set or clear the event memory configuration for a session."""
+        session_data_manager = await self._resources.get_session_data_manager()
+        await session_data_manager.set_event_memory_conf(
+            session_data.session_key,
+            conf,
+        )
+
     @staticmethod
     def _merge_filter_exprs(
         left: FilterExpr | None,
@@ -699,14 +780,210 @@ class MemMachine:
                 )
             )
 
+        if MemoryType.Event in target_memories:
+            tasks.append(
+                self._add_event_memory_episodes(
+                    session_data=session_data,
+                    episodes=episodes,
+                )
+            )
+
         await asyncio.gather(*tasks)
         return episode_ids
+
+    @staticmethod
+    def _episode_to_event(episode: Episode) -> Event:
+        """Convert a top-level Episode to an event memory Event.
+
+        Maps Episode-native fields to Event-model property names:
+        - context.source: producer_id (who produced the content)
+        - context.type: "message" (Episode content is always message-type)
+        - source_role: producer_role (e.g. "user", "assistant")
+        - target_id: produced_for_id (who the content was produced for)
+
+        User-defined filterable_metadata is merged into properties.
+        """
+        properties: dict[str, PropertyValue] = {
+            "source_role": episode.producer_role,
+        }
+        if episode.produced_for_id is not None:
+            properties["target_id"] = episode.produced_for_id
+        if episode.filterable_metadata is not None:
+            properties.update(episode.filterable_metadata)
+
+        metadata: dict[str, JsonValue] = {}
+        if episode.metadata is not None:
+            metadata.update(episode.metadata)
+
+        return Event(
+            uuid=uuid5(_EVENT_UUID_NAMESPACE, episode.uid),
+            timestamp=episode.created_at,
+            context=EventProducerContext(producer=episode.producer_id),
+            blocks=[EventTextBlock(text=episode.content)],
+            properties=properties,
+        )
+
+    @staticmethod
+    def _episode_uid_to_event_uuid(uid: str) -> UUID:
+        """Convert an episode UID to the corresponding event UUID."""
+        return uuid5(_EVENT_UUID_NAMESPACE, uid)
+
+    @staticmethod
+    def _resolve_properties_schema(
+        raw: dict[str, str],
+    ) -> dict[str, type[PropertyValue]]:
+        """Resolve property type names from config to Python types."""
+        resolved: dict[str, type[PropertyValue]] = {}
+        for key, type_name in raw.items():
+            prop_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
+            if prop_type is None:
+                raise ValueError(f"Property {key!r}: unknown type name {type_name!r}")
+            resolved[key] = prop_type
+        return resolved
+
+    async def _resolve_event_memory_conf(
+        self,
+        session_key: str,
+    ) -> EventMemoryConf | None:
+        """Resolve event memory config: tenant-specific with server default fallback."""
+        session_data_manager = await self._resources.get_session_data_manager()
+        try:
+            tenant_conf = await session_data_manager.get_event_memory_conf(session_key)
+        except Exception:
+            tenant_conf = None
+        if tenant_conf is not None:
+            return tenant_conf
+        return self._conf.event_memory
+
+    async def _open_event_memory(
+        self,
+        partition_key: str,
+    ) -> EventMemory | None:
+        """Open or create an EventMemory for a partition, or None if disabled."""
+        conf = await self._resolve_event_memory_conf(partition_key)
+        if conf is None:
+            return None
+
+        async with MemMachine._event_memory_partition_locks[partition_key]:
+            vector_store = await self._resources.get_vector_store(conf.vector_store)
+            segment_store = await self._resources.get_segment_store(conf.segment_store)
+            embedder = await self._resources.get_embedder(conf.embedder, validate=True)
+            reranker = (
+                await self._resources.get_reranker(conf.reranker, validate=True)
+                if conf.reranker is not None
+                else None
+            )
+
+            # Try to open existing collection first (preserves original schema).
+            # Create with current schema only if the partition doesn't exist.
+            vector_store_collection = await vector_store.open_collection(
+                namespace=MemMachine._EVENT_MEMORY_COLLECTION_NAMESPACE,
+                name=partition_key,
+            )
+            if vector_store_collection is None:
+                user_schema = MemMachine._resolve_properties_schema(
+                    conf.properties_schema
+                )
+                collection_config = VectorStoreCollectionConfig(
+                    vector_dimensions=embedder.dimensions,
+                    similarity_metric=embedder.similarity_metric,
+                    indexed_properties_schema={
+                        **EventMemory.expected_vector_store_collection_schema(),
+                        **user_schema,
+                    },
+                )
+                await vector_store.create_collection(
+                    namespace=MemMachine._EVENT_MEMORY_COLLECTION_NAMESPACE,
+                    name=partition_key,
+                    config=collection_config,
+                )
+                vector_store_collection = await vector_store.open_collection(
+                    namespace=MemMachine._EVENT_MEMORY_COLLECTION_NAMESPACE,
+                    name=partition_key,
+                )
+                if vector_store_collection is None:
+                    msg = f"Failed to open collection after creation for {partition_key!r}"
+                    raise RuntimeError(msg)
+
+            segment_store_partition = await segment_store.open_or_create_partition(
+                partition_key,
+                SegmentStorePartitionConfig(),
+            )
+
+        segmenter = await self._build_segmenter(conf.segmenter)
+        deriver = await self._build_deriver(conf.deriver)
+
+        return EventMemory(
+            EventMemoryParams(
+                vector_store_collection=vector_store_collection,
+                segment_store_partition=segment_store_partition,
+                segmenter=segmenter,
+                deriver=deriver,
+                embedder=embedder,
+                reranker=reranker,
+            )
+        )
+
+    async def _build_segmenter(self, conf: SegmenterConf) -> Segmenter:
+        """Materialize a Segmenter from config.
+
+        Async so future variants can resolve resource IDs via `self._resources`.
+        """
+        match conf:
+            case TextSegmenterConf(max_chunk_length=max_chunk_length):
+                return TextSegmenter(max_chunk_length=max_chunk_length)
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported segmenter config: {type(conf).__name__}"
+                )
+
+    async def _build_deriver(self, conf: DeriverConf) -> Deriver:
+        """Materialize a Deriver from config.
+
+        Async so future variants can resolve resource IDs via `self._resources`.
+        """
+        match conf:
+            case WholeTextDeriverConf():
+                return WholeTextDeriver()
+            case SentenceTextDeriverConf():
+                return SentenceTextDeriver()
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported deriver config: {type(conf).__name__}"
+                )
+
+    async def _delete_event_memory_partition(self, partition_key: str) -> None:
+        """Delete all event memory data for a partition. Idempotent."""
+        conf = await self._resolve_event_memory_conf(partition_key)
+        if conf is None:
+            return
+        async with MemMachine._event_memory_partition_locks[partition_key]:
+            vector_store = await self._resources.get_vector_store(conf.vector_store)
+            segment_store = await self._resources.get_segment_store(conf.segment_store)
+            await vector_store.delete_collection(
+                namespace=MemMachine._EVENT_MEMORY_COLLECTION_NAMESPACE,
+                name=partition_key,
+            )
+            await segment_store.delete_partition(partition_key)
+
+    async def _add_event_memory_episodes(
+        self,
+        session_data: InstanceOf[SessionData],
+        episodes: list[Episode],
+    ) -> None:
+        """Encode episodes into event memory."""
+        event_memory = await self._open_event_memory(session_data.session_key)
+        if event_memory is None:
+            return
+        events = [MemMachine._episode_to_event(episode) for episode in episodes]
+        await event_memory.encode_events(events)
 
     class SearchResponse(BaseModel):
         """Aggregated search results across memory types."""
 
         episodic_memory: EpisodicMemory.QueryResponse | None = None
         semantic_memory: list[SemanticFeature] | None = None
+        event_memory: EventMemoryQueryResult | None = None
 
     async def _search_episodic_memory(
         self,
@@ -980,9 +1257,44 @@ class MemMachine:
 
             semantic_task = asyncio.create_task(_collect_semantic_results())
 
+        event_memory_task: Task | None = None
+        if MemoryType.Event in target_memories:
+            event_memory_task = asyncio.create_task(
+                self._search_event_memory(
+                    session_data=session_data,
+                    query=query,
+                    limit=limit,
+                    expand_context=expand_context,
+                    property_filter=property_filter,
+                )
+            )
+
         return MemMachine.SearchResponse(
             episodic_memory=await episodic_task if episodic_task else None,
             semantic_memory=await semantic_task if semantic_task else None,
+            event_memory=await event_memory_task if event_memory_task else None,
+        )
+
+    async def _search_event_memory(
+        self,
+        *,
+        session_data: InstanceOf[SessionData],
+        query: str,
+        limit: int | None = None,
+        expand_context: int = 0,
+        property_filter: FilterExpr | None = None,
+    ) -> EventMemoryQueryResult | None:
+        """Query event memory for relevant segments."""
+        event_memory = await self._open_event_memory(session_data.session_key)
+        if event_memory is None:
+            return None
+
+        search_limit = limit if limit is not None else 20
+        return await event_memory.query(
+            query,
+            vector_search_limit=search_limit,
+            expand_context=expand_context,
+            property_filter=property_filter,
         )
 
     class ListResults(BaseModel):
@@ -1119,14 +1431,20 @@ class MemMachine:
         tasks: list[Coroutine[Any, Any, Any]] = []
 
         if session_data is not None:
+            event_memory = await self._open_event_memory(session_data.session_key)
+            if event_memory is not None:
+                event_uuids = [
+                    MemMachine._episode_uid_to_event_uuid(uid) for uid in episode_ids
+                ]
+                tasks.append(event_memory.forget_events(event_uuids))
+
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
             async with episodic_memory_manager.open_episodic_memory(
                 session_data.session_key
             ) as episodic_session:
-                t = episodic_session.delete_episodes(episode_ids)
-                tasks.append(t)
+                tasks.append(episodic_session.delete_episodes(episode_ids))
 
         tasks.append(episode_storage.delete_episodes(episode_ids))
         tasks.append(semantic_service.delete_history(episode_ids))

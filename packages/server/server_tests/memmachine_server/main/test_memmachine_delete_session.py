@@ -145,6 +145,7 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     conf = MagicMock()
     conf.episodic_memory.enabled = False
     conf.semantic_memory.enabled = False
+    conf.event_memory = None
 
     resources = MagicMock()
     resources.close = AsyncMock()

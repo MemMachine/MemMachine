@@ -41,6 +41,11 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
 )
+from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
+from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
+    SQLAlchemySegmentStore,
+    SQLAlchemySegmentStoreParams,
+)
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
@@ -75,11 +80,15 @@ class ResourceManagerImpl:
 
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
+        self._vector_stores: dict[str, VectorStore] = {}
+        self._segment_stores: dict[str, SegmentStore] = {}
 
         self._session_data_manager_lock = Lock()
         self._episodic_memory_manager_lock = Lock()
         self._episode_storage_lock = Lock()
         self._semantic_manager_lock = Lock()
+        self._vector_store_lock = Lock()
+        self._segment_store_lock = Lock()
 
     async def build(self) -> None:
         """Build all configured resources in parallel."""
@@ -123,6 +132,19 @@ class ResourceManagerImpl:
     async def get_vector_store(self, name: str) -> VectorStore:
         """Return a vector store by name."""
         return await self._database_manager.get_vector_store(name)
+
+    async def get_segment_store(self, name: str) -> SegmentStore:
+        """Return a segment store by name, constructing on first access."""
+        if name not in self._segment_stores:
+            async with self._segment_store_lock:
+                if name not in self._segment_stores:
+                    engine = await self.get_sql_engine(name)
+                    store = SQLAlchemySegmentStore(
+                        SQLAlchemySegmentStoreParams(engine=engine)
+                    )
+                    await store.startup()
+                    self._segment_stores[name] = store
+        return self._segment_stores[name]
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""

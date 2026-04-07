@@ -32,6 +32,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine_server.common.configuration.event_memory_config import EventMemoryConf
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
@@ -53,6 +54,9 @@ IntColumn = Annotated[int, mapped_column(Integer)]
 StringKeyColumn = Annotated[str, mapped_column(String, primary_key=True)]
 StringColumn = Annotated[str, mapped_column(String)]
 JSONColumn = Annotated[dict, mapped_column(JSON_AUTO)]
+
+
+_EVENT_MEMORY_CONF_KEY = "_event_memory_conf"
 
 
 class SessionDataManagerSQL(SessionDataManager):
@@ -305,11 +309,19 @@ class SessionDataManagerSQL(SessionDataManager):
                 return None
             param = EpisodicMemoryConf(**session.param_data)
 
+            event_memory_conf_data = session.configuration.get(_EVENT_MEMORY_CONF_KEY)
+            event_memory_conf = (
+                EventMemoryConf(**event_memory_conf_data)
+                if event_memory_conf_data is not None
+                else None
+            )
+
             return SessionDataManager.SessionInfo(
                 configuration=session.configuration,
                 description=session.description,
                 user_metadata=session.user_metadata,
                 episode_memory_conf=param,
+                event_memory_conf=event_memory_conf,
                 status=session.status,
             )
 
@@ -459,6 +471,55 @@ class SessionDataManagerSQL(SessionDataManager):
                 update(self.SessionConfig)
                 .where(self.SessionConfig.session_key == session_key)
                 .values(param_data=param_data)
+            )
+            await dbsession.execute(update_stmt)
+            await dbsession.commit()
+
+    async def get_event_memory_conf(
+        self,
+        session_key: str,
+    ) -> EventMemoryConf | None:
+        """Get the event memory configuration for a session."""
+        async with self._async_session() as dbsession:
+            sessions = await dbsession.execute(
+                select(self.SessionConfig).where(
+                    self.SessionConfig.session_key == session_key,
+                ),
+            )
+            session = sessions.scalars().first()
+            if session is None:
+                raise SessionNotFoundError(session_key)
+            conf_data = session.configuration.get(_EVENT_MEMORY_CONF_KEY)
+            if conf_data is None:
+                return None
+            return EventMemoryConf(**conf_data)
+
+    async def set_event_memory_conf(
+        self,
+        session_key: str,
+        conf: EventMemoryConf | None,
+    ) -> None:
+        """Set or clear the event memory configuration for a session."""
+        async with self._async_session() as dbsession:
+            sessions = await dbsession.execute(
+                select(self.SessionConfig).where(
+                    self.SessionConfig.session_key == session_key,
+                ),
+            )
+            session = sessions.scalars().first()
+            if session is None:
+                raise SessionNotFoundError(session_key)
+
+            configuration = dict(session.configuration)
+            if conf is not None:
+                configuration[_EVENT_MEMORY_CONF_KEY] = conf.model_dump(mode="json")
+            else:
+                configuration.pop(_EVENT_MEMORY_CONF_KEY, None)
+
+            update_stmt = (
+                update(self.SessionConfig)
+                .where(self.SessionConfig.session_key == session_key)
+                .values(configuration=configuration)
             )
             await dbsession.execute(update_stmt)
             await dbsession.commit()

@@ -6,6 +6,7 @@ from enum import StrEnum
 from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine_server.common.configuration.event_memory_config import EventMemoryConf
 from memmachine_server.common.data_types import PropertyValue
 
 
@@ -74,6 +75,7 @@ class SessionDataManager(ABC):
         description: str
         user_metadata: dict[str, JsonValue]
         episode_memory_conf: EpisodicMemoryConf
+        event_memory_conf: EventMemoryConf | None = None
         status: str
 
     @abstractmethod
@@ -127,6 +129,37 @@ class SessionDataManager(ABC):
             enabled: Whether episodic memory is enabled overall.
             long_term_memory_enabled: Whether long-term memory is enabled.
             short_term_memory_enabled: Whether short-term memory is enabled.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_event_memory_conf(
+        self,
+        session_key: str,
+    ) -> EventMemoryConf | None:
+        """Get the event memory configuration for a session.
+
+        Returns None if the session has no event memory configuration.
+
+        Raises:
+            SessionNotFoundError: If the session does not exist.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def set_event_memory_conf(
+        self,
+        session_key: str,
+        conf: EventMemoryConf | None,
+    ) -> None:
+        """Set or clear the event memory configuration for a session.
+
+        Args:
+            session_key: The session key to update.
+            conf: The configuration to store, or None to clear.
 
         Raises:
             SessionNotFoundError: If the session does not exist.

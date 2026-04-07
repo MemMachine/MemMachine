@@ -20,11 +20,16 @@ from typing_extensions import Self
 
 from . import EpisodeType, MemoryType
 from .doc import Examples, SpecDoc
+from .event_memory.config import (
+    DeriverConf,
+    SegmenterConf,
+    TextSegmenterConf,
+    WholeTextDeriverConf,
+)
+from .event_memory.data_types import EventMemoryQueryResult
+from .event_memory.properties import PropertyValue
 
 UTC = timezone.utc
-
-PropertyValue = bool | int | float | str | datetime
-"""Type for stored property values (duplicated here to avoid server dependency)."""
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
@@ -876,6 +881,10 @@ class SearchResultContent(BaseModel):
         list[SemanticFeature] | None,
         Field(default=None, description=SpecDoc.SEARCH_SEMANTIC_MEMORY),
     ]
+    event_memory: Annotated[
+        EventMemoryQueryResult | None,
+        Field(default=None, description=SpecDoc.SEARCH_EVENT_MEMORY),
+    ]
 
 
 class ListResult(BaseModel):
@@ -1551,6 +1560,94 @@ class ConfigureEpisodicMemorySpec(_WithOrgAndProj):
         Field(
             default=None,
             description=SpecDoc.EPISODIC_STM_ENABLED,
+        ),
+    ]
+
+
+class GetEventMemoryConfigSpec(_WithOrgAndProj):
+    """Specification model for getting event memory configuration."""
+
+
+class EventMemoryConfigEntry(BaseModel):
+    """Response model for event memory configuration."""
+
+    vector_store: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_VECTOR_STORE),
+    ]
+    segment_store: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_SEGMENT_STORE),
+    ]
+    embedder: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_EMBEDDER),
+    ]
+    reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EVENT_MEMORY_RERANKER),
+    ]
+    properties_schema: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=SpecDoc.EVENT_MEMORY_PROPERTIES_SCHEMA,
+        ),
+    ]
+    segmenter: Annotated[
+        SegmenterConf,
+        Field(
+            default_factory=TextSegmenterConf,
+            description=SpecDoc.EVENT_MEMORY_SEGMENTER,
+        ),
+    ]
+    deriver: Annotated[
+        DeriverConf,
+        Field(
+            default_factory=WholeTextDeriverConf,
+            description=SpecDoc.EVENT_MEMORY_DERIVER,
+        ),
+    ]
+
+
+class ConfigureEventMemorySpec(_WithOrgAndProj):
+    """Specification model for configuring event memory for a session."""
+
+    vector_store: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_VECTOR_STORE),
+    ]
+    segment_store: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_SEGMENT_STORE),
+    ]
+    embedder: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_EMBEDDER),
+    ]
+    reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EVENT_MEMORY_RERANKER),
+    ]
+    properties_schema: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=SpecDoc.EVENT_MEMORY_PROPERTIES_SCHEMA,
+        ),
+    ]
+    segmenter: Annotated[
+        SegmenterConf,
+        Field(
+            default_factory=TextSegmenterConf,
+            description=SpecDoc.EVENT_MEMORY_SEGMENTER,
+        ),
+    ]
+    deriver: Annotated[
+        DeriverConf,
+        Field(
+            default_factory=WholeTextDeriverConf,
+            description=SpecDoc.EVENT_MEMORY_DERIVER,
         ),
     ]
 
