@@ -27,6 +27,12 @@ class VectorStoreCollection(ABC):
     All data operations are scoped to this logical collection.
     """
 
+    @property
+    @abstractmethod
+    def config(self) -> VectorStoreCollectionConfig:
+        """The configuration for this collection."""
+        raise NotImplementedError
+
     @abstractmethod
     async def upsert(
         self,
@@ -210,7 +216,7 @@ class VectorStore(ABC):
                 Configuration for the collection.
 
         Returns:
-            Collection:
+            VectorStoreCollection:
                 A handle to the opened or created collection.
 
         Raises:
