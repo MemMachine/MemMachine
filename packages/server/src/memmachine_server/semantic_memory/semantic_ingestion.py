@@ -353,6 +353,7 @@ class IngestionService:
                 ]
 
                 message_content = self._format_cluster_messages(cluster_messages)
+                citation_ids = [m.uid for m in cluster_messages if m.uid is not None]
 
                 try:
                     commands = await llm_feature_update(
@@ -364,12 +365,11 @@ class IngestionService:
                 except Exception as err:
                     if _is_context_length_exceeded_error(err):
                         logger.warning(
-                            "Skipping message %s for semantic type %s due to non-retryable context length error",
-                            message.uid,
+                            "Skipping cluster %s for semantic type %s due to non-retryable context length error",
+                            cluster_id,
                             semantic_category.name,
                         )
-                        if message.uid not in mark_messages:
-                            mark_messages.append(message.uid)
+                        mark_messages.update(citation_ids)
                         continue
 
                     logger.exception(
@@ -381,8 +381,6 @@ class IngestionService:
                         raise
 
                     continue
-
-                citation_ids = [m.uid for m in cluster_messages if m.uid is not None]
 
                 await self._apply_commands(
                     commands=commands,
