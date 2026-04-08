@@ -867,7 +867,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 else:
                     # Default to UTC
                     params[param_name] = value.strftime("%Y-%m-%dT%H:%M:%S.%f +00:00")
-                return f"zoned_datetime({placeholder}, \"%Y-%m-%dT%H:%M:%S %Ez\")"
+                return f'zoned_datetime({placeholder}, "%Y-%m-%dT%H:%M:%S %Ez")'
             params[param_name] = value
             return placeholder
 
@@ -1398,10 +1398,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     rest = formatted_str[:-5]
                     formatted_str = rest + tz_part[:3] + ":" + tz_part[3:]
                 return f'zoned_datetime("{formatted_str}", "%Y-%m-%dT%H:%M:%S %Ez")'
-            else:
-                # No timezone info, default to UTC (+00:00)
-                formatted_str = value.strftime("%Y-%m-%dT%H:%M:%S.%f +00:00")
-                return f'zoned_datetime("{formatted_str}", "%Y-%m-%dT%H:%M:%S %Ez")'
+            # No timezone info, default to UTC (+00:00)
+            formatted_str = value.strftime("%Y-%m-%dT%H:%M:%S.%f +00:00")
+            return f'zoned_datetime("{formatted_str}", "%Y-%m-%dT%H:%M:%S %Ez")'
         if isinstance(value, list):
             formatted = [self._format_value(v) for v in value]
             return f"[{', '.join(formatted)}]"

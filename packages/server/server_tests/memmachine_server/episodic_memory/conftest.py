@@ -71,7 +71,9 @@ async def nebula_client_factory():
             await temp_client.execute(
                 f"CREATE SCHEMA IF NOT EXISTS {connection_info['schema_name']}"
             )
-            await temp_client.execute(f"SESSION SET SCHEMA {connection_info['schema_name']}")
+            await temp_client.execute(
+                f"SESSION SET SCHEMA {connection_info['schema_name']}"
+            )
             await temp_client.execute(
                 f"CREATE GRAPH TYPE IF NOT EXISTS {connection_info['graph_type_name']} AS {{}}"
             )
@@ -86,8 +88,8 @@ async def nebula_client_factory():
                 username=connection_info["username"],
                 password=connection_info["password"],
                 session_config=SessionConfig(
-                    schema=connection_info['schema_name'],
-                    graph=connection_info['graph_name'],
+                    schema=connection_info["schema_name"],
+                    graph=connection_info["graph_name"],
                 ),
                 session_pool_config=SessionPoolConfig(size=10),
             )
