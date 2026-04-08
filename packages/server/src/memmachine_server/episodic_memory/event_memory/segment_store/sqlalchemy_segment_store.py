@@ -1,17 +1,21 @@
 """SQLAlchemy implementation of the SegmentStore interface."""
 
-import asyncio
 import logging
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import override
 from uuid import UUID
-from weakref import WeakKeyDictionary
 
-from pydantic import BaseModel, Field, InstanceOf, JsonValue, TypeAdapter
+from pydantic import (
+    BaseModel,
+    Field,
+    InstanceOf,
+    JsonValue,
+    TypeAdapter,
+    field_validator,
+)
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -44,7 +48,7 @@ from sqlalchemy.orm import (
     MappedColumn,
     mapped_column,
 )
-from sqlalchemy.pool import ConnectionPoolEntry
+from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.filter.filter_parser import (
@@ -80,25 +84,6 @@ _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
 
 _ContextAdapter = TypeAdapter(Context | None)
 _BlockAdapter = TypeAdapter(Block)
-
-
-# SQLite does not isolate transactions within a single connection
-# (https://sqlite.org/isolation.html), so we serialise writes through per-partition asyncio locks.
-# Shared across all store instances so that stores using the same engine use the same lock.
-# Keyed by engine so locks are garbage-collected when the engine is.
-_sqlite_write_locks: WeakKeyDictionary[AsyncEngine, defaultdict[str, asyncio.Lock]] = (
-    WeakKeyDictionary()
-)
-
-
-def _get_sqlite_write_lock_context(
-    engine: AsyncEngine, partition_key: str
-) -> AbstractAsyncContextManager[None]:
-    """Return the SQLite write lock for the partition, or a no-op for other dialects."""
-    if engine.dialect.name == "sqlite":
-        engine_locks = _sqlite_write_locks.setdefault(engine, defaultdict(asyncio.Lock))
-        return engine_locks[partition_key]
-    return nullcontext()
 
 
 # ORM models
@@ -207,14 +192,13 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         self._engine = engine
         self._create_session = async_sessionmaker(engine, expire_on_commit=False)
         self._is_sqlite = engine.dialect.name == "sqlite"
-        self._sqlite_write_lock = _get_sqlite_write_lock_context(engine, partition_key)
 
     async def _lock_partition_for_write(self, session: AsyncSession) -> None:
         """Acquire a shared lock on the partition row to prevent concurrent deletion."""
         if not self._is_sqlite:
             # Shared lock on the partition row blocks concurrent deletions
             # (which hold exclusive locks) until write completes.
-            # SQLite relies on the asyncio write lock instead.
+            # SQLite relies on write serialization by the database.
             await session.execute(
                 select(PartitionRow.partition_key)
                 .where(PartitionRow.partition_key == self._partition_key)
@@ -228,11 +212,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         self,
         segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
     ) -> None:
-        async with (
-            self._sqlite_write_lock,
-            self._create_session() as session,
-            session.begin(),
-        ):
+        async with self._create_session() as session, session.begin():
             await self._lock_partition_for_write(session)
             await self._insert_segments(session, segments_to_derivative_uuids.keys())
             await self._insert_derivative_links(session, segments_to_derivative_uuids)
@@ -637,16 +617,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if not segment_uuids:
             return
 
-        async with (
-            self._sqlite_write_lock,
-            self._create_session() as session,
-            session.begin(),
-        ):
+        async with self._create_session() as session, session.begin():
             await self._lock_partition_for_write(session)
             if not self._is_sqlite:
                 # Lock rows in deterministic order to prevent deadlocks
                 # from concurrent deletions with overlapping UUID sets.
-                # SQLite relies on the asyncio write lock instead.
+                # SQLite relies on write serialization by the database.
                 await session.execute(
                     select(SegmentRow.uuid)
                     .where(
@@ -716,6 +692,21 @@ class SQLAlchemySegmentStoreParams(BaseModel):
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
 
+    @field_validator("engine")
+    @classmethod
+    def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
+        assert not isinstance(engine.pool, StaticPool), (
+            "Engine uses StaticPool, which shares one connection across sessions. "
+            "Use a multi-connection pool instead."
+        )
+        db = engine.url.database
+        if engine.dialect.name == "sqlite" and (db is None or db == ":memory:"):
+            raise ValueError(
+                "Engine uses ephemeral SQLite, where each connection gets a separate database. "
+                "Use a file path instead."
+            )
+        return engine
+
 
 class SQLAlchemySegmentStore(SegmentStore):
     """SQLAlchemy-backed SegmentStore factory."""
@@ -762,10 +753,7 @@ class SQLAlchemySegmentStore(SegmentStore):
     @override
     async def create_partition(self, partition_key: str) -> None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
-        async with (
-            _get_sqlite_write_lock_context(self._engine, partition_key),
-            self._engine.begin() as connection,
-        ):
+        async with self._engine.begin() as connection:
             if self._is_postgresql:
                 await connection.execute(
                     SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
@@ -814,10 +802,7 @@ class SQLAlchemySegmentStore(SegmentStore):
     ) -> SQLAlchemySegmentStorePartition:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
         try:
-            async with (
-                _get_sqlite_write_lock_context(self._engine, partition_key),
-                self._engine.begin() as connection,
-            ):
+            async with self._engine.begin() as connection:
                 if self._is_postgresql:
                     await connection.execute(
                         SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
@@ -854,14 +839,11 @@ class SQLAlchemySegmentStore(SegmentStore):
     @override
     async def delete_partition(self, partition_key: str) -> None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
-        async with (
-            _get_sqlite_write_lock_context(self._engine, partition_key),
-            self._engine.begin() as connection,
-        ):
+        async with self._engine.begin() as connection:
             if not self._is_sqlite:
                 # Exclusive lock on the partition row blocks concurrent writes
                 # (which hold shared locks) until deletion completes.
-                # SQLite relies on the asyncio write lock instead.
+                # SQLite relies on write serialization by the database.
                 await connection.execute(
                     select(PartitionRow.partition_key)
                     .where(PartitionRow.partition_key == partition_key)
