@@ -40,9 +40,18 @@ openclaw plugins install @memmachine/openclaw-memmachine
 ### Install from local filesystem
 
 ```bash
-openclaw plugins install ./MemMachine/integrations
-cd ./MemMachine/integrations/openclaw && pnpm install
+openclaw plugins install ./MemMachine/integrations/openclaw
 ```
+
+### Install from a packed tarball
+
+```bash
+openclaw plugins install ./memmachine-openclaw-memmachine-0.0.0-development.tgz
+```
+
+Do not use `openclaw hooks install` for this package. It is an OpenClaw plugin
+pack that exports `openclaw.extensions`, not a hook pack that exports
+`openclaw.hooks`.
 
 ## Platform (MemMachine Cloud)
 
@@ -58,19 +67,27 @@ You can configure the MemMachine plugin in the UI or by editing the
 Here is a sample `openclaw.json` entry:
 
 ```json5
-// plugins.entries
-"openclaw-memmachine": {
-  "enabled": true,
-  "config": {
-    "apiKey": "mm-...",
-    "baseUrl": "https://api.memmachine.ai",
-    "autoCapture": true,
-    "autoRecall": true,
-    "orgId": "openclaw",
-    "projectId": "openclaw",
-    "searchThreshold": 0.5,
-    "topK": 5,
-    "userId": "openclaw"
+{
+  "plugins": {
+    "slots": {
+      "memory": "openclaw-memmachine"
+    },
+    "entries": {
+      "openclaw-memmachine": {
+        "enabled": true,
+        "config": {
+          "apiKey": "mm-...",
+          "baseUrl": "https://api.memmachine.ai",
+          "autoCapture": true,
+          "autoRecall": true,
+          "orgId": "openclaw",
+          "projectId": "openclaw",
+          "searchThreshold": 0.5,
+          "topK": 5,
+          "userId": "openclaw"
+        }
+      }
+    }
   }
 }
 ```

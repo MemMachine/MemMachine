@@ -1,51 +1,58 @@
 {
   "id": "openclaw-memmachine",
+  "name": "MemMachine",
+  "version": "0.0.0-development",
+  "description": "MemMachine-backed memory tools with auto recall/capture",
   "kind": "memory",
-  "main": "./dist/index.mjs",
+  "install": {
+    "npmSpec": "@memmachine/openclaw-memmachine",
+    "localPath": "integrations/openclaw",
+    "defaultChoice": "npm"
+  },
   "uiHints": {
     "apiKey": {
       "label": "MemMachine API Key",
       "sensitive": true,
-      "placeholder": "...",
-      "help": "API key from app.memmachine.ai. Only needed for platform mode."
+      "placeholder": "mm-...",
+      "help": "API key from MemMachine Cloud or your self-hosted deployment."
     },
     "baseUrl": {
       "label": "MemMachine Base URL",
       "placeholder": "https://api.memmachine.ai",
-      "help": "Base URL for MemMachine service"
+      "help": "Base URL for the MemMachine service."
     },
     "userId": {
       "label": "Default User ID",
-      "placeholder": "default",
-      "help": "User ID for scoping memories"
+      "placeholder": "openclaw",
+      "help": "User identifier used for long-term memory scoping."
     },
     "orgId": {
       "label": "Organization ID",
-      "placeholder": "org-...",
+      "placeholder": "openclaw",
       "advanced": true
     },
     "projectId": {
       "label": "Project ID",
-      "placeholder": "proj-...",
+      "placeholder": "openclaw",
       "advanced": true
     },
     "autoCapture": {
       "label": "Auto-Capture",
-      "help": "Automatically store conversation context after each agent turn"
+      "help": "Automatically store recent conversation turns after each agent run."
     },
     "autoRecall": {
       "label": "Auto-Recall",
-      "help": "Automatically inject relevant memories before each agent turn"
+      "help": "Automatically inject relevant memories before each agent run."
     },
     "searchThreshold": {
-      "label": "Search score Threshold",
+      "label": "Search Score Threshold",
       "placeholder": "0.5",
-      "help": "Minimum reranking score for search results (0-1). Default: 0.5"
+      "help": "Minimum search score required for automatic recall and search results."
     },
     "topK": {
       "label": "Top K Results",
       "placeholder": "5",
-      "help": "Maximum number of memories to retrieve"
+      "help": "Maximum number of memories to retrieve per search."
     }
   },
   "configSchema": {
@@ -59,13 +66,16 @@
         "type": "string"
       },
       "userId": {
-        "type": "string"
+        "type": "string",
+        "default": "openclaw"
       },
       "orgId": {
-        "type": "string"
+        "type": "string",
+        "default": "openclaw"
       },
       "projectId": {
-        "type": "string"
+        "type": "string",
+        "default": "openclaw"
       },
       "autoCapture": {
         "type": "boolean"

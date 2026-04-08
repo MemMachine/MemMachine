@@ -6,6 +6,7 @@ import math
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar
 
 from nltk import sent_tokenize
@@ -55,6 +56,19 @@ async def merge_async_iterators[T](
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def ensure_tz_aware(dt: datetime) -> datetime:
+    """Return an aware datetime; treat naive datetimes as UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
+def utc_offset_seconds(dt: datetime) -> int:
+    """Return the UTC offset in seconds, treating naive datetimes as UTC."""
+    offset = dt.utcoffset()
+    return int(offset.total_seconds()) if offset is not None else 0
 
 
 async def async_with[T](

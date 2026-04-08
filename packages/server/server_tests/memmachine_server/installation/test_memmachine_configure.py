@@ -1,4 +1,6 @@
+import io
 import logging
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,6 +21,7 @@ from memmachine_server.installation.memmachine_configure import (
     MacosInstaller,
     WindowsEnvironment,
     WindowsInstaller,
+    _safe_extract_zip,
 )
 
 MOCK_INSTALL_DIR = "C:\\Users\\TestUser\\MemMachine"
@@ -245,3 +248,116 @@ def test_install_in_linux(mock_input, mock_wizard):
     installer = LinuxInstaller(environment)
     installer.install()
     assert environment.neo4j_started
+
+
+# ---------------------------------------------------------------------------
+# Helper: build an in-memory zip and write it to a temp file
+# ---------------------------------------------------------------------------
+
+
+def _make_zip(tmp_path: Path, entries: list[tuple[str, bytes, int]]) -> str:
+    """Create a zip file at *tmp_path/test.zip* with the given entries.
+
+    Each entry is a tuple of (filename, data, external_attr).
+    ``external_attr`` is placed in the ZipInfo field of the same name so
+    tests can inject Unix file-type bits (e.g. symlink mask 0xA000 << 16).
+    """
+    zip_path = str(tmp_path / "test.zip")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, data, ext_attr in entries:
+            info = zipfile.ZipInfo(name)
+            info.external_attr = ext_attr
+            zf.writestr(info, data)
+    (tmp_path / "test.zip").write_bytes(buf.getvalue())
+    return zip_path
+
+
+# ---------------------------------------------------------------------------
+# _safe_extract_zip - path-traversal tests
+# ---------------------------------------------------------------------------
+
+
+def test_safe_extract_zip_normal(tmp_path: Path) -> None:
+    """A clean zip extracts all files to the target directory."""
+    extract_to = tmp_path / "out"
+    extract_to.mkdir()
+    zip_path = _make_zip(
+        tmp_path,
+        [
+            ("subdir/file.txt", b"hello", 0),
+            ("top.txt", b"world", 0),
+        ],
+    )
+    _safe_extract_zip(zip_path, str(extract_to))
+    assert (extract_to / "subdir" / "file.txt").read_bytes() == b"hello"
+    assert (extract_to / "top.txt").read_bytes() == b"world"
+
+
+def test_safe_extract_zip_rejects_path_traversal(tmp_path: Path) -> None:
+    """An entry with ``../`` in its name must raise ValueError."""
+    extract_to = tmp_path / "out"
+    extract_to.mkdir()
+    zip_path = _make_zip(
+        tmp_path,
+        [("../evil.txt", b"pwned", 0)],
+    )
+    with pytest.raises(ValueError, match="would extract outside"):
+        _safe_extract_zip(zip_path, str(extract_to))
+
+
+def test_safe_extract_zip_rejects_absolute_path(tmp_path: Path) -> None:
+    """An entry with an absolute path must raise ValueError."""
+    extract_to = tmp_path / "out"
+    extract_to.mkdir()
+    zip_path = _make_zip(
+        tmp_path,
+        [("/etc/passwd", b"bad", 0)],
+    )
+    with pytest.raises(ValueError, match="would extract outside"):
+        _safe_extract_zip(zip_path, str(extract_to))
+
+
+def test_safe_extract_zip_rejects_symlink_entry(tmp_path: Path) -> None:
+    """An entry whose external_attr marks it as a symlink must raise ValueError."""
+    extract_to = tmp_path / "out"
+    extract_to.mkdir()
+    # Unix symlink type: 0xA000 in the upper 16 bits of external_attr
+    symlink_attr = 0xA000 << 16
+    zip_path = _make_zip(
+        tmp_path,
+        [("link", b"../secret", symlink_attr)],
+    )
+    with pytest.raises(ValueError, match="symlink"):
+        _safe_extract_zip(zip_path, str(extract_to))
+
+
+def test_safe_extract_zip_no_traversal_no_false_positive(tmp_path: Path) -> None:
+    """A filename that merely *contains* '..' as a substring is fine."""
+    extract_to = tmp_path / "out"
+    extract_to.mkdir()
+    zip_path = _make_zip(
+        tmp_path,
+        [("file..name.txt", b"ok", 0)],
+    )
+    # Should not raise
+    _safe_extract_zip(zip_path, str(extract_to))
+    assert (extract_to / "file..name.txt").read_bytes() == b"ok"
+
+
+# ---------------------------------------------------------------------------
+# WindowsEnvironment.extract_zip - delegates to _safe_extract_zip
+# ---------------------------------------------------------------------------
+
+
+def test_windows_environment_extract_zip_delegates(tmp_path: Path) -> None:
+    """WindowsEnvironment.extract_zip uses _safe_extract_zip and rejects traversal."""
+    extract_to = tmp_path / "out"
+    extract_to.mkdir()
+    zip_path = _make_zip(
+        tmp_path,
+        [("../escape.txt", b"bad", 0)],
+    )
+    env = WindowsEnvironment()
+    with pytest.raises(ValueError, match="would extract outside"):
+        env.extract_zip(zip_path, str(extract_to))

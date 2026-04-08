@@ -10,7 +10,7 @@
     "paths": {
       "@sinclair/typebox": ["types/shims/typebox"],
       "@memmachine/client": ["types/shims/memmachine-client"],
-      "openclaw/plugin-sdk": ["types/shims/openclaw-plugin-sdk"]
+      "openclaw/plugin-sdk": ["types/shims/openclaw-plugin-entry"]
     },
     "esModuleInterop": true,
     "resolveJsonModule": true,
