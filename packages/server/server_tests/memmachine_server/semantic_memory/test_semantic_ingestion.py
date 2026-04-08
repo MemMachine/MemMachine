@@ -260,15 +260,19 @@ async def test_process_single_set_marks_context_length_errors_as_ingested(
     await ingestion_service._process_single_set("user-context-overflow")
 
     assert (
-        await semantic_storage.get_history_messages(
-            set_ids=["user-context-overflow"],
-            is_ingested=False,
+        await _collect(
+            semantic_storage.get_history_messages(
+                set_ids=["user-context-overflow"],
+                is_ingested=False,
+            )
         )
         == []
     )
-    assert await semantic_storage.get_history_messages(
-        set_ids=["user-context-overflow"],
-        is_ingested=True,
+    assert await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-context-overflow"],
+            is_ingested=True,
+        )
     ) == [message_id]
 
 
