@@ -221,10 +221,18 @@ async def test_writer_exclusion():
 async def test_multiple_keys_independent():
     """Verify locks for different keys do not block each other."""
     manager = AsyncRWLockPool()
+    events = []
 
-    # This should complete instantly if they don't block
-    async with manager.write_lock("a"), manager.write_lock("b"):
-        pass
+    async def lock_key(key: str):
+        async with manager.write_lock(key):
+            events.append(f"{key}_locked")
+            await asyncio.sleep(0.05)
+            events.append(f"{key}_unlocked")
+
+    await asyncio.gather(lock_key("a"), lock_key("b"))
+    assert len(events) == 4
+    assert "a_locked" in events
+    assert "b_locked" in events
 
 
 @pytest.mark.asyncio

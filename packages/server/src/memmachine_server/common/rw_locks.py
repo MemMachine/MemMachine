@@ -36,6 +36,17 @@ class AsyncRWLock:
         self._read_gate = (
             asyncio.Lock()
         )  # Prevents new readers when a writer is waiting
+        self._write_owner: asyncio.Task | None = None
+
+    def _check_reentrant_write(self) -> None:
+        """Raise if the current task already holds the write lock."""
+        current = asyncio.current_task()
+        if current is not None and self._write_owner is current:
+            raise RuntimeError(
+                "AsyncRWLock.write_lock() is not reentrant. "
+                "If using AsyncRWLockPool, this likely means two keys "
+                "hashed to the same bucket."
+            )
 
     @asynccontextmanager
     async def read_lock(self) -> AsyncGenerator[None, None]:
@@ -59,10 +70,15 @@ class AsyncRWLock:
     @asynccontextmanager
     async def write_lock(self) -> AsyncGenerator[None, None]:
         """Acquire a write lock."""
+        self._check_reentrant_write()
         # 1. Close the gate so no NEW readers can enter.
         # 2. Acquire the writer lock to wait for EXISTING readers to finish.
         async with self._read_gate, self._writer_lock:
-            yield
+            self._write_owner = asyncio.current_task()
+            try:
+                yield
+            finally:
+                self._write_owner = None
 
     async def acquire_read(self) -> None:
         """Acquire a read lock."""
@@ -80,12 +96,15 @@ class AsyncRWLock:
 
     async def acquire_write(self) -> None:
         """Acquire a write lock."""
+        self._check_reentrant_write()
         # Writers must acquire the gate first to stop new readers
         await self._read_gate.acquire()
         await self._writer_lock.acquire()
+        self._write_owner = asyncio.current_task()
 
     def release_write(self) -> None:
         """Release a write lock."""
+        self._write_owner = None
         self._writer_lock.release()
         self._read_gate.release()
 
