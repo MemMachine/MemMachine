@@ -1,5 +1,7 @@
 """Unit tests for OpenAIChatCompletionsLanguageModel."""
 
+from dataclasses import dataclass
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -9,7 +11,7 @@ from openai.types import chat as openai_chat
 from openai.types.chat.chat_completion_message_function_tool_call import (
     Function as ToolCallFunction,
 )
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.language_model.openai_chat_completions_language_model import (
@@ -17,6 +19,38 @@ from memmachine_server.common.language_model.openai_chat_completions_language_mo
     OpenAIChatCompletionsLanguageModelParams,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
+
+
+class FakeAsyncStream:
+    def __init__(self, chunks):
+        self._chunks = iter(chunks)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+@dataclass
+class FakeReasoningChunk:
+    type: str = "response.reasoning.delta"
+
+
+class ParsedResponse(BaseModel):
+    answer: str
+    confidence: float
+
+
+def make_chat_completion(data: dict[str, Any]) -> openai_chat.ChatCompletion:
+    return openai_chat.ChatCompletion.model_validate(data)
+
+
+def make_chat_completion_chunk(data: dict[str, Any]) -> openai_chat.ChatCompletionChunk:
+    return openai_chat.ChatCompletionChunk.model_validate(data)
 
 
 @pytest.fixture
@@ -214,6 +248,338 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
         {"role": "user", "content": "User prompt"},
     ]
     assert call_args.kwargs["store"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_success(mock_async_openai, minimal_config):
+    """Test a non-streamed structured response is parsed correctly."""
+    mock_response = make_chat_completion(
+        {
+            "id": "completion-1",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": '{"answer":"ok","confidence":0.9}',
+                        "refusal": None,
+                    },
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 5,
+                "total_tokens": 12,
+            },
+        }
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = mock_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    parsed = await lm.generate_parsed_response(
+        ParsedResponse,
+        system_prompt="System prompt",
+        user_prompt="User prompt",
+    )
+
+    assert parsed == ParsedResponse(answer="ok", confidence=0.9)
+    call_args = mock_client.chat.completions.create.call_args
+    assert call_args.kwargs["model"] == "test-model"
+    assert call_args.kwargs["messages"] == [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "User prompt"},
+    ]
+    assert call_args.kwargs["response_format"]["type"] == "json_schema"
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_from_stream(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test a streamed structured response is aggregated and validated."""
+    streamed_response = FakeAsyncStream(
+        [
+            FakeReasoningChunk(),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": '{"answer":"ok",',
+                            },
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": '"confidence":0.9}'},
+                            "finish_reason": "stop",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    parsed = await lm.generate_parsed_response(ParsedResponse)
+
+    assert parsed == ParsedResponse(answer="ok", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_from_stream_discards_reasoning_delta_chunks(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test streamed structured responses ignore chunks with reasoning_content."""
+    reasoning_chunk = make_chat_completion_chunk(
+        {
+            "id": "chunk-0",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": None},
+                    "finish_reason": None,
+                    "logprobs": None,
+                }
+            ],
+            "usage": None,
+        }
+    )
+    cast(Any, reasoning_chunk.choices[0].delta).reasoning_content = "chain-of-thought"
+
+    streamed_response = FakeAsyncStream(
+        [
+            reasoning_chunk,
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": '{"answer":"ok",',
+                            },
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": '"confidence":0.9}'},
+                            "finish_reason": "stop",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    parsed = await lm.generate_parsed_response(ParsedResponse)
+
+    assert parsed == ParsedResponse(answer="ok", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_streamed_chat_completion_chunks(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test a streamed chat completion is aggregated into a single response."""
+    streamed_response = FakeAsyncStream(
+        [
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": "Hello"},
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": ", world!"},
+                            "finish_reason": "stop",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 4,
+                        "total_tokens": 14,
+                    },
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    (
+        content,
+        tool_calls,
+        input_tokens,
+        output_tokens,
+    ) = await lm.generate_response_with_token_usage()
+
+    assert content == "Hello, world!"
+    assert tool_calls == []
+    assert input_tokens == 10
+    assert output_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_generate_response_streamed_tool_calls_and_discards_reasoning_chunks(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test streamed tool calls are reconstructed while reasoning chunks are ignored."""
+    streamed_response = FakeAsyncStream(
+        [
+            FakeReasoningChunk(),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "get_weather",
+                                            "arguments": '{"location"',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"arguments": ': "Boston"}'},
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, tool_calls = await lm.generate_response()
+
+    assert content == ""
+    assert tool_calls == [
+        {
+            "call_id": "call_123",
+            "function": {
+                "name": "get_weather",
+                "arguments": {"location": "Boston"},
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio
