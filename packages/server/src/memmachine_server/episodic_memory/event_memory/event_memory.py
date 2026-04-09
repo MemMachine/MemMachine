@@ -1,16 +1,19 @@
 """Event memory system for storing and retrieving events."""
 
+import asyncio
+import bisect
 import datetime
 import json
 import logging
 from collections.abc import Iterable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import ClassVar, cast
 from uuid import UUID, uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -25,6 +28,9 @@ from memmachine_server.common.utils import (
 from memmachine_server.common.vector_store import (
     Record,
     VectorStoreCollection,
+)
+from memmachine_server.common.vector_store.data_types import (
+    QueryResult as VectorStoreQueryResult,
 )
 
 from .data_types import (
@@ -61,11 +67,27 @@ class EventMemoryParams(BaseModel):
             Embedder instance for creating embeddings.
         reranker (Reranker | None):
             Reranker instance for scoring search results.
-            If None, embedding similarity scores are used instead.
+            If None, embedding similarity scores are used instead
+            (default: None).
         derive_sentences (bool):
-            Whether to derive sentence-level derivatives from content (default: False).
+            Whether to derive sentence-level derivatives from content
+            (default: False).
         max_text_chunk_length (int):
-            Max code-point length for text chunking in segment creation (default: 2000).
+            Max code-point length for text chunking in segment creation
+            (default: 2000).
+        eviction_similarity_threshold (float | None):
+            Similarity threshold at which vectors are considered part of the same cluster
+            for eviction evaluation. None disables eviction.
+            (default: None).
+        eviction_search_limit (int):
+            Maximum number of similar vectors to retrieve per derivative for eviction evaluation
+            (default: 20).
+        eviction_target_size (int):
+            Target cluster size; eviction starts when the number of similar vectors exceeds this
+            (default: 15).
+        serialize_encode (bool):
+            Serialize encode_events calls with an async lock
+            (default: False).
     """
 
     vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
@@ -83,7 +105,7 @@ class EventMemoryParams(BaseModel):
     reranker: InstanceOf[Reranker] | None = Field(
         None,
         description="Reranker instance for scoring search results. "
-        "If None, embedding similarity scores are used instead.",
+        "If None, embedding similarity scores are used instead",
     )
     derive_sentences: bool = Field(
         False,
@@ -92,6 +114,23 @@ class EventMemoryParams(BaseModel):
     max_text_chunk_length: int = Field(
         2000,
         description="Max code-point length for text chunking in segment creation",
+    )
+    eviction_similarity_threshold: float | None = Field(
+        None,
+        description="Similarity threshold at which vectors are considered part of the same cluster "
+        "for eviction consideration. None disables eviction",
+    )
+    eviction_search_limit: int = Field(
+        20,
+        description="Maximum number of similar vectors to retrieve per derivative for eviction evaluation",
+    )
+    eviction_target_size: int = Field(
+        15,
+        description="Target cluster size; eviction starts when the number of similar vectors exceeds this",
+    )
+    serialize_encode: bool = Field(
+        False,
+        description="Serialize encode_events calls with an async lock",
     )
 
 
@@ -151,6 +190,13 @@ class EventMemory:
 
         self._derive_sentences = params.derive_sentences
 
+        self._eviction_similarity_threshold = params.eviction_similarity_threshold
+        self._eviction_search_limit = params.eviction_search_limit
+        self._eviction_target_size = params.eviction_target_size
+        self._encode_lock: asyncio.Lock | None = (
+            asyncio.Lock() if params.serialize_encode else None
+        )
+
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=params.max_text_chunk_length,
             chunk_overlap=0,
@@ -200,6 +246,12 @@ class EventMemory:
                         required.update(keys)
         return frozenset(required - self._schema_keys)
 
+    def _acquire_encode_lock(self) -> AbstractAsyncContextManager[None]:
+        """Return the encode lock if configured, otherwise a no-op context."""
+        if self._encode_lock is not None:
+            return self._encode_lock
+        return nullcontext()
+
     async def encode_events(
         self,
         events: Iterable[Event],
@@ -221,6 +273,8 @@ class EventMemory:
                 f"Events require properties missing from the collection schema: "
                 f"{', '.join(sorted(missing))}"
             )
+
+        # --- Outside lock: pure computation + embedding API call ---
 
         events = sorted(
             events,
@@ -245,24 +299,64 @@ class EventMemory:
             [derivative.text for derivative in derivatives],
         )
 
-        await self._segment_store_partition.add_segments(
-            {
-                segment: [derivative.uuid for derivative in segment_derivatives]
-                for segment, segment_derivatives in segments_to_derivatives.items()
-            }
-        )
-
-        derivative_records = [
-            self._build_derivative_record(derivative, derivative_embedding)
-            for derivative, derivative_embedding in zip(
-                derivatives,
+        batch_predecessors: list[set[int]] | None = None
+        if self._eviction_similarity_threshold is not None and derivative_embeddings:
+            batch_predecessors = EventMemory._compute_batch_predecessors(
                 derivative_embeddings,
-                strict=True,
+                self._eviction_similarity_threshold,
+                self._embedder.similarity_metric,
             )
-        ]
 
-        if derivative_records:
-            await self._vector_store_collection.upsert(records=derivative_records)
+        # --- Inside lock: DB reads, eviction decisions, writes ---
+
+        async with self._acquire_encode_lock():
+            skipped_uuids: set[UUID] = set()
+            db_eviction_uuids: set[UUID] = set()
+
+            if batch_predecessors is not None:
+                eviction_query_results = await self._vector_store_collection.query(
+                    query_vectors=derivative_embeddings,
+                    score_threshold=self._eviction_similarity_threshold,
+                    limit=self._eviction_search_limit,
+                    return_vector=False,
+                    return_properties=True,
+                )
+
+                db_eviction_uuids, skipped_uuids = EventMemory._select_eviction_targets(
+                    derivatives=derivatives,
+                    query_results=eviction_query_results,
+                    batch_predecessors=batch_predecessors,
+                    eviction_target_size=self._eviction_target_size,
+                )
+
+            await self._segment_store_partition.add_segments(
+                {
+                    segment: [
+                        derivative.uuid
+                        for derivative in segment_derivatives
+                        if derivative.uuid not in skipped_uuids
+                    ]
+                    for segment, segment_derivatives in segments_to_derivatives.items()
+                }
+            )
+
+            derivative_records = [
+                EventMemory._build_derivative_record(derivative, derivative_embedding)
+                for derivative, derivative_embedding in zip(
+                    derivatives,
+                    derivative_embeddings,
+                    strict=True,
+                )
+                if derivative.uuid not in skipped_uuids
+            ]
+
+            if derivative_records:
+                await self._vector_store_collection.upsert(records=derivative_records)
+
+            if db_eviction_uuids:
+                await self._vector_store_collection.delete(
+                    record_uuids=db_eviction_uuids
+                )
 
     @staticmethod
     def _build_derivative_record(
@@ -292,6 +386,139 @@ class EventMemory:
             vector=list(derivative_embedding),
             properties=properties,
         )
+
+    @staticmethod
+    def _compute_batch_predecessors(
+        derivative_embeddings: Iterable[Sequence[float]],
+        eviction_similarity_threshold: float,
+        similarity_metric: SimilarityMetric,
+    ) -> list[set[int]]:
+        """Pre-compute intra-batch similarity (lower triangle only).
+
+        ``batch_predecessors[i]`` contains indices ``j < i`` that are
+        similar to ``i``. Only predecessors are included to simulate
+        serial ingestion.
+        """
+        import numpy as np
+
+        embeddings = np.asarray(list(derivative_embeddings), dtype=np.float64)
+        n = len(embeddings)
+        if n <= 1:
+            return [set() for _ in range(n)]
+
+        higher_is_better = similarity_metric.higher_is_better
+
+        match similarity_metric:
+            case SimilarityMetric.COSINE:
+                norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+                norms[norms == 0] = 1.0
+                normalized = embeddings / norms
+                sim_matrix = normalized @ normalized.T
+            case SimilarityMetric.DOT:
+                sim_matrix = embeddings @ embeddings.T
+            case SimilarityMetric.EUCLIDEAN | SimilarityMetric.MANHATTAN:
+                # Compute lower triangle row-by-row to avoid O(N²·D)
+                # peak memory from full broadcasting.
+                sim_matrix = np.zeros((n, n), dtype=np.float64)
+                for i in range(1, n):
+                    diff = embeddings[i] - embeddings[:i]
+                    if similarity_metric == SimilarityMetric.EUCLIDEAN:
+                        sim_matrix[i, :i] = np.linalg.norm(diff, axis=1)
+                    else:
+                        sim_matrix[i, :i] = np.sum(np.abs(diff), axis=1)
+
+        if higher_is_better:
+            mask = np.tril(sim_matrix, k=-1) >= eviction_similarity_threshold
+        else:
+            mask = np.tril(sim_matrix, k=-1) <= eviction_similarity_threshold
+
+        return [set(np.where(mask[i])[0].tolist()) for i in range(n)]
+
+    @staticmethod
+    def _select_eviction_targets(
+        derivatives: Iterable[Derivative],
+        query_results: Iterable[VectorStoreQueryResult],
+        batch_predecessors: list[set[int]],
+        eviction_target_size: int,
+    ) -> tuple[set[UUID], set[UUID]]:
+        """Select eviction targets considering both DB and intra-batch similarity.
+
+        Returns:
+            A tuple of ``(db_uuids_to_delete, batch_uuids_to_skip)``.
+        """
+        derivatives = list(derivatives)
+        query_results = list(query_results)
+
+        db_eviction_uuids: set[UUID] = set()
+        batch_skip_uuids: set[UUID] = set()
+
+        for i, (derivative, query_result) in enumerate(
+            zip(derivatives, query_results, strict=True)
+        ):
+            EventMemory._evict_for_derivative(
+                i,
+                derivative,
+                query_result,
+                derivatives,
+                batch_predecessors,
+                eviction_target_size,
+                db_eviction_uuids,
+                batch_skip_uuids,
+            )
+
+        return db_eviction_uuids, batch_skip_uuids
+
+    @staticmethod
+    def _evict_for_derivative(
+        i: int,
+        derivative: Derivative,
+        query_result: VectorStoreQueryResult,
+        derivatives: list[Derivative],
+        batch_predecessors: list[set[int]],
+        eviction_target_size: int,
+        db_eviction_uuids: set[UUID],
+        batch_skip_uuids: set[UUID],
+    ) -> None:
+        """Evaluate and apply eviction for a single derivative."""
+        # DB cluster members, excluding already-evicted.
+        # Pre-sorted by timestamp via bisect.insort.
+        sorted_members: list[tuple[datetime.datetime, UUID, str]] = []
+        for match in query_result.matches:
+            if match.record.uuid in db_eviction_uuids:
+                continue
+            raw_timestamp = cast(dict[str, PropertyValue], match.record.properties)[
+                EventMemory._TIMESTAMP_KEY
+            ]
+            if isinstance(raw_timestamp, str):
+                raw_timestamp = datetime.datetime.fromisoformat(raw_timestamp)
+            ts = cast(datetime.datetime, raw_timestamp)
+            bisect.insort(sorted_members, (ts, match.record.uuid, "db"))
+
+        # Intra-batch predecessors (j < i), excluding already-skipped.
+        for j in batch_predecessors[i]:
+            neighbor = derivatives[j]
+            if neighbor.uuid not in batch_skip_uuids:
+                bisect.insort(
+                    sorted_members, (neighbor.timestamp, neighbor.uuid, "batch")
+                )
+
+        # Add self.
+        bisect.insort(sorted_members, (derivative.timestamp, derivative.uuid, "self"))
+
+        total_size = len(sorted_members)
+        if total_size <= eviction_target_size:
+            return
+
+        # Cluster is oversized — evict from the temporal middle.
+        protected_count = eviction_target_size // 2
+        middle = sorted_members[protected_count : total_size - protected_count]
+        excess_count = total_size - eviction_target_size
+
+        for _ts, uuid, source in middle[:excess_count]:
+            if source == "db":
+                db_eviction_uuids.add(uuid)
+            else:  # "batch" or "self"
+                batch_skip_uuids.add(uuid)
 
     def _create_segments(
         self,
