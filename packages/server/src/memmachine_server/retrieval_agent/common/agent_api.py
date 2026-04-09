@@ -1,28 +1,27 @@
-"""Shared interfaces and base implementation for retrieval-agent tools."""
+"""Shared interfaces and helper types for retrieval agents."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from abc import abstractmethod
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
+from memmachine_common.api import MemoryType
 from pydantic import BaseModel, ConfigDict, InstanceOf
 
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-)
+from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 logger = logging.getLogger(__name__)
 
 
 class QueryPolicy(BaseModel):
-    """Scoring and budget policy used by retrieval-agent tools."""
+    """Scoring and budget policy used by retrieval agents."""
 
     token_cost: int
     time_cost: int
@@ -41,134 +40,110 @@ class QueryParam(BaseModel):
     expand_context: int = 0
     score_threshold: float = -float("inf")
     property_filter: FilterExpr | None = None
-    memory: InstanceOf[EpisodicMemory]
+    session_key: str
+    rest_memory: SearchToolMemoryProtocol
+    target_memories: list[MemoryType]
 
 
-class AgentToolBaseParam(BaseModel):
-    """Dependency bundle used to construct an agent tool."""
+class RetrievalAgentResult(BaseModel):
+    """Combined search results returned by the top-level retrieval agent."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    model: InstanceOf[LanguageModel] | None = None
-    children_tools: list[InstanceOf[AgentToolBase]] | None = None
+    episodic_memory: EpisodicMemory.QueryResponse | None = None
+    semantic_memory: list[SemanticFeature] | None = None
+
+
+@runtime_checkable
+class SearchToolMemoryProtocol(Protocol):
+    """Minimal REST-style search dependency consumed by SkillRunner."""
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        agent_mode: bool = False,
+    ) -> object: ...
+
+
+class RetrievalAgentParams(BaseModel):
+    """Dependency bundle used to construct a retrieval agent."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model: InstanceOf[LanguageModel]
     extra_params: dict[str, Any] | None = None
     reranker: InstanceOf[Reranker] | None = None
 
 
-class AgentToolBase:
-    """Base class for retrieval-agent tool implementations."""
-
-    def __init__(self, param: AgentToolBaseParam) -> None:
-        """Initialize tool dependencies and aggregate child costs."""
-        super().__init__()
-        self._model = param.model
-        self._children_tools = param.children_tools or []
-        self._reranker = param.reranker
-        self._child_token_cost = 0
-        self._child_time_cost = 0
-        for tool in self._children_tools:
-            self._child_token_cost += tool.token_cost
-            self._child_time_cost += tool.time_cost
+@runtime_checkable
+class RetrievalAgentProtocol(Protocol):
+    """Protocol implemented by server-side retrieval agents."""
 
     @property
-    @abstractmethod
-    def agent_name(self) -> str:
-        pass
+    def agent_name(self) -> str: ...
 
     @property
-    @abstractmethod
-    def agent_description(self) -> str:
-        pass
+    def agent_description(self) -> str: ...
 
-    def _update_perf_metrics(
-        self,
-        source: dict[str, Any],
-        target: dict[str, Any],
-    ) -> dict[str, Any]:
-        for key, value in source.items():
-            if key not in target:
-                target[key] = value
-            else:
-                if isinstance(value, int | float):
-                    target[key] += value
-                elif isinstance(value, list):
-                    target[key].extend(value)
-        return target
+    @property
+    def accuracy_score(self) -> int: ...
 
-    async def _do_rerank(
-        self, query: QueryParam, episodes: list[Episode]
-    ) -> list[Episode]:
-        if query.limit <= 0:
-            return sorted(episodes, key=lambda x: x.created_at)
+    @property
+    def token_cost(self) -> int: ...
 
-        if len(episodes) <= query.limit or self._reranker is None:
-            if len(episodes) == 0:
-                return episodes
-            return sorted(episodes[: query.limit], key=lambda x: x.created_at)
-
-        contents = [episodes_to_string([episode]) for episode in episodes]
-        success = False
-        max_retry = 60
-        scores = []
-        while not success:
-            try:
-                scores = await self._reranker.score(query.query, contents)
-                success = True
-            except Exception as e:
-                max_retry -= 1
-                if max_retry == 0:
-                    logger.exception("Reranker failed after maximum retries.")
-                    raise
-                if "ThrottlingException" in str(e):
-                    logger.warning(
-                        "Reranker throttling exception, retrying after 5 seconds..."
-                    )
-                    await asyncio.sleep(5)
-                else:
-                    raise
-
-        result = sorted(
-            zip(episodes, scores, strict=True),
-            key=lambda x: x[1],  # sort by score
-            reverse=True,  # highest score first
-        )
-
-        result = result[: query.limit] if query.limit > 0 else result
-        res = [r[0] for r in result]
-        return sorted(res, key=lambda x: x.created_at)
+    @property
+    def time_cost(self) -> int: ...
 
     async def do_query(
-        self, policy: QueryPolicy, query: QueryParam
-    ) -> tuple[list[Episode], dict[str, Any]]:
-        if len(self._children_tools) == 0:
-            raise RuntimeError("No child tool to call")
-        tasks = []
-        for tool in self._children_tools:
-            task = tool.do_query(policy, query)
-            tasks.append(task)
-        results = await asyncio.gather(*tasks)
-        data: list[Episode] = []
-        perf_metrics: dict[str, Any] = {}
-        for res, p_metric in results:
-            if res is None:
-                continue
-            data.extend(res)
-            perf_metrics = self._update_perf_metrics(perf_metrics, p_metric)
-        return data, perf_metrics
+        self,
+        policy: QueryPolicy,
+        query: QueryParam,
+    ) -> tuple[RetrievalAgentResult, dict[str, Any]]: ...
 
-    @property
-    @abstractmethod
-    def accuracy_score(self) -> int:
-        pass
 
-    @property
-    @abstractmethod
-    def token_cost(self) -> int:
-        pass
+async def rerank_episodes(
+    *,
+    query: QueryParam,
+    episodes: list[Episode],
+    reranker: Reranker | None,
+) -> list[Episode]:
+    """Rerank retrieved episodes when the caller configured a reranker."""
+    if query.limit <= 0:
+        return sorted(episodes, key=lambda item: item.created_at)
 
-    @property
-    @abstractmethod
-    def time_cost(self) -> int:
-        pass
+    if len(episodes) <= query.limit or reranker is None:
+        if not episodes:
+            return episodes
+        return sorted(episodes, key=lambda item: item.created_at)
 
-    def agent_tools(self) -> list[AgentToolBase]:
-        return self._children_tools
+    contents = [episodes_to_string([episode]) for episode in episodes]
+    success = False
+    retries_remaining = 60
+    scores: list[float] = []
+    while not success:
+        try:
+            scores = await reranker.score(query.query, contents)
+            success = True
+        except Exception as err:
+            retries_remaining -= 1
+            if retries_remaining == 0:
+                logger.exception("Reranker failed after maximum retries.")
+                raise
+            if "ThrottlingException" in str(err):
+                logger.warning(
+                    "Reranker throttling exception, retrying after 5 seconds..."
+                )
+                await asyncio.sleep(5)
+            else:
+                raise
+
+    ranked = sorted(
+        zip(episodes, scores, strict=True),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    limited = ranked[: query.limit] if query.limit > 0 else ranked
+    reranked = [episode for episode, _score in limited]
+    return sorted(reranked, key=lambda item: item.created_at)

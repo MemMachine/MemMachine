@@ -254,6 +254,7 @@ async def test_search_memory_variants(mock_search, params, mcp_client):
     assert result.data.status == 200
     assert result.data.content.episodic_memory is None
     assert result.data.content.semantic_memory == []
+    assert result.data.content.retrieval_trace is None
 
 
 @pytest.mark.asyncio

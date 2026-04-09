@@ -1,0 +1,831 @@
+"""Shared provider session loop for installed MemMachine skills."""
+# ruff: noqa: SLF001
+
+from __future__ import annotations
+
+import inspect
+import json
+import re
+import time
+from typing import Literal, Protocol, cast
+
+from memmachine_common.skill_loop import (
+    SkillLoopState,
+    SkillLoopToolCall,
+    SkillLoopToolResult,
+    as_dict,
+    augment_prompt,
+    build_tool_search_result,
+    canonicalize_search_query,
+    continue_tool_loop,
+    extract_query_from_arguments,
+    final_response_text,
+    normalize_search_result,
+    normalize_tool_arguments,
+)
+
+from .skill import Skill
+
+
+class RestMemoryProtocol(Protocol):
+    """Minimal rest-memory interface used by the shared skill runner."""
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        agent_mode: bool = False,
+    ) -> object: ...
+
+
+class _OpenAIResponsesAPI(Protocol):
+    async def create(self, **kwargs: object) -> object: ...
+
+
+class _OpenAIClientProtocol(Protocol):
+    responses: _OpenAIResponsesAPI
+
+
+class _AnthropicMessagesAPI(Protocol):
+    async def create(self, **kwargs: object) -> object: ...
+
+
+class _AnthropicClientProtocol(Protocol):
+    messages: _AnthropicMessagesAPI
+
+
+ProviderName = Literal["anthropic", "openai"]
+
+_CANONICAL_MEMMACHINE_SEARCH_PARAMETERS: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "The memory search query to run.",
+        }
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+
+_CANONICAL_MEMMACHINE_SEARCH_TOOL: dict[str, object] = {
+    "type": "function",
+    "name": "memmachine_search",
+    "description": "Search MemMachine memory with the provided query.",
+    "parameters": _CANONICAL_MEMMACHINE_SEARCH_PARAMETERS,
+}
+
+
+class _OpenAIToolLoopTransport:
+    """OpenAI Responses transport wrapper for the shared tool loop."""
+
+    def __init__(self, runner: SkillRunner) -> None:
+        self._runner = runner
+
+    def response_text(self, response: object) -> str:
+        return self._runner._openai_response_output_text(response)
+
+    def tool_calls(self, response: object) -> list[SkillLoopToolCall]:
+        calls: list[SkillLoopToolCall] = []
+        for item in self._runner._openai_response_items(response):
+            if str(item.get("type", "")) != "function_call":
+                continue
+            arguments = normalize_tool_arguments(item.get("arguments", {}))
+            raw_call_id = item.get("call_id")
+            calls.append(
+                SkillLoopToolCall(
+                    name=str(item.get("name", "")),
+                    query=extract_query_from_arguments(arguments),
+                    call_id=raw_call_id if isinstance(raw_call_id, str) else None,
+                    arguments=arguments,
+                )
+            )
+        return calls
+
+    async def continue_with_results(
+        self,
+        *,
+        response: object,
+        tool_results: list[SkillLoopToolResult],
+    ) -> object:
+        outputs: list[dict[str, object]] = []
+        for result in tool_results:
+            if not isinstance(result.call_id, str) or not result.call_id:
+                continue
+            outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": result.call_id,
+                    "output": json.dumps(result.output, default=str),
+                }
+            )
+        request: dict[str, object] = {
+            "model": self._runner._model,
+            "input": outputs,
+            "tools": self._runner.tools(),
+            "tool_choice": self._runner._tool_choice,
+        }
+        response_id = self._runner._openai_response_id(response)
+        if response_id is not None:
+            request["previous_response_id"] = response_id
+        return await self._runner._openai_client().responses.create(**request)
+
+    def usage(self, response: object) -> tuple[int, int]:
+        return self._runner._usage_tuple(response)
+
+
+class _AnthropicToolLoopTransport:
+    """Anthropic Messages transport wrapper for the shared tool loop."""
+
+    def __init__(self, runner: SkillRunner) -> None:
+        self._runner = runner
+
+    def response_text(self, response: object) -> str:
+        return self._runner._anthropic_extract_text(
+            self._runner._anthropic_content_blocks(response)
+        )
+
+    def tool_calls(self, response: object) -> list[SkillLoopToolCall]:
+        calls: list[SkillLoopToolCall] = []
+        for block in self._runner._anthropic_content_blocks(response):
+            if block.get("type") != "tool_use":
+                continue
+            arguments = normalize_tool_arguments(block.get("input"))
+            raw_call_id = block.get("id")
+            calls.append(
+                SkillLoopToolCall(
+                    name=str(block.get("name", "")),
+                    query=extract_query_from_arguments(arguments),
+                    call_id=raw_call_id if isinstance(raw_call_id, str) else None,
+                    arguments=arguments,
+                )
+            )
+        return calls
+
+    async def continue_with_results(
+        self,
+        *,
+        response: object,
+        tool_results: list[SkillLoopToolResult],
+    ) -> object:
+        if self._runner._anthropic_messages is None:
+            raise RuntimeError(
+                "Call skill_messages() before Anthropic handle_tool_loop()."
+            )
+
+        content_blocks = self._runner._anthropic_content_blocks(response)
+        self._runner._anthropic_messages.append(
+            {"role": "assistant", "content": content_blocks}
+        )
+        tool_outputs: list[dict[str, object]] = []
+        for result in tool_results:
+            if not isinstance(result.call_id, str) or not result.call_id:
+                continue
+            tool_outputs.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": result.call_id,
+                    "content": json.dumps(result.output, default=str),
+                }
+            )
+        self._runner._anthropic_messages.append(
+            {"role": "user", "content": tool_outputs}
+        )
+
+        request: dict[str, object] = {
+            "model": self._runner._model,
+            "messages": self._runner._anthropic_messages,
+            "tools": self._runner.tools(),
+            "max_tokens": self._runner._anthropic_max_tokens,
+        }
+        if self._runner._anthropic_system_prompt is not None:
+            request["system"] = self._runner._anthropic_system_prompt
+        anthropic_tool_choice = self._runner._anthropic_tool_choice()
+        if anthropic_tool_choice is not None:
+            request["tool_choice"] = anthropic_tool_choice
+        return await self._runner._anthropic_client().messages.create(**request)
+
+    def usage(self, response: object) -> tuple[int, int]:
+        return self._runner._usage_tuple(response)
+
+
+class SkillRunner:
+    """Attach an installed skill to a caller-owned provider client session."""
+
+    def __init__(
+        self,
+        skill: Skill,
+        *,
+        client: object,
+        model: str,
+        provider: ProviderName | None = None,
+        rest_memory: RestMemoryProtocol | None = None,
+        max_turns: int = 10,
+        search_limit: int = 20,
+        expand_context: int = 0,
+        score_threshold: float | None = None,
+        adaptive_search_limit: dict[str, int] | None = None,
+        max_episode_chars: int | None = None,
+        early_exit_confidence: bool | None = None,
+        query_dedup: bool = False,
+        stage_result_mode: bool = False,
+        stage_result_confidence_threshold: float = 0.85,
+        omit_episode_text_on_confident_stage_result: bool = False,
+        use_answer_prompt_template: bool = False,
+        anthropic_max_tokens: int = 2048,
+        tool_choice: str | dict[str, str] = "auto",
+    ) -> None:
+        """Configure provider loop state and the search backend dependencies."""
+        self.skill = skill
+        self.provider = provider or skill.provider
+        if self.provider != skill.provider:
+            raise ValueError(
+                "SkillRunner provider must match the provider used to install the skill"
+            )
+        self._client = client
+        self._model = model
+        self._rest_memory = rest_memory
+        self.max_turns = max_turns
+        self.search_limit = search_limit
+        self.expand_context = expand_context
+        self.score_threshold = score_threshold
+        self.adaptive_search_limit = adaptive_search_limit
+        self.max_episode_chars = max_episode_chars
+        self.early_exit_confidence = early_exit_confidence
+        self.query_dedup = query_dedup
+        self.stage_result_mode = stage_result_mode
+        self.stage_result_confidence_threshold = stage_result_confidence_threshold
+        self.omit_episode_text_on_confident_stage_result = (
+            omit_episode_text_on_confident_stage_result
+        )
+        self.use_answer_prompt_template = use_answer_prompt_template
+        self._anthropic_max_tokens = anthropic_max_tokens
+        self._tool_choice = tool_choice
+        self._anthropic_messages: list[dict[str, object]] | None = None
+        self._anthropic_system_prompt: str | None = None
+        self.last_search_results: list[dict[str, object]] = []
+        self.last_raw_search_results: list[object] = []
+        self.last_memory_search_called = 0
+        self.last_memory_search_latency_seconds: list[float] = []
+        self.last_stage_results: list[dict[str, object]] = []
+        self.last_stage_sub_queries: list[str] = []
+        self.last_initial_input_tokens = 0
+        self.last_initial_output_tokens = 0
+        self.last_llm_call_count = 0
+        self.last_tool_call_count = 0
+        self.last_follow_up_input_tokens = 0
+        self.last_follow_up_output_tokens = 0
+        self._seen_queries: set[frozenset[str]] = set()
+
+        self._validate_client()
+
+    def fork(self) -> SkillRunner:
+        """Return a fresh runner with the same configuration and isolated state."""
+        adaptive_search_limit = (
+            dict(self.adaptive_search_limit)
+            if self.adaptive_search_limit is not None
+            else None
+        )
+        tool_choice = (
+            dict(self._tool_choice)
+            if isinstance(self._tool_choice, dict)
+            else self._tool_choice
+        )
+        return SkillRunner(
+            self.skill,
+            client=self._client,
+            model=self._model,
+            provider=self.provider,
+            rest_memory=self._rest_memory,
+            max_turns=self.max_turns,
+            search_limit=self.search_limit,
+            expand_context=self.expand_context,
+            score_threshold=self.score_threshold,
+            adaptive_search_limit=adaptive_search_limit,
+            max_episode_chars=self.max_episode_chars,
+            early_exit_confidence=self.early_exit_confidence,
+            query_dedup=self.query_dedup,
+            stage_result_mode=self.stage_result_mode,
+            stage_result_confidence_threshold=self.stage_result_confidence_threshold,
+            omit_episode_text_on_confident_stage_result=(
+                self.omit_episode_text_on_confident_stage_result
+            ),
+            use_answer_prompt_template=self.use_answer_prompt_template,
+            anthropic_max_tokens=self._anthropic_max_tokens,
+            tool_choice=tool_choice,
+        )
+
+    def _validate_client(self) -> None:
+        if self.provider == "openai":
+            create = getattr(getattr(self._client, "responses", None), "create", None)
+            if not callable(create):
+                raise TypeError(
+                    "OpenAI SkillRunner requires a client with responses.create()."
+                )
+            return
+
+        create = getattr(getattr(self._client, "messages", None), "create", None)
+        if not callable(create):
+            raise TypeError(
+                "Anthropic SkillRunner requires a client with messages.create()."
+            )
+
+    def _openai_client(self) -> _OpenAIClientProtocol:
+        return cast(_OpenAIClientProtocol, self._client)
+
+    def _anthropic_client(self) -> _AnthropicClientProtocol:
+        return cast(_AnthropicClientProtocol, self._client)
+
+    def skill_messages(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+    ) -> list[dict[str, object]]:
+        """Return provider-native attachment blocks for the next user prompt."""
+        if self.provider == "openai":
+            return self._openai_skill_messages(prompt)
+        return self._anthropic_skill_messages(prompt, system_prompt=system_prompt)
+
+    def _openai_skill_messages(self, prompt: str) -> list[dict[str, object]]:
+        prompt_text = self._augment_prompt(prompt)
+        return [
+            *(
+                {"type": "input_file", "file_id": file_id}
+                for file_id in self.skill.file_ids
+            ),
+            {"type": "input_text", "text": prompt_text},
+        ]
+
+    def _anthropic_skill_messages(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+    ) -> list[dict[str, object]]:
+        prompt_text = self._augment_prompt(prompt)
+        content: list[dict[str, object]] = [
+            {
+                "type": "document",
+                "source": {"type": "file", "file_id": file_id},
+            }
+            for file_id in self.skill.file_ids
+        ]
+        content.append({"type": "text", "text": prompt_text})
+        self._anthropic_messages = [{"role": "user", "content": content}]
+        self._anthropic_system_prompt = system_prompt
+        return content
+
+    def tools(self) -> list[dict[str, object]]:
+        """Return the provider-specific memmachine_search tool schema."""
+        if self.provider == "openai":
+            return [dict(_CANONICAL_MEMMACHINE_SEARCH_TOOL)]
+        return [
+            {
+                "name": _CANONICAL_MEMMACHINE_SEARCH_TOOL["name"],
+                "description": _CANONICAL_MEMMACHINE_SEARCH_TOOL["description"],
+                "input_schema": dict(_CANONICAL_MEMMACHINE_SEARCH_PARAMETERS),
+            }
+        ]
+
+    async def handle_tool_loop(self, response: object) -> str:
+        """Execute the memmachine_search loop until a final text response is produced."""
+        self.last_search_results = []
+        self.last_raw_search_results = []
+        self.last_memory_search_called = 0
+        self.last_memory_search_latency_seconds = []
+        self.last_stage_results = []
+        self.last_stage_sub_queries = []
+        self.last_llm_call_count = 1
+        self.last_tool_call_count = 0
+        self.last_follow_up_input_tokens = 0
+        self.last_follow_up_output_tokens = 0
+        self._seen_queries = set()
+        state = SkillLoopState()
+        transport = (
+            _OpenAIToolLoopTransport(self)
+            if self.provider == "openai"
+            else _AnthropicToolLoopTransport(self)
+        )
+        result = await continue_tool_loop(
+            initial_response=response,
+            transport=transport,
+            state=state,
+            run_search=self._run_search,
+            max_turns=self.max_turns,
+            stage_result_mode=self.stage_result_mode,
+            early_exit_confidence=bool(self.early_exit_confidence),
+            partial_response_text=self._partial_response_text(),
+        )
+        self.last_stage_results = list(state.stage_results)
+        self.last_stage_sub_queries = list(state.stage_sub_queries)
+        self.last_llm_call_count = state.llm_call_count
+        self.last_tool_call_count = state.tool_call_count
+        self.last_follow_up_input_tokens = state.follow_up_input_tokens
+        self.last_follow_up_output_tokens = state.follow_up_output_tokens
+        self.last_memory_search_called = state.memory_search_called
+        return result
+
+    def _anthropic_tool_choice(self) -> dict[str, str] | None:
+        if isinstance(self._tool_choice, dict):
+            return {
+                str(key): str(value)
+                for key, value in self._tool_choice.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        if self._tool_choice == "auto":
+            return {"type": "auto"}
+        if self._tool_choice == "required":
+            return {"type": "any"}
+        return None
+
+    async def _run_search(
+        self,
+        query: str,
+        state: SkillLoopState | None = None,
+    ) -> dict[str, object]:
+        query = canonicalize_search_query(query)
+        sync_back = state is None
+        if state is None:
+            state = SkillLoopState(
+                memory_search_called=self.last_memory_search_called,
+                stage_results=list(self.last_stage_results),
+                stage_sub_queries=list(self.last_stage_sub_queries),
+            )
+        if self.query_dedup:
+            normalized_query = frozenset(re.findall(r"[a-z0-9]+", query.lower()))
+            if normalized_query in self._seen_queries:
+                for cached in self.last_search_results:
+                    if cached.get("query") == query:
+                        return self._tool_search_result(
+                            cached,
+                            stage_results=state.stage_results,
+                        )
+                return self._tool_search_result(
+                    {
+                        "query": query,
+                        "episodic_memory": {
+                            "short_term_memory": {
+                                "episodes": [],
+                                "episode_summary": [],
+                            },
+                            "long_term_memory": {"episodes": []},
+                        },
+                        "semantic_memory": [],
+                        "episode_summary": [],
+                        "episodes": [],
+                        "episodes_text": "",
+                        "semantic_text": "",
+                        "memory_text": "",
+                        "count": 0,
+                        "semantic_count": 0,
+                        "total_count": 0,
+                    },
+                    stage_results=state.stage_results,
+                )
+            self._seen_queries.add(normalized_query)
+
+        if self._rest_memory is None:
+            raise RuntimeError("rest_memory is required for SkillRunner.")
+        search_start = time.perf_counter()
+        result = self._rest_memory.search(
+            query,
+            limit=self._current_search_limit(),
+            expand_context=self.expand_context,
+            score_threshold=self.score_threshold,
+            agent_mode=False,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        elapsed_seconds = time.perf_counter() - search_start
+        self.last_raw_search_results.append(result)
+        payload = self._normalize_search_result(
+            query=query,
+            raw_result=result,
+            state=state,
+        )
+        self.last_search_results.append(payload)
+        state.memory_search_called += 1
+        self.last_memory_search_latency_seconds.append(elapsed_seconds)
+        tool_result = self._tool_search_result(
+            payload, stage_results=state.stage_results
+        )
+        if sync_back:
+            self.last_memory_search_called = state.memory_search_called
+            self.last_stage_results = list(state.stage_results)
+            self.last_stage_sub_queries = list(state.stage_sub_queries)
+        return tool_result
+
+    async def search(self, query: str) -> dict[str, object]:
+        """Run one search outside the provider loop and return the tool payload."""
+        return await self._run_search(query)
+
+    async def run(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        max_output_tokens: int | None = None,
+        top_p: float | None = None,
+    ) -> str:
+        """Run the full installed-skill session, including the initial provider call."""
+        self.last_initial_input_tokens = 0
+        self.last_initial_output_tokens = 0
+        if self.provider == "openai":
+            request: dict[str, object] = {
+                "model": self._model,
+                "input": [{"role": "user", "content": self.skill_messages(prompt)}],
+                "tools": self.tools(),
+                "tool_choice": self._tool_choice,
+            }
+            if max_output_tokens is not None:
+                request["max_output_tokens"] = max_output_tokens
+            if top_p is not None:
+                request["top_p"] = top_p
+            response = await self._openai_client().responses.create(**request)
+        else:
+            _ = self.skill_messages(prompt, system_prompt=system_prompt)
+            if self._anthropic_messages is None:
+                raise RuntimeError(
+                    "Anthropic skill_messages() did not initialize messages."
+                )
+            request = {
+                "model": self._model,
+                "messages": self._anthropic_messages,
+                "tools": self.tools(),
+                "max_tokens": (
+                    max_output_tokens
+                    if max_output_tokens is not None
+                    else self._anthropic_max_tokens
+                ),
+            }
+            if system_prompt is not None:
+                request["system"] = system_prompt
+            anthropic_tool_choice = self._anthropic_tool_choice()
+            if anthropic_tool_choice is not None:
+                request["tool_choice"] = anthropic_tool_choice
+            response = await self._anthropic_client().messages.create(**request)
+        self.last_initial_input_tokens, self.last_initial_output_tokens = (
+            self._usage_tuple(response)
+        )
+        return await self.handle_tool_loop(response)
+
+    def _normalize_search_result(
+        self,
+        *,
+        query: str,
+        raw_result: object,
+        state: SkillLoopState | None = None,
+    ) -> dict[str, object]:
+        if state is None:
+            state = SkillLoopState(
+                stage_results=list(self.last_stage_results),
+                stage_sub_queries=list(self.last_stage_sub_queries),
+            )
+        return normalize_search_result(
+            query=query,
+            raw_result=raw_result,
+            score_threshold=self.score_threshold,
+            max_episode_chars=self.max_episode_chars,
+            stage_result_mode=self.stage_result_mode,
+            stage_results=state.stage_results,
+            stage_sub_queries=state.stage_sub_queries,
+        )
+
+    def _tool_search_result(
+        self,
+        payload: dict[str, object],
+        *,
+        stage_results: list[dict[str, object]],
+    ) -> dict[str, object]:
+        return build_tool_search_result(
+            payload=payload,
+            stage_result_mode=self.stage_result_mode,
+            stage_results=stage_results,
+            omit_episode_text_on_confident_stage_result=(
+                self.omit_episode_text_on_confident_stage_result
+            ),
+            stage_result_confidence_threshold=self.stage_result_confidence_threshold,
+        )
+
+    def _current_search_limit(self) -> int:
+        if self.adaptive_search_limit is None:
+            return self.search_limit
+        if self.last_memory_search_called == 0 and not self.last_search_results:
+            return self.adaptive_search_limit["initial"]
+        return self.adaptive_search_limit["escalated"]
+
+    def _augment_prompt(self, prompt: str) -> str:
+        return augment_prompt(prompt, stage_result_mode=self.stage_result_mode)
+
+    def _final_response_text(self, latest_text: str) -> str:
+        return final_response_text(
+            latest_text,
+            stage_result_mode=self.stage_result_mode,
+        )
+
+    @staticmethod
+    def _as_dict(raw_value: object) -> dict[str, object]:
+        return as_dict(raw_value)
+
+    @staticmethod
+    def _extract_query_from_arguments(raw_arguments: object) -> str:
+        if isinstance(raw_arguments, str):
+            try:
+                raw_arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                return ""
+        return extract_query_from_arguments(raw_arguments)
+
+    @staticmethod
+    def _partial_response_text() -> str:
+        return "Partial result: memmachine_search loop reached max_turns."
+
+    def _usage_tuple(self, response: object) -> tuple[int, int]:
+        response_payload = self._as_dict(response)
+        usage = response_payload.get("usage") or getattr(response, "usage", None)
+        if usage is None:
+            return 0, 0
+        usage_payload = self._as_dict(usage)
+        return (
+            self._coerce_int(
+                usage_payload.get("input_tokens", getattr(usage, "input_tokens", 0))
+            ),
+            self._coerce_int(
+                usage_payload.get("output_tokens", getattr(usage, "output_tokens", 0))
+            ),
+        )
+
+    @staticmethod
+    def _openai_response_id(response: object) -> str | None:
+        payload = SkillRunner._as_dict(response)
+        value = payload.get("id")
+        if isinstance(value, str):
+            return value
+        value = getattr(response, "id", None)
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _openai_response_output_text(response: object) -> str:
+        payload = SkillRunner._as_dict(response)
+        value = payload.get("output_text")
+        if isinstance(value, str) and value.strip():
+            return value
+        value = getattr(response, "output_text", "")
+        if isinstance(value, str) and value.strip():
+            return value
+
+        texts: list[str] = []
+        for item in SkillRunner._openai_raw_output_items(response):
+            texts.extend(SkillRunner._openai_output_item_text(item))
+        return "\n".join(text for text in texts if text).strip()
+
+    @classmethod
+    def _openai_raw_output_items(cls, response: object) -> list[dict[str, object]]:
+        response_payload = cls._as_dict(response)
+        items = response_payload.get("output")
+        if isinstance(items, list):
+            normalized_items: list[dict[str, object]] = []
+            for item in items:
+                item_dict = cls._as_dict(item)
+                if item_dict:
+                    normalized_items.append(item_dict)
+            return normalized_items
+
+        raw_items = getattr(response, "output", []) or []
+        normalized: list[dict[str, object]] = []
+        for item in raw_items:
+            item_dict = cls._as_dict(item)
+            if item_dict:
+                normalized.append(item_dict)
+                continue
+            if getattr(item, "type", None) == "function_call":
+                normalized.append(
+                    {
+                        "type": "function_call",
+                        "name": getattr(item, "name", ""),
+                        "arguments": getattr(item, "arguments", {}),
+                        "call_id": getattr(item, "call_id", None),
+                    }
+                )
+        return normalized
+
+    @classmethod
+    def _openai_output_item_text(cls, item: dict[str, object]) -> list[str]:
+        item_type = str(item.get("type", ""))
+        if item_type in {"output_text", "text"}:
+            text = item.get("text")
+            return [text] if isinstance(text, str) and text.strip() else []
+        if item_type == "message":
+            content = item.get("content", [])
+            if not isinstance(content, list):
+                return []
+            texts: list[str] = []
+            for block in content:
+                block_dict = cls._as_dict(block)
+                if block_dict:
+                    texts.extend(cls._openai_output_item_text(block_dict))
+            return texts
+        content = item.get("content")
+        return [content] if isinstance(content, str) and content.strip() else []
+
+    @classmethod
+    def _openai_response_items(cls, response: object) -> list[dict[str, object]]:
+        return cls._openai_raw_output_items(response)
+
+    @classmethod
+    def _anthropic_content_blocks(cls, response: object) -> list[dict[str, object]]:
+        response_payload = cls._as_dict(response)
+        blocks = response_payload.get("content")
+        if isinstance(blocks, list):
+            raw_blocks = blocks
+        else:
+            raw_blocks = getattr(response, "content", []) or []
+
+        normalized: list[dict[str, object]] = []
+        for raw_block in raw_blocks:
+            block = cls._normalize_anthropic_block(raw_block)
+            if block is not None:
+                normalized.append(block)
+        return normalized
+
+    @staticmethod
+    def _normalize_anthropic_block(raw_block: object) -> dict[str, object] | None:
+        raw_block_dict = SkillRunner._as_dict(raw_block)
+        if raw_block_dict:
+            return SkillRunner._normalize_anthropic_block_dict(raw_block_dict)
+
+        block_type = getattr(raw_block, "type", None)
+        if block_type == "text":
+            text = getattr(raw_block, "text", None)
+            if isinstance(text, str):
+                return {"type": "text", "text": text}
+            return None
+        if block_type == "tool_use":
+            name = getattr(raw_block, "name", None)
+            if not isinstance(name, str):
+                return None
+            block = {
+                "type": "tool_use",
+                "name": name,
+                "input": getattr(raw_block, "input", {}),
+            }
+            raw_id = getattr(raw_block, "id", None)
+            if isinstance(raw_id, str):
+                block["id"] = raw_id
+            return block
+        return None
+
+    @staticmethod
+    def _normalize_anthropic_block_dict(
+        raw_block: dict[str, object],
+    ) -> dict[str, object] | None:
+        block_type = raw_block.get("type")
+        if block_type == "text":
+            text = raw_block.get("text")
+            if isinstance(text, str):
+                return {"type": "text", "text": text}
+            return None
+        if block_type == "tool_use":
+            name = raw_block.get("name")
+            if not isinstance(name, str):
+                return None
+            block: dict[str, object] = {
+                "type": "tool_use",
+                "name": name,
+                "input": raw_block.get("input", {}),
+            }
+            raw_id = raw_block.get("id")
+            if isinstance(raw_id, str):
+                block["id"] = raw_id
+            return block
+        return None
+
+    @staticmethod
+    def _anthropic_extract_text(content_blocks: list[dict[str, object]]) -> str:
+        texts: list[str] = []
+        for block in content_blocks:
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+        return "\n".join(texts).strip()
+
+    @staticmethod
+    def _coerce_int(value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return 0
+        return 0

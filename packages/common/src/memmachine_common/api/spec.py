@@ -598,6 +598,7 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             default=False,
             description=SpecDoc.AGENT_MODE,
             examples=Examples.AGENT_MODE,
+            serialization_alias="agent_mode",
         ),
     ]
 
@@ -942,6 +943,10 @@ class SearchResultContent(BaseModel):
     semantic_memory: Annotated[
         list[SemanticFeature] | None,
         Field(default=None, description=SpecDoc.SEARCH_SEMANTIC_MEMORY),
+    ]
+    retrieval_trace: Annotated[
+        dict[str, JsonValue] | None,
+        Field(default=None, description=SpecDoc.SEARCH_RETRIEVAL_TRACE),
     ]
 
 

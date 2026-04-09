@@ -4,97 +4,115 @@ description: "How MemMachine uses intelligent orchestration to solve complex, mu
 icon: "brain-circuit"
 ---
 
-Sometimes a single vector search isn't enough. `agent_mode` adds an intelligent orchestration layer to episodic long-term memory retrieval, moving beyond simple similarity to active reasoning. Use `agent_mode=true` in your memory search APIs to handle complex questions that require more than one step to answer.
+Sometimes a single vector search is not enough. When you pass
+`agent_mode=true`, MemMachine switches from the default episodic search path to
+the top-level `RetrievalAgent`.
 
-## How it Works
+The current retrieval agent is a provider-native, multi-turn search loop. It
+runs inside one LLM session, uses `memmachine_search` as its only external tool,
+and can enter an internal chain-of-query (`coq`) branch for multi-hop
+questions.
+
+## How It Works
 
 <Steps>
-  <Step title="Smart Routing">
-    The `ToolSelectAgent` analyzes your query to decide the best path forward: a direct lookup, splitting the query into parts, or following a chain of evidence.
+  <Step title="Provider-Native Session">
+    MemMachine uploads a markdown agent bundle and runs the retrieval loop
+    inside a provider-native session. OpenAI Responses is the default runtime;
+    Anthropic Messages can be enabled in `retrieval_agent` configuration.
   </Step>
-  <Step title="Specialized Execution">
-    The orchestrator hands the query to a specialized agent that can dig through your memory based on the specific complexity of your question.
+  <Step title="Single Tool Contract">
+    The top-level agent uses only one external tool: `memmachine_search`.
+    Routing is internal to the session. There is no separate routing tool call
+    exposed to the client.
   </Step>
-  <Step title="Evidence Aggregation">
-    MemMachine gathers all the findings, reranks them for precision, and returns the results along with clear metrics on how it found the answer.
+  <Step title="Internal COQ Branch">
+    For multi-hop questions, the agent can switch to attached `coq` guidance.
+    That branch keeps the same session alive and resolves dependency hops in
+    order, still using only `memmachine_search`.
+  </Step>
+  <Step title="Merge, Rerank, Return">
+    MemMachine merges semantic and episodic evidence across hops, reranks the
+    final long-term episodic results, and returns both the answer context and a
+    `retrieval_trace`.
   </Step>
 </Steps>
 
-![Retrieval Agent Orchestration](/images/intelligent_orchestration.png)
+## Current Components
 
-## Agent Taxonomy
-
-Not all queries are created equal. We use different agents to handle different levels of complexity:
-
-| Agent | Role | Best For |
+| Component | Role | Notes |
 | :--- | :--- | :--- |
-| `MemMachineAgent` | Direct Retrieval | Simple, one-shot lookups. |
-| `SplitQueryAgent` | Parallel Search | Queries with multiple independent entities or constraints. |
-| `ChainOfQueryAgent` | Multi-hop Retrieval | Complex relationship chains where facts depend on each other. |
+| `RetrievalAgent` | Top-level orchestrator | Activated by `agent_mode=true`. |
+| `memmachine_search` | Only external tool | Used for every retrieval hop. |
+| `coq` | Internal chain-of-query branch | Used for multi-hop dependency resolution. |
 
----
+## When To Use `agent_mode`
 
-## Why Agentic Retrieval Matters
+`agent_mode` is most useful when the answer cannot be recovered from one direct
+lookup, for example:
 
-Standard vector search works great when a query maps directly to a single memory. However, real-world questions are often "messy." 
-
-`agent_mode` is designed for scenarios that require:
-- **Multi-hop chains:** Where Fact B can't be found until you find Fact A.
-- **Relationship traversal:** Jumping across entities (e.g., `Person` -> `Organization` -> `Role`).
-- **Mixed constraints:** Filtering by time, location, and role simultaneously in steps.
-- **Sufficiency checks:** Ensuring the agent doesn't stop until it actually has enough evidence.
-
-### The "Spouse" Problem (Multi-hop struggle)
-Imagine asking: *"What is the current company of the spouse of the CEO of Acme?"*
-
-A standard search might over-focus on "Acme" and "CEO," completely missing the spouse's data because that entity hasn't been identified yet. 
-
-### How MemMachine Fixes This
-1. **Detection:** `ToolSelectAgent` sees the complexity and routes to a chain-based strategy.
-2. **Iteration:** `ChainOfQueryAgent` finds the CEO first, identifies the spouse, and then searches for that spouse's company.
-3. **Verification:** At each step, the agent checks if it has enough info to move forward.
-4. **Ranking:** All gathered evidence is combined and ranked to give you the most relevant answer.
+- Multi-hop relationship chains such as `person -> spouse -> employer`.
+- Comparison questions that require resolving both sides before deciding.
+- Queries where the final attribute depends on an intermediate identity lookup.
+- Cases where you want the retrieval trace for debugging and evaluation.
 
 <Note>
-Setting `agent_mode=false` (default) uses the standard `EpisodicMemory` path. This is faster for simple queries but may struggle with multi-step reasoning.
+Setting `agent_mode=false` keeps the standard `EpisodicMemory` search path. It
+is faster for simple lookups and should remain the default when you do not need
+multi-step reasoning.
 </Note>
 
-### Workflow Diagram
+## Example: Resolving an Intermediate Hop
 
-This diagram shows how our Intelligent Orchestration resolves these patterns by branching between standard and agentic paths:
+Question:
 
-![Retrieval Agent Workflow Diagram](/images/retrieval-agent-workflow.png)
+> "Where was the father of Rembrandt's wife born?"
 
----
+A direct search can easily over-focus on Rembrandt or his wife. The retrieval
+agent instead works hop-by-hop:
 
-## Configuration & Extension
+1. Search for Rembrandt's wife.
+2. Resolve her father.
+3. Search for that father's birthplace.
+4. Stop only when the final asked attribute is supported.
 
-You can fine-tune how these agents behave using the `extra_params` dictionary.
+## Configuration
+
+Runtime configuration lives under the top-level `retrieval_agent` section in
+`cfg.yml`. Key settings include:
+
+- `llm_model` and `reranker` for the retrieval path.
+- `agent_session_provider` to choose `openai` or `anthropic`.
+- Session budgets such as `agent_session_timeout_seconds` and
+  `agent_session_max_combined_calls`.
+- Provider-specific settings such as `anthropic_model` and
+  `anthropic_api_key`.
+
+See the [Configuration](/open_source/configuration) page for the full field list
+and examples.
+
+## Search API Example
 
 ```python
-# Example: Tuning agent behavior for higher precision
-memory.search(
-    query="Find the CEO of Acme's spouse's current company",
+results = memory.search(
+    query="Where was the father of Rembrandt's wife born?",
     agent_mode=True,
-    extra_params={
-        "max_attempts": 3,      # How many hops to allow
-        "confidence_score": 0.85 # Threshold for stopping early
-    }
 )
+
+print(results.content.retrieval_trace)
 ```
 
-<Tip>**Pro Tip:** If the `ChainOfQueryAgent` isn't navigating your data correctly, check the `selected_tool` and `confidence_scores` in your metadata. You can often fix "lost" agents by providing more context in the `combined_prompt` within your config.</Tip>
+## Retrieval Trace
 
-------
+When `agent_mode=true`, MemMachine can return a `retrieval_trace` describing
+how the search ran.
 
-## Metrics and Telemetry
-
-Transparency is key. We provide detailed metrics so you can see exactly how the agent "thought" through your query:
-
-| **Metric**             | **Purpose**                                                  |
-| ---------------------- | ------------------------------------------------------------ |
-| `selected_tool`        | Identifies which agent was chosen to handle the heavy lifting. |
-| `queries`              | Shows the specific sub-queries generated during the process. |
-| `memory_search_called` | The total number of times the agent hit the database.        |
-| `llm_time`             | How long the orchestration/reasoning steps took.             |
-| `confidence_scores`    | The certainty level for each hop in a chain.                 |
+| Metric | Purpose |
+| :--- | :--- |
+| `selected_agent` | Internal route label, typically `memmachine_search` or `coq`. |
+| `selected_agent_name` | Human-readable route label such as `MemMachineSearch` or `ChainOfQueryAgent`. |
+| `memory_search_called` | Total number of `memmachine_search` calls executed. |
+| `orchestrator_step_count` | Number of orchestration steps completed in the session. |
+| `orchestrator_trace` | Full event trace for debugging and evaluation. |
+| `stage_results` | Optional intermediate hop summaries when stage-result mode is enabled. |
+| `stage_result_memory_returned` | Indicates whether confident stage summaries were returned as memory lines. |

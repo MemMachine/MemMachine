@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -68,17 +69,20 @@ def nebula_connection_info():
 async def nebula_client(nebula_connection_info):
     """Create NebulaGraph async client for testing, skip if unavailable."""
     try:
-        from nebulagraph_python.client import NebulaAsyncClient, SessionConfig
+        nebula_client_module = importlib.import_module("nebulagraph_python.client")
     except ImportError:
         pytest.skip("nebulagraph_python not installed")
 
+    nebula_async_client_cls = nebula_client_module.NebulaAsyncClient
+    session_config_cls = nebula_client_module.SessionConfig
+
     try:
         # Connect with empty SessionConfig (schema/graph don't exist yet)
-        client = await NebulaAsyncClient.connect(
+        client = await nebula_async_client_cls.connect(
             hosts=nebula_connection_info["hosts"],
             username=nebula_connection_info["username"],
             password=nebula_connection_info["password"],
-            session_config=SessionConfig(),
+            session_config=session_config_cls(),
         )
 
         # Initialize schema, graph type, and graph

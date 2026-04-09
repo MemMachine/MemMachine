@@ -73,8 +73,9 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(ls *server*.whl)
-          python -m pip install --find-links . "$whl_name"
+          common_whl=$(ls memmachine_common-*.whl | head -1)
+          server_whl=$(ls memmachine_server-*.whl | head -1)
+          python -m pip install --find-links . "$common_whl" "$server_whl"
 
       #
       # ─────────────────────────────────────
@@ -105,8 +106,9 @@ jobs:
         run: |
           set -eo pipefail
           export PYTHONUTF8=1
-          whl_name=$(ls *server*.whl)
-          python -m pip install --find-links . "$whl_name"
+          common_whl=$(ls memmachine_common-*.whl | head -1)
+          server_whl=$(ls memmachine_server-*.whl | head -1)
+          python -m pip install --find-links . "$common_whl" "$server_whl"
 
       #
       # ─────────────────────────────────────
@@ -124,8 +126,9 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(ls *server*.whl)
-          python -m pip install --find-links . "$whl_name"
+          common_whl=$(ls memmachine_common-*.whl | head -1)
+          server_whl=$(ls memmachine_server-*.whl | head -1)
+          python -m pip install --find-links . "$common_whl" "$server_whl"
 
       #
       # ─────────────────────────────────────

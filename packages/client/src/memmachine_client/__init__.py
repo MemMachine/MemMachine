@@ -10,4 +10,9 @@ from .config import Config
 from .memory import Memory
 from .project import Project
 
-__all__ = ["Config", "MemMachineClient", "Memory", "Project"]
+__all__ = [
+    "Config",
+    "MemMachineClient",
+    "Memory",
+    "Project",
+]

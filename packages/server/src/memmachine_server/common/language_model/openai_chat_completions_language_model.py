@@ -104,6 +104,16 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                 "Number of tokens used for OpenAI language model",
             )
 
+    @property
+    def client(self) -> openai.AsyncOpenAI:
+        """Expose underlying OpenAI async client for installed-skill execution."""
+        return self._client
+
+    @property
+    def model_name(self) -> str:
+        """Expose configured OpenAI model name."""
+        return self._model
+
     async def generate_parsed_response(
         self,
         output_format: type[T],

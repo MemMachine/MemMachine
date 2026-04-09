@@ -1,0 +1,178 @@
+import argparse
+import asyncio
+import json
+import random
+import sys
+import time
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from dotenv import load_dotenv
+from memmachine_common.api.spec import MemoryMessage
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from evaluation.utils import skill_utils  # noqa: E402
+
+
+def load_data(  # noqa: C901
+    data_path: str,
+    start_line: int = 1,
+    end_line: int = 100,
+    randomize: str = "KEYWORD",
+):
+    print(f"Loading data from {data_path}")
+    print(f"Loading data from line {start_line} to {end_line}, randomize={randomize}")
+    contexts = []
+    questions = []
+    answers = []
+    types = []
+    supporting_facts = []
+    i = 1
+    with open(data_path, "r", encoding="utf-8") as f:
+        keyword_list = []
+        for line in f:
+            if i < start_line:
+                i += 1
+                continue
+            if i > end_line:
+                break
+            i += 1
+
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            obj["context"] = json.loads(obj["context"])
+            cur_keyword_seg = []
+            key_to_sentences = {}
+            for key, sentences in obj["context"]:
+                key_to_sentences[key] = sentences
+                for s in sentences:
+                    c = f"{key}: {s}"
+                    contexts.append(c)
+                    cur_keyword_seg.append(c)
+            keyword_list.append(cur_keyword_seg)
+            questions.append(obj["question"])
+            answers.append(obj["answer"])
+
+            types.append(obj["type"])
+
+            cur_facts = json.loads(obj["supporting_facts"])
+            fact_sents = []
+            for fact in cur_facts:
+                key = fact[0]
+                sentence_idx = int(fact[1])
+                sent = f"{key}: {key_to_sentences[key][sentence_idx]}"
+                fact_sents.append(sent)
+            supporting_facts.append(fact_sents)
+
+        # Randomize on sentence level
+        if randomize == "SENTENCE":
+            random.shuffle(contexts)
+        # Randomize on keyword level.
+        # Wikimultihop dataset gives context for each question in the format of:
+        # [[keyword1, [sent1, sent2]], [keyword2, [sent3, sent4], ...]]
+        # Each keyword list is kept in order, but the order of keyword lists are shuffled.
+        elif randomize == "KEYWORD":
+            random.shuffle(keyword_list)
+            contexts = []
+            for seg in keyword_list:
+                contexts.extend(seg)
+
+    return contexts, questions, answers, types, supporting_facts
+
+
+async def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--data-path", required=True, help="Path to the data file")
+    parser.add_argument(
+        "--length", type=int, default=500, help="Number of records to ingest"
+    )
+    parser.add_argument(
+        "--session-id",
+        default="group1",
+        help="Evaluation session/project identifier for REST-backed ingestion",
+    )
+
+    args = parser.parse_args()
+
+    data_path = args.data_path
+
+    contexts, questions, _, _, _ = load_data(
+        data_path=data_path, start_line=1, end_line=args.length, randomize="SENTENCE"
+    )
+    print("Loaded", len(contexts), "contexts, start ingestion...")
+
+    num_batch = 1000
+    messages: list[MemoryMessage] = []
+    added_contexts = set()
+    t1 = datetime.now(UTC)
+    for c in contexts:
+        # Wikimultihop dataset may have duplicate sentences, skip them
+        if c in added_contexts:
+            continue
+
+        added_contexts.add(c)
+
+        ts = t1 + timedelta(seconds=len(added_contexts))
+
+        source = c.split(":")[0]
+        messages.append(
+            MemoryMessage(
+                content=c,
+                producer=source,
+                role="system",
+                timestamp=ts,
+                metadata={"session_id": args.session_id},
+            )
+        )
+
+        if len(added_contexts) % num_batch == 0:
+            t = time.perf_counter()
+            await skill_utils.add_messages_via_rest(
+                session_id=args.session_id,
+                messages=messages,
+                batch_size=num_batch,
+            )
+            print(
+                f"Gathered and added {len(messages)} memories in {(time.perf_counter() - t):.3f}s"
+            )
+            messages = []
+
+            print(f"Total added episodes: {len(added_contexts)}")
+
+    if messages:
+        t = time.perf_counter()
+        await skill_utils.add_messages_via_rest(
+            session_id=args.session_id,
+            messages=messages,
+            batch_size=num_batch,
+        )
+        print(
+            f"Gathered and added {len(messages)} memories in {(time.perf_counter() - t):.3f}s"
+        )
+        print(f"Total added episodes: {len(added_contexts)}")
+
+    print(f"Completed WIKI-Multihop ingestion, added {len(added_contexts)} episodes.")
+
+    warmup_query = next((question.strip() for question in questions if question), "")
+    if warmup_query:
+        elapsed = await skill_utils.warmup_rest_evaluation_search(
+            session_id=args.session_id,
+            query=warmup_query,
+        )
+        if elapsed is None:
+            print(
+                f"Warmup search for {args.session_id} did not finish before the retry budget was exhausted."
+            )
+        else:
+            print(f"Warmed up search for {args.session_id} in {elapsed:.3f}s")
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    asyncio.run(main())

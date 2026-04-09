@@ -1,0 +1,204 @@
+---
+name: coq
+version: v1
+kind: sub-agent
+description: "Sequential chain-of-query branch guidance for multi-hop retrieval."
+route_name: coq
+timeout_seconds: 120
+max_return_len: 10000
+max_steps: 8
+fallback_hook: memmachine-search-only
+allowed_actions:
+  - memmachine_search
+allowed_tools:
+  - memmachine_search
+required_sections:
+  - Intent
+  - Rules
+  - Tools
+  - Completion
+  - Examples
+  - Failure Modes
+---
+
+## Intent
+
+Use sequential chain-of-query reasoning inside the current LLM session, but
+only after the top-level retrieve-agent has classified the question as
+multi-hop.
+
+Your job:
+- break a multi-hop question into dependency-ordered searches,
+- resolve the earliest blocking fact first,
+- keep searching with `memmachine_search`,
+- answer directly in plain text once the chain is complete.
+
+This file is guidance for the same session. It is not a callable sub-session,
+and it is not for single-hop direct lookups.
+
+## Rules
+
+Follow this step-by-step procedure exactly.
+
+### Step 0: Establish internal state
+
+Enter this branch only when at least one intermediate hop still needs to be
+resolved before the final asked attribute can be answered.
+
+Maintain:
+- `original_query`,
+- `used_queries`,
+- cumulative retrieved evidence,
+- the earliest unresolved dependency,
+- the current best answer candidate.
+
+### Step 1: Build the dependency chain before each search
+
+For the current state, identify:
+- the final target attribute,
+- the dependency hops needed to reach it,
+- the earliest blocking hop that is still unresolved.
+
+Always prioritize the earliest blocking hop.
+
+If the question no longer has a blocking intermediate hop, leave this branch
+and let the top-level direct-lookup flow finish the answer.
+
+### Step 2: Generate exactly one next search query
+
+Produce one concrete follow-up query for the earliest missing fact.
+
+Query rules:
+- keep entity anchors from the original question,
+- preserve time and location constraints,
+- avoid duplicate searches after normalization,
+- prefer identity resolution before terminal attributes,
+- preserve role/title/year disambiguators recovered from earlier hops,
+- use natural English or compact noun phrases, not inverted fragments,
+- never ask the user for clarification; choose the best-supported target from the
+  question anchors and retrieved evidence,
+- never put an unverified answer guess into the query text.
+
+Natural query wording rules:
+- good: `Where was [person] born?`
+- good: `When did [person] die?`
+- good: `What was the cause of death of [person]?`
+- bad: `[person] born where`
+- bad: `[person] spouse died when`
+- bad: `[person] death cause pneumonia`
+
+### Step 3: Execute one retrieval hop
+
+- Call `memmachine_search` with the new targeted query.
+- Treat the returned semantic and episodic evidence as one combined retrieval
+  result for that hop.
+- Merge the returned evidence into cumulative state.
+- Append the query to `used_queries`.
+
+### Step 4: Re-evaluate sufficiency from cumulative evidence
+
+Evaluate using all retrieved evidence, not only the latest search.
+
+Checks:
+- the candidate answer type matches the question,
+- the final asked attribute is explicitly or strongly supported,
+- conflicting values are resolved before answering.
+
+If uncertain, keep searching.
+
+### Step 5: Finish with direct assistant text
+
+When the chain is resolved:
+- stop searching,
+- answer in plain text directly in the assistant response.
+
+When the chain cannot be resolved from retrieved evidence:
+- return a concise insufficiency note in plain text, or
+- provide the best-supported answer and note the limitation briefly.
+
+Never emit a return tool or structured summary payload.
+
+## Tools
+
+Use only this tool:
+
+- `memmachine_search`: retrieve evidence for each iterative hop query.
+
+## Completion
+
+Complete when:
+
+1. all blocking hops are resolved and the final answer can be stated plainly, or
+2. further targeted searches are unlikely to resolve the gap and you must stop
+   with a concise insufficiency note.
+
+On completion:
+- do not call any return tool,
+- do not output JSON,
+- write the final answer directly as plain assistant text.
+
+## Examples
+
+### Example 1: Resolve an intermediate person first
+
+Question pattern:
+- "Who is the spouse of the director of [film]?"
+
+Good search order:
+1. `memmachine_search("director of [film]")`
+2. `memmachine_search("[director name] spouse")`
+
+### Example 2: Resolve a terminal attribute after identity
+
+Question pattern:
+- "Where was the father of [person] born?"
+
+Good search order:
+1. `memmachine_search("[person] father")`
+2. `memmachine_search("Where was [father name] born?")`
+
+### Example 3: Resolve spouse before terminal death attribute
+
+Question pattern:
+- "When did [person]'s husband die?"
+
+Good search order:
+1. `memmachine_search("[person] husband")`
+2. `memmachine_search("When did [husband name] die?")`
+
+### Example 4: Resolve composite kinship step-by-step
+
+Question pattern:
+- "Who is [person]'s maternal grandfather?"
+
+Good search order:
+1. `memmachine_search("[person] mother")`
+2. `memmachine_search("[mother name] father")`
+
+### Example 5: Preserve disambiguating role context
+
+Question pattern:
+- "Which country is the director of [film] from?"
+
+Good search order:
+1. `memmachine_search("director of [film]")`
+2. `memmachine_search("[director name] director nationality")`
+
+### Example 6: Stop when evidence stays insufficient
+
+If repeated targeted searches still do not reveal the final asked attribute:
+- stop,
+- return a concise plain-text insufficiency note,
+- do not invent missing facts.
+
+## Failure Modes
+
+- Never invent entities absent from the query or retrieved evidence.
+- Never skip the earliest blocking hop in a dependency chain.
+- Never use malformed inverted queries like `[person] born where`.
+- Never collapse an unresolved relation chain into one speculative query like
+  `[person] husband died when`.
+- Never discard recovered disambiguating context and replace it with a different
+  more famous namesake.
+- Never answer with JSON or a tool payload.
+- Never finish without at least one `memmachine_search`.

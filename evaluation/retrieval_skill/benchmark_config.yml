@@ -1,0 +1,73 @@
+# Benchmark configuration for answer model and evaluation model.
+#
+# Format mirrors the MemMachine server configuration.yml language_models section.
+# Each model entry requires:
+#   provider  -- one of: openai-responses, openai-chat-completions, amazon-bedrock
+#   config    -- provider-specific settings (see examples below)
+#
+# Environment variables can be referenced with ${VAR} or $VAR syntax.
+
+# ── Answer model ────────────────────────────────────────────────────────
+# Used to generate final answers from retrieved memories during benchmarks.
+
+answer_model:
+  provider: openai-responses
+  config:
+    api_key: ${OPENAI_API_KEY}
+    base_url: https://api.openai.com/v1
+    model: gpt-5-mini
+
+# ── Evaluation model ────────────────────────────────────────────────────
+# Used by the LLM judge to score answer correctness.
+
+evaluation_model:
+  provider: openai-responses
+  config:
+    api_key: ${OPENAI_API_KEY}
+    base_url: https://api.openai.com/v1
+    model: gpt-5-mini
+
+# ── Provider examples ───────────────────────────────────────────────────
+#
+# --- Ollama (via openai-chat-completions) ---
+#
+# answer_model:
+#   provider: openai-chat-completions
+#   config:
+#     api_key: EMPTY
+#     base_url: http://localhost:11434/v1
+#     model: qwen3.5:9b
+#
+# evaluation_model:
+#   provider: openai-chat-completions
+#   config:
+#     api_key: EMPTY
+#     base_url: http://localhost:11434/v1
+#     model: qwen3.5:9b
+#
+# --- OpenAI Chat Completions ---
+#
+# answer_model:
+#   provider: openai-chat-completions
+#   config:
+#     api_key: ${OPENAI_API_KEY}
+#     base_url: https://api.openai.com/v1
+#     model: gpt-5-mini
+#
+# --- Amazon Bedrock ---
+#
+# answer_model:
+#   provider: amazon-bedrock
+#   config:
+#     model_id: openai.gpt-oss-20b-1:0
+#     region: us-west-2
+#     aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+#     aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+#
+# evaluation_model:
+#   provider: amazon-bedrock
+#   config:
+#     model_id: openai.gpt-oss-20b-1:0
+#     region: us-west-2
+#     aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+#     aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
