@@ -1,7 +1,6 @@
 """Event memory system for storing and retrieving events."""
 
 import asyncio
-import bisect
 import datetime
 import json
 import logging
@@ -10,6 +9,7 @@ from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import ClassVar, cast
 from uuid import UUID, uuid4
 
+import numpy as np
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -193,6 +193,7 @@ class EventMemory:
         self._eviction_similarity_threshold = params.eviction_similarity_threshold
         self._eviction_search_limit = params.eviction_search_limit
         self._eviction_target_size = params.eviction_target_size
+
         self._encode_lock: asyncio.Lock | None = (
             asyncio.Lock() if params.serialize_encode else None
         )
@@ -274,8 +275,6 @@ class EventMemory:
                 f"{', '.join(sorted(missing))}"
             )
 
-        # --- Outside lock: pure computation + embedding API call ---
-
         events = sorted(
             events,
             key=lambda event: (event.timestamp, event.uuid),
@@ -306,8 +305,6 @@ class EventMemory:
                 self._eviction_similarity_threshold,
                 self._embedder.similarity_metric,
             )
-
-        # --- Inside lock: DB reads, eviction decisions, writes ---
 
         async with self._acquire_encode_lock():
             skipped_uuids: set[UUID] = set()
@@ -393,19 +390,14 @@ class EventMemory:
         eviction_similarity_threshold: float,
         similarity_metric: SimilarityMetric,
     ) -> list[set[int]]:
-        """Pre-compute intra-batch similarity (lower triangle only).
-
-        ``batch_predecessors[i]`` contains indices ``j < i`` that are
-        similar to ``i``. Only predecessors are included to simulate
-        serial ingestion.
         """
-        import numpy as np
+        Compute batch predecessors for each derivative embedding.
 
+        The ith entry contains indices j < i that are similar to i.
+        Only predecessors are included to mimic serial ingestion.
+        """
         embeddings = np.asarray(list(derivative_embeddings), dtype=np.float64)
-        n = len(embeddings)
-        if n <= 1:
-            return [set() for _ in range(n)]
-
+        num_embeddings = len(embeddings)
         higher_is_better = similarity_metric.higher_is_better
 
         match similarity_metric:
@@ -413,26 +405,35 @@ class EventMemory:
                 norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
                 norms[norms == 0] = 1.0
                 normalized = embeddings / norms
-                sim_matrix = normalized @ normalized.T
+                similarity_matrix = normalized @ normalized.T
             case SimilarityMetric.DOT:
-                sim_matrix = embeddings @ embeddings.T
-            case SimilarityMetric.EUCLIDEAN | SimilarityMetric.MANHATTAN:
-                # Compute lower triangle row-by-row to avoid O(N²·D)
-                # peak memory from full broadcasting.
-                sim_matrix = np.zeros((n, n), dtype=np.float64)
-                for i in range(1, n):
+                similarity_matrix = embeddings @ embeddings.T
+            case SimilarityMetric.EUCLIDEAN:
+                norms_squared = np.sum(embeddings**2, axis=1)
+                distance_squared = np.add.outer(norms_squared, norms_squared) - 2.0 * (
+                    embeddings @ embeddings.T
+                )
+                similarity_matrix = np.sqrt(np.maximum(distance_squared, 0.0))
+            case SimilarityMetric.MANHATTAN:
+                # Compute row-by-row to avoid using excessive memory.
+                similarity_matrix = np.zeros(
+                    (num_embeddings, num_embeddings), dtype=np.float64
+                )
+                for i in range(1, num_embeddings):
                     diff = embeddings[i] - embeddings[:i]
-                    if similarity_metric == SimilarityMetric.EUCLIDEAN:
-                        sim_matrix[i, :i] = np.linalg.norm(diff, axis=1)
-                    else:
-                        sim_matrix[i, :i] = np.sum(np.abs(diff), axis=1)
+                    similarity_matrix[i, :i] = np.sum(np.abs(diff), axis=1)
 
+        # Exclude diagonal and upper triangle by setting them to a value
+        # that can never pass the threshold comparison.
+        upper_indices = np.triu_indices(num_embeddings)
         if higher_is_better:
-            mask = np.tril(sim_matrix, k=-1) >= eviction_similarity_threshold
+            similarity_matrix[upper_indices] = -np.inf
+            mask = similarity_matrix >= eviction_similarity_threshold
         else:
-            mask = np.tril(sim_matrix, k=-1) <= eviction_similarity_threshold
+            similarity_matrix[upper_indices] = np.inf
+            mask = similarity_matrix <= eviction_similarity_threshold
 
-        return [set(np.where(mask[i])[0].tolist()) for i in range(n)]
+        return [set(np.where(mask[i])[0].tolist()) for i in range(num_embeddings)]
 
     @staticmethod
     def _select_eviction_targets(
@@ -441,10 +442,12 @@ class EventMemory:
         batch_predecessors: list[set[int]],
         eviction_target_size: int,
     ) -> tuple[set[UUID], set[UUID]]:
-        """Select eviction targets considering both DB and intra-batch similarity.
+        """
+        Select eviction targets considering both DB and intra-batch similarity.
 
-        Returns:
-            A tuple of ``(db_uuids_to_delete, batch_uuids_to_skip)``.
+        Returns a tuple of:
+        - a set of DB UUIDs to delete
+        - a set of batch UUIDs to skip
         """
         derivatives = list(derivatives)
         query_results = list(query_results)
@@ -452,73 +455,49 @@ class EventMemory:
         db_eviction_uuids: set[UUID] = set()
         batch_skip_uuids: set[UUID] = set()
 
-        for i, (derivative, query_result) in enumerate(
-            zip(derivatives, query_results, strict=True)
+        for derivative, query_result, predecessor_indexes in zip(
+            derivatives, query_results, batch_predecessors, strict=True
         ):
-            EventMemory._evict_for_derivative(
-                i,
-                derivative,
-                query_result,
-                derivatives,
-                batch_predecessors,
-                eviction_target_size,
-                db_eviction_uuids,
-                batch_skip_uuids,
-            )
+            # Build cluster members: (timestamp, uuid, is_from_db).
+            members: list[tuple[datetime.datetime, UUID, bool]] = []
+
+            # DB cluster members, excluding already-evicted.
+            for match in query_result.matches:
+                if match.record.uuid in db_eviction_uuids:
+                    continue
+                timestamp = cast(
+                    datetime.datetime,
+                    cast(dict[str, PropertyValue], match.record.properties)[
+                        EventMemory._TIMESTAMP_KEY
+                    ],
+                )
+                members.append((timestamp, match.record.uuid, True))
+
+            # Batch predecessors, excluding already-skipped.
+            for index in predecessor_indexes:
+                neighbor = derivatives[index]
+                if neighbor.uuid not in batch_skip_uuids:
+                    members.append((neighbor.timestamp, neighbor.uuid, False))
+
+            # Self.
+            members.append((derivative.timestamp, derivative.uuid, False))
+
+            total_size = len(members)
+            if total_size <= eviction_target_size:
+                continue
+
+            # Cluster is oversized — evict from the temporal middle.
+            members.sort()
+            keep_early = eviction_target_size // 2
+            keep_late = eviction_target_size - keep_early
+
+            for _, uuid, is_from_db in members[keep_early : total_size - keep_late]:
+                if is_from_db:
+                    db_eviction_uuids.add(uuid)
+                else:
+                    batch_skip_uuids.add(uuid)
 
         return db_eviction_uuids, batch_skip_uuids
-
-    @staticmethod
-    def _evict_for_derivative(
-        i: int,
-        derivative: Derivative,
-        query_result: VectorStoreQueryResult,
-        derivatives: list[Derivative],
-        batch_predecessors: list[set[int]],
-        eviction_target_size: int,
-        db_eviction_uuids: set[UUID],
-        batch_skip_uuids: set[UUID],
-    ) -> None:
-        """Evaluate and apply eviction for a single derivative."""
-        # DB cluster members, excluding already-evicted.
-        # Pre-sorted by timestamp via bisect.insort.
-        sorted_members: list[tuple[datetime.datetime, UUID, str]] = []
-        for match in query_result.matches:
-            if match.record.uuid in db_eviction_uuids:
-                continue
-            raw_timestamp = cast(dict[str, PropertyValue], match.record.properties)[
-                EventMemory._TIMESTAMP_KEY
-            ]
-            if isinstance(raw_timestamp, str):
-                raw_timestamp = datetime.datetime.fromisoformat(raw_timestamp)
-            ts = cast(datetime.datetime, raw_timestamp)
-            bisect.insort(sorted_members, (ts, match.record.uuid, "db"))
-
-        # Intra-batch predecessors (j < i), excluding already-skipped.
-        for j in batch_predecessors[i]:
-            neighbor = derivatives[j]
-            if neighbor.uuid not in batch_skip_uuids:
-                bisect.insort(
-                    sorted_members, (neighbor.timestamp, neighbor.uuid, "batch")
-                )
-
-        # Add self.
-        bisect.insort(sorted_members, (derivative.timestamp, derivative.uuid, "self"))
-
-        total_size = len(sorted_members)
-        if total_size <= eviction_target_size:
-            return
-
-        # Cluster is oversized — evict from the temporal middle.
-        protected_count = eviction_target_size // 2
-        middle = sorted_members[protected_count : total_size - protected_count]
-        excess_count = total_size - eviction_target_size
-
-        for _ts, uuid, source in middle[:excess_count]:
-            if source == "db":
-                db_eviction_uuids.add(uuid)
-            else:  # "batch" or "self"
-                batch_skip_uuids.add(uuid)
 
     def _create_segments(
         self,
