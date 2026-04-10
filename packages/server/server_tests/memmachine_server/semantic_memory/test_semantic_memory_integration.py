@@ -99,6 +99,7 @@ async def semantic_service(
     episode_storage: EpisodeStorage,
     semantic_storage: SemanticStorage,
     semantic_config_storage: SemanticConfigStorage,
+    in_memory_cluster_state_storage,
     embedder: Embedder,
     llm_model: LanguageModel,
     default_session_categories,
@@ -110,11 +111,15 @@ async def semantic_service(
         async def get_language_model(self, _: str) -> LanguageModel:
             return llm_model
 
+        async def get_reranker(self, _: str):
+            return None
+
     mem = SemanticService(
         SemanticService.Params(
             semantic_storage=semantic_storage,
             semantic_config_storage=semantic_config_storage,
             episode_storage=episode_storage,
+            cluster_state_storage=in_memory_cluster_state_storage,
             feature_update_interval_sec=0.05,
             uningested_message_limit=0,
             debug_fail_loudly=True,

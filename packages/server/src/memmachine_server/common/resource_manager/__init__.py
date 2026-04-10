@@ -1,6 +1,8 @@
 """Protocols for accessing shared MemMachine resources."""
 
-from typing import Protocol, runtime_checkable
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -14,10 +16,18 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 
+if TYPE_CHECKING:
+    from memmachine_server.common.configuration import Configuration
+
 
 @runtime_checkable
 class CommonResourceManager(Protocol):
     """Protocol for constructing and retrieving shared resources."""
+
+    @property
+    def config(self) -> Configuration:
+        """Return the configuration instance."""
+        raise NotImplementedError
 
     async def build(self) -> None:
         """Construct underlying resource instances."""
