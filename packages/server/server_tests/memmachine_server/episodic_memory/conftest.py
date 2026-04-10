@@ -50,13 +50,17 @@ async def nebula_client_factory():
 
     async def _create_client(connection_info: dict):
         try:
-            from nebulagraph_python.client import NebulaAsyncClient, SessionConfig
+            from nebulagraph_python.client import (
+                NebulaAsyncClient,
+                SessionConfig,
+                SessionPoolConfig,
+            )
         except ImportError:
             pytest.skip("nebulagraph_python not installed")
 
         try:
-            # Connect with empty SessionConfig
-            client = await NebulaAsyncClient.connect(
+            # First connect without session pool to set up schema and graph
+            temp_client = await NebulaAsyncClient.connect(
                 hosts=connection_info["hosts"],
                 username=connection_info["username"],
                 password=connection_info["password"],
@@ -64,17 +68,31 @@ async def nebula_client_factory():
             )
 
             # Initialize schema, graph type, and graph
-            await client.execute(
+            await temp_client.execute(
                 f"CREATE SCHEMA IF NOT EXISTS {connection_info['schema_name']}"
             )
-            await client.execute(f"SESSION SET SCHEMA {connection_info['schema_name']}")
-            await client.execute(
+            await temp_client.execute(
+                f"SESSION SET SCHEMA {connection_info['schema_name']}"
+            )
+            await temp_client.execute(
                 f"CREATE GRAPH TYPE IF NOT EXISTS {connection_info['graph_type_name']} AS {{}}"
             )
-            await client.execute(
+            await temp_client.execute(
                 f"CREATE GRAPH IF NOT EXISTS {connection_info['graph_name']} TYPED {connection_info['graph_type_name']}"
             )
-            await client.execute(f"SESSION SET GRAPH {connection_info['graph_name']}")
+            await temp_client.close()
+
+            # Now connect with SessionPoolConfig and set default schema/graph
+            client = await NebulaAsyncClient.connect(
+                hosts=connection_info["hosts"],
+                username=connection_info["username"],
+                password=connection_info["password"],
+                session_config=SessionConfig(
+                    schema=connection_info["schema_name"],
+                    graph=connection_info["graph_name"],
+                ),
+                session_pool_config=SessionPoolConfig(size=10),
+            )
 
             clients.append((client, connection_info))
 
