@@ -1476,6 +1476,7 @@ async def test_process_single_set_limits_features_sent_to_llm(
             resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=100,
             debug_fail_loudly=False,
+            ingestion_trigger_messages=1,
         )
     )
 
