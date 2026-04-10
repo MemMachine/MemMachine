@@ -1,0 +1,853 @@
+"""Unit tests for OpenAIChatCompletionsLanguageModel."""
+
+from dataclasses import dataclass
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import openai
+import pytest
+from openai.types import chat as openai_chat
+from openai.types.chat.chat_completion_message_function_tool_call import (
+    Function as ToolCallFunction,
+)
+from pydantic import BaseModel, ValidationError
+
+from memmachine_server.common.data_types import ExternalServiceAPIError
+from memmachine_server.common.language_model.openai_chat_completions_language_model import (
+    OpenAIChatCompletionsLanguageModel,
+    OpenAIChatCompletionsLanguageModelParams,
+)
+from memmachine_server.common.metrics_factory import MetricsFactory
+
+
+class FakeAsyncStream:
+    def __init__(self, chunks):
+        self._chunks = iter(chunks)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._chunks)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+@dataclass
+class FakeReasoningChunk:
+    type: str = "response.reasoning.delta"
+
+
+class ParsedResponse(BaseModel):
+    answer: str
+    confidence: float
+
+
+def make_chat_completion(data: dict[str, Any]) -> openai_chat.ChatCompletion:
+    return openai_chat.ChatCompletion.model_validate(data)
+
+
+def make_chat_completion_chunk(data: dict[str, Any]) -> openai_chat.ChatCompletionChunk:
+    return openai_chat.ChatCompletionChunk.model_validate(data)
+
+
+@pytest.fixture
+def mock_metrics_factory():
+    """Fixture for a mocked MetricsFactory."""
+
+    class MockMetricsFactory(MetricsFactory):
+        def __init__(self):
+            self.counters = MagicMock()
+            self.gauge = MagicMock()
+            self.histogram = MagicMock()
+            self.summaries = MagicMock()
+
+        def get_counter(self, name, description, label_names=...):
+            return self.counters
+
+        def get_summary(self, name, description, label_names=...):
+            return self.summaries
+
+        def get_gauge(self, name, description, label_names=...):
+            return self.gauge
+
+        def get_histogram(self, name, description, label_names=...):
+            return self.histogram
+
+        def reset(self):
+            return MagicMock()
+
+    factory = MockMetricsFactory()
+    return factory
+
+
+@pytest.fixture
+def mock_tool_call_impl():
+    """Fixture for a mocked tool call."""
+
+    def _factory(
+        call_id: str,
+        name: str,
+        arguments: str,
+    ) -> openai_chat.ChatCompletionMessageFunctionToolCall:
+        return openai_chat.ChatCompletionMessageFunctionToolCall(
+            id=call_id,
+            function=ToolCallFunction(
+                name=name,
+                arguments=arguments,
+            ),
+            type="function",
+        )
+
+    return _factory
+
+
+@pytest.fixture
+def mock_async_openai():
+    """Fixture for a mocked AsyncOpenAI client."""
+    with patch("openai.AsyncOpenAI", spec=openai.AsyncOpenAI) as mock_async_openai:
+        mock_client = mock_async_openai.return_value
+        mock_client.chat.completions.create = AsyncMock()
+        yield mock_async_openai
+
+
+@pytest.fixture
+def minimal_config(mock_async_openai):
+    """Fixture for a minimal valid configuration."""
+    return OpenAIChatCompletionsLanguageModelParams(
+        client=openai.AsyncOpenAI(
+            api_key="test_api_key",
+        ),
+        model="test-model",
+    )
+
+
+@pytest.fixture
+def full_config(mock_async_openai, mock_metrics_factory):
+    """Fixture for a full valid configuration with metrics."""
+    return OpenAIChatCompletionsLanguageModelParams(
+        client=openai.AsyncOpenAI(
+            api_key="test_api_key",
+            base_url="http://localhost:8080",
+        ),
+        model="test-model",
+        max_retry_interval_seconds=60,
+        metrics_factory=mock_metrics_factory,
+    )
+
+
+@pytest.fixture
+def max_retry_interval_seconds_config(mock_async_openai):
+    """Fixture for a valid configuration with small max_retry_interval_seconds."""
+    return OpenAIChatCompletionsLanguageModelParams(
+        client=openai.AsyncOpenAI(
+            api_key="test_api_key",
+        ),
+        model="test-model",
+        max_retry_interval_seconds=4,
+    )
+
+
+def test_init_success(mock_async_openai, minimal_config):
+    """Test successful initialization."""
+    OpenAIChatCompletionsLanguageModel(minimal_config)
+
+
+def test_init_with_full_config(mock_async_openai, full_config):
+    """Test successful initialization with all optional parameters."""
+    _ = OpenAIChatCompletionsLanguageModel(full_config)
+    mock_async_openai.assert_called_once_with(
+        api_key="test_api_key",
+        base_url="http://localhost:8080",
+    )
+
+
+def test_init_missing_client():
+    """Test initialization fails if client is missing."""
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionsLanguageModel(
+            OpenAIChatCompletionsLanguageModelParams(
+                model="test-model",
+            ),
+        )
+
+
+def test_init_missing_model():
+    """Test initialization fails if model is missing."""
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionsLanguageModel(
+            OpenAIChatCompletionsLanguageModelParams(
+                client=openai.AsyncOpenAI(
+                    api_key="test_api_key",
+                ),
+            ),
+        )
+
+
+def test_init_invalid_max_retry_interval_seconds_type(minimal_config):
+    """Test initialization fails with non-integer max_retry_interval_seconds."""
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionsLanguageModelParams(
+            **(
+                minimal_config.model_dump()
+                | {"max_retry_interval_seconds": "not-an-int"}
+            ),
+        )
+
+
+def test_init_invalid_max_retry_interval_seconds_value(minimal_config):
+    """Test initialization fails with non-positive max_retry_interval_seconds."""
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionsLanguageModelParams(
+            **(minimal_config.model_dump() | {"max_retry_interval_seconds": 0}),
+        )
+
+
+def test_init_invalid_metrics_factory_type(minimal_config):
+    """Test initialization fails with invalid metrics_factory type."""
+    with pytest.raises(ValidationError):
+        OpenAIChatCompletionsLanguageModelParams(
+            **(minimal_config.model_dump() | {"metrics_factory": "not-a-factory"}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_response_invalid_max_attempts(minimal_config):
+    """Test generate_response fails with non-positive max_attempts."""
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    with pytest.raises(ValueError, match="max_attempts must be a positive integer"):
+        await lm.generate_response(max_attempts=0)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_success(mock_async_openai, minimal_config):
+    """Test a successful call to generate_response."""
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "Hello, world!"
+    mock_response.choices[0].message.tool_calls = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = mock_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, tool_calls = await lm.generate_response(
+        system_prompt="System prompt",
+        user_prompt="User prompt",
+    )
+
+    assert content == "Hello, world!"
+    assert tool_calls == []
+    mock_client.chat.completions.create.assert_awaited_once()
+    call_args = mock_client.chat.completions.create.call_args
+    assert call_args.kwargs["model"] == "test-model"
+    assert call_args.kwargs["messages"] == [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "User prompt"},
+    ]
+    assert call_args.kwargs["store"] is False
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_success(mock_async_openai, minimal_config):
+    """Test a non-streamed structured response is parsed correctly."""
+    mock_response = make_chat_completion(
+        {
+            "id": "completion-1",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": '{"answer":"ok","confidence":0.9}',
+                        "refusal": None,
+                    },
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 5,
+                "total_tokens": 12,
+            },
+        }
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = mock_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    parsed = await lm.generate_parsed_response(
+        ParsedResponse,
+        system_prompt="System prompt",
+        user_prompt="User prompt",
+    )
+
+    assert parsed == ParsedResponse(answer="ok", confidence=0.9)
+    call_args = mock_client.chat.completions.create.call_args
+    assert call_args.kwargs["model"] == "test-model"
+    assert call_args.kwargs["messages"] == [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "User prompt"},
+    ]
+    assert call_args.kwargs["response_format"]["type"] == "json_schema"
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_from_stream(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test a streamed structured response is aggregated and validated."""
+    streamed_response = FakeAsyncStream(
+        [
+            FakeReasoningChunk(),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": '{"answer":"ok",',
+                            },
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": '"confidence":0.9}'},
+                            "finish_reason": "stop",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    parsed = await lm.generate_parsed_response(ParsedResponse)
+
+    assert parsed == ParsedResponse(answer="ok", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_from_stream_discards_reasoning_delta_chunks(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test streamed structured responses ignore chunks with reasoning_content."""
+    reasoning_chunk = make_chat_completion_chunk(
+        {
+            "id": "chunk-0",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "test-model",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": None},
+                    "finish_reason": None,
+                    "logprobs": None,
+                }
+            ],
+            "usage": None,
+        }
+    )
+    cast(Any, reasoning_chunk.choices[0].delta).reasoning_content = "chain-of-thought"
+
+    streamed_response = FakeAsyncStream(
+        [
+            reasoning_chunk,
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": '{"answer":"ok",',
+                            },
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": '"confidence":0.9}'},
+                            "finish_reason": "stop",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    parsed = await lm.generate_parsed_response(ParsedResponse)
+
+    assert parsed == ParsedResponse(answer="ok", confidence=0.9)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_streamed_chat_completion_chunks(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test a streamed chat completion is aggregated into a single response."""
+    streamed_response = FakeAsyncStream(
+        [
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": "Hello"},
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": ", world!"},
+                            "finish_reason": "stop",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 4,
+                        "total_tokens": 14,
+                    },
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    (
+        content,
+        tool_calls,
+        input_tokens,
+        output_tokens,
+    ) = await lm.generate_response_with_token_usage()
+
+    assert content == "Hello, world!"
+    assert tool_calls == []
+    assert input_tokens == 10
+    assert output_tokens == 4
+
+
+@pytest.mark.asyncio
+async def test_generate_response_streamed_tool_calls_and_discards_reasoning_chunks(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test streamed tool calls are reconstructed while reasoning chunks are ignored."""
+    streamed_response = FakeAsyncStream(
+        [
+            FakeReasoningChunk(),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-1",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_123",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "get_weather",
+                                            "arguments": '{"location"',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+            make_chat_completion_chunk(
+                {
+                    "id": "chunk-2",
+                    "object": "chat.completion.chunk",
+                    "created": 2,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {"arguments": ': "Boston"}'},
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                            "logprobs": None,
+                        }
+                    ],
+                    "usage": None,
+                }
+            ),
+        ]
+    )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = streamed_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, tool_calls = await lm.generate_response()
+
+    assert content == ""
+    assert tool_calls == [
+        {
+            "call_id": "call_123",
+            "function": {
+                "name": "get_weather",
+                "arguments": {"location": "Boston"},
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_with_tool_calls(
+    mock_async_openai,
+    minimal_config,
+    mock_tool_call_impl,
+):
+    """Test a successful call that returns tool calls."""
+    mock_tool_call = mock_tool_call_impl(
+        "call_123",
+        "get_weather",
+        '{"location": "Boston"}',
+    )
+
+    invalid_mock_tool_call = MagicMock()
+    invalid_mock_tool_call.id = "invalid_call_123"
+    invalid_mock_tool_call.function.name = "get_weather"
+    invalid_mock_tool_call.function.arguments = '{"location": "Boston"}'
+
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = None
+    mock_response.choices[0].message.tool_calls = [
+        mock_tool_call,
+        invalid_mock_tool_call,
+    ]
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = mock_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, tool_calls = await lm.generate_response()
+
+    assert content == ""
+    assert tool_calls == [
+        {
+            "call_id": "call_123",
+            "function": {
+                "name": "get_weather",
+                "arguments": {"location": "Boston"},
+            },
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_response_tool_call_json_repair(
+    mock_async_openai,
+    minimal_config,
+    mock_tool_call_impl,
+):
+    """Test that json-repair successfully fixes invalid JSON in tool call arguments.
+
+    This test uses a MemMachine memory search example with multiple JSON errors
+    that commonly occur in LLM outputs to verify json-repair functionality.
+    """
+    mock_tool_call = mock_tool_call_impl(
+        "call_123",  # Use id instead of uuid
+        "search_memory",
+        """{
+        query: "user preferences and history",
+        "top_k": 10,
+        "types": ["episodic", "semantic",],
+        "filter": {
+            user_id: "user_123",
+            "session_active": true,
+        },
+    }""",
+    )
+    # Invalid JSON with multiple common LLM errors:
+    # - Missing quotes around keys
+    # - Trailing comma in array
+    # - Comments in JSON (not standard)
+    # - Missing closing brace (will be fixed)
+    mock_response = MagicMock()
+    mock_response.choices[0].message.tool_calls = [mock_tool_call]
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = mock_response
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    # json-repair should automatically fix the invalid JSON
+    _content, tool_calls = await lm.generate_response()
+
+    # Verify the repaired JSON is parsed correctly
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["call_id"] == "call_123"
+    assert tool_calls[0]["function"]["name"] == "search_memory"
+    # Verify the complex JSON structure was repaired and parsed correctly
+    args = tool_calls[0]["function"]["arguments"]
+    assert args["query"] == "user preferences and history"
+    assert args["top_k"] == 10
+    assert args["types"] == ["episodic", "semantic"]
+    assert args["filter"]["user_id"] == "user_123"
+    assert args["filter"]["session_active"] is True
+
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_generate_response_retry_on_rate_limit(
+    mock_sleep,
+    mock_async_openai,
+    minimal_config,
+):
+    """Test retry logic on RateLimitError."""
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "Success after retry"
+    mock_response.choices[0].message.tool_calls = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = [
+        openai.RateLimitError("rate limited", response=MagicMock(), body=None),
+        mock_response,
+    ]
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, _ = await lm.generate_response(max_attempts=2)
+
+    assert content == "Success after retry"
+    assert mock_client.chat.completions.create.call_count == 2
+    mock_sleep.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_generate_response_retry_on_rate_limit_with_max_retry_interval_seconds(
+    mock_sleep,
+    mock_async_openai,
+    max_retry_interval_seconds_config,
+):
+    """Test retry logic on RateLimitError."""
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "Success after retry"
+    mock_response.choices[0].message.tool_calls = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = openai.RateLimitError(
+        "rate limited",
+        response=MagicMock(),
+        body=None,
+    )
+
+    lm = OpenAIChatCompletionsLanguageModel(max_retry_interval_seconds_config)
+    with pytest.raises(ExternalServiceAPIError):
+        await lm.generate_response(max_attempts=6)
+
+    assert mock_client.chat.completions.create.call_count == 6
+    mock_sleep.assert_has_awaits(
+        [
+            ((1,),),
+            ((2,),),
+            ((4,),),
+            ((4,),),
+            ((4,),),
+        ],
+    )
+
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_generate_response_fail_after_max_retries(
+    mock_sleep,
+    mock_async_openai,
+    minimal_config,
+):
+    """Test that an IOError is raised after max_attempts are exhausted."""
+    mock_client = mock_async_openai.return_value
+    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    mock_client.chat.completions.create.side_effect = openai.APITimeoutError(request)
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    with pytest.raises(ExternalServiceAPIError, match=r"max attempts"):
+        await lm.generate_response(max_attempts=3)
+
+    assert mock_client.chat.completions.create.call_count == 3
+    assert mock_sleep.call_count == 2
+    mock_sleep.assert_any_await(1)
+    mock_sleep.assert_any_await(2)
+
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_generate_response_retry_on_internal_server_error(
+    mock_sleep,
+    mock_async_openai,
+    minimal_config,
+):
+    """Test retry logic on InternalServerError."""
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "Success after retry"
+    mock_response.choices[0].message.tool_calls = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = [
+        openai.InternalServerError(
+            "internal server error", response=MagicMock(), body=None
+        ),
+        mock_response,
+    ]
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, _ = await lm.generate_response(max_attempts=2)
+
+    assert content == "Success after retry"
+    assert mock_client.chat.completions.create.call_count == 2
+    mock_sleep.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exception",
+    [
+        (openai.AuthenticationError("auth error", response=MagicMock(), body=None),),
+        (openai.BadRequestError("bad request", response=MagicMock(), body=None),),
+        (openai.APIError("api error", request=MagicMock(), body=None),),
+        (openai.OpenAIError("generic error")),
+    ],
+)
+async def test_generate_response_runtime_exception_mapping(
+    mock_async_openai,
+    minimal_config,
+    exception,
+):
+    """Test that OpenAI exceptions are correctly mapped to generic
+    exceptions.
+    """
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = exception
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    with pytest.raises(ExternalServiceAPIError):
+        await lm.generate_response()
+
+
+@pytest.mark.asyncio
+async def test_metrics_collection(mock_async_openai, full_config):
+    """Test that metrics are collected on a successful call."""
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "Metrics test"
+    mock_response.choices[0].message.tool_calls = None
+    mock_response.usage = mock_usage
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = mock_response
+
+    lm = OpenAIChatCompletionsLanguageModel(full_config)
+    await lm.generate_response()
+
+    metrics_factory = full_config.metrics_factory
+
+    input_counter = metrics_factory.get_counter("test", "test")
+    output_counter = metrics_factory.get_counter("test", "test")
+    total_counter = metrics_factory.get_counter("test", "test")
+    latency_histogram = metrics_factory.get_histogram("test", "test")
+
+    # Note: Since get_counter returns the same mock, we check the calls on that mock.
+    input_counter.increment.assert_any_call(value=100)
+    output_counter.increment.assert_any_call(value=50)
+    total_counter.increment.assert_any_call(value=150)
+
+    latency_histogram.observe.assert_called_once()

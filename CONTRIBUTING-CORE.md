@@ -97,9 +97,9 @@ ruff format
 
 To run the ty type checker:
 ```
-uv run ty check src
+uv run ty check packages
 # OR
-ty check src
+ty check packages
 ```
 
 ## 4. Testing

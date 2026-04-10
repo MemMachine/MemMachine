@@ -38,7 +38,7 @@ Slack Messages → Slack Server → CRM Server → Memory Backend → Database
 ## Prerequisites
 
 1. **Python Environment** (3.8+)
-2. **PostgreSQL Database** 
+2. **PostgreSQL Database**
 3. **Slack Bot Token**
 4. **OpenAI API Key** (for AI responses)
 5. **Memory Backend** (MemMachine system)
@@ -108,7 +108,7 @@ pip install fastapi uvicorn httpx asyncpg slack-sdk openai python-dotenv numpy
 
 Navigate to **OAuth & Permissions** and ensure you have these scopes:
 
-#### Bot Token Scopes 
+#### Bot Token Scopes
 ```
 channels:history           # View messages in public channels
 channels:read              # View basic information about public channels
@@ -182,10 +182,10 @@ ngrok http 8001
 
 ```bash
 # Terminal 1: Start Memory Backend
-cd memmachine/src
+cd memmachine/packages/server/src/memmachine_server
 python -m server.app
 
-# Terminal 2: Start CRM Server  
+# Terminal 2: Start CRM Server
 cd agents
 python -m crm.crm_server
 
@@ -198,10 +198,10 @@ python slack_server.py
 
 ```bash
 # Memory Backend (Terminal 1)
-cd memmachine/src
+cd memmachine/packages/server/src/memmachine_server
 python -m server.app
 
-# CRM Server (Terminal 2)  
+# CRM Server (Terminal 2)
 cd agents
 python -m crm.crm_server
 
@@ -221,7 +221,7 @@ SLACK HISTORICAL MESSAGE INGESTION
 Enter the number of historical messages to ingest per channel.
 Press Enter for default (5 messages), or type a number.
 ============================================================
-Number of messages to ingest per channel [5]: 
+Number of messages to ingest per channel [5]:
 ```
 
 **Options:**
@@ -300,7 +300,7 @@ Skipped (duplicates): 0 messages
 ### Logs to Check:
 
 - **Slack Server**: Look for `[SLACK]` prefixed messages
-- **CRM Server**: Look for `[CRM]` prefixed messages  
+- **CRM Server**: Look for `[CRM]` prefixed messages
 - **Memory Backend**: Check for database connection logs
 - **Profile Memory**: Look for `[PROFILE]` and `[PROFILE_UPDATE]` messages
 - **OpenAI**: Look for `[OPENAI]` prefixed messages

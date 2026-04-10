@@ -8,8 +8,8 @@ to enable AI agents with persistent memory capabilities.
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from memmachine import MemMachineClient
-from memmachine.common.api import EpisodeType
+from memmachine_client import MemMachineClient
+from memmachine_common.api import EpisodeType
 
 # Try to import CrewAI tools, fallback to function-based tools if not available
 try:
@@ -27,7 +27,7 @@ except ImportError:
         BaseTool = None
 
 if TYPE_CHECKING:
-    from memmachine.rest_client.memory import Memory
+    from memmachine_client import Memory
 
 
 class MemMachineTools:

@@ -7,7 +7,7 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Bot
 | Field         | Value              |
 |---------------|--------------------|
 | Chart version | 0.1.0              |
-| App version   | v0.2.6             |
+| App version   | v0.3.0             |
 | API version   | v2 (Helm 3)        |
 
 ---
@@ -164,10 +164,11 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 
 ### Storage
 
-| Value          | Default      | Description                                   |
-|----------------|--------------|-----------------------------------------------|
-| `storageClass` | `nfs-client` | StorageClass for all three PVCs               |
-| `pvcSize`      | `5Gi`        | Storage request size for each PVC             |
+| Value          | Default        | Description                                                                 |
+|----------------|----------------|-----------------------------------------------------------------------------|
+| `storageClass` | `nfs-client`   | StorageClass for all three PVCs (e.g., `standard` on kind/minikube)        |
+| `accessMode`   | `ReadWriteMany`| PVC access mode. Use `ReadWriteMany` for NFS-style RWX classes, or `ReadWriteOnce` for local/standard classes that do not support RWX. |
+| `pvcSize`      | `5Gi`          | Storage request size for each PVC                                           |
 
 ### Neo4j (`neo4j.*`)
 
@@ -502,11 +503,12 @@ Only the MemMachine Deployment, Service, memmachine-pvc, two ConfigMaps, and thr
 ```bash
 helm upgrade --install memmachine . \
   --namespace memmachine --create-namespace \
-  --set storageClass=local-path \
+  --set storageClass=standard \
+  --set accessMode=ReadWriteOnce \
   --set pvcSize=20Gi
 ```
 
-> **Note:** `local-path` (Rancher) does not support ReadWriteMany. If your storage class only supports `ReadWriteOnce`, you will need to modify the PVC access modes in `templates/pvc.yaml` accordingly.
+> **Note:** Not all StorageClasses support `ReadWriteMany`. The default `nfs-client` is RWX-capable. Common classes like `standard` on kind/minikube are `ReadWriteOnce` only — when using those, set `accessMode=ReadWriteOnce` (and ensure it matches what your StorageClass supports).
 
 ---
 

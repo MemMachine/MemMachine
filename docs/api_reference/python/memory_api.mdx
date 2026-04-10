@@ -46,7 +46,11 @@ results = client.memories.search(
     org_id="my_org",
     project_id="my_proj",
     query="What are the user's coding preferences?",
-    limit=5
+    limit=5,
+    expand_context=2,
+    score_threshold=0.65,
+    agent_mode=True,
+    filter_dict={"source": "chat_v3"},
 )
 ```
 
@@ -55,8 +59,12 @@ results = client.memories.search(
 | `org_id`      | `str`    | **Required** | Organization identifier.                                     |
 | `project_id`  | `str`    | **Required** | Project identifier.                                          |
 | `query`       | `str`    | **Required** | The natural language search query.                           |
-| `limit`       | `int`    | `20`         | Maximum number of results to return.                         |
+| `limit`       | `int`    | `10`         | Maximum number of results to return.                         |
+| `expand_context` | `int` | `0`          | Number of neighboring episodic entries to include around each long-term match. |
+| `score_threshold` | `float` | `None`     | Minimum episodic retrieval score to keep. Not supported when `agent_mode=True`. |
+| `agent_mode`  | `bool`   | `False`      | Whether to use retrieval-agent search orchestration.         |
 | `filter_dict` | `dict`   | `None`       | Key-value filters to apply to the search (metadata matching). |
+| `timeout`     | `int`    | `None`       | Request timeout in seconds. Uses client default if omitted.  |
 
 ------
 

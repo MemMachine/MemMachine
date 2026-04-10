@@ -7,12 +7,12 @@ on:
     branches:
       - main
     paths:
-      - 'src/memmachine-ts/rest_client/**'
+      - 'packages/ts-client/**'
   pull_request:
     branches:
       - main
     paths:
-      - 'src/memmachine-ts/rest_client/**'
+      - 'packages/ts-client/**'
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./src/memmachine-ts/rest_client
+        working-directory: ./packages/ts-client
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

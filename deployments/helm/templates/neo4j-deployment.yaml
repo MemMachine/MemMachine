@@ -42,10 +42,17 @@ spec:
               value: '{{ .Values.neo4j.plugins | toJson }}'
           resources:
             {{- toYaml .Values.neo4j.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket:
+              port: {{ .Values.neo4j.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             tcpSocket:
               port: {{ .Values.neo4j.port }}
-            initialDelaySeconds: 60
+            initialDelaySeconds: 5
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 5

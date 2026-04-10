@@ -177,7 +177,7 @@ In the **Schema** field, paste the following content:
     },
     "/api/v2/memories/search": {
       "post": {
-        "description": "CRITICAL: Use this on EVERY message to retrieve context. Always search for relevant past information before responding. This searches both episodic memory (conversation history) and semantic memory (long-term user traits and facts) to provide personalized responses.",
+        "description": "CRITICAL: Use this on EVERY message to retrieve context. Always search for relevant past information before responding. This searches both episodic memory (conversation history) and semantic memory (long-term user traits and facts) to provide personalized responses. Optional: set agent_mode=true to use retrieval-agent search. In agent mode, score-threshold filtering is not supported.",
         "summary": "Search memories",
         "operationId": "SearchMemory",
         "x-openai-isConsequential": false,
@@ -366,6 +366,11 @@ In the **Schema** field, paste the following content:
               "enum": ["episodic", "semantic"]
             },
             "default": []
+          },
+          "agent_mode": {
+            "type": "boolean",
+            "description": "Whether to use retrieval agent for memory search. Agent mode does not support score-threshold filtering.",
+            "default": false
           }
         },
         "required": [

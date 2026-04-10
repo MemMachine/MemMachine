@@ -16,20 +16,22 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
 
 <AccordionGroup>
   <Accordion title="Logging">
-      Manages the path and level of application logging.
+      Manages the path, format, and level of application logging.
     <Tabs>
     <Tab title="Parameters">
       ```yaml
         logging:
           path: mem-machine.log
-          level: info #| debug | error
+          level: info #| debug | warning | error | critical
+          format: "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
       ```
     </Tab>
     <Tab title="With Comments">
       ```yaml
         logging:
           path: mem-machine.log # Path to log file (empty logs to stdout only)
-          level: info # Log level: debug, info, warning, error, critical (default: info)   
+          level: info # Log level: debug, info, warning, error, critical (default: info)
+          format: "%(asctime)s [%(levelname)s] %(name)s - %(message)s" # Log format string
         ```
     </Tab>
     </Tabs>
@@ -38,6 +40,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       |-----------|----------------------------------------|----------------------------|
       | `path`    | The file path to write logs to. If empty, logs are sent to stdout. | `MemMachine.log`           |
       | `level`   | The minimum level of messages to log.  | `info`                     |
+      | `format`  | The logging format string. Must include `%(asctime)s`, `%(levelname)s`, and `%(message)s`. | `%(asctime)s [%(levelname)s] %(name)s - %(message)s` |
   </Accordion>
   <Accordion title="Episode Store">
     Configuration for the database storing raw episode data.
@@ -46,12 +49,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     ```yaml
     episode_store:
       database: profile_storage
+      with_count_cache: true
     ```
   </Tab>
   <Tab title="With Comment">
     ```yaml
     episode_store:
       database: profile_storage # ID of the database from 'resources.databases'
+      with_count_cache: true # Enable in-memory episode count caching
     ```
   </Tab>
   </Tabs>
@@ -60,6 +65,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | Parameter | Description                                                                 | Default    |
     |-----------|-----------------------------------------------------------------------------|------------|
     | `database`| The ID of a database defined in `resources.databases` for episode storage.  | *Required* |
+    | `with_count_cache` | Whether to maintain an in-memory cache for session message counts. | `true` |
   </Accordion>
   <Accordion title="Episodic Memory">
     Configuration for the episodic memory service, which handles event-based memories.
@@ -67,25 +73,45 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     <Tab title="Parameters">
     ```yaml
       episodic_memory:
+        session_key: user-session-id
+        metrics_factory_id: prometheus
         long_term_memory:
+          session_id: user-session-id
           vector_graph_store: my-neo4j-store
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
+          message_sentence_chunking: false
         short_term_memory:
+          session_key: user-session-id
           llm_model: my-summarization-llm
+          summary_prompt_system: episode_summary_system
+          summary_prompt_user: episode_summary_user
           message_capacity: 64000
+        long_term_memory_enabled: true
+        short_term_memory_enabled: true
+        enabled: true
         ```
       </Tab>
       <Tab title="With Comments">
       ```yaml
       episodic_memory:
+        session_key: user-session-id # Unique session identifier
+        metrics_factory_id: prometheus # Metrics exporter ID
         long_term_memory: # Configuration for long-term memory
+          session_id: user-session-id # Reuses parent session_key
           vector_graph_store: my-neo4j-store # ID of the VectorGraphStore from 'resources.databases'
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
+          message_sentence_chunking: false # chunk episodes by sentence before embedding
         short_term_memory: # Configuration for short-term memory
+          session_key: user-session-id # Reuses parent session_key
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
+          summary_prompt_system: episode_summary_system # System prompt for summary generation
+          summary_prompt_user: episode_summary_user # User prompt for summary generation
           message_capacity: 64000 # Maximum length of short-term memory (default: 64000)
+        long_term_memory_enabled: true # Enable long-term memory
+        short_term_memory_enabled: true # Enable short-term memory
+        enabled: true # Enable episodic memory subsystem
       ```
     </Tab>
   </Tabs>
@@ -93,11 +119,48 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     **Parameter Descriptions:**
     | Parameter                       | Description                                                                 | Default      |
     |---------------------------------|-----------------------------------------------------------------------------|--------------|
+    | `session_key`                   | Unique session identifier for episodic ingestion and context tracking.      | *Required*  |
+    | `metrics_factory_id`            | ID of the metrics exporter factory (e.g., `prometheus`).                   | `prometheus` |
+    | `long_term_memory_enabled`      | Whether long-term episodic memory is enabled.                              | `true`       |
+    | `short_term_memory_enabled`     | Whether short-term episodic memory is enabled.                             | `true`       |
+    | `enabled`                       | Whether episodic memory as a whole is enabled.                             | `true`       |
     | `long_term_memory.vector_graph_store` | The ID of a database defined in `resources.databases` for long-term storage. | *Required* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. | *Required* |
+    | `long_term_memory.session_id`   | The same `session_key` used for long-term memory operations.               | *Inherited from `session_key`* |
+    | `long_term_memory.message_sentence_chunking` | If true, chunk messages into sentences before embedding. | `false` |
+    | `short_term_memory.session_key` | Session key for short-term memory summarization.                           | *Inherited from `session_key`* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
+    | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |
+    | `short_term_memory.summary_prompt_user` | User prompt ID for short-term summarization. | *Required* |
     | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
+  </Accordion>
+
+  <Accordion title="Retrieval Agent">
+    Configuration for optional top-level retrieval-agent orchestration used by
+    episodic search when `agent_mode=true`.
+    <Tabs>
+      <Tab title="Parameters">
+      ```yaml
+      retrieval_agent:
+        llm_model: my-agent-llm
+        reranker: my-rrf-reranker
+      ```
+      </Tab>
+      <Tab title="With Comments">
+      ```yaml
+      retrieval_agent:
+        llm_model: my-agent-llm # ID of the Language Model from 'resources.language_models'
+        reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
+      ```
+      </Tab>
+    </Tabs>
+
+    **Parameter Descriptions:**
+    | Parameter             | Description                                                                 | Default      |
+    |-----------------------|-----------------------------------------------------------------------------|--------------|
+    | `llm_model`           | The language model ID used by retrieval-agent routing/rewrite steps.       | Auto-resolved from configured memory models when omitted. |
+    | `reranker`            | The reranker ID used by retrieval-agent result reranking.                  | Auto-resolved from episodic long-term-memory reranker when omitted. |
   </Accordion>
 
   <Accordion title="Semantic Memory">
@@ -106,17 +169,27 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       <Tab title="Parameters">
       ```yaml
       semantic_memory:
+        enabled: true
         llm_model: my-semantic-llm
         embedding_model: my-openai-embedder
         database: my-postgres-db
+        config_database: profile_storage
+        with_config_cache: true
+        ingestion_trigger_messages: 5
+        ingestion_trigger_age: 00:05:00
       ```
       </Tab>
       <Tab title="With Comments">
       ```yaml
       semantic_memory:
+        enabled: true # Controls whether semantic memory is active
         llm_model: my-semantic-llm # ID of the Language Model from 'resources.language_models'
         embedding_model: my-openai-embedder # ID of the Embedder from 'resources.embedders'
         database: my-postgres-db # ID of the database from 'resources.databases'
+        config_database: profile_storage # ID of the database to store semantic configs
+        with_config_cache: true # Whether to use in-memory semantic config caching
+        ingestion_trigger_messages: 5 # Number of un-ingested messages before ingestion runs
+        ingestion_trigger_age: 00:05:00 # Time (HH:MM:SS) before ingestion runs when messages are pending
       ```
       </Tab>
     </Tabs>
@@ -124,9 +197,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     **Parameters:**
     | Parameter           | Description                                                                 | Default    |
     |---------------------|-----------------------------------------------------------------------------|------------|
+    | `enabled`           | Whether semantic memory is enabled. Auto-disabled when required fields are missing. | `true` |
     | `llm_model`         | The ID of a language model defined in `resources.language_models` for semantic processing. | *Required* |
     | `embedding_model`   | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `database`          | The ID of a database defined in `resources.databases` for semantic storage. | *Required* |
+    | `config_database`   | The ID of a database used for semantic configuration metadata. | *Required* |
+    | `with_config_cache` | Whether to use an in-memory cache for semantic memory configurations. | `true` |
+    | `ingestion_trigger_messages` | Number of pending messages before semantic ingestion triggers. | `5` |
+    | `ingestion_trigger_age` | Max age of pending messages before ingestion triggers (duration in HH:MM:SS). | `00:05:00` |
   </Accordion>
 
   <Accordion title="Session Manager">
@@ -152,21 +230,59 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `database`| The ID of a database defined in `resources.databases` for session data storage. | *Required* |
     </Accordion>
 
+  <Accordion title="Server">
+    API server host and port configuration.
+    <Tabs>
+      <Tab title="Parameters">
+      ```yaml
+      server:
+        host: localhost
+        port: 8080
+      ```
+      </Tab>
+      <Tab title="With Comments">
+      ```yaml
+      server:
+        host: localhost # host to bind MemMachine API server
+        port: 8080 # port to bind MemMachine API server
+      ```
+      </Tab>
+    </Tabs>
+
+    **Parameters:**
+    | Parameter | Description | Default |
+    |-----------|-------------|---------|
+    | `host`    | API server interface host. | `localhost` |
+    | `port`    | API server port. | `8080` |
+  </Accordion>
+
   <Accordion title="Prompt">
-    Manages the default prompts used for various memory types.
+    Manages the default prompts used by semantic memory for organization and summarization.
     <Tabs>
     <Tab title="Parameter">
     ```yaml
     prompt:
-      session:
+      default_org_categories:
         - profile_prompt
+      default_project_categories:
+        - profile_prompt
+      default_user_categories:
+        - profile_prompt
+      episode_summary_system_prompt_path: default_episode_summary_system_prompt.txt
+      episode_summary_user_prompt_path: default_episode_summary_user_prompt.txt
     ```
     </Tab>
     <Tab title="With Comment">
     ```yaml
     prompt:
-      session:
-        - profile_prompt # List of predefined prompt IDs for semantic user profile memory
+      default_org_categories:
+        - profile_prompt # Default prompts for organization-level semantic memory
+      default_project_categories:
+        - profile_prompt # Default prompts for project-level semantic memory
+      default_user_categories:
+        - profile_prompt # Default prompts for user-level semantic memory
+      episode_summary_system_prompt_path: ./prompts/custom_episode_summary_system.txt # Path to system portion of episode summary prompt
+      episode_summary_user_prompt_path: ./prompts/custom_episode_summary_user.txt # Path to user portion of episode summary prompt
     ```
     </Tab>
     </Tabs>
@@ -174,8 +290,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     **Parameter Description:**
     | Parameter                           | Description                                                            | Default                      |
     |-------------------------------------|------------------------------------------------------------------------|------------------------------|
-    | `profile_prompt`                    | List of predefined prompt IDs for semantic user profile memory.        | `["profile_prompt", "writing_assistant_prompt"]` |
-
+    | `default_org_categories`            | List of prompt IDs used for organization-scoped semantic memory.       | `[]` |
+    | `default_project_categories`        | List of prompt IDs used for project-scoped semantic memory.            | `["profile_prompt"]` |
+    | `default_user_categories`           | List of prompt IDs used for user-scoped semantic memory.               | `[]` |
+    | `episode_summary_system_prompt_path`| Path to the system prompt template for episode summarization.          | `""` |
+    | `episode_summary_user_prompt_path`  | Path to the user prompt template for episode summarization.            | `""` |
   </Accordion>
 
   <Accordion title="Resources">
@@ -479,6 +598,8 @@ If you are deploying MemMachine behind a corporate proxy, you may need to config
 ### Docker Compose
 
 To configure proxies in a Docker Compose setup, add the `HTTP_PROXY`, `HTTPS_PROXY`, and `SSL_CERT_FILE` environment variables to your service definitions. You may also need to mount a custom CA certificate if your proxy performs SSL inspection.
+d
+For an end-to-end example, see [`sample_configs/env.dockercompose`](http://github.com/MemMachine/MemMachine/blob/main/sample_configs/env.dockercompose) in this repository. The file contains environment settings you can source together with your own `docker-compose.yml` file.
 
 Add the following to your `docker-compose.yml` for the `memmachine` service:
 
@@ -500,20 +621,27 @@ services:
 
 If you are running MemMachine directly on your host machine (e.g., using `pip` or from source), simply export the standard environment variables before starting the application.
 
-**Linux/MacOS:**
-```bash
-export HTTP_PROXY="http://proxy.example.com:8080"
-export HTTPS_PROXY="http://proxy.example.com:8080"
-export SSL_CERT_FILE="/path/to/custom-ca-cert.pem"
+<Tabs>
+  <Tab title="Linux or MacOS" icon="apple">
 
-memmachine-server
-```
+  ```bash
+  export HTTP_PROXY="http://proxy.example.com:8080"
+  export HTTPS_PROXY="http://proxy.example.com:8080"
+  export SSL_CERT_FILE="/path/to/custom-ca-cert.pem"
 
-**Windows (PowerShell):**
-```powershell
-$env:HTTP_PROXY = "http://proxy.example.com:8080"
-$env:HTTPS_PROXY = "http://proxy.example.com:8080"
-$env:SSL_CERT_FILE = "C:\path\to\custom-ca-cert.pem"
+  memmachine-server
+  ```
 
-memmachine-server
-```
+  </Tab>
+  <Tab title="Windows (PowerShell)" icon="windows">
+
+  ```powershell
+  $env:HTTP_PROXY = "http://proxy.example.com:8080"
+  $env:HTTPS_PROXY = "http://proxy.example.com:8080"
+  $env:SSL_CERT_FILE = "C:\path\to\custom-ca-cert.pem"
+
+  memmachine-server
+  ```
+
+  </Tab>
+</Tabs>

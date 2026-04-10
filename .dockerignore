@@ -21,8 +21,6 @@ Dockerfile.*
 env.example
 *.env
 configuration.yml
-src/server/cfg.yml
-src/server/configuration.yml
 
 # Python cache and virtual environments
 __pycache__/
@@ -63,7 +61,6 @@ Thumbs.db
 # Testing and evaluation
 test_*.py
 evaluation/
-tests/
 .pytest_cache/
 .coverage
 htmlcov/
@@ -81,7 +78,6 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
-src/server/sqlitetest.db
 
 # Sample and example files
 sample/

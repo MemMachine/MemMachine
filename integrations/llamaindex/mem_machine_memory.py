@@ -6,8 +6,7 @@ from typing import Any
 from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.core.memory import BaseMemory
 from llama_index.core.memory import Memory as LlamaIndexMemory
-
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 DEFAULT_INTRO_PREFERENCES = "Below are a set of relevant preferences retrieved from potentially several memory sources:"
 DEFAULT_OUTRO_PREFERENCES = "This is the end of the retrieved preferences."
@@ -40,7 +39,7 @@ class MemMachineMemory(BaseMemory):
         session_id: str | None = None,
         search_msg_limit: int = 5,
         client: MemMachineClient | None = None,
-        **kwargs: Any,  # noqa: ARG002, ANN401
+        **kwargs: Any,
     ) -> None:
         """
         Initialize MemMachine memory.
@@ -87,7 +86,7 @@ class MemMachineMemory(BaseMemory):
         agent_id: str | None = None,
         group_id: str | None = None,
         session_id: str | None = None,
-    ) -> Any:  # noqa: ANN401
+    ) -> Any:
         """
         Get or create a MemMachine project memory bound to the current context.
 
@@ -253,7 +252,7 @@ class MemMachineMemory(BaseMemory):
     # ----------------------------------
     # BaseMemory interface for chat usage
     # ----------------------------------
-    def get(self, input_text: str | None = None, **kwargs: Any) -> list[ChatMessage]:  # noqa: ANN401
+    def get(self, input_text: str | None = None, **kwargs: Any) -> list[ChatMessage]:
         """
         Return chat history augmented with a SYSTEM memory context message.
 
@@ -394,7 +393,7 @@ class MemMachineMemory(BaseMemory):
         return "MemMachineMemory"
 
     @classmethod
-    def from_defaults(cls, **kwargs: Any) -> "MemMachineMemory":  # noqa: ANN401
+    def from_defaults(cls, **kwargs: Any) -> "MemMachineMemory":
         """
         Construct memory from defaults.
 

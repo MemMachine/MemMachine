@@ -103,7 +103,7 @@ pip install memmachine
 After installing `memmachine-client`:
 
 ```python
-from memmachine.rest_client import MemMachineClient, Memory
+from memmachine_server.rest_client import MemMachineClient, Memory
 
 client = MemMachineClient(base_url="http://localhost:8080")
 memory = client.memory(
@@ -133,15 +133,14 @@ memmachine-mcp-http
 ## Package Contents
 
 ### memmachine-client
-- Contains only the `memmachine.rest_client` module
+- Contains only the `memmachine_client` module
 - Dependencies: `requests`, `urllib3`
 - Lightweight, suitable for scenarios that only need to call the MemMachine ServerAPI
 
 ### memmachine-server
 - Contains all server-related modules:
-  - `memmachine.common` - Common components
-  - `memmachine.episodic_memory` - Episodic memory
-  - `memmachine.server` - Server application
+  - `memmachine_common` - Common components
+  - `memmachine_server` - Server application
 - Contains all server dependencies (database, FastAPI, etc.)
 - Includes command-line tools
 

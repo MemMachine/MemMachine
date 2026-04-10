@@ -1,0 +1,50 @@
+{
+  "name": "@memmachine/openclaw-memmachine",
+  "version": "0.0.0-development",
+  "type": "module",
+  "description": "OpenClaw MemMachine memory plugin",
+  "homepage": "https://memmachine.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MemMachine/MemMachine.git"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && npm exec tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@memmachine/client": "^0.0.0-development",
+    "@sinclair/typebox": "^0.34.48",
+    "openclaw": "^2026.3.23"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3"
+  },
+  "openclaw": {
+    "install": {
+      "npmSpec": "@memmachine/openclaw-memmachine",
+      "localPath": "integrations/openclaw",
+      "defaultChoice": "npm"
+    },
+    "extensions": [
+      "./dist/index.mjs"
+    ]
+  },
+  "license": "Apache-2.0"
+}

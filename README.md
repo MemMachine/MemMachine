@@ -38,7 +38,7 @@ MemMachine is an open-source **long-term memory layer** for AI agents and LLM-po
 
 Get up and running in under 5 minutes:
 
-> **Prerequisites:** This code requires a running MemMachine Server.  
+> **Prerequisites:** This code requires a running MemMachine Server.
 > [Start a server locally](https://docs.memmachine.ai/getting_started/quickstart) or create a free account on the [MemMachine Platform](https://console.memmachine.ai/).
 
 ```bash
@@ -46,7 +46,7 @@ pip install memmachine-client
 ```
 
 ```python
-from memmachine import MemMachineClient
+from memmachine_client import import MemMachineClient
 
 # Initialize the client
 client = MemMachineClient(base_url="http://localhost:8080")
@@ -176,6 +176,20 @@ MemMachine is a growing community of builders and developers. Help us grow by cl
 ## Contributing
 
 We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## References
+
+```bibtex
+@misc{luo2025agentlightningtrainai,
+  title={Agent Lightning: Train ANY AI Agents with Reinforcement Learning},
+  author={Xufang Luo and Yuge Zhang and Zhiyuan He and Zilong Wang and Siyun Zhao and Dongsheng Li and Luna K. Qiu and Yuqing Yang},
+  year={2025},
+  eprint={2508.03680},
+  archivePrefix={arXiv},
+  primaryClass={cs.AI},
+  url={https://arxiv.org/abs/2508.03680},
+}
+```
 
 ## License
 

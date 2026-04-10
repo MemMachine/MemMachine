@@ -399,6 +399,11 @@ generate_config_for_provider() {
             print "    embedder: " embedder_name
             next
         }
+        # Update llm_model reference in long_term_memory
+        if (in_long_term && /^    llm_model:/) {
+            print "    llm_model: " model_name
+            next
+        }
         # Update llm_model reference in short_term_memory
         if (in_short_term && /^    llm_model:/) {
             print "    llm_model: " model_name

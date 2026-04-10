@@ -11,7 +11,7 @@ icon: "code"
 The client manages a persistent HTTP session, handles authentication, and provides global timeout settings for all sub-client requests.
 
 ```python
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 client = MemMachineClient(
     base_url="http://localhost:8080",
@@ -101,7 +101,7 @@ with MemMachineClient(base_url="http://localhost:8080") as client:
 The SDK raises custom `RestError` exceptions for API-level validation or logic errors, allowing for granular error catching.
 
 ```python
-from memmachine.rest_client.exceptions import RestError
+from memmachine_client.exceptions import RestError
 
 try:
     client.projects.delete("org", "non_existent_proj")

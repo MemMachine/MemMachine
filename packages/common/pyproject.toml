@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memmachine-common"
+dynamic = ["version"]
+dependencies = [
+    "pydantic>=2.0.0",
+    "regex>=2023.0.0",
+    "typing-extensions>=4.0.0",
+]
+requires-python = ">= 3.10"
+authors = [
+  {name="MemMachine", email="noreply@memmachine.ai"},
+]
+description = "MemMachine Common - Shared API models for MemMachine client and server"
+keywords = ["memmachine", "common", "api", "models"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+
+[project.urls]
+Homepage = "https://github.com/MemMachine/MemMachine"
+Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+root = "../.."
+
+[tool.uv]
+package = true
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py310"

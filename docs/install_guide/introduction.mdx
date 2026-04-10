@@ -17,6 +17,18 @@ Access the main guide for installing MemMachine using the preferred methods:
 </Card>
 </Columns>
 
+## Cloud Deployments
+Deploy MemMachine to your preferred infrastructure using our verified orchestration templates and containerized workflows:
+
+<CardGroup cols={2}>
+  <Card title="AWS CloudFormation" icon="aws" href="/install_guide/cloud_deploy/aws_cloudformation">
+    **Automate Your AWS Infrastructure.** Deploy a full MemMachine stack into your VPC using our CloudFormation template. This setup orchestrates EC2, networking, and storage for a production-ready environment.
+  </Card>
+  <Card title="Helm Chart (Kubernetes)" icon="anchor" href="/install_guide/cloud_deploy/Helm_Chart">
+    **Container Orchestration at Scale.** Use our official Helm chart to deploy MemMachine, PostgreSQL, and Neo4j into any Kubernetes cluster. Supports external database integration and fine-grained resource limits.
+  </Card>
+</CardGroup>
+
 ## Configurations
 Find a **Quickstart Guide** and specific details for setting up MemMachine's backend with popular AI platforms:
 <Columns cols={2}>
@@ -36,6 +48,14 @@ Find specific configuration and integration details for using MemMachine in popu
 </Card>
 
 <Columns cols={3}>
+  <Card title="OpenClaw" icon="terminal" href="/install_guide/integrate/openclaw">
+    **Automated Agent Recall.** Ground your OpenClaw agents with persistent memory, auto-capture of exchanges, and CLI-based memory management.
+  </Card>
+
+  <Card title="LangChain" icon="link" href="/install_guide/integrate/LangChain">
+    **Standard Framework Support.** Use MemMachine as a persistent `BaseMemory` backend for your chains, agents, and custom document loaders.
+  </Card>
+
   <Card title="Claude Code and MCP" icon="star-of-life" href="/install_guide/integrate/claude_code_mcp">
     **Give Claude Real-Time Recall.** Configure the MemMachine Control Protocol (MCP) as a **Custom Tool** to provide Claude with persistent user profiles.
   </Card>
@@ -58,5 +78,9 @@ Find specific configuration and integration details for using MemMachine in popu
 
   <Card title="Google ADK" icon="google" href="/install_guide/integrate/Google_ADK">
     **Extend Google GenAI.** Integrate MemMachine as a `BaseMemoryService` to empower Gemini agents to recall past interactions.
+  </Card>
+
+  <Card title="LlamaIndex" icon="wand-magic-sparkles" href="/install_guide/integrate/LlamaIndex">
+    **Data-Driven Memory.** Add persistent context to your LlamaIndex chat engines, enabling agents to recall user preferences across diverse data sources.
   </Card>
 </Columns>

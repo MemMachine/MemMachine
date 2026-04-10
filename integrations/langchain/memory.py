@@ -1,4 +1,4 @@
-# ruff: noqa: C901, TRY300, SIM105, PIE790, N806, ANN202, ANN204
+# ruff: noqa: C901, TRY300, SIM105, PIE790, N806
 """
 MemMachine-backed memory for LangChain.
 
@@ -9,7 +9,7 @@ with MemMachine to provide persistent memory capabilities.
 import importlib
 from typing import Any
 
-from memmachine import MemMachineClient
+from memmachine_client import MemMachineClient
 
 # Handle LangChain version compatibility with lazy imports to avoid circular import issues
 # LangChain 0.x uses langchain.memory.BaseMemory

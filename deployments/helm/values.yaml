@@ -6,13 +6,14 @@
 # secrets out-of-band (e.g., Vault, sealed-secrets); see README.
 #
 # Sections:
-#   storageClass / pvcSize     - shared PVC settings for all three volumes
+#   storageClass / accessMode / pvcSize     - shared PVC settings for all three volumes
 #   neo4j.*                    - Neo4j image, auth, JVM heap, and connection pool
 #   postgres.*                 - PostgreSQL image, credentials, and pool settings
 #   memmachine.*               - App image, LLM/embedder backend, and app config
 #   nodePorts.*                - NodePort assignments for external access
 
 storageClass: nfs-client
+accessMode: ReadWriteMany
 pvcSize: 5Gi
 
 neo4j:
@@ -37,6 +38,8 @@ neo4j:
     connection_acquisition_timeout: 60.0
     range_index_creation_threshold: 10000
     vector_index_creation_threshold: 10000
+    max_connection_lifetime: 3600        # driver default (1 hour); lower for AuraDB (e.g. 3000)
+    # liveness_check_timeout: ~          # driver default (disabled); set to 0 to always check
 
 postgres:
   enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
@@ -48,6 +51,9 @@ postgres:
   database: memmachine
   pool_size: 5
   max_overflow: 10
+  pool_timeout: 30      # SQLAlchemy default (seconds to wait for a connection)
+  pool_recycle: -1      # SQLAlchemy default (disabled; set to e.g. 3000 for idle-timeout avoidance)
+  pool_pre_ping: false  # SQLAlchemy default; set to true to test connections before checkout
   resources:
     requests:
       cpu: 250m
@@ -57,7 +63,7 @@ postgres:
 
 memmachine:
   image: docker.io/memmachine/memmachine
-  tag: v0.2.6-cpu
+  tag: latest-cpu
   pullPolicy: IfNotPresent
   resources:
     requests:
