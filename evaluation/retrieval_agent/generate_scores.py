@@ -34,17 +34,16 @@ for key in data:
 # Convert to DataFrame
 df = pd.DataFrame(all_items)
 
-# Convert category to numeric type
-# df["category"] = pd.to_numeric(df["category"])
+# Ensure category is string for grouping
+# BEAM: category is already string (e.g., "abstention", "multi_session_reasoning")
+# LoCoMo/HotpotQA/LongMemEval: category may be int or string, convert to string
+df["category"] = df["category"].astype(str)
 
 # Calculate mean scores by category
 result = df.groupby("category").agg({"llm_score": "mean"}).round(4)
 
 # Add count of questions per category
 result["count"] = df.groupby("category").size()
-
-if isinstance(result.index, int):
-    result["type"] = result.index.map(lambda x: categories[x - 1])
 
 # Print the results
 print("Mean Scores Per Category:")
@@ -67,8 +66,11 @@ locomo_matrix = None
 hotpotqa_matrix = None
 longmemeval_matrix = None
 general_matrix = None
+beam_rubric = None
 tools_called: dict[str, int] = {}
 tools_correct: dict[str, int] = {}
+has_tool_info = False
+
 for item in all_items:
     if wiki_matrix is None:
         wiki_matrix = item.get("wiki_final_matrix", None)
@@ -80,21 +82,28 @@ for item in all_items:
         longmemeval_matrix = item.get("longmemeval_final_matrix", None)
     if general_matrix is None:
         general_matrix = item.get("general_final_matrix", None)
+    if beam_rubric is None:
+        beam_rubric = item.get("rubric", None)
 
-    tool = item.get("selected_tool", "Unknown")
-    tools_called[tool] = tools_called.get(tool, 0) + 1
-    if item.get("llm_score", 1):
-        tools_correct[tool] = tools_correct.get(tool, 0) + 1
+    # Check for tool selection info (from other benchmarks)
+    if "selected_tool" in item:
+        has_tool_info = True
+        tool = item.get("selected_tool", "Unknown")
+        tools_called[tool] = tools_called.get(tool, 0) + 1
+        if item.get("llm_score", 1):
+            tools_correct[tool] = tools_correct.get(tool, 0) + 1
 
-tools_overall = "Tools Overall Accuracy:\n"
-for tool, called in tools_called.items():
-    correct = tools_correct.get(tool, 0)
-    accuracy = correct / called * 100 if called > 0 else 0.0
-    tools_overall += f"Tool: {tool}\n  Accuracy: {correct}/{called} = {accuracy:.2f}%\n"
+# Print Tools Overall Accuracy only if tool info exists
+if has_tool_info:
+    tools_overall = "Tools Overall Accuracy:\n"
+    for tool, called in tools_called.items():
+        correct = tools_correct.get(tool, 0)
+        accuracy = correct / called * 100 if called > 0 else 0.0
+        tools_overall += f"Tool: {tool}\n  Accuracy: {correct}/{called} = {accuracy:.2f}%\n"
 
-print("\n--------------------------------")
-print(tools_overall)
-print("--------------------------------")
+    print("\n--------------------------------")
+    print(tools_overall)
+    print("--------------------------------")
 
 if wiki_matrix:
     print(f"\nWiki Info Matrix:\n{wiki_matrix}")
