@@ -557,13 +557,39 @@ From `evaluation/retrieval_agent/`:
 ./run_test.sh locomo exp1 ingest retrieval_agent --ingest-concurrency 2
 ./run_test.sh locomo exp1 search retrieval_agent
 ./run_test.sh locomo exp1 search retrieval_agent --search-concurrency 1 --judge-concurrency 4
+
+# BEAM — requires explicit data paths
+./run_test.sh beam exp1 ingest retrieval_agent /path/to/chat.json /path/to/probing_questions.json
+./run_test.sh beam exp1 search retrieval_agent /path/to/chat.json /path/to/probing_questions.json
+./run_test.sh beam exp1 search retrieval_agent /path/to/chat.json /path/to/probing_questions.json --search-concurrency 10 --judge-concurrency 30
 ```
+
+### Downloading BEAM Dataset
+
+Due to the large size of the BEAM dataset, it is hosted externally on Hugging Face for download and provided with an option for selective download based on your needs.
+Download and convert it using:
+
+```bash
+cd evaluation/data
+
+# Download specific sizes (100K, 500K, or 1M)
+python beam_download.py --size 100K --output ./beam
+python beam_download.py --size 500K --output ./beam
+python beam_download.py --size 1M --output ./beam
+
+# Download multiple sizes at once
+python beam_download.py --size 100K 500K 1M --output ./beam
+```
+
+**Note**: 10M dataset is not supported in this script.
+
 
 For the full argument reference run:
 
 ```sh
 ./run_test.sh --help
 ./run_test.sh wikimultihop --help
+./run_test.sh beam --help
 ```
 
 ---
