@@ -78,6 +78,25 @@ usage_longmemeval() {
     exit 1
 }
 
+usage_beam() {
+    echo "BEAM Usage: $0 beam RESULT_POSTFIX RUN_TYPE TEST_TARGET CHAT_PATH QUESTIONS_PATH"
+    echo
+    echo "Arguments:"
+    echo "  RESULT_POSTFIX    Custom postfix for output files"
+    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
+    echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
+    echo "  CHAT_PATH         Path to chat.json file"
+    echo "  QUESTIONS_PATH    Path to probing_questions.json file"
+    echo "Options:"
+    echo "  --search-concurrency N"
+    echo "                     Optional max concurrent BEAM search requests"
+    echo "                     (search only, default: 10)"
+    echo "  --judge-concurrency N"
+    echo "                     Optional max concurrent LLM judge workers"
+    echo "                     (search only, default: 30)"
+    exit 1
+}
+
 show_help() {
     case "$1" in
         locomo)
@@ -92,6 +111,9 @@ show_help() {
         longmemeval)
             usage_longmemeval
             ;;
+        beam)
+            usage_beam
+            ;;
         ""|all)
             echo "Usage: $0 TEST [args...]"
             echo
@@ -100,6 +122,7 @@ show_help() {
             echo "  wikimultihop"
             echo "  hotpotqa"
             echo "  longmemeval"
+            echo "  beam"
             echo
             echo "Use:"
             echo "  $0 TEST --help"
@@ -251,6 +274,25 @@ validate_args() {
                 show_help longmemeval
             fi
             ;;
+        beam)
+            if [ -n "${INGEST_CONCURRENCY:-}" ]; then
+                echo "--ingest-concurrency is only supported for locomo ingest"
+                exit 1
+            fi
+            if [ "$#" -ne 6 ]; then
+                show_help beam
+            fi
+            if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--search-concurrency can only be used with search runs"
+                echo
+                show_help beam
+            fi
+            if [ -n "${JUDGE_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
+                echo "--judge-concurrency can only be used with search runs"
+                echo
+                show_help beam
+            fi
+            ;;
         *)
             echo "Unknown test: $TEST"
             show_help all
@@ -325,6 +367,13 @@ run_test() {
             TEST_TARGET=$5
             LENGTH=$6
             ;;
+        beam)
+            RESULT_POSTFIX=$2
+            INGEST=$3
+            TEST_TARGET=$4
+            CHAT_PATH=$5
+            QUESTIONS_PATH=$6
+            ;;
         *)
             echo "Unknown test: $TEST"
             show_help all
@@ -388,14 +437,29 @@ run_test() {
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
             ;;
+        beam)
+            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam_ingest.py" --data-path "$CHAT_PATH" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID")
+            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam_search.py" --chat-data-path "$CHAT_PATH" --data-path "$QUESTIONS_PATH" --eval-result-path "$RESULT_FILE" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID" --test-target "$TEST_TARGET")
+            EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/beam_evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
+            if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
+                SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
+            fi
+            if [ -n "${JUDGE_CONCURRENCY:-}" ]; then
+                EVALUATE_CMD+=(--max-workers "$JUDGE_CONCURRENCY")
+            fi
+            ;;
     esac
 
     if [[ "$INGEST" = "ingest" ]]; then
         "${INGEST_CMD[@]}"
     elif [[ "$INGEST" = "search" ]]; then
-        EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
-        if [ -n "${JUDGE_CONCURRENCY:-}" ]; then
-            EVALUATE_CMD+=(--max_workers "$JUDGE_CONCURRENCY")
+        # BEAM uses beam_evaluate.py for rubric-based evaluation
+        # Other benchmarks use evaluate.py for standard LLM judge evaluation
+        if [ "$TEST" != "beam" ]; then
+            EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
+            if [ -n "${JUDGE_CONCURRENCY:-}" ]; then
+                EVALUATE_CMD+=(--max_workers "$JUDGE_CONCURRENCY")
+            fi
         fi
         if ! check_python_modules pandas; then
             echo "generate_scores.py requires pandas for final score generation."
