@@ -239,8 +239,8 @@ class TestEncodeEvents:
         record = next(iter(fake_vector_store_collection.records.values()))
         assert _record_properties(record)["color"] == "red"
 
-    async def test_missing_schema_keys_raises(self, fake_embedder):
-        # Collection without context keys.
+    async def test_missing_schema_fields_raises(self, fake_embedder):
+        # Collection without context fields.
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
@@ -261,6 +261,29 @@ class TestEncodeEvents:
         event = _make_event("hi", context=MessageContext(source="Alice"))
         with pytest.raises(ValueError, match="missing from the collection schema"):
             await em.encode_events([event])
+
+    async def test_init_raises_on_missing_base_field(self, fake_embedder):
+        # Collection without _timestamp — base field required at init.
+        config = VectorStoreCollectionConfig(
+            vector_dimensions=2,
+            similarity_metric=SimilarityMetric.COSINE,
+            properties_schema={
+                "_segment_uuid": str,
+            },
+        )
+        collection = InMemoryVectorStoreCollection(config)
+        partition = InMemorySegmentStorePartition()
+        with pytest.raises(
+            ValueError,
+            match="Collection schema missing fields required by EventMemory",
+        ):
+            EventMemory(
+                EventMemoryParams(
+                    vector_store_collection=collection,
+                    segment_store_partition=partition,
+                    embedder=fake_embedder,
+                )
+            )
 
     async def test_empty_events(
         self,

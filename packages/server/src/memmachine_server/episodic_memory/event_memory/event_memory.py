@@ -34,10 +34,12 @@ from memmachine_server.common.vector_store.data_types import (
 )
 
 from .data_types import (
+    INDEXED_CONTEXT_PROPERTIES_SCHEMA,
     Block,
     CitationContext,
     Content,
     Context,
+    ContextUnion,
     Derivative,
     Event,
     FileRef,
@@ -137,38 +139,50 @@ class EventMemoryParams(BaseModel):
 class EventMemory:
     """Event memory system."""
 
-    # System-defined metadata keys. Underscore prefix is reserved.
-    _SEGMENT_UUID_KEY = "_segment_uuid"
-    _TIMESTAMP_KEY = "_timestamp"
-    _CONTEXT_TYPE_KEY = "_context_type"
-    _CONTEXT_SOURCE_KEY = "_context_source"
+    # System-defined metadata field names. Reserved.
+    _SEGMENT_UUID_FIELD_NAME = "_segment_uuid"
+    _TIMESTAMP_FIELD_NAME = "_timestamp"
 
-    # Properties schema that the vector store collection should include.
-    # Callers should merge this with any user-defined properties when
-    # creating the collection.
-    SYSTEM_PROPERTIES_SCHEMA: ClassVar[dict[str, type[PropertyValue]]] = {
-        _SEGMENT_UUID_KEY: str,
-        _TIMESTAMP_KEY: datetime.datetime,
-        _CONTEXT_TYPE_KEY: str,
-        _CONTEXT_SOURCE_KEY: str,
-    }
-
-    # Base properties required for every derivative.
-    _BASE_REQUIRED_KEYS: ClassVar[frozenset[str]] = frozenset(
-        {_SEGMENT_UUID_KEY, _TIMESTAMP_KEY}
+    _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {_SEGMENT_UUID_FIELD_NAME, _TIMESTAMP_FIELD_NAME}
     )
 
-    # Additional properties required by each context type.
-    _CONTEXT_TYPE_REQUIRED_KEYS: ClassVar[dict[type, frozenset[str]]] = {
-        MessageContext: frozenset({_CONTEXT_TYPE_KEY, _CONTEXT_SOURCE_KEY}),
-        CitationContext: frozenset({_CONTEXT_TYPE_KEY, _CONTEXT_SOURCE_KEY}),
-    }
+    # Prefix applied to Context field names in the vector store. Reserved.
+    _CONTEXT_VECTOR_RECORD_FIELD_PREFIX: ClassVar[str] = "_context_"
 
-    _COLLECTION_SYSTEM_FIELD_MAPPING: ClassVar[dict[str, str]] = {
-        "timestamp": _TIMESTAMP_KEY,
-        "context.type": _CONTEXT_TYPE_KEY,
-        "context.source": _CONTEXT_SOURCE_KEY,
-    }
+    @classmethod
+    def _context_vector_record_property_name(cls, field_name: str) -> str:
+        """Return the vector record property name for a Context field name."""
+        return f"{cls._CONTEXT_VECTOR_RECORD_FIELD_PREFIX}{field_name}"
+
+    @classmethod
+    def _required_fields_for_context_type(
+        cls,
+        context_type: type[ContextUnion],
+    ) -> frozenset[str]:
+        """Return the storage fields required by a concrete Context type."""
+        field_names = set(context_type.model_fields)
+        return frozenset(
+            cls._context_vector_record_property_name(name)
+            for name in INDEXED_CONTEXT_PROPERTIES_SCHEMA
+            if name in field_names
+        )
+
+    @classmethod
+    def expected_vector_store_collection_schema(cls) -> dict[str, type[PropertyValue]]:
+        """
+        Return the vector store collection schema expected by EventMemory.
+
+        Callers should merge this with any user or external system-defined properties
+        when creating the collection so that EventMemory's reserved fields are filterable.
+        """
+        schema: dict[str, type[PropertyValue]] = {
+            cls._SEGMENT_UUID_FIELD_NAME: cast(type[PropertyValue], str),
+            cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
+        }
+        for name, storage_type in INDEXED_CONTEXT_PROPERTIES_SCHEMA.items():
+            schema[cls._context_vector_record_property_name(name)] = storage_type
+        return schema
 
     def __init__(self, params: EventMemoryParams) -> None:
         """
@@ -181,9 +195,30 @@ class EventMemory:
         """
         self._vector_store_collection = params.vector_store_collection
         self._segment_store_partition = params.segment_store_partition
-        self._schema_keys = frozenset(
+        self._schema_fields = frozenset(
             params.vector_store_collection.config.properties_schema
         )
+
+        missing_base_fields = (
+            EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
+        )
+        if missing_base_fields:
+            raise ValueError(
+                f"Collection schema missing fields required by EventMemory: "
+                f"{', '.join(sorted(missing_base_fields))}"
+            )
+        missing_context_fields = (
+            frozenset(EventMemory.expected_vector_store_collection_schema())
+            - self._schema_fields
+            - EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES
+        )
+        if missing_context_fields:
+            logger.warning(
+                "EventMemory collection schema is missing context fields: "
+                "%s. Ingesting events with the corresponding Context "
+                "subtypes will fail until the schema is updated.",
+                ", ".join(sorted(missing_context_fields)),
+            )
 
         self._embedder = params.embedder
         self._reranker = params.reranker
@@ -194,8 +229,8 @@ class EventMemory:
         self._eviction_search_limit = params.eviction_search_limit
         self._eviction_target_size = params.eviction_target_size
 
-        self._encode_lock: asyncio.Lock | None = (
-            asyncio.Lock() if params.serialize_encode else None
+        self._encode_lock: AbstractAsyncContextManager[None] = (
+            asyncio.Lock() if params.serialize_encode else nullcontext()
         )
 
         self._text_splitter = RecursiveCharacterTextSplitter(
@@ -236,22 +271,47 @@ class EventMemory:
             keep_separator="end",
         )
 
-    def _missing_schema_keys(self, events: Iterable[Event]) -> frozenset[str]:
-        """Return schema keys required by the events but missing from the collection."""
-        required: set[str] = set(EventMemory._BASE_REQUIRED_KEYS)
+    @classmethod
+    def _is_reserved_field(cls, field: str) -> bool:
+        """Returns whether a property field is reserved."""
+        return field in cls._BASE_EVENT_MEMORY_FIELD_NAMES or field.startswith(
+            cls._CONTEXT_VECTOR_RECORD_FIELD_PREFIX
+        )
+
+    def _validate_events(self, events: Iterable[Event]) -> None:
+        """
+        Validate a batch of events before encoding.
+
+        Raises ValueError if any event supplies a reserved field name in its properties,
+        or if the collection schema is missing fields required by any event's Context type.
+        """
+        events = list(events)
+
+        reserved_fields = {
+            field
+            for event in events
+            for field in event.properties
+            if EventMemory._is_reserved_field(field)
+        }
+        if reserved_fields:
+            raise ValueError(
+                f"Event properties must not contain reserved fields: "
+                f"{', '.join(sorted(reserved_fields))}"
+            )
+
+        required_fields: set[str] = set(EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES)
         for event in events:
             match event.body:
                 case Content(context=context) if context is not None:
-                    keys = EventMemory._CONTEXT_TYPE_REQUIRED_KEYS.get(type(context))
-                    if keys is not None:
-                        required.update(keys)
-        return frozenset(required - self._schema_keys)
-
-    def _acquire_encode_lock(self) -> AbstractAsyncContextManager[None]:
-        """Return the encode lock if configured, otherwise a no-op context."""
-        if self._encode_lock is not None:
-            return self._encode_lock
-        return nullcontext()
+                    required_fields.update(
+                        EventMemory._required_fields_for_context_type(type(context))
+                    )
+        missing_fields = required_fields - self._schema_fields
+        if missing_fields:
+            raise ValueError(
+                f"Events require properties missing from the collection schema: "
+                f"{', '.join(sorted(missing_fields))}"
+            )
 
     async def encode_events(
         self,
@@ -264,16 +324,12 @@ class EventMemory:
             events (Iterable[Event]): The events to encode.
 
         Raises:
-            ValueError: If any event has a context type that requires
-                properties not in the collection schema.
+            ValueError:
+                If any event supplies a reserved field name in its properties,
+                or if the collection schema is missing fields required by any event's Context type.
         """
         events = list(events)
-        missing = self._missing_schema_keys(events)
-        if missing:
-            raise ValueError(
-                f"Events require properties missing from the collection schema: "
-                f"{', '.join(sorted(missing))}"
-            )
+        self._validate_events(events)
 
         events = sorted(
             events,
@@ -306,7 +362,7 @@ class EventMemory:
                 self._embedder.similarity_metric,
             )
 
-        async with self._acquire_encode_lock():
+        async with self._encode_lock:
             skipped_uuids: set[UUID] = set()
             db_eviction_uuids: set[UUID] = set()
 
@@ -355,8 +411,9 @@ class EventMemory:
                     record_uuids=db_eviction_uuids
                 )
 
-    @staticmethod
+    @classmethod
     def _build_derivative_record(
+        cls,
         derivative: Derivative,
         derivative_embedding: Sequence[float],
     ) -> Record:
@@ -364,16 +421,12 @@ class EventMemory:
         properties: dict[str, PropertyValue] = {}
 
         # System-defined metadata (underscore-prefixed).
-        properties[EventMemory._SEGMENT_UUID_KEY] = str(derivative.segment_uuid)
-        properties[EventMemory._TIMESTAMP_KEY] = derivative.timestamp
+        properties[cls._SEGMENT_UUID_FIELD_NAME] = str(derivative.segment_uuid)
+        properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
 
-        match derivative.context:
-            case MessageContext(source=source):
-                properties[EventMemory._CONTEXT_TYPE_KEY] = "message"
-                properties[EventMemory._CONTEXT_SOURCE_KEY] = source
-            case CitationContext(source=source):
-                properties[EventMemory._CONTEXT_TYPE_KEY] = "citation"
-                properties[EventMemory._CONTEXT_SOURCE_KEY] = source
+        if derivative.context is not None:
+            for name, value in derivative.context.model_dump(exclude_none=True).items():
+                properties[cls._context_vector_record_property_name(name)] = value
 
         # User-defined properties.
         properties.update(derivative.properties)
@@ -468,7 +521,7 @@ class EventMemory:
                 timestamp = cast(
                     datetime.datetime,
                     cast(dict[str, PropertyValue], match.record.properties)[
-                        EventMemory._TIMESTAMP_KEY
+                        EventMemory._TIMESTAMP_FIELD_NAME
                     ],
                 )
                 members.append((timestamp, match.record.uuid, True))
@@ -640,15 +693,23 @@ class EventMemory:
             for sentence in extract_sentences(text)
         ]
 
-    @staticmethod
-    def _to_collection_field(field: str) -> str:
-        """Translate canonical filter field names to collection property keys."""
+    @classmethod
+    def _to_vector_record_property(cls, field: str) -> str:
+        """
+        Translates canonical filter field name to vector record property.
+
+        Event memory base properties (`foo`) translate to `_foo`..
+        Context properties (`context.foo`) translate to `_context_foo`.
+        User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
+        """
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
-        if field in EventMemory._COLLECTION_SYSTEM_FIELD_MAPPING:
-            return EventMemory._COLLECTION_SYSTEM_FIELD_MAPPING[field]
-        raise ValueError(f"Unknown filter field: {field!r}")
+        context_prefix = "context."
+        if field.startswith(context_prefix):
+            subfield = field.removeprefix(context_prefix)
+            return cls._context_vector_record_property_name(subfield)
+        return f"_{field}"
 
     async def query(
         self,
@@ -674,7 +735,7 @@ class EventMemory:
                 around each matched segment for additional context
                 (default: 0).
             property_filter (FilterExpr | None):
-                Attribute keys and values
+                Property fields and values
                 to use for filtering segments
                 (default: None).
             format_options (FormatOptions | None):
@@ -696,7 +757,7 @@ class EventMemory:
 
         # Translate filter fields for vector store.
         collection_filter = (
-            map_filter_fields(property_filter, EventMemory._to_collection_field)
+            map_filter_fields(property_filter, EventMemory._to_vector_record_property)
             if property_filter is not None
             else None
         )
@@ -720,7 +781,7 @@ class EventMemory:
                     cast(
                         dict[str, PropertyValue],
                         match.record.properties,
-                    )[EventMemory._SEGMENT_UUID_KEY]
+                    )[EventMemory._SEGMENT_UUID_FIELD_NAME]
                 )
             )
             if segment_uuid not in seed_embedding_scores:
