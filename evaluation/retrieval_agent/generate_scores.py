@@ -90,7 +90,7 @@ for item in all_items:
         has_tool_info = True
         tool = item.get("selected_tool", "Unknown")
         tools_called[tool] = tools_called.get(tool, 0) + 1
-        if item.get("llm_score", 1):
+        if item.get("llm_score", 0) == 1:
             tools_correct[tool] = tools_correct.get(tool, 0) + 1
 
 # Print Tools Overall Accuracy only if tool info exists

@@ -219,17 +219,25 @@ async def beam_search(
             )
 
     # Process questions by category
+    categories = list(questions_data.keys())
     for category, questions in questions_data.items():
         for question in questions:
             tasks.append(bounded_process(category, question))
 
         # Process in batches to respect concurrency
-        if len(tasks) >= concurrency or category == list(questions_data.keys())[-1]:
+        if len(tasks) >= concurrency:
             responses = await asyncio.gather(*tasks)
             tasks = []
             agent_utils.update_results(responses, attribute_matrix, results)
             num_processed += len(responses)
             print(f"Processed {num_processed} questions...")
+
+    # Flush any remaining tasks after all categories/questions are processed
+    if tasks:
+        responses = await asyncio.gather(*tasks)
+        agent_utils.update_results(responses, attribute_matrix, results)
+        num_processed += len(responses)
+        print(f"Processed {num_processed} questions...")
 
     agent_utils.update_final_attribute_matrix(
         "beam",
