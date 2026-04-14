@@ -564,6 +564,17 @@ From `evaluation/retrieval_agent/`:
 ./run_test.sh beam exp1 search retrieval_agent /path/to/chat.json /path/to/probing_questions.json --search-concurrency 10 --judge-concurrency 30
 ```
 
+### Dependencies for BEAM
+
+BEAM evaluation requires additional Python packages beyond the base benchmark dependencies:
+
+```bash
+pip install scipy datasets
+```
+
+- `scipy`: Used for Kendall tau-b correlation in event ordering evaluation
+- `datasets`: Used for downloading BEAM dataset from HuggingFace
+
 ### Downloading BEAM Dataset
 
 Due to the large size of the BEAM dataset, it is hosted externally on Hugging Face for download and provided with an option for selective download based on your needs.
