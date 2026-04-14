@@ -1,3 +1,16 @@
+"""BEAM benchmark evaluation script with rubric-based scoring.
+
+This script evaluates BEAM benchmark results using the official BEAM evaluation
+approach from https://github.com/mohammadtavakoli78/BEAM.
+
+Key features:
+- Uses official BEAM unified_llm_judge_base_prompt
+- 0.0/0.5/1.0 scoring scale (float preserved)
+- Event ordering evaluation with Kendall tau-b normalized
+- Responsiveness check anchored to the question
+- Semantic tolerance for paraphrases and equivalents
+"""
+
 import argparse
 import concurrent.futures
 import json
@@ -8,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 import json_repair
+from scipy.stats import kendalltau
 from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -20,19 +34,77 @@ from evaluation.retrieval_agent.llm_judge import (  # noqa: E402
 )
 
 
-# Rubric evaluation prompt - evaluates each criterion individually
-RUBRIC_EVALUATION_PROMPT = """You are tasked with evaluating whether a response meets a specific criterion.
+# Official BEAM unified LLM judge prompt
+# From https://github.com/mohammadtavakoli78/BEAM/blob/main/src/prompts.py
+UNIFIED_LLM_JUDGE_PROMPT = """You are an expert evaluator tasked with judging whether the LLM's response demonstrates compliance with the specified RUBRIC CRITERION.
 
-Question: {question}
-Criterion: {criterion}
-Response: {response}
+## EVALUATION INPUTS
+- QUESTION (what the user asked): {question}
+- RUBRIC CRITERION (what to check): {criterion}
+- RESPONSE TO EVALUATE: {response}
 
-Evaluate if the response adequately addresses this criterion.
-Return a JSON object with:
-- "score": 1 if the response meets the criterion, 0 otherwise
-- "reasoning": brief explanation of your evaluation
+## EVALUATION RUBRIC:
+The rubric defines a specific requirement, constraint, or expected behavior that the LLM response should demonstrate.
 
-Example: {{"score": 1, "reasoning": "The response clearly addresses the criterion by..."}}
+**IMPORTANT**: Pay careful attention to whether the rubric specifies:
+- **Positive requirements** (things the response SHOULD include/do)
+- **Negative constraints** (things the response SHOULD NOT include/do, often indicated by "no", "not", "avoid", "absent")
+
+## RESPONSIVENESS REQUIREMENT (anchored to the QUESTION)
+A compliant response must be **on-topic with respect to the QUESTION** and attempt to answer it.
+- If the response does not address the QUESTION, score **0.0** and stop.
+- For negative constraints, both must hold: (a) the response is responsive to the QUESTION, and (b) the prohibited element is absent.
+
+## SEMANTIC TOLERANCE RULES:
+Judge by meaning, not exact wording.
+- Accept **paraphrases** and **synonyms** that preserve intent.
+- **Case/punctuation/whitespace** differences must be ignored.
+- **Numbers/currencies/dates** may appear in equivalent forms (e.g., "$68,000", "68k", "68,000 USD", or "sixty-eight thousand dollars"). Treat them as equal when numerically equivalent.
+- If the rubric expects a number or duration, prefer **normalized comparison** (extract and compare values) over string matching.
+
+## STYLE NEUTRALITY (prevents style contamination):
+Ignore tone, politeness, length, and flourish unless the rubric explicitly requires a format/structure (e.g., "itemized list", "no citations", "one sentence").
+- Do **not** penalize hedging, voice, or verbosity if content satisfies the rubric.
+- Only evaluate format when the rubric **explicitly** mandates it.
+
+## SCORING SCALE:
+- **1.0 (Complete Compliance)**: Fully complies with the rubric criterion.
+  - Positive: required element present, accurate, properly executed (allowing semantic equivalents).
+  - Negative: prohibited element **absent** AND response is **responsive**.
+
+- **0.5 (Partial Compliance)**: Partially complies.
+  - Positive: element present but minor inaccuracies/incomplete execution.
+  - Negative: generally responsive and mostly avoids the prohibited element but with minor/edge violations.
+
+- **0.0 (No Compliance)**: Fails to comply.
+  - Positive: required element missing or incorrect.
+  - Negative: prohibited element present **or** response is non-responsive/evasive even if the element is absent.
+
+## EVALUATION INSTRUCTIONS:
+1. **Understand the Requirement**: Determine if the rubric is asking for something to be present (positive) or absent (negative/constraint).
+
+2. **Parse Compound Statements**: If the rubric contains multiple elements connected by "and" or commas, evaluate whether:
+   - **All elements** must be present for full compliance (1.0)
+   - **Some elements** present indicates partial compliance (0.5)
+   - **No elements** present indicates no compliance (0.0)
+
+3. **Check Compliance**:
+   - For positive requirements: Look for the presence and quality of the required element
+   - For negative constraints: Look for the absence of the prohibited element
+
+4. **Assign Score**: Based on compliance with the specific rubric criterion according to the scoring scale above.
+
+5. **Provide Reasoning**: Explain whether the rubric criterion was satisfied and justify the score.
+
+## OUTPUT FORMAT:
+Return your evaluation in JSON format with two fields:
+
+{{
+   "score": [your score: 1.0, 0.5, or 0.0],
+   "reason": "[detailed explanation of whether the rubric criterion was satisfied and why this justified the assigned score]"
+}}
+
+NOTE: Only output the JSON object, without any explanation before or after it.
 """
 
 
@@ -41,8 +113,8 @@ def evaluate_rubric_criterion(
     criterion: str,
     response: str,
     call_fn: Callable[[str], str],
-) -> tuple[int, str]:
-    """Evaluate a single rubric criterion.
+) -> tuple[float, str]:
+    """Evaluate a single rubric criterion using official BEAM prompt.
 
     Args:
         question: The probing question.
@@ -51,9 +123,9 @@ def evaluate_rubric_criterion(
         call_fn: Callable for LLM judge.
 
     Returns:
-        Tuple of (score, reasoning).
+        Tuple of (score, reasoning) where score is 0.0, 0.5, or 1.0.
     """
-    prompt = RUBRIC_EVALUATION_PROMPT.format(
+    prompt = UNIFIED_LLM_JUDGE_PROMPT.format(
         question=question,
         criterion=criterion,
         response=response,
@@ -62,13 +134,94 @@ def evaluate_rubric_criterion(
     raw = call_fn(prompt)
     try:
         result = json_repair.loads(raw)
-        score = int(result.get("score", 0))
-        reasoning = result.get("reasoning", "")
+        # Official BEAM uses float scores: 0.0, 0.5, 1.0
+        score = float(result.get("score", 0.0))
+        # Clamp score to valid range
+        score = max(0.0, min(1.0, score))
+        reasoning = result.get("reason", result.get("reasoning", ""))
     except Exception:
-        score = 0
+        score = 0.0
         reasoning = "Failed to parse LLM response"
 
     return score, reasoning
+
+
+def extract_facts_from_response(response: str, question: str) -> list[str]:
+    """Extract facts/statements from response for event ordering evaluation.
+
+    Simple line-based extraction as used in official BEAM.
+
+    Args:
+        response: The model's response.
+        question: The probing question (for context).
+
+    Returns:
+        List of extracted facts/statements.
+    """
+    # Split by newlines and filter empty lines
+    lines = [line.strip() for line in response.strip().split("\n") if line.strip()]
+    return lines
+
+
+def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[str]) -> dict:
+    """Compute event ordering score using Kendall tau-b normalized.
+
+    Based on official BEAM event_ordering_score() function.
+
+    Args:
+        reference_list: Reference ordered list of events/facts.
+        system_list: System predicted ordered list of events/facts.
+
+    Returns:
+        Dictionary with precision, recall, f1, tau_norm, and final_score.
+    """
+    if not reference_list or not system_list:
+        return {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "tau_norm": 0.0,
+            "final_score": 0.0,
+        }
+
+    # Create union for ranking
+    union = list(dict.fromkeys(reference_list + system_list))
+    tie_rank = len(union) + 1
+
+    def to_rank(seq: list[str]) -> list[int]:
+        """Convert sequence to rank list."""
+        rank_map = {item: i + 1 for i, item in enumerate(seq)}
+        return [rank_map.get(u, tie_rank) for u in union]
+
+    # Compute precision/recall/F1 based on set overlap
+    ref_set = set(reference_list)
+    sys_set = set(system_list)
+
+    tp = len(ref_set & sys_set)
+    fp = len(sys_set - ref_set)
+    fn = len(ref_set - sys_set)
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    # Compute Kendall tau-b normalized
+    ref_ranks = to_rank(reference_list)
+    sys_ranks = to_rank(system_list)
+
+    tau_b, _ = kendalltau(ref_ranks, sys_ranks, variant="b", method="auto")
+    tau_norm = (tau_b + 1) / 2 if tau_b is not None else 0.0
+
+    # Final score is tau_norm * f1 (as in official BEAM)
+    final_score = tau_norm * f1
+
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "tau_norm": round(tau_norm, 4),
+        "final_score": round(final_score, 4),
+    }
 
 
 def evaluate_with_rubric(
@@ -76,29 +229,32 @@ def evaluate_with_rubric(
     response: str,
     rubric: list,
     call_fn: Callable[[str], str],
+    category: str = "",
 ) -> dict:
-    """Evaluate a response against rubric criteria.
+    """Evaluate a response against rubric criteria using official BEAM approach.
 
     Args:
         question: The probing question.
         response: The model's response.
         rubric: List of evaluation criteria.
         call_fn: Callable for LLM judge.
+        category: BEAM category (for special handling of event_ordering).
 
     Returns:
-        Dictionary with rubric_score, individual scores, and reasoning.
+        Dictionary with rubric_score, criterion_scores, and evaluation details.
     """
     if not rubric:
         return {
-            "rubric_score": 0,
+            "rubric_score": 0.0,
             "num_criteria": 0,
             "criterion_scores": [],
             "criterion_reasonings": [],
+            "event_ordering": None,
         }
 
     criterion_scores = []
     criterion_reasonings = []
-    total_score = 0
+    total_score = 0.0
 
     for criterion in rubric:
         score, reasoning = evaluate_rubric_criterion(
@@ -108,13 +264,23 @@ def evaluate_with_rubric(
         criterion_reasonings.append(reasoning)
         total_score += score
 
-    rubric_score = total_score / len(rubric) if rubric else 0
+    rubric_score = total_score / len(rubric) if rubric else 0.0
+
+    # Special handling for event_ordering category
+    event_ordering_result = None
+    if category == "event_ordering":
+        # Extract facts from rubric (reference) and response (system)
+        reference_list = extract_facts_from_response("\n".join(rubric), question)
+        system_list = extract_facts_from_response(response, question)
+
+        event_ordering_result = compute_kendall_tau_normalized(reference_list, system_list)
 
     return {
-        "rubric_score": rubric_score,
+        "rubric_score": round(rubric_score, 4),
         "num_criteria": len(rubric),
-        "criterion_scores": criterion_scores,
+        "criterion_scores": [round(s, 4) for s in criterion_scores],
         "criterion_reasonings": criterion_reasonings,
+        "event_ordering": event_ordering_result,
     }
 
 
@@ -123,7 +289,7 @@ def process_beam_sample(
     item: dict,
     call_fn: Callable[[str], str],
 ) -> tuple[str, dict | None]:
-    """Process a single BEAM sample with rubric evaluation.
+    """Process a single BEAM sample with official BEAM evaluation.
 
     Args:
         group_key: Category key (e.g., "abstention", "contradiction_resolution").
@@ -141,7 +307,6 @@ def process_beam_sample(
 
     # Skip if no rubric (fallback to standard evaluation)
     if not rubric:
-        # For samples without rubric, use basic accuracy check
         return group_key, {
             "question": question,
             "ideal_answer": ideal_answer,
@@ -151,11 +316,18 @@ def process_beam_sample(
             "note": "No rubric provided",
         }
 
-    # Perform rubric-based evaluation
-    rubric_result = evaluate_with_rubric(question, response, rubric, call_fn)
+    # Perform rubric-based evaluation using official BEAM approach
+    eval_result = evaluate_with_rubric(question, response, rubric, call_fn, category)
 
-    # Build result dictionary
-    rubric_score = round(rubric_result["rubric_score"], 3)
+    # Build result dictionary following official BEAM output format
+    rubric_score = eval_result["rubric_score"]
+
+    # For event_ordering, use final_score (tau_norm * f1) as the main score
+    if category == "event_ordering" and eval_result["event_ordering"]:
+        llm_score = eval_result["event_ordering"]["final_score"]
+    else:
+        llm_score = rubric_score
+
     res = {
         "question": question,
         "ideal_answer": ideal_answer,
@@ -163,11 +335,19 @@ def process_beam_sample(
         "category": category,
         "rubric": rubric,
         "rubric_score": rubric_score,
-        "llm_score": rubric_score,  # For compatibility with generate_scores.py
-        "num_criteria": rubric_result["num_criteria"],
-        "criterion_scores": rubric_result["criterion_scores"],
-        "criterion_reasonings": rubric_result["criterion_reasonings"],
+        "llm_score": llm_score,  # For compatibility with generate_scores.py
+        "num_criteria": eval_result["num_criteria"],
+        "criterion_scores": eval_result["criterion_scores"],
+        "criterion_reasonings": eval_result["criterion_reasonings"],
+        "llm_judge_responses": [
+            {"score": s, "reason": r}
+            for s, r in zip(eval_result["criterion_scores"], eval_result["criterion_reasonings"])
+        ],
     }
+
+    # Add event_ordering specific metrics if applicable
+    if eval_result["event_ordering"]:
+        res["event_ordering"] = eval_result["event_ordering"]
 
     # Add extra BEAM-specific attributes if present
     for key in [
@@ -176,6 +356,8 @@ def process_beam_sample(
         "contradiction_type",
         "ordering_type",
         "ideal_response",
+        "preference_being_tested",
+        "why_unanswerable",
     ]:
         if key in item:
             res[key] = item[key]
@@ -186,7 +368,7 @@ def process_beam_sample(
 def build_parser() -> argparse.ArgumentParser:
     """Build argument parser for BEAM evaluation."""
     parser = argparse.ArgumentParser(
-        description="Evaluate BEAM benchmark results with rubric-based scoring"
+        description="Evaluate BEAM benchmark results using official BEAM evaluation approach"
     )
     parser.add_argument(
         "--data-path",
@@ -219,10 +401,11 @@ def main():
     """Main entry point for BEAM evaluation."""
     args = build_parser().parse_args()
 
-    print("Starting BEAM rubric-based evaluation...")
+    print("Starting BEAM evaluation using official BEAM approach...")
     print(f"Data path: {args.data_path}")
     print(f"Output path: {args.target_path}")
     print(f"Max workers: {args.max_workers}")
+    print("Using official BEAM unified LLM judge prompt with 0.0/0.5/1.0 scoring")
 
     call_fn = create_judge_fn(args.config_path)
 
@@ -271,7 +454,7 @@ def main():
 
     # Print category-level summary
     print("\n" + "=" * 60)
-    print("BEAM Rubric Evaluation Summary")
+    print("BEAM Evaluation Summary (Official BEAM Approach)")
     print("=" * 60)
 
     for category, metrics in sorted(category_metrics.items()):
