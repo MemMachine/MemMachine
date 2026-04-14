@@ -384,12 +384,15 @@ class Derivative(BaseModel):
 
 # FormatOptions: options for formatting query result.
 
+# CLDR datetime style. Ordered from compact to verbose.
+DateTimeStyle = Literal["short", "medium", "long", "full"]
+
 
 class FormatOptions(BaseModel):
     """Options for formatting."""
 
-    datetime_style: Literal["short", "medium", "long", "full"] | None = "full"
-    include_time: bool = True
+    date_style: DateTimeStyle | None = "full"
+    time_style: DateTimeStyle | None = "long"
     locale: str = "en_US"
     timezone: InstanceOf[tzinfo] | None = None
 

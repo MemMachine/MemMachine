@@ -7,11 +7,11 @@ import logging
 import time
 from collections.abc import Iterable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, cast
 from uuid import UUID, uuid4
 
 import numpy as np
-from babel.dates import format_date, format_datetime
+from babel.dates import format_date, format_time, get_datetime_format
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -42,6 +42,7 @@ from .data_types import (
     Content,
     Context,
     ContextUnion,
+    DateTimeStyle,
     Derivative,
     Event,
     FileRef,
@@ -56,6 +57,9 @@ from .data_types import (
 from .segment_store import SegmentStorePartition
 
 logger = logging.getLogger(__name__)
+
+# CLDR datetime style levels, ordered from compact to verbose.
+_DATETIME_STYLE_LEVELS: tuple[DateTimeStyle, ...] = ("short", "medium", "long", "full")
 
 
 class EventMemoryParams(BaseModel):
@@ -970,18 +974,14 @@ class EventMemory:
     @staticmethod
     def _segment_header(segment: Segment, format_options: FormatOptions) -> str:
         """Build the header emitted before a segment."""
-        datetime_style = format_options.datetime_style
-        if datetime_style is None:
-            timestamp_prefix = ""
-        else:
-            formatted_timestamp = EventMemory._format_timestamp(
-                segment.timestamp,
-                datetime_style=datetime_style,
-                include_time=format_options.include_time,
-                locale=format_options.locale,
-                timezone=format_options.timezone,
-            )
-            timestamp_prefix = f"[{formatted_timestamp}] "
+        formatted_timestamp = EventMemory._format_timestamp(
+            segment.timestamp,
+            date_style=format_options.date_style,
+            time_style=format_options.time_style,
+            locale=format_options.locale,
+            timezone=format_options.timezone,
+        )
+        timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
 
         match segment.context:
             case MessageContext(source=source):
@@ -995,20 +995,45 @@ class EventMemory:
     def _format_timestamp(
         timestamp: datetime.datetime,
         *,
-        datetime_style: Literal["short", "medium", "long", "full"],
-        include_time: bool,
+        date_style: DateTimeStyle | None,
+        time_style: DateTimeStyle | None,
         locale: str,
         timezone: datetime.tzinfo | None,
     ) -> str:
         """Format a timestamp."""
+        if date_style is None and time_style is None:
+            return ""
+
         normalized_timestamp = (
             timestamp.astimezone(timezone) if timezone is not None else timestamp
         )
-        if include_time:
-            return format_datetime(
-                normalized_timestamp, format=datetime_style, locale=locale
+
+        date_string = ""
+        time_string = ""
+
+        if date_style is not None:
+            date_string = format_date(
+                normalized_timestamp, format=date_style, locale=locale
             )
-        return format_date(normalized_timestamp, format=datetime_style, locale=locale)
+        if time_style is not None:
+            time_string = format_time(
+                normalized_timestamp, format=time_style, locale=locale
+            )
+
+        if not time_string:
+            return date_string
+        if not date_string:
+            return time_string
+
+        connector_style = _DATETIME_STYLE_LEVELS[
+            max(
+                _DATETIME_STYLE_LEVELS.index(date_style),
+                _DATETIME_STYLE_LEVELS.index(time_style),
+            )
+        ]
+
+        template = str(get_datetime_format(connector_style, locale=locale))
+        return template.replace("{1}", date_string).replace("{0}", time_string)
 
     @staticmethod
     def _extract_text(block: Block) -> str | None:
