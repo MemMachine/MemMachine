@@ -25,14 +25,18 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && npm exec tsup",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@memmachine/client": "^0.0.0-development",
+    "@memmachine/client": "^0.3.4",
     "@sinclair/typebox": "^0.34.48",
-    "openclaw": "^2026.3.23"
+    "openclaw": "^2026.4.10"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.9",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3"
   },

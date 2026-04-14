@@ -212,7 +212,7 @@ function sanitizeFilterValue(value: string): string {
   return value.replace(/'/g, "");
 }
 
-function buildScopeFilter(
+export function buildScopeFilter(
   scope: MemoryScope,
   sessionKey?: string,
   userId?: string,
@@ -244,6 +244,33 @@ function buildScopeFilter(
     return `metadata.user_id = '${safeUser}'`;
   }
   return undefined;
+}
+
+/**
+ * Build the filter string used exclusively by the autoRecall hook.
+ *
+ * Rules:
+ * - `sessionId` undefined → return undefined (caller skips the search; no
+ *   filter means "match everything", which is the bug we are fixing).
+ * - `userId` undefined or equals the shared DEFAULT_OPENCLAW_ID constant →
+ *   return a session-only filter so that memories from unrelated conversations
+ *   cannot leak through the shared userId.
+ * - `userId` is a real per-user value → return a user-scoped filter so that
+ *   cross-session long-term recall works correctly for that user.
+ */
+export function buildAutoRecallFilter(
+  sessionId: string | undefined,
+  userId: string | undefined,
+): string | undefined {
+  if (!sessionId) {
+    return undefined;
+  }
+  const safeSession = sanitizeFilterValue(sessionId);
+  if (!userId || userId === DEFAULT_OPENCLAW_ID) {
+    return `metadata.run_id = '${safeSession}'`;
+  }
+  const safeUser = sanitizeFilterValue(userId);
+  return `metadata.user_id = '${safeUser}'`;
 }
 
 function normalizeScope(value: string | undefined, fallback: MemoryScope): MemoryScope {
@@ -409,11 +436,11 @@ function extractMessageTextBlocks(message: Record<string, unknown>): string[] {
 async function autoCaptureMessages(params: {
   api: OpenClawPluginApi;
   handle: MemoryHandle;
-  sessionKey?: string;
+  sessionId?: string;
   messages: unknown[];
 }): Promise<void> {
-  const { api, handle, sessionKey, messages } = params;
-  const recent = messages.slice(-8); // Only consider the last 3 messages for auto-capture
+  const { api, handle, sessionId, messages } = params;
+  const recent = messages.slice(-8);
   let stored = 0;
 
   for (const msg of recent) {
@@ -438,7 +465,7 @@ async function autoCaptureMessages(params: {
           role,
           producer: role,
           metadata: toMetadata(undefined, {
-            run_id: sessionKey,
+            run_id: sessionId,
             user_id: handle.config.userId,
           }),
         });
@@ -785,7 +812,12 @@ export default {
         }
         try {
           const handle = resolveMemoryHandle(api, { sessionKey: ctx.sessionKey });
-          const filter = buildScopeFilter("all", ctx.sessionKey, handle.config.userId) ?? "";
+          const filter = buildAutoRecallFilter(ctx.sessionId, handle.config.userId);
+          if (filter === undefined) {
+            // No safe filter can be built (sessionId absent). Skip recall rather
+            // than issuing an unscoped search that would match all stored memories.
+            return;
+          }
           const result = await handle.memory.search(event.prompt, {
             top_k: cfg.topK ?? DEFAULT_TOP_K,
             score_threshold: cfg.searchThreshold ?? DEFAULT_SEARCH_THRESHOLD,
@@ -824,7 +856,7 @@ export default {
           await autoCaptureMessages({
             api,
             handle,
-            sessionKey: ctx.sessionKey,
+            sessionId: ctx.sessionId,
             messages: event.messages,
           });
         } catch (err) {

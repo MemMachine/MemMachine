@@ -24,6 +24,6 @@
     "outDir": "./dist",
     "rootDir": "."
   },
-  "include": ["index.mts", "types/**/*.d.ts"],
+  "include": ["index.mts", "types/**/*.d.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
