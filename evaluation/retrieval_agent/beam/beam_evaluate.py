@@ -448,9 +448,9 @@ def main():
                         "rubric_score"
                     ]
 
-            # Save intermediate results
-            with open(args.target_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, indent=4, ensure_ascii=False)
+    # Save results once after all evaluations complete
+    with open(args.target_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=4, ensure_ascii=False)
 
     # Print category-level summary
     print("\n" + "=" * 60)

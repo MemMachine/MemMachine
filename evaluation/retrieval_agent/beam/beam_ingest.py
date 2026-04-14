@@ -38,7 +38,6 @@ async def beam_ingest(
     data_path: str,
     config_path: str,
     session_id: str,
-    concurrency: int = 10,
 ) -> dict:
     """Ingest BEAM chat data into MemMachine episodic memory.
 
@@ -46,7 +45,6 @@ async def beam_ingest(
         data_path: Path to the chat.json file.
         config_path: Path to configuration.yml.
         session_id: Session ID for this ingestion run.
-        concurrency: Number of concurrent batch ingestion tasks.
 
     Returns:
         Dictionary containing ingestion statistics.
@@ -143,12 +141,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="beam_default",
         help="Session ID for this ingestion (default: beam_default)",
     )
-    parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=10,
-        help="Number of concurrent batch ingestion tasks (default: 10)",
-    )
     return parser
 
 
@@ -160,13 +152,11 @@ async def main():
     print(f"Data path: {args.data_path}")
     print(f"Config path: {args.config_path}")
     print(f"Session ID: {args.session_id}")
-    print(f"Concurrency: {args.concurrency}")
 
     stats = await beam_ingest(
         data_path=args.data_path,
         config_path=args.config_path,
         session_id=args.session_id,
-        concurrency=args.concurrency,
     )
 
     print("\nIngestion statistics:")
