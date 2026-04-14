@@ -438,9 +438,9 @@ run_test() {
             fi
             ;;
         beam)
-            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam_ingest.py" --data-path "$CHAT_PATH" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID")
-            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam_search.py" --chat-data-path "$CHAT_PATH" --data-path "$QUESTIONS_PATH" --eval-result-path "$RESULT_FILE" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID" --test-target "$TEST_TARGET")
-            EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/beam_evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
+            INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam/beam_ingest.py" --data-path "$CHAT_PATH" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID")
+            SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam/beam_search.py" --chat-data-path "$CHAT_PATH" --data-path "$QUESTIONS_PATH" --eval-result-path "$RESULT_FILE" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID" --test-target "$TEST_TARGET")
+            EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/beam/beam_evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
