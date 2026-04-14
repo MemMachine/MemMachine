@@ -4,12 +4,14 @@ import asyncio
 import datetime
 import json
 import logging
+import time
 from collections.abc import Iterable, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
-from typing import ClassVar, cast
+from typing import ClassVar, Literal, cast
 from uuid import UUID, uuid4
 
 import numpy as np
+from babel.dates import format_date, format_datetime
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -328,6 +330,8 @@ class EventMemory:
                 If any event supplies a reserved field name in its properties,
                 or if the collection schema is missing fields required by any event's Context type.
         """
+        t_start = time.monotonic()
+
         events = list(events)
         self._validate_events(events)
 
@@ -339,6 +343,7 @@ class EventMemory:
         segments = [
             segment for event in events for segment in self._create_segments(event)
         ]
+        t_segment = time.monotonic()
 
         segments_to_derivatives: dict[Segment, list[Derivative]] = {
             segment: self._derive_derivatives(segment) for segment in segments
@@ -349,10 +354,12 @@ class EventMemory:
             for segment_derivatives in segments_to_derivatives.values()
             for derivative in segment_derivatives
         ]
+        t_derive = time.monotonic()
 
         derivative_embeddings = await self._embedder.ingest_embed(
             [derivative.text for derivative in derivatives],
         )
+        t_embed = time.monotonic()
 
         batch_predecessors: list[set[int]] | None = None
         if self._eviction_similarity_threshold is not None and derivative_embeddings:
@@ -361,8 +368,10 @@ class EventMemory:
                 self._eviction_similarity_threshold,
                 self._embedder.similarity_metric,
             )
+        t_pred = time.monotonic()
 
         async with self._encode_lock:
+            t_lock = time.monotonic()
             skipped_uuids: set[UUID] = set()
             db_eviction_uuids: set[UUID] = set()
 
@@ -381,6 +390,7 @@ class EventMemory:
                     batch_predecessors=batch_predecessors,
                     eviction_target_size=self._eviction_target_size,
                 )
+            t_e_target = time.monotonic()
 
             await self._segment_store_partition.add_segments(
                 {
@@ -392,6 +402,7 @@ class EventMemory:
                     for segment, segment_derivatives in segments_to_derivatives.items()
                 }
             )
+            t_seg_store = time.monotonic()
 
             derivative_records = [
                 EventMemory._build_derivative_record(derivative, derivative_embedding)
@@ -405,11 +416,37 @@ class EventMemory:
 
             if derivative_records:
                 await self._vector_store_collection.upsert(records=derivative_records)
+            t_v_store = time.monotonic()
 
             if db_eviction_uuids:
                 await self._vector_store_collection.delete(
                     record_uuids=db_eviction_uuids
                 )
+            t_evict = time.monotonic()
+
+        logger.debug(
+            "Ingest timing: "
+            "segment=%.3fs "
+            "derive=%.3fs "
+            "embed=%.3fs "
+            "pred=%.3fs "
+            "lock=%.3fs "
+            "e_target=%.3fs "
+            "seg_store=%.3fs "
+            "v_store=%.3fs "
+            "evict=%.3fs "
+            "total=%.3fs",
+            t_segment - t_start,
+            t_derive - t_segment,
+            t_embed - t_derive,
+            t_pred - t_embed,
+            t_lock - t_pred,
+            t_e_target - t_lock,
+            t_seg_store - t_e_target,
+            t_v_store - t_seg_store,
+            t_evict - t_v_store,
+            t_evict - t_start,
+        )
 
     @classmethod
     def _build_derivative_record(
@@ -739,7 +776,7 @@ class EventMemory:
                 to use for filtering segments
                 (default: None).
             format_options (FormatOptions | None):
-                Options for formatting timestamps in output
+                Options for formatting.
                 (default: None).
 
         Returns:
@@ -749,11 +786,14 @@ class EventMemory:
         """
         if format_options is None:
             format_options = FormatOptions()
+
+        t_start = time.monotonic()
         query_embedding = (
             await self._embedder.search_embed(
                 [query],
             )
         )[0]
+        t_embed = time.monotonic()
 
         # Translate filter fields for vector store.
         collection_filter = (
@@ -770,6 +810,7 @@ class EventMemory:
             return_vector=False,
             return_properties=True,
         )
+        t_v_query = time.monotonic()
 
         # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
@@ -800,6 +841,7 @@ class EventMemory:
                 property_filter=property_filter,
             )
         )
+        t_s_query = time.monotonic()
 
         # Filter to seeds with results, preserving similarity order.
         kept_seed_segment_uuids = [
@@ -822,6 +864,7 @@ class EventMemory:
             scores = await self._score_segment_contexts(
                 query, segment_contexts, format_options
             )
+        t_score = time.monotonic()
 
         # Reranker scores are always higher-is-better.
         # Embedding scores depend on the similarity metric.
@@ -846,6 +889,23 @@ class EventMemory:
                 reverse=higher_is_better,
             )
         ]
+        t_result = time.monotonic()
+
+        logger.debug(
+            "Query timing: "
+            "embed=%.3fs "
+            "v_query=%.3fs "
+            "s_query=%.3fs "
+            "score=%.3fs "
+            "result=%.3fs "
+            "total=%.3fs",
+            t_embed - t_start,
+            t_v_query - t_embed,
+            t_s_query - t_v_query,
+            t_score - t_s_query,
+            t_result - t_score,
+            t_result - t_start,
+        )
 
         return QueryResult(scored_segment_contexts=scored_segment_contexts)
 
@@ -892,18 +952,7 @@ class EventMemory:
                     context_string += json.dumps(accumulated_text) + "\n"
                 first = False
                 accumulated_text = ""
-
-                timestamp = EventMemory._format_timestamp(
-                    segment.timestamp, format_options
-                )
-
-                match segment.context:
-                    case MessageContext(source=source):
-                        context_string += f"{timestamp} {source}: "
-                    case CitationContext(source=source):
-                        context_string += f"{timestamp} From '{source}': "
-                    case _:
-                        context_string += f"{timestamp} "
+                context_string += EventMemory._segment_header(segment, format_options)
 
             text = EventMemory._extract_text(segment.block)
             if text is not None:
@@ -919,6 +968,49 @@ class EventMemory:
         return context_string.strip()
 
     @staticmethod
+    def _segment_header(segment: Segment, format_options: FormatOptions) -> str:
+        """Build the header emitted before a segment."""
+        datetime_style = format_options.datetime_style
+        if datetime_style is None:
+            timestamp_prefix = ""
+        else:
+            formatted_timestamp = EventMemory._format_timestamp(
+                segment.timestamp,
+                datetime_style=datetime_style,
+                include_time=format_options.include_time,
+                locale=format_options.locale,
+                timezone=format_options.timezone,
+            )
+            timestamp_prefix = f"[{formatted_timestamp}] "
+
+        match segment.context:
+            case MessageContext(source=source):
+                return f"{timestamp_prefix}{source}: "
+            case CitationContext(source=source):
+                return f"{timestamp_prefix}From '{source}': "
+            case _:
+                return timestamp_prefix
+
+    @staticmethod
+    def _format_timestamp(
+        timestamp: datetime.datetime,
+        *,
+        datetime_style: Literal["short", "medium", "long", "full"],
+        include_time: bool,
+        locale: str,
+        timezone: datetime.tzinfo | None,
+    ) -> str:
+        """Format a timestamp."""
+        normalized_timestamp = (
+            timestamp.astimezone(timezone) if timezone is not None else timestamp
+        )
+        if include_time:
+            return format_datetime(
+                normalized_timestamp, format=datetime_style, locale=locale
+            )
+        return format_date(normalized_timestamp, format=datetime_style, locale=locale)
+
+    @staticmethod
     def _extract_text(block: Block) -> str | None:
         """Extract text from a block, if it contains text."""
         match block:
@@ -926,50 +1018,6 @@ class EventMemory:
                 return text
             case _:
                 return None
-
-    @staticmethod
-    def _format_timestamp(
-        timestamp: datetime.datetime,
-        format_options: FormatOptions,
-    ) -> str:
-        """Format a timestamp as a bracketed date/time string."""
-        display_timestamp = (
-            timestamp.astimezone(format_options.timezone)
-            if format_options.timezone is not None
-            else timestamp
-        )
-        date = EventMemory._format_date(display_timestamp.date())
-        time = EventMemory._format_time(display_timestamp.time())
-        if format_options.show_timezone_label:
-            tz_label = EventMemory._format_timezone(display_timestamp)
-            if tz_label:
-                time += " " + tz_label
-        return f"[{date} at {time}]"
-
-    @staticmethod
-    def _format_date(date: datetime.date) -> str:
-        """Format the date as a string."""
-        return date.strftime("%A, %B %d, %Y")
-
-    @staticmethod
-    def _format_time(time: datetime.time) -> str:
-        """Format the time as a string."""
-        return time.strftime("%I:%M %p")
-
-    @staticmethod
-    def _format_timezone(timestamp: datetime.datetime) -> str:
-        """Format the timezone of a datetime as a UTC offset string."""
-        offset = timestamp.utcoffset()
-        if offset is None:
-            return ""
-        total_seconds = int(offset.total_seconds())
-        sign = "+" if total_seconds >= 0 else "-"
-        total_seconds = abs(total_seconds)
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        if seconds:
-            return f"UTC{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"UTC{sign}{hours:02d}:{minutes:02d}"
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
         """Forget events by their UUIDs."""

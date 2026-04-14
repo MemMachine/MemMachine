@@ -386,10 +386,12 @@ class Derivative(BaseModel):
 
 
 class FormatOptions(BaseModel):
-    """Options for formatting query results."""
+    """Options for formatting."""
 
+    datetime_style: Literal["short", "medium", "long", "full"] | None = "full"
+    include_time: bool = True
+    locale: str = "en_US"
     timezone: InstanceOf[tzinfo] | None = None
-    show_timezone_label: bool = True
 
 
 # QueryResult: the result of a memory query.
