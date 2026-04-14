@@ -22,13 +22,21 @@ spec:
         app: memmachine
     spec:
       initContainers:
+        {{- if eq .Values.episodicBackend "age" }}
+        # Single-Postgres stack: wait for the AGE-enabled Postgres only.
+        # The standalone ``postgres`` Deployment is skipped in AGE mode
+        # because postgresAge.image ships both ``age`` and ``vector``.
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -zv {{ .Values.postgresAge.host }} {{ .Values.postgresAge.port }}; do echo waiting for postgres-age; sleep 2; done']
+        {{- else }}
         - name: wait-for-postgres
           image: busybox:1.36
           command: ['sh', '-c', 'until nc -zv {{ .Values.postgres.host }} {{ .Values.postgres.port }}; do echo waiting for postgres; sleep 2; done']
-
         - name: wait-for-neo4j
           image: busybox:1.36
           command: ['sh', '-c', 'until nc -zv {{ .Values.neo4j.host }} {{ .Values.neo4j.port }}; do echo waiting for neo4j; sleep 2; done']
+        {{- end }}
 
       containers:
         - name: memmachine
@@ -60,11 +68,20 @@ spec:
                 secretKeyRef:
                   name: memmachine-secrets
                   key: OPENAI_API_KEY
+            # POSTGRES_PASSWORD is the sole Postgres credential env var.
+            # In AGE mode it comes from postgres-age-secret (the only
+            # Postgres MemMachine talks to); in Neo4j mode it comes from
+            # postgres-secret (the pgvector instance for semantic memory).
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
+                  {{- if eq .Values.episodicBackend "age" }}
+                  name: postgres-age-secret
+                  {{- else }}
                   name: postgres-secret
+                  {{- end }}
                   key: POSTGRES_PASSWORD
+            {{- if eq .Values.episodicBackend "neo4j" }}
             - name: NEO4J_USER
               valueFrom:
                 secretKeyRef:
@@ -75,6 +92,7 @@ spec:
                 secretKeyRef:
                   name: neo4j-secret
                   key: NEO4J_PASSWORD
+            {{- end }}
             - name: LOG_FILE
               value: "/app/data/memmachine.log"
             - name: MEMORY_CONFIG

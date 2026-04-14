@@ -1,6 +1,21 @@
 # MemMachine Helm Chart
 
-Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Both databases can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false`.
+Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j, and Apache AGE (openCypher over PostgreSQL). Any of the three databases can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false` / `postgresAge.enabled=false`.
+
+### Choosing an episodic backend
+
+`episodicBackend` (top-level, values: `neo4j` | `age`, default `neo4j`) picks which graph backend MemMachine connects to. This is **orthogonal** to the per-backend `*.enabled` flags, which control whether the chart deploys that backend in-cluster:
+
+| episodicBackend | neo4j.enabled | postgresAge.enabled | Effect |
+|-----------------|---------------|---------------------|--------|
+| `neo4j`         | `true`        | `false`             | Default. In-cluster Neo4j + in-cluster pgvector Postgres. |
+| `neo4j`         | `false`       | `false`             | External Neo4j (override `neo4j.host`) + in-cluster or external Postgres. |
+| `age`           | `false`       | `true`              | Apache-2.0, single-Postgres stack: in-cluster AGE-enabled Postgres backs both the graph store and semantic memory. The standalone pgvector `postgres` Deployment is **automatically skipped**. |
+| `age`           | `false`       | `false`             | External AGE-enabled Postgres (override `postgresAge.host`, set `postgresAge.password`). |
+
+In AGE mode, `postgres.enabled` is ignored: the postgres-age image bakes in both `age` and `vector`, so the chart collapses semantic memory, session_manager, episode_store, and config_database onto the same Postgres that holds the graph. One database service for the whole stack.
+
+For an Apache-2.0-licensed stack, set `episodicBackend=age`, `postgresAge.enabled=true`, and `neo4j.enabled=false`; the chart renders `db_age` (provider `age`) into the generated `configuration.yml`, skips the standalone `postgres` Deployment, and swaps the `wait-for-neo4j` init container for `wait-for-postgres-age`.
 
 ## Chart Info
 

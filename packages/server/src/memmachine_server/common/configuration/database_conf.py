@@ -5,6 +5,7 @@ from typing import ClassVar, Self
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr, model_validator
+from sqlalchemy.engine import URL
 
 from memmachine_server.common.configuration.mixin_confs import (
     PasswordMixin,
@@ -85,6 +86,119 @@ class Neo4jConf(YamlSerializableMixin, PasswordMixin):
         if "neo4j+s://" in self.host:
             return self.host
         return f"bolt://{self.host}:{self.port}"
+
+
+class AgeConf(YamlSerializableMixin, PasswordMixin):
+    """Configuration options for an Apache AGE (PostgreSQL) instance.
+
+    AGE is a PostgreSQL extension, so connections reuse the standard SQLAlchemy
+    + asyncpg stack. Vector similarity search is delegated to pgvector side
+    tables, so the same database must also have the ``vector`` extension
+    available (already required for ``SqlAlchemyPgVectorSemanticStorage``).
+    """
+
+    host: str = Field(default="localhost", description="PostgreSQL host")
+    port: int = Field(default=5432, description="PostgreSQL port")
+    user: str = Field(default="postgres", description="PostgreSQL username")
+    password: SecretStr = Field(
+        default=SecretStr("postgres_password"),
+        description=(
+            "Password for the PostgreSQL user. "
+            "You may reference an environment variable using `$ENV` or `${ENV}` "
+            "syntax (for example, `$AGE_PASSWORD`)."
+        ),
+    )
+    db_name: str = Field(default="postgres", description="Database name")
+    graph_name: str = Field(
+        default="mem_graph",
+        description=(
+            "AGE graph name. Becomes the PostgreSQL schema that holds the "
+            "AGE catalog tables, and is used as the prefix for the pgvector "
+            "side tables. Must be a valid PostgreSQL identifier."
+        ),
+    )
+
+    # Search behavior — mirrors Neo4jConf for consistency across backends.
+    force_exact_similarity_search: bool = Field(
+        default=False,
+        description="Whether to force exact similarity search instead of ANN",
+    )
+    range_index_creation_threshold: int | None = Field(
+        default=None,
+        description=(
+            "Minimum number of entities in a collection or relationship "
+            "before AGE automatically creates a B-tree property index."
+        ),
+    )
+    vector_index_creation_threshold: int | None = Field(
+        default=None,
+        description=(
+            "Minimum number of entities in a collection or relationship "
+            "before pgvector automatically creates an HNSW vector index."
+        ),
+    )
+
+    # pgvector HNSW tuning
+    hnsw_m: int = Field(
+        default=16,
+        description=(
+            "pgvector HNSW 'm' parameter (max neighbors per layer). "
+            "Higher values trade memory for recall."
+        ),
+        gt=0,
+    )
+    hnsw_ef_construction: int = Field(
+        default=64,
+        description=(
+            "pgvector HNSW 'ef_construction' parameter (build quality). "
+            "Higher values trade build time for index quality."
+        ),
+        gt=0,
+    )
+
+    # SQLAlchemy connection pool tuning (mirrors SqlAlchemyConf knobs).
+    pool_size: int | None = Field(
+        default=None,
+        description=("Number of persistent connections to maintain in the pool."),
+    )
+    max_overflow: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of temporary connections allowed above pool_size."
+        ),
+    )
+    pool_timeout: int | None = Field(
+        default=None,
+        description=(
+            "Maximum time in seconds to wait for a connection from the pool. "
+            "Internal default is 30."
+        ),
+    )
+    pool_recycle: int | None = Field(
+        default=None,
+        description=("Maximum age of a connection in seconds before it is recycled."),
+    )
+    pool_pre_ping: bool | None = Field(
+        default=None,
+        description=("When True, test each connection for liveness before checkout."),
+    )
+
+    @property
+    def uri(self) -> str:
+        """Construct the SQLAlchemy/asyncpg URI for this AGE deployment.
+
+        Uses :func:`sqlalchemy.engine.URL.create` so special characters in
+        the password (``@``, ``:``, ``/``, ``#``, etc.) are correctly
+        percent-encoded rather than breaking the DSN.
+        """
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.user,
+            password=self.password.get_secret_value(),
+            host=self.host,
+            port=self.port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)
 
 
 class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
@@ -333,7 +447,9 @@ class SupportedDB(StrEnum):
     """Supported database providers."""
 
     # <-- Add these annotations so mypy knows these attributes exist
-    conf_cls: type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf]
+    conf_cls: (
+        type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf] | type[AgeConf]
+    )
     dialect: str | None
     driver: str | None
 
@@ -341,11 +457,17 @@ class SupportedDB(StrEnum):
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
     NEBULA_GRAPH = ("nebula_graph", NebulaGraphConf, None, None)
+    AGE = ("age", AgeConf, None, None)
 
     def __new__(
         cls,
         value: str,
-        conf_cls: type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf],
+        conf_cls: (
+            type[Neo4jConf]
+            | type[SqlAlchemyConf]
+            | type[NebulaGraphConf]
+            | type[AgeConf]
+        ),
         dialect: str | None,
         driver: str | None,
     ) -> Self:
@@ -366,10 +488,14 @@ class SupportedDB(StrEnum):
             f"Unsupported provider '{provider}'. Supported providers are: {valid}"
         )
 
-    def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf | NebulaGraphConf:
+    def build_config(
+        self, conf: dict
+    ) -> Neo4jConf | SqlAlchemyConf | NebulaGraphConf | AgeConf:
         if self is SupportedDB.NEO4J:
             return self.conf_cls(**conf)
         if self is SupportedDB.NEBULA_GRAPH:
+            return self.conf_cls(**conf)
+        if self is SupportedDB.AGE:
             return self.conf_cls(**conf)
         # Relational DBs (PostgreSQL, SQLite)
         if self.dialect is None or self.driver is None:
@@ -388,6 +514,10 @@ class SupportedDB(StrEnum):
     def is_nebula_graph(self) -> bool:
         return self is SupportedDB.NEBULA_GRAPH
 
+    @property
+    def is_age(self) -> bool:
+        return self is SupportedDB.AGE
+
 
 class DatabasesConf(BaseModel):
     """Top-level storage configuration mapping identifiers to backends."""
@@ -395,6 +525,7 @@ class DatabasesConf(BaseModel):
     neo4j_confs: dict[str, Neo4jConf] = {}
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
     nebula_graph_confs: dict[str, NebulaGraphConf] = {}
+    age_confs: dict[str, AgeConf] = {}
 
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
@@ -404,6 +535,7 @@ class DatabasesConf(BaseModel):
     POSTGRESQL: ClassVar[str] = "postgresql"
     SQLITE: ClassVar[str] = "sqlite"
     NEBULA_GRAPH: ClassVar[str] = "nebula_graph"
+    AGE: ClassVar[str] = "age"
     DIALECT: ClassVar[str] = "dialect"
 
     def to_yaml_dict(self) -> dict:
@@ -437,6 +569,12 @@ class DatabasesConf(BaseModel):
                 self.CONFIG_KEY: conf.to_yaml_dict(),
             }
 
+        for database_id, conf in self.age_confs.items():
+            databases[database_id] = {
+                self.PROVIDER_KEY: self.AGE,
+                self.CONFIG_KEY: conf.to_yaml_dict(),
+            }
+
         return databases
 
     def to_yaml(self) -> str:
@@ -453,6 +591,7 @@ class DatabasesConf(BaseModel):
         neo4j_dict = {}
         relational_db_dict = {}
         nebula_graph_dict = {}
+        age_dict = {}
 
         for database_id, resource_definition in databases.items():
             provider_str = resource_definition.get(cls.PROVIDER_KEY)
@@ -465,6 +604,8 @@ class DatabasesConf(BaseModel):
                 neo4j_dict[database_id] = config_obj
             elif provider.is_nebula_graph:
                 nebula_graph_dict[database_id] = config_obj
+            elif provider.is_age:
+                age_dict[database_id] = config_obj
             else:
                 relational_db_dict[database_id] = config_obj
 
@@ -472,4 +613,5 @@ class DatabasesConf(BaseModel):
             neo4j_confs=neo4j_dict,
             relational_db_confs=relational_db_dict,
             nebula_graph_confs=nebula_graph_dict,
+            age_confs=age_dict,
         )

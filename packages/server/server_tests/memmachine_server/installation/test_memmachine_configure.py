@@ -102,6 +102,7 @@ class MockWindowsEnvironment(WindowsEnvironment):
 @patch("builtins.input")
 def test_install_in_windows(mock_input, mock_wizard):
     mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
         "y",  # Confirm installation
     ]
     environment = MockWindowsEnvironment()
@@ -118,6 +119,7 @@ def test_install_in_windows(mock_input, mock_wizard):
 @patch("builtins.input")
 def test_install_in_windows_default_dir(mock_input, monkeypatch, mock_wizard):
     mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
         "y",  # Confirm installation
         "",  # Use default install directory
     ]
@@ -141,6 +143,7 @@ def test_install_in_windows_default_dir(mock_input, monkeypatch, mock_wizard):
 @patch("builtins.input")
 def test_use_custom_neo4j(mock_input, mock_wizard):
     mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
         "n",  # do not install neo4j
     ]
     environment = MockWindowsEnvironment()
@@ -149,7 +152,11 @@ def test_use_custom_neo4j(mock_input, mock_wizard):
     assert not environment.neo4j_installed
 
 
-def test_install_in_windows_neo4j_preinstalled(mock_wizard):
+@patch("builtins.input")
+def test_install_in_windows_neo4j_preinstalled(mock_input, mock_wizard):
+    mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
+    ]
     environment = MockWindowsEnvironment()
     installer = WindowsInstaller(environment)
     environment.neo4j_preinstalled = True
@@ -183,6 +190,7 @@ class MockMacOSEnvironment(MacosEnvironment):
 @patch("platform.machine")
 def test_install_in_macos(mock_machine, mock_input, mock_wizard):
     mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
         "y",  # Confirm installation
     ]
     mock_machine.return_value = "arm64"
@@ -199,6 +207,7 @@ def test_install_in_macos(mock_machine, mock_input, mock_wizard):
 @patch("platform.machine")
 def test_install_in_macos_x64(mock_machine, mock_input, mock_wizard):
     mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
         "y",  # Confirm installation
     ]
     mock_machine.return_value = "x86_64"
@@ -211,7 +220,11 @@ def test_install_in_macos_x64(mock_machine, mock_input, mock_wizard):
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
-def test_install_in_macos_neo4j_preinstalled(mock_wizard):
+@patch("builtins.input")
+def test_install_in_macos_neo4j_preinstalled(mock_input, mock_wizard):
+    mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
+    ]
     environment = MockMacOSEnvironment()
     environment.neo4j_preinstalled = True
     installer = MacosInstaller(environment)
@@ -242,6 +255,7 @@ class MockLinuxEnvironment(LinuxEnvironment):
 @patch("builtins.input")
 def test_install_in_linux(mock_input, mock_wizard):
     mock_input.side_effect = [
+        "",  # graph backend → neo4j (default)
         "y",  # Confirm installation
     ]
     environment = MockLinuxEnvironment()

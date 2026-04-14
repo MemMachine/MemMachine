@@ -6,6 +6,7 @@ from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration.database_conf import (
+    AgeConf,
     DatabasesConf,
     Neo4jConf,
     SqlAlchemyConf,
@@ -41,6 +42,7 @@ def mock_conf():
     }
     conf.sqlite_confs = {}
     conf.nebula_graph_confs = {}
+    conf.age_confs = {}
     return conf
 
 
@@ -90,6 +92,7 @@ async def test_build_and_validate_sqlite():
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
     conf.nebula_graph_confs = {}
+    conf.age_confs = {}
     conf.relational_db_confs = {
         "sqlite1": SqlAlchemyConf(
             dialect="sqlite",
@@ -136,6 +139,7 @@ async def test_neo4j_pool_lifecycle_kwargs():
     conf.neo4j_confs = {"neo1": neo4j_conf}
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
+    conf.age_confs = {}
 
     mock_driver = MagicMock()
     mock_driver.close = AsyncMock()
@@ -204,6 +208,7 @@ async def test_neo4j_pool_lifecycle_kwargs_none_omitted():
     conf.neo4j_confs = {"neo1": neo4j_conf}
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
+    conf.age_confs = {}
 
     mock_driver = MagicMock()
     mock_driver.close = AsyncMock()
@@ -254,3 +259,187 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
     assert "pool_timeout" not in call_kwargs
     assert "pool_recycle" not in call_kwargs
     assert "pool_pre_ping" not in call_kwargs
+
+
+def _age_conf(**overrides: Any) -> AgeConf:
+    defaults: dict[str, Any] = {
+        "host": "localhost",
+        "port": 5432,
+        "user": "postgres",
+        "password": SecretStr("pw"),
+        "db_name": "memmachine",
+        "graph_name": "mem_graph",
+    }
+    defaults.update(overrides)
+    return AgeConf(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_build_age(mock_conf):
+    """AGE engine + graph store are both created and registered under the conf name."""
+    mock_conf.age_confs = {"age1": _age_conf()}
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.sync_engine = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager._register_age_connect_hook",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AgeVectorGraphStore",
+        ) as mock_store_cls,
+    ):
+        builder = DatabaseManager(mock_conf)
+        await builder.async_get_age_engine("age1")
+
+    assert builder.age_engines["age1"] is mock_engine
+    assert builder.graph_stores["age1"] is mock_store_cls.return_value
+
+
+@pytest.mark.asyncio
+async def test_age_pool_lifecycle_kwargs_forwarded():
+    """pool_size, max_overflow, pool_timeout, pool_recycle, pool_pre_ping are forwarded."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.age_confs = {
+        "age1": _age_conf(
+            pool_size=7,
+            max_overflow=3,
+            pool_timeout=45,
+            pool_recycle=1800,
+            pool_pre_ping=True,
+        )
+    }
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.sync_engine = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ) as mock_create,
+        patch(
+            "memmachine_server.common.resource_manager.database_manager._register_age_connect_hook",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AgeVectorGraphStore",
+        ),
+    ):
+        builder = DatabaseManager(conf)
+        await builder.async_get_age_engine("age1")
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert call_kwargs["pool_size"] == 7
+    assert call_kwargs["max_overflow"] == 3
+    assert call_kwargs["pool_timeout"] == 45
+    assert call_kwargs["pool_recycle"] == 1800
+    assert call_kwargs["pool_pre_ping"] is True
+
+
+@pytest.mark.asyncio
+async def test_age_pool_lifecycle_kwargs_none_omitted():
+    """When pool knobs are None, they are not forwarded to create_async_engine."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.age_confs = {"age1": _age_conf()}
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.sync_engine = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ) as mock_create,
+        patch(
+            "memmachine_server.common.resource_manager.database_manager._register_age_connect_hook",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AgeVectorGraphStore",
+        ),
+    ):
+        builder = DatabaseManager(conf)
+        await builder.async_get_age_engine("age1")
+
+    call_kwargs = mock_create.call_args.kwargs
+    for key in (
+        "pool_size",
+        "max_overflow",
+        "pool_timeout",
+        "pool_recycle",
+        "pool_pre_ping",
+    ):
+        assert key not in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_age_graph_store_params_forwarded():
+    """Index thresholds and HNSW knobs from AgeConf reach AgeVectorGraphStoreParams."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.age_confs = {
+        "age1": _age_conf(
+            range_index_creation_threshold=500,
+            vector_index_creation_threshold=1000,
+            hnsw_m=24,
+            hnsw_ef_construction=96,
+        )
+    }
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.sync_engine = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager._register_age_connect_hook",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AgeVectorGraphStore",
+        ),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.AgeVectorGraphStoreParams",
+        ) as mock_params,
+    ):
+        builder = DatabaseManager(conf)
+        await builder.async_get_age_engine("age1")
+
+    params_kwargs = mock_params.call_args.kwargs
+    assert params_kwargs["graph_name"] == "mem_graph"
+    assert params_kwargs["range_index_creation_threshold"] == 500
+    assert params_kwargs["vector_index_creation_threshold"] == 1000
+    assert params_kwargs["hnsw_m"] == 24
+    assert params_kwargs["hnsw_ef_construction"] == 96
+
+
+@pytest.mark.asyncio
+async def test_validate_age_engine_passes():
+    """validate_age_engine completes silently when SELECT 1 returns the expected row."""
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    mock_result = MagicMock()
+    mock_result.fetchone.return_value = (1,)
+
+    mock_conn = AsyncMock()
+    mock_conn.execute.return_value = mock_result
+
+    mock_engine.connect.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_engine.connect.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    await DatabaseManager.validate_age_engine("age1", cast(AsyncEngine, mock_engine))
+    mock_engine.dispose.assert_not_awaited()

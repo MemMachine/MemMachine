@@ -1,3 +1,6 @@
+{{- if not (has .Values.episodicBackend (list "neo4j" "age")) -}}
+{{ fail (printf "episodicBackend must be one of: neo4j, age (got %q)" .Values.episodicBackend) }}
+{{- end -}}
 # memmachine-configmaps.yaml
 # Defines two ConfigMaps for the MemMachine application:
 #
@@ -31,7 +34,11 @@ data:
       long_term_memory:
         embedder: default_embedder
         reranker: my_reranker_id
+        {{- if eq .Values.episodicBackend "age" }}
+        vector_graph_store: db_age
+        {{- else }}
         vector_graph_store: db_neo4j
+        {{- end }}
       short_term_memory:
         llm_model: default_model
         message_capacity: 500
@@ -54,6 +61,23 @@ data:
         db_postgres:
           provider: postgres
           config:
+            {{- if eq .Values.episodicBackend "age" }}
+            # Single-Postgres stack: semantic memory, session_manager,
+            # episode_store, and config_database all ride on the same
+            # AGE-enabled Postgres as the graph store. postgresAge.image
+            # ships both ``age`` and ``vector`` extensions, so pgvector is
+            # available for semantic memory without a separate instance.
+            host: {{ .Values.postgresAge.host }}
+            port: {{ .Values.postgresAge.port }}
+            user: {{ .Values.postgresAge.user }}
+            password: $POSTGRES_PASSWORD
+            db_name: {{ .Values.postgresAge.database }}
+            pool_size: {{ .Values.postgresAge.pool_size }}
+            max_overflow: {{ .Values.postgresAge.max_overflow }}
+            pool_timeout: {{ .Values.postgresAge.pool_timeout }}
+            pool_recycle: {{ .Values.postgresAge.pool_recycle }}
+            pool_pre_ping: {{ .Values.postgresAge.pool_pre_ping }}
+            {{- else }}
             host: {{ .Values.postgres.host }}
             port: {{ .Values.postgres.port }}
             user: {{ .Values.postgres.user }}
@@ -64,6 +88,8 @@ data:
             pool_timeout: {{ .Values.postgres.pool_timeout }}
             pool_recycle: {{ .Values.postgres.pool_recycle }}
             pool_pre_ping: {{ .Values.postgres.pool_pre_ping }}
+            {{- end }}
+        {{- if eq .Values.episodicBackend "neo4j" }}
         db_neo4j:
           provider: neo4j
           config:
@@ -78,6 +104,30 @@ data:
             {{- if ne .Values.neo4j.pool.liveness_check_timeout nil }}
             liveness_check_timeout: {{ .Values.neo4j.pool.liveness_check_timeout }}
             {{- end }}
+        {{- end }}
+        {{- if eq .Values.episodicBackend "age" }}
+        db_age:
+          provider: age
+          config:
+            host: {{ .Values.postgresAge.host }}
+            port: {{ .Values.postgresAge.port }}
+            user: {{ .Values.postgresAge.user }}
+            # db_postgres and db_age point at the same Postgres in AGE mode,
+            # so both resolve ``$POSTGRES_PASSWORD`` (sourced from
+            # postgres-age-secret when episodicBackend=age).
+            password: $POSTGRES_PASSWORD
+            db_name: {{ .Values.postgresAge.database }}
+            graph_name: {{ .Values.postgresAge.graph_name }}
+            range_index_creation_threshold: {{ .Values.postgresAge.range_index_creation_threshold }}
+            vector_index_creation_threshold: {{ .Values.postgresAge.vector_index_creation_threshold }}
+            hnsw_m: {{ .Values.postgresAge.hnsw_m }}
+            hnsw_ef_construction: {{ .Values.postgresAge.hnsw_ef_construction }}
+            pool_size: {{ .Values.postgresAge.pool_size }}
+            max_overflow: {{ .Values.postgresAge.max_overflow }}
+            pool_timeout: {{ .Values.postgresAge.pool_timeout }}
+            pool_recycle: {{ .Values.postgresAge.pool_recycle }}
+            pool_pre_ping: {{ .Values.postgresAge.pool_pre_ping }}
+        {{- end }}
       embedders:
         default_embedder:
           provider: "{{ .Values.memmachine.embedder.provider }}"
@@ -112,10 +162,17 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   .env: |
+    {{- if eq .Values.episodicBackend "age" }}
+    POSTGRES_HOST={{ .Values.postgresAge.host }}
+    POSTGRES_PORT={{ .Values.postgresAge.port }}
+    POSTGRES_USER={{ .Values.postgresAge.user }}
+    POSTGRES_DB={{ .Values.postgresAge.database }}
+    {{- else }}
     POSTGRES_HOST={{ .Values.postgres.host }}
     POSTGRES_PORT={{ .Values.postgres.port }}
     POSTGRES_USER={{ .Values.postgres.user }}
     POSTGRES_DB={{ .Values.postgres.database }}
+    {{- end }}
     MCP_BASE_URL={{ .Values.memmachine.config.baseUrl }}
     GATEWAY_URL={{ .Values.memmachine.config.gatewayUrl }}
     FAST_MCP_LOG_LEVEL={{ .Values.memmachine.config.loggingLevel }}

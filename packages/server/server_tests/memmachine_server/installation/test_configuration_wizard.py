@@ -211,3 +211,60 @@ def test_un_provided_neo4j(mock_input, conf_args):
     assert neo4j_conf.user == "neo4j"
     assert neo4j_conf.password.get_secret_value() == "password"
     assert len(db_conf.relational_db_confs) == 1
+
+
+@patch("builtins.input")
+def test_age_backend(mock_input, conf_args):
+    """AGE interactive mode collects six connection fields and emits paired confs.
+
+    The generated config registers an AgeConf for the graph store and a
+    companion SqlAlchemyConf at the same Postgres instance so semantic
+    memory's pgvector store rides along — the single-Postgres promise.
+    """
+    conf_args.graph_backend = "age"
+    mock_input.side_effect = [
+        "age.example.com",  # host
+        "5500",  # port
+        "mm_user",  # user
+        "mm_password",  # password
+        "mm_db",  # db_name
+        "mem_g",  # graph_name
+    ]
+    conf = ConfigurationWizard(conf_args)
+    db_conf = conf.database_conf
+
+    # AGE graph store registered, Neo4j absent.
+    assert len(db_conf.neo4j_confs) == 0
+    assert len(db_conf.age_confs) == 1
+    age_conf = db_conf.age_confs[ConfigurationWizard.AGE_DB_ID]
+    assert age_conf.host == "age.example.com"
+    assert age_conf.port == 5500
+    assert age_conf.user == "mm_user"
+    assert age_conf.password.get_secret_value() == "mm_password"
+    assert age_conf.db_name == "mm_db"
+    assert age_conf.graph_name == "mem_g"
+
+    # Companion SqlAlchemyConf targets the same Postgres instance.
+    assert ConfigurationWizard.AGE_POSTGRES_DB_ID in db_conf.relational_db_confs
+    pg_conf = db_conf.relational_db_confs[ConfigurationWizard.AGE_POSTGRES_DB_ID]
+    assert pg_conf.dialect == "postgresql"
+    assert pg_conf.host == age_conf.host
+    assert pg_conf.port == age_conf.port
+    assert pg_conf.db_name == age_conf.db_name
+
+    # Long-term memory points at the AGE graph store; semantic memory
+    # rides on the companion SqlAlchemyConf.
+    assert (
+        conf.long_term_memory_conf.vector_graph_store
+        == ConfigurationWizard.AGE_DB_ID
+    )
+    assert (
+        conf.semantic_manager_conf.database
+        == ConfigurationWizard.AGE_POSTGRES_DB_ID
+    )
+
+
+def test_invalid_graph_backend_rejected(conf_args):
+    conf_args.graph_backend = "foobar"
+    with pytest.raises(ValueError, match="graph_backend"):
+        ConfigurationWizard(conf_args)

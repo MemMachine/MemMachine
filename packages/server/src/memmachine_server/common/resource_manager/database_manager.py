@@ -1,4 +1,4 @@
-"""Manage database engines for SQL, Neo4j, and NebulaGraph backends."""
+"""Manage database engines for SQL, Neo4j, NebulaGraph, and Apache AGE backends."""
 
 import asyncio
 import logging
@@ -6,10 +6,12 @@ from asyncio import Lock
 from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from memmachine_server.common.age_utils import setup_age_sync_connection
 from memmachine_server.common.configuration.database_conf import (
+    AgeConf,
     DatabasesConf,
     Neo4jConf,
 )
@@ -18,6 +20,10 @@ from memmachine_server.common.errors import (
     SQLConfigurationError,
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_graph_store.age_vector_graph_store import (
+    AgeVectorGraphStore,
+    AgeVectorGraphStoreParams,
+)
 from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
@@ -45,11 +51,13 @@ class DatabaseManager:
         # is only imported under TYPE_CHECKING and doesn't exist at runtime.
         # Type checkers see it, but runtime treats it as a string literal.
         self.nebula_clients: dict[str, NebulaAsyncClient] = {}
+        self.age_engines: dict[str, AsyncEngine] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
         self._sql_locks: dict[str, Lock] = {}
         self._nebula_locks: dict[str, Lock] = {}
+        self._age_locks: dict[str, Lock] = {}
 
     async def build_all(self, validate: bool = False) -> Self:
         """Optionally eagerly initialize all backends."""
@@ -65,8 +73,12 @@ class DatabaseManager:
             self.async_get_nebula_client(name, validate=validate)
             for name in self.conf.nebula_graph_confs
         ]
+        age_tasks = [
+            self.async_get_age_engine(name, validate=validate)
+            for name in self.conf.age_confs
+        ]
         # Lazy build will occur in get_* calls, but build_all can trigger them
-        tasks = neo4j_tasks + relation_db_tasks + nebula_tasks
+        tasks = neo4j_tasks + relation_db_tasks + nebula_tasks + age_tasks
         await asyncio.gather(*tasks)
 
         if validate:
@@ -74,6 +86,7 @@ class DatabaseManager:
                 self._validate_neo4j_drivers(),
                 self._validate_sql_engines(),
                 self._validate_nebula_clients(),
+                self._validate_age_engines(),
             )
 
         return self
@@ -88,14 +101,18 @@ class DatabaseManager:
                 tasks.append(self._close_async_engine(name, engine))
             for name, client in self.nebula_clients.items():
                 tasks.append(self._close_nebula_client(name, client))
+            for name, engine in self.age_engines.items():
+                tasks.append(self._close_async_engine(name, engine))
             await asyncio.gather(*tasks)
             self.graph_stores.clear()
             self.neo4j_drivers.clear()
             self.sql_engines.clear()
             self.nebula_clients.clear()
+            self.age_engines.clear()
             self._neo4j_locks.clear()
             self._sql_locks.clear()
             self._nebula_locks.clear()
+            self._age_locks.clear()
 
     @staticmethod
     async def _close_async_driver(name: str, driver: AsyncDriver) -> None:
@@ -185,7 +202,7 @@ class DatabaseManager:
         return asyncio.run(self.async_get_neo4j_driver(name, validate=True))
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
-        """Return a vector graph store, auto-detecting Neo4j or NebulaGraph backend."""
+        """Return a vector graph store, auto-detecting the configured backend."""
         # Check if it's a Neo4j configuration
         if name in self.conf.neo4j_confs:
             await self.async_get_neo4j_driver(name, validate=True)
@@ -196,9 +213,15 @@ class DatabaseManager:
             await self.async_get_nebula_client(name, validate=True)
             return self.graph_stores[name]
 
-        # Not found in either
+        # Check if it's an Apache AGE configuration
+        if name in self.conf.age_confs:
+            await self.async_get_age_engine(name, validate=True)
+            return self.graph_stores[name]
+
+        # Not found in any
         raise ValueError(
-            f"VectorGraphStore '{name}' not found in neo4j_confs or nebula_graph_confs"
+            f"VectorGraphStore '{name}' not found in neo4j_confs, "
+            "nebula_graph_confs, or age_confs"
         )
 
     @staticmethod
@@ -470,3 +493,117 @@ class DatabaseManager:
         """Validate connectivity to each NebulaGraph instance."""
         for name, client in self.nebula_clients.items():
             await self.validate_nebula_client(name, client)
+
+    # --- Apache AGE ---
+
+    async def async_get_age_engine(
+        self, name: str, validate: bool = False
+    ) -> AsyncEngine:
+        """Return an AGE-enabled SQLAlchemy engine, creating it if necessary."""
+        if name not in self._age_locks:
+            async with self._lock:
+                self._age_locks.setdefault(name, Lock())
+
+        async with self._age_locks[name]:
+            if name in self.age_engines:
+                return self.age_engines[name]
+
+            conf = self.conf.age_confs.get(name)
+            if not conf:
+                raise ValueError(f"AGE config '{name}' not found.")
+
+            engine = self._build_age_engine(conf)
+
+            if validate:
+                await self.validate_age_engine(name, engine)
+
+            self.age_engines[name] = engine
+
+            params_kwargs: dict[str, Any] = {
+                "engine": engine,
+                "graph_name": conf.graph_name,
+                "force_exact_similarity_search": conf.force_exact_similarity_search,
+                "range_index_hierarchies": [["uid"], ["timestamp", "uid"]],
+                "hnsw_m": conf.hnsw_m,
+                "hnsw_ef_construction": conf.hnsw_ef_construction,
+            }
+            if conf.range_index_creation_threshold is not None:
+                params_kwargs["range_index_creation_threshold"] = (
+                    conf.range_index_creation_threshold
+                )
+            if conf.vector_index_creation_threshold is not None:
+                params_kwargs["vector_index_creation_threshold"] = (
+                    conf.vector_index_creation_threshold
+                )
+
+            params = AgeVectorGraphStoreParams(**params_kwargs)
+            self.graph_stores[name] = AgeVectorGraphStore(params)
+            return engine
+
+    @staticmethod
+    def _build_age_engine(conf: AgeConf) -> AsyncEngine:
+        """Build an async SQLAlchemy engine and wire the per-connection setup."""
+        engine_kwargs: dict[str, bool | int] = {
+            "echo": False,
+            "future": True,
+        }
+        if conf.pool_size is not None:
+            engine_kwargs["pool_size"] = conf.pool_size
+        if conf.max_overflow is not None:
+            engine_kwargs["max_overflow"] = conf.max_overflow
+        if conf.pool_timeout is not None:
+            engine_kwargs["pool_timeout"] = conf.pool_timeout
+        if conf.pool_recycle is not None:
+            engine_kwargs["pool_recycle"] = conf.pool_recycle
+        if conf.pool_pre_ping is not None:
+            engine_kwargs["pool_pre_ping"] = conf.pool_pre_ping
+
+        engine = create_async_engine(conf.uri, **engine_kwargs)
+        _register_age_connect_hook(engine)
+        return engine
+
+    @staticmethod
+    async def validate_age_engine(name: str, engine: AsyncEngine) -> None:
+        """Validate connectivity for an AGE engine."""
+        try:
+            logger.info("Validating AGE engine '%s'", name)
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT 1 AS ok"))
+                row = result.fetchone()
+        except Exception as e:
+            await engine.dispose()
+            raise SQLConfigurationError(
+                f"AGE config '{name}' failed verification: {e}",
+            ) from e
+
+        if not row or row[0] != 1:
+            await engine.dispose()
+            raise SQLConfigurationError(
+                f"Verification failed for AGE config '{name}'",
+            )
+        logger.info("AGE engine '%s' validated successfully", name)
+
+    async def _validate_age_engines(self) -> None:
+        """Validate connectivity for each AGE engine."""
+        for name, engine in self.age_engines.items():
+            await self.validate_age_engine(name, engine)
+
+
+def _register_age_connect_hook(engine: AsyncEngine) -> None:
+    """Wire per-connection AGE setup onto a SQLAlchemy async engine.
+
+    Extracted as a module-level function so tests can patch this seam
+    directly instead of patching ``sqlalchemy.event.listens_for``, which
+    couples the test to internal SQLAlchemy plumbing.
+
+    AGE's session state (extension load, search_path) is per-connection, so
+    every newly created physical connection must run the setup before any
+    Cypher query.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(
+        dbapi_connection: Any,  # noqa: ANN401
+        connection_record: Any,  # noqa: ANN401, ARG001
+    ) -> None:
+        setup_age_sync_connection(dbapi_connection)

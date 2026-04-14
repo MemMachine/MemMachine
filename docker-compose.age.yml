@@ -1,0 +1,106 @@
+# docker-compose.age.yml
+# Apache-2.0, single-Postgres MemMachine stack.
+#
+# Use this file *instead of* ``docker-compose.yml`` (not in addition to it)
+# when you want to run MemMachine against Apache AGE rather than Neo4j.
+# This deploys exactly one database service — an AGE-enabled Postgres that
+# ships ``age`` + ``vector`` — and wires MemMachine to use it for both the
+# graph store (via provider: age) and semantic memory (via pgvector), the
+# same way the helm chart's ``episodicBackend=age`` mode does.
+#
+# Usage:
+#
+#   # 1. Copy the sample config and edit it (set API key, adjust host to
+#   #    ``postgres-age`` so MemMachine resolves the service over the
+#   #    compose network rather than localhost).
+#   cp sample_configs/episodic_memory_config.age.sample configuration.yml
+#
+#   # 2. Bring the stack up.
+#   docker compose -f docker-compose.age.yml up
+#
+# The base ``docker-compose.yml`` (Neo4j-backed stack) is untouched and still
+# the default ``docker compose up`` experience. Pick whichever file matches
+# the backend you want — running both files simultaneously isn't supported
+# because both define a ``memmachine`` service.
+
+services:
+  # Apache AGE-enabled PostgreSQL. Ships both the ``age`` extension (for the
+  # MemMachine vector_graph_store) and the ``vector`` extension (for
+  # pgvector-backed semantic memory) in one Postgres process.
+  postgres-age:
+    image: ${AGE_IMAGE:-memmachine/postgres-age:pg16-1.6.0}
+    build:
+      context: ./deployments/docker/postgres-age
+    container_name: memmachine-postgres-age
+    restart: unless-stopped
+    ports:
+      - "${AGE_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${AGE_DB:-memmachine}
+      POSTGRES_USER: ${AGE_USER:-memmachine}
+      POSTGRES_PASSWORD: ${AGE_PASSWORD:-memmachine_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_age_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AGE_USER:-memmachine} -d ${AGE_DB:-memmachine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - memmachine-network
+
+  memmachine:
+    image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
+    pull_policy: ${PULL_POLICY:-always}
+    container_name: memmachine-app
+    restart: unless-stopped
+    ports:
+      - "${MEMORY_SERVER_PORT:-8080}:8080"
+    environment:
+      # POSTGRES_* point at the AGE instance. Alembic pgvector migrations
+      # read these at startup; the app's own db_postgres / db_age entries
+      # resolve ``password: $POSTGRES_PASSWORD`` against the same value so
+      # both relational and graph workloads land on one Postgres.
+      POSTGRES_HOST: postgres-age
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${AGE_USER:-memmachine}
+      POSTGRES_PASSWORD: ${AGE_PASSWORD:-memmachine_password}
+      POSTGRES_DB: ${AGE_DB:-memmachine}
+
+      MEMORY_CONFIG: ${MEMORY_CONFIG:-/app/configuration.yml}
+      MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
+      GATEWAY_URL: ${GATEWAY_URL:-http://localhost:8080}
+      FAST_MCP_LOG_LEVEL: ${FAST_MCP_LOG_LEVEL:-INFO}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MEMMACHINE_WORKERS: ${MEMMACHINE_WORKERS:-1}
+      MEMMACHINE_CONFIG_API: ${MEMMACHINE_CONFIG_API:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HOST: 0.0.0.0
+    volumes:
+      - ./configuration.yml:/app/configuration.yml:rw,Z
+      - memmachine_logs:/tmp/memory_logs
+    depends_on:
+      postgres-age:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/api/v2/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - memmachine-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_age_data:
+    driver: local
+  memmachine_logs:
+    driver: local
+
+networks:
+  memmachine-network:
+    driver: bridge

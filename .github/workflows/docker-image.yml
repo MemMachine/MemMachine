@@ -16,6 +16,13 @@ on:
 env:
   # Docker image name to publish
   IMAGE_NAME: memmachine/memmachine
+  # AGE + pgvector companion image (referenced by docker-compose.yml and the
+  # helm chart when ``episodicBackend=age``).
+  AGE_IMAGE_NAME: memmachine/postgres-age
+  # The AGE image version tracks the apache/age base tag it layers pgvector
+  # onto, not the MemMachine release cadence. Bump when updating the base in
+  # deployments/docker/postgres-age/Dockerfile.
+  AGE_IMAGE_TAG: pg16-1.6.0
 
 permissions:
   # Only need read access to repository contents for this workflow
@@ -220,3 +227,56 @@ jobs:
       # Step 7: Show the digest of the built GPU image (useful for traceability)
       - name: Show GPU image digest
         run: echo "GPU digest - ${{ steps.build_gpu.outputs.digest }}"
+
+  build-postgres-age:
+    name: Build and Push Postgres+AGE Image
+    # Independent of the MemMachine app build — AGE_IMAGE_TAG is pinned to
+    # the apache/age base version, not the MemMachine release. Runs in
+    # parallel with build-cpu (no ``needs:``) because it shares no cache.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source (Release)
+        if: github.event_name == 'release'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout source (Manual)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_API_KEY }}
+
+      - name: Build and push Postgres+AGE image
+        id: build_age
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deployments/docker/postgres-age
+          file: ./deployments/docker/postgres-age/Dockerfile
+          push: true
+          tags: ${{ env.AGE_IMAGE_NAME }}:${{ env.AGE_IMAGE_TAG }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+          # linux/amd64 only: the apache/age base image has historically not
+          # published arm64 variants consistently, so a multi-arch build can
+          # fail at "apt-get update" inside the arm64 emulation layer. Add
+          # linux/arm64 back once we confirm the pinned base tag ships it.
+          platforms: linux/amd64
+          cache-from: type=gha,scope=build-postgres-age
+          cache-to: type=gha,mode=max,scope=build-postgres-age
+
+      - name: Show Postgres+AGE image digest
+        run: echo "AGE digest - ${{ steps.build_age.outputs.digest }}"

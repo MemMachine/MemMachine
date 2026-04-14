@@ -111,25 +111,49 @@ class Installer(ABC):
         else:
             logger.info("Using installation directory: %s", self.install_dir)
 
+    @staticmethod
+    def _ask_graph_backend() -> str:
+        """Prompt the user for the episodic-memory graph backend."""
+        choice = (
+            input(
+                "Which graph backend would you like to use for episodic "
+                "memory? (neo4j/age) [neo4j]: "
+            )
+            .strip()
+            .lower()
+        )
+        if choice in ("age", "a"):
+            return "age"
+        return "neo4j"
+
     def install(self, prompt: bool = True) -> None:
         """Install and configure MemMachine."""
+        graph_backend = self._ask_graph_backend()
         neo4j_started_by_installer = False
-        if not self.check_neo4j_running():
-            choice = (
-                input(
-                    "Cannot find Neo4j locally. Do you want to install and start Neo4j? (y/n): "
+
+        if graph_backend == "neo4j":
+            if not self.check_neo4j_running():
+                choice = (
+                    input(
+                        "Cannot find Neo4j locally. Do you want to install and "
+                        "start Neo4j? (y/n): "
+                    )
+                    .strip()
+                    .lower()
                 )
-                .strip()
-                .lower()
-            )
-            if choice == "y":
-                self.install_and_start_neo4j()
-                neo4j_started_by_installer = True
-        else:
-            logger.info("Neo4j is already running.")
+                if choice == "y":
+                    self.install_and_start_neo4j()
+                    neo4j_started_by_installer = True
+            else:
+                logger.info("Neo4j is already running.")
+        # AGE mode: no installer-side provisioning. Users stand up their own
+        # AGE-enabled Postgres (e.g. via ``docker compose -f
+        # docker-compose.age.yml up`` or their existing infrastructure) and
+        # the wizard prompts for connection details.
 
         wizard_args = ConfigurationWizard.Params(
             neo4j_provided=neo4j_started_by_installer,
+            graph_backend=graph_backend,
             destination=get_memmachine_config_dir(),
             prompt=prompt,
         )

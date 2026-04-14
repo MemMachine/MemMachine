@@ -16,6 +16,14 @@ storageClass: nfs-client
 accessMode: ReadWriteMany
 pvcSize: 5Gi
 
+# Which graph backend MemMachine connects to for episodic memory. Orthogonal
+# to the per-backend ``.enabled`` flags below: those control whether the chart
+# deploys that backend in-cluster, while this picks which one the app talks
+# to. "neo4j" (default) + neo4j.enabled=false means use an external Neo4j;
+# "age" + postgresAge.enabled=false means use an external AGE-enabled
+# Postgres.
+episodicBackend: neo4j  # one of: neo4j | age
+
 neo4j:
   enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
   host: memmachine-neo4j     # internal service name (default); override when enabled: false
@@ -41,14 +49,64 @@ neo4j:
     max_connection_lifetime: 3600        # driver default (1 hour); lower for AuraDB (e.g. 3000)
     # liveness_check_timeout: ~          # driver default (disabled); set to 0 to always check
 
+# Standalone PostgreSQL (pgvector) for semantic memory, session_manager,
+# episode_store, and config_database. When ``episodicBackend: age`` is set,
+# this Deployment/Service/PVC is skipped: the postgres-age image ships
+# ``vector`` too, so all relational workloads ride on the AGE-enabled
+# instance instead (the "single-Postgres stack" story).
 postgres:
-  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
+  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host (ignored in AGE mode)
   host: memmachine-postgres  # internal service name (default); override when enabled: false
   port: 5432                 # default Postgres port; override if external uses different port
   image: pgvector/pgvector:pg16
   user: memmachine
   password: memverge   # dev default; override in production
   database: memmachine
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30      # SQLAlchemy default (seconds to wait for a connection)
+  pool_recycle: -1      # SQLAlchemy default (disabled; set to e.g. 3000 for idle-timeout avoidance)
+  pool_pre_ping: false  # SQLAlchemy default; set to true to test connections before checkout
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+# Apache AGE: PostgreSQL extension adding openCypher support. When enabled,
+# this chart deploys a second PostgreSQL instance that ships with the ``age``
+# and ``vector`` extensions installed, suitable for use as the MemMachine
+# vector_graph_store via ``provider: age`` in configuration.yml. Users who
+# want to stand up an AGE-only stack should set ``neo4j.enabled: false`` and
+# point the episodic configuration at ``memmachine-postgres-age``.
+#
+# The referenced image must ship BOTH ``age`` and ``vector`` extensions. The
+# upstream ``apache/age`` images bundle only AGE, so operators are expected to
+# build and push a combined image from ``deployments/docker/postgres-age/``
+# and set ``postgresAge.image`` to its registry path. Example::
+#
+#   docker build -t my-registry/postgres-age:pg16-1.6.0 \
+#       deployments/docker/postgres-age
+#   docker push my-registry/postgres-age:pg16-1.6.0
+postgresAge:
+  enabled: false                       # opt-in; leave false for Neo4j-default installs
+  host: memmachine-postgres-age        # internal service name when enabled: true
+  port: 5432
+  # Override to point at your built+pushed image (see note above). The default
+  # value is a placeholder: it will ImagePullBackOff unless you build and
+  # push the image under this name, or override with your own path.
+  image: memmachine/postgres-age:pg16-1.6.0
+  user: memmachine
+  password: CHANGE_ME                  # dev placeholder; MUST override in production
+  database: memmachine
+  graph_name: mem_graph
+  range_index_creation_threshold: 10000
+  vector_index_creation_threshold: 10000
+  hnsw_m: 16
+  hnsw_ef_construction: 64
+  # SQLAlchemy connection-pool tuning. Applies to both db_age (AgeConf) and
+  # db_postgres (SqlAlchemyConf) in AGE mode, since both share this Postgres.
   pool_size: 5
   max_overflow: 10
   pool_timeout: 30      # SQLAlchemy default (seconds to wait for a connection)
