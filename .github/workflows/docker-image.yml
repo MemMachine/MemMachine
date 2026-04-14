@@ -44,14 +44,14 @@ jobs:
       # Step 1: Checkout source for Release triggers
       - name: Checkout source (Release)
         if: github.event_name == 'release'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       # Step 1: Checkout source for Manual triggers
       - name: Checkout source (Manual)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
@@ -144,14 +144,14 @@ jobs:
       # Step 1: Checkout source for Release triggers
       - name: Checkout source (Release)
         if: github.event_name == 'release'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       # Step 1: Checkout source for Manual triggers
       - name: Checkout source (Manual)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.tag }}
           fetch-depth: 0

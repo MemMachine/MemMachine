@@ -29,16 +29,16 @@ jobs:
     strategy:
       fail-fast: false  # Continue running all matrix jobs even if one fails
       matrix:
-        node-version: [20, 22]  # Test against multiple Node.js versions
+        node-version: [22, 24]  # Test against multiple Node.js versions
 
     steps:
       # Step 1: Checkout the repository code
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       # Step 2: Set up Node.js for the current matrix version
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
 

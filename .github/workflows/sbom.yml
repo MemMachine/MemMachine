@@ -25,7 +25,7 @@ jobs:
       
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Create a '/sbom' directory to store the SBOM file in the project root.
       - name: Create SBOM directory
