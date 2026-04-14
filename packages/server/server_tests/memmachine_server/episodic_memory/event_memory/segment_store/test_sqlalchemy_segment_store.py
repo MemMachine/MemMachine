@@ -383,6 +383,82 @@ async def test_contexts_property_filter(
 
 
 @pytest.mark.asyncio
+async def test_contexts_filter_by_context_source(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Filter using ``context.source`` resolves via the type-tagged JSON path."""
+    ep = uuid4()
+    s0 = _seg(
+        event_uuid=ep,
+        offset=0,
+        ts_offset_seconds=0,
+        context=MessageContext(source="Alice"),
+    )
+    s1 = _seg(
+        event_uuid=ep,
+        offset=1,
+        ts_offset_seconds=1,
+        context=MessageContext(source="Bob"),
+    )
+    s2 = _seg(
+        event_uuid=ep,
+        offset=2,
+        ts_offset_seconds=2,
+        context=MessageContext(source="Alice"),
+    )
+    await partition.add_segments(_links(s0, s1, s2))
+
+    filt = Comparison(field="context.source", op="=", value="Alice")
+    result = await partition.get_segment_contexts(
+        [s0.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=filt,
+    )
+    ctx = result[s0.uuid]
+    # s1 excluded (source=Bob); s0 seed, s2 forward.
+    assert [s.uuid for s in ctx] == [s0.uuid, s2.uuid]
+
+
+@pytest.mark.asyncio
+async def test_contexts_filter_by_context_type(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Filter using ``context.type`` discriminates between Context subtypes."""
+    ep = uuid4()
+    s0 = _seg(
+        event_uuid=ep,
+        offset=0,
+        ts_offset_seconds=0,
+        context=MessageContext(source="Alice"),
+    )
+    s1 = _seg(
+        event_uuid=ep,
+        offset=1,
+        ts_offset_seconds=1,
+        context=CitationContext(source="paper.pdf"),
+    )
+    s2 = _seg(
+        event_uuid=ep,
+        offset=2,
+        ts_offset_seconds=2,
+        context=MessageContext(source="Bob"),
+    )
+    await partition.add_segments(_links(s0, s1, s2))
+
+    filt = Comparison(field="context.type", op="=", value="message")
+    result = await partition.get_segment_contexts(
+        [s0.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=filt,
+    )
+    ctx = result[s0.uuid]
+    # s1 excluded (type=citation); s0 seed, s2 forward.
+    assert [s.uuid for s in ctx] == [s0.uuid, s2.uuid]
+
+
+@pytest.mark.asyncio
 async def test_contexts_session_isolation(store: SQLAlchemySegmentStore) -> None:
     """Context only includes segments from the same partition_key."""
     ep = uuid4()

@@ -233,7 +233,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 "timestamp": ensure_tz_aware(segment.timestamp),
                 "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
                 "context": (
-                    segment.context.model_dump(mode="json")
+                    encode_properties(segment.context.model_dump(exclude_none=True))
                     if segment.context is not None
                     else None
                 ),
@@ -652,7 +652,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             return SegmentRow.timestamp.expression, "column"
         if field.startswith("context."):
             key = field.removeprefix("context.")
-            return SegmentRow.context[key], "json"
+            return SegmentRow.context[key], "properties_json"
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             key = demangle_user_metadata_key(internal_name)
@@ -664,7 +664,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         row: SegmentRow,
     ) -> Segment:
         """Convert a SegmentRow into a Segment."""
-        context = _ContextAdapter.validate_python(row.context)
+        context = (
+            _ContextAdapter.validate_python(decode_properties(row.context))
+            if row.context is not None
+            else None
+        )
         block = _BlockAdapter.validate_python(row.block)
         properties = decode_properties(row.properties)
         original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
