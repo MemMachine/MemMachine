@@ -150,11 +150,11 @@ class OpenAIEmbedder(Embedder):
             for input_text in inputs
         ]
 
+        effective_max = (
+            self._max_input_length or self.max_total_input_length_per_request
+        )
         inputs_chunks = [
-            chunk_text_balanced(input_text, self._max_input_length)
-            if self._max_input_length is not None
-            else [input_text]
-            for input_text in inputs
+            chunk_text_balanced(input_text, effective_max) for input_text in inputs
         ]
 
         chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
