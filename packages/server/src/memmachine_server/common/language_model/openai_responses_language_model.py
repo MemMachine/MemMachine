@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Any, TypeVar, cast
 from uuid import uuid4
 
@@ -13,7 +14,7 @@ from openai.types.responses import (
     ResponseInputParam,
     ToolParam,
 )
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
@@ -23,6 +24,12 @@ from .language_model import LanguageModel
 T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
+
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_think_blocks(text: str) -> str:
+    return _THINK_BLOCK_RE.sub("", text).strip()
 
 
 class OpenAIResponsesLanguageModelParams(BaseModel):
@@ -173,7 +180,18 @@ class OpenAIResponsesLanguageModel(LanguageModel):
 
             self._collect_usage_metrics(response)
 
-            return response.output_parsed
+            if response.output_parsed is not None:
+                return response.output_parsed
+
+            raw_text = response.output_text or ""
+            if raw_text:
+                raw = _strip_think_blocks(raw_text)
+                if raw:
+                    return TypeAdapter(output_format).validate_python(
+                        json_repair.loads(raw)
+                    )
+
+            return None
 
     async def generate_response(
         self,
@@ -310,7 +328,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
             self._collect_usage_metrics(response)
 
             if response.output is None:
-                return (response.output_text or "", [], 0, 0)
+                return (_strip_think_blocks(response.output_text or ""), [], 0, 0)
 
             function_calls_arguments: list[dict[str, Any]] = []
             try:
@@ -333,7 +351,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 ) from e
 
             return (
-                response.output_text or "",
+                _strip_think_blocks(response.output_text or ""),
                 function_calls_arguments,
                 response.usage.input_tokens if response.usage else 0,
                 response.usage.output_tokens if response.usage else 0,

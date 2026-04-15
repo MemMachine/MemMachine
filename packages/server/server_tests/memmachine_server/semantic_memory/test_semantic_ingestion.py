@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 import pytest_asyncio
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ValidationError
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.episode_store import (
@@ -1003,3 +1005,113 @@ async def test_user_tags_preserved_after_ingestion_and_consolidation(
     # "bugfix" and "decision" survive (each had < 2 entries)
     assert "bugfix" in remaining_tags
     assert "decision" in remaining_tags
+
+
+def _make_validation_error() -> ValidationError:
+    """Construct a real pydantic ValidationError by feeding bad data to a trivial model."""
+
+    class _StrictModel(PydanticBaseModel):
+        x: int
+
+    try:
+        _StrictModel.model_validate({"x": "not-an-int"})
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("Expected ValidationError was not raised")  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_validation_error_marks_message_as_ingested(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    monkeypatch,
+):
+    """A pydantic.ValidationError from llm_feature_update causes the message to be
+    marked as ingested so it is not re-queued on the next cycle."""
+    message_id = await add_history(
+        episode_storage,
+        content="message that triggers a ValidationError",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-valderr",
+        history_id=message_id,
+    )
+
+    validation_error = _make_validation_error()
+
+    async def mock_validation_error(*args, **kwargs):
+        raise validation_error
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        mock_validation_error,
+    )
+
+    await ingestion_service._process_single_set("user-valderr")
+
+    # Message must NOT appear in the not-yet-ingested list
+    pending = await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-valderr"],
+            is_ingested=False,
+        )
+    )
+    assert message_id not in pending
+
+    # Message MUST appear in the ingested list
+    ingested = await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-valderr"],
+            is_ingested=True,
+        )
+    )
+    assert message_id in ingested
+
+
+@pytest.mark.asyncio
+async def test_generic_exception_does_not_mark_ingested(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    monkeypatch,
+):
+    """A generic RuntimeError from llm_feature_update must NOT mark the message as
+    ingested — guards against future over-broad widening of the ValidationError catch."""
+    message_id = await add_history(
+        episode_storage,
+        content="message that triggers a generic RuntimeError",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-rterr",
+        history_id=message_id,
+    )
+
+    async def mock_runtime_error(*args, **kwargs):
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        mock_runtime_error,
+    )
+
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            debug_fail_loudly=False,
+        )
+    )
+
+    await ingestion_service._process_single_set("user-rterr")
+
+    # Message must remain in the not-yet-ingested list (was NOT marked ingested)
+    pending = await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-rterr"],
+            is_ingested=False,
+        )
+    )
+    assert message_id in pending
