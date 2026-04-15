@@ -1,15 +1,4 @@
-"""BEAM benchmark evaluation script with rubric-based scoring.
-
-This script evaluates BEAM benchmark results using the official BEAM evaluation
-approach from https://github.com/mohammadtavakoli78/BEAM.
-
-Key features:
-- Uses official BEAM unified_llm_judge_base_prompt
-- 0.0/0.5/1.0 scoring scale (float preserved)
-- Event ordering evaluation with Kendall tau-b normalized
-- Responsiveness check anchored to the question
-- Semantic tolerance for paraphrases and equivalents
-"""
+"""BEAM benchmark evaluation script with rubric-based scoring."""
 
 import argparse
 import concurrent.futures
@@ -34,8 +23,7 @@ from evaluation.retrieval_agent.llm_judge import (  # noqa: E402
 )
 
 
-# Official BEAM unified LLM judge prompt
-# From https://github.com/mohammadtavakoli78/BEAM/blob/main/src/prompts.py
+# BEAM unified LLM judge prompt
 UNIFIED_LLM_JUDGE_PROMPT = """You are an expert evaluator tasked with judging whether the LLM's response demonstrates compliance with the specified RUBRIC CRITERION.
 
 ## EVALUATION INPUTS
@@ -114,7 +102,7 @@ def evaluate_rubric_criterion(
     response: str,
     call_fn: Callable[[str], str],
 ) -> tuple[float, str]:
-    """Evaluate a single rubric criterion using official BEAM prompt.
+    """Evaluate a single rubric criterion using LLM judge.
 
     Args:
         question: The probing question.
@@ -134,7 +122,6 @@ def evaluate_rubric_criterion(
     raw = call_fn(prompt)
     try:
         result = json_repair.loads(raw)
-        # Official BEAM uses float scores: 0.0, 0.5, 1.0
         score = float(result.get("score", 0.0))
         # Clamp score to valid range
         score = max(0.0, min(1.0, score))
@@ -147,9 +134,7 @@ def evaluate_rubric_criterion(
 
 
 def extract_facts_from_response(response: str, question: str) -> list[str]:
-    """Extract facts/statements from response for event ordering evaluation.
-
-    Simple line-based extraction as used in official BEAM.
+    """Extract facts from response for event ordering evaluation.
 
     Args:
         response: The model's response.
@@ -163,14 +148,68 @@ def extract_facts_from_response(response: str, question: str) -> list[str]:
     return lines
 
 
-def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[str]) -> dict:
-    """Compute event ordering score using Kendall tau-b normalized.
+def llm_equivalence(first_snippet: str, second_snippet: str, call_fn: Callable[[str], str]) -> bool:
+    """Check if two snippets describe the same event/fact using LLM.
 
-    Based on official BEAM event_ordering_score() function.
+    Args:
+        first_snippet: First fact/snippet.
+        second_snippet: Second fact/snippet.
+        call_fn: Callable for LLM judge.
+
+    Returns:
+        True if the two snippets describe the same event/fact, False otherwise.
+    """
+    system_msg = "You are a binary classifier. If the TWO snippets describe the SAME event/fact, reply YES. Otherwise reply NO. No extra words. DO NOT provide any explanation."
+
+    user_msg = f"First snippet: {first_snippet}\nSecond snippet: {second_snippet}"
+
+    prompt = f"{system_msg}\n\n{user_msg}"
+
+    response = call_fn(prompt).lower()
+
+    return "yes" in response
+
+
+def align_with_llm(reference: list[str], system: list[str], call_fn: Callable[[str], str]) -> tuple[list[str], list[str]]:
+    """Align system facts with reference facts using LLM equivalence.
+
+    Args:
+        reference: Reference ordered list of facts.
+        system: System predicted ordered list of facts.
+        call_fn: Callable for LLM judge.
+
+    Returns:
+        Tuple of (reference_canon, system_canon) after alignment.
+    """
+    used = set()
+    system_out = []
+
+    for s in system:
+        matched_index = None
+        for index, r in enumerate(reference):
+            if index in used:
+                continue
+
+            if llm_equivalence(first_snippet=r, second_snippet=s, call_fn=call_fn):
+                matched_index = index
+                break
+
+        if matched_index is not None:
+            system_out.append(reference[matched_index])
+            used.add(matched_index)
+        else:
+            system_out.append(s)
+
+    return reference, system_out
+
+
+def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[str], call_fn: Callable[[str], str] | None = None) -> dict:
+    """Compute event ordering score using Kendall tau-b normalized.
 
     Args:
         reference_list: Reference ordered list of events/facts.
         system_list: System predicted ordered list of events/facts.
+        call_fn: Optional callable for LLM alignment. If provided, uses LLM-based alignment.
 
     Returns:
         Dictionary with precision, recall, f1, tau_norm, and final_score.
@@ -184,7 +223,9 @@ def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[
             "final_score": 0.0,
         }
 
-    # Create union for ranking
+    # Apply LLM-based alignment if call_fn is provided
+    if call_fn is not None:
+        reference_list, system_list = align_with_llm(reference_list, system_list, call_fn)
     union = list(dict.fromkeys(reference_list + system_list))
     tie_rank = len(union) + 1
 
@@ -212,7 +253,7 @@ def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[
     tau_b, _ = kendalltau(ref_ranks, sys_ranks, variant="b", method="auto")
     tau_norm = (tau_b + 1) / 2 if tau_b is not None else 0.0
 
-    # Final score is tau_norm * f1 (as in official BEAM)
+    # Final score is tau_norm * f1
     final_score = tau_norm * f1
 
     return {
@@ -231,7 +272,7 @@ def evaluate_with_rubric(
     call_fn: Callable[[str], str],
     category: str = "",
 ) -> dict:
-    """Evaluate a response against rubric criteria using official BEAM approach.
+    """Evaluate a response against rubric criteria.
 
     Args:
         question: The probing question.
@@ -273,7 +314,7 @@ def evaluate_with_rubric(
         reference_list = extract_facts_from_response("\n".join(rubric), question)
         system_list = extract_facts_from_response(response, question)
 
-        event_ordering_result = compute_kendall_tau_normalized(reference_list, system_list)
+        event_ordering_result = compute_kendall_tau_normalized(reference_list, system_list, call_fn)
 
     return {
         "rubric_score": round(rubric_score, 4),
@@ -289,7 +330,7 @@ def process_beam_sample(
     item: dict,
     call_fn: Callable[[str], str],
 ) -> tuple[str, dict | None]:
-    """Process a single BEAM sample with official BEAM evaluation.
+    """Process a single BEAM sample.
 
     Args:
         group_key: Category key (e.g., "abstention", "contradiction_resolution").
@@ -316,15 +357,14 @@ def process_beam_sample(
             "note": "No rubric provided",
         }
 
-    # Perform rubric-based evaluation using official BEAM approach
+    # Perform rubric-based evaluation
     eval_result = evaluate_with_rubric(question, response, rubric, call_fn, category)
 
-    # Build result dictionary following official BEAM output format
     rubric_score = eval_result["rubric_score"]
 
-    # For event_ordering, use final_score (tau_norm * f1) as the main score
+    # For event_ordering, use tau_norm as the primary metric
     if category == "event_ordering" and eval_result["event_ordering"]:
-        llm_score = eval_result["event_ordering"]["final_score"]
+        llm_score = eval_result["event_ordering"]["tau_norm"]
     else:
         llm_score = rubric_score
 
@@ -368,7 +408,7 @@ def process_beam_sample(
 def build_parser() -> argparse.ArgumentParser:
     """Build argument parser for BEAM evaluation."""
     parser = argparse.ArgumentParser(
-        description="Evaluate BEAM benchmark results using official BEAM evaluation approach"
+        description="Evaluate BEAM benchmark results"
     )
     parser.add_argument(
         "--data-path",
@@ -401,11 +441,10 @@ def main():
     """Main entry point for BEAM evaluation."""
     args = build_parser().parse_args()
 
-    print("Starting BEAM evaluation using official BEAM approach...")
+    print("Starting BEAM evaluation ...")
     print(f"Data path: {args.data_path}")
     print(f"Output path: {args.target_path}")
     print(f"Max workers: {args.max_workers}")
-    print("Using official BEAM unified LLM judge prompt with 0.0/0.5/1.0 scoring")
 
     call_fn = create_judge_fn(args.config_path)
 
@@ -454,7 +493,7 @@ def main():
 
     # Print category-level summary
     print("\n" + "=" * 60)
-    print("BEAM Evaluation Summary (Official BEAM Approach)")
+    print("BEAM Evaluation Summary")
     print("=" * 60)
 
     for category, metrics in sorted(category_metrics.items()):
