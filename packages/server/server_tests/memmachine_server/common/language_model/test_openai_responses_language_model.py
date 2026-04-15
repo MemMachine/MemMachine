@@ -480,9 +480,7 @@ async def test_generate_response_strips_multiline_think_block(
 ):
     """generate_response strips a multi-line <think>...</think> block from output_text."""
     mock_response = MagicMock()
-    mock_response.output_text = (
-        '<think>\nline one\nline two\n</think>\n{"answer": 42}'
-    )
+    mock_response.output_text = '<think>\nline one\nline two\n</think>\n{"answer": 42}'
     mock_response.output = None
     mock_response.usage = None
 
