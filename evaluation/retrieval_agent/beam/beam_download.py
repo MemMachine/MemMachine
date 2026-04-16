@@ -31,7 +31,11 @@ def convert_chats_to_json(data: list) -> list:
         single_turn = []
 
         for message in batch:
-            if "question_type" in message.keys() and message["question_type"] == "main_question" and single_turn:
+            if (
+                "question_type" in message
+                and message["question_type"] == "main_question"
+                and single_turn
+            ):
                 turns.append(single_turn)
                 single_turn = []
                 single_turn.append(message)
@@ -41,10 +45,7 @@ def convert_chats_to_json(data: list) -> list:
         if single_turn:
             turns.append(single_turn)
 
-        json_object.append({
-            "batch_number": batch_number,
-            "turns": turns
-        })
+        json_object.append({"batch_number": batch_number, "turns": turns})
 
     return json_object
 
@@ -68,16 +69,15 @@ def convert_user_messages_to_json(data: list) -> list:
         for message in messages:
             if "->->" not in message:
                 continue
-            batch_messages.append({
-                "role": "user",
-                "content": message.strip()
-            })
+            batch_messages.append({"role": "user", "content": message.strip()})
 
-        json_object.append({
-            "batch": batch_index,
-            "time_anchor": time_anchor,
-            "messages": batch_messages
-        })
+        json_object.append(
+            {
+                "batch": batch_index,
+                "time_anchor": time_anchor,
+                "messages": batch_messages,
+            }
+        )
 
     return json_object
 
@@ -141,7 +141,9 @@ def download_and_convert(size: str, output_dir: Path):
     num_conversations = len(conversations)
     print(f"Found {num_conversations} conversations")
 
-    for idx, conversation in tqdm(enumerate(conversations), total=num_conversations, desc=f"Processing {size}"):
+    for idx, conversation in tqdm(
+        enumerate(conversations), total=num_conversations, desc=f"Processing {size}"
+    ):
         conversation_id = conversation["conversation_id"]
         conv_dir = size_dir / conversation_id
         conv_dir.mkdir(parents=True, exist_ok=True)
@@ -151,7 +153,9 @@ def download_and_convert(size: str, output_dir: Path):
         probing_questions = conversation.get("probing_questions", "{}")
         labels = conversation.get("narratives", "")
         main_spec = conversation.get("user_profile", {}).get("user_info", "")
-        relationships = conversation.get("user_profile", {}).get("user_relationships", "")
+        relationships = conversation.get("user_profile", {}).get(
+            "user_relationships", ""
+        )
         topic = conversation.get("conversation_seed", {})
         user_messages = conversation.get("user_questions", [])
 
@@ -164,6 +168,7 @@ def download_and_convert(size: str, output_dir: Path):
         # Parse probing_questions (string representation of dict)
         try:
             import ast
+
             probing_questions_data = ast.literal_eval(probing_questions)
         except (ValueError, SyntaxError):
             try:
@@ -209,13 +214,13 @@ def main():
         nargs="+",
         required=True,
         choices=["100K", "500K", "1M"],
-        help="Dataset size(s) to download (e.g., 100K, 500K, 1M)"
+        help="Dataset size(s) to download (e.g., 100K, 500K, 1M)",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path("./beam"),
-        help="Output directory (default: ./beam)"
+        help="Output directory (default: ./beam)",
     )
     args = parser.parse_args()
 
@@ -239,9 +244,11 @@ def main():
     print("=" * 60)
     print(f"\nOutput directory: {args.output.absolute()}")
     print("\nTo use with MemMachine evaluation:")
-    print(f"  ./run_test.sh beam exp1 search retrieval_agent \\")
+    print("  ./run_test.sh beam exp1 search retrieval_agent \\")
     print(f"    {args.output.absolute()}/100K/{{conversation_id}}/chat.json \\")
-    print(f"    {args.output.absolute()}/100K/{{conversation_id}}/probing_questions/probing_questions.json")
+    print(
+        f"    {args.output.absolute()}/100K/{{conversation_id}}/probing_questions/probing_questions.json"
+    )
 
 
 if __name__ == "__main__":

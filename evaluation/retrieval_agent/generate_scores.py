@@ -99,7 +99,9 @@ if has_tool_info:
     for tool, called in tools_called.items():
         correct = tools_correct.get(tool, 0)
         accuracy = correct / called * 100 if called > 0 else 0.0
-        tools_overall += f"Tool: {tool}\n  Accuracy: {correct}/{called} = {accuracy:.2f}%\n"
+        tools_overall += (
+            f"Tool: {tool}\n  Accuracy: {correct}/{called} = {accuracy:.2f}%\n"
+        )
 
     print("\n--------------------------------")
     print(tools_overall)
