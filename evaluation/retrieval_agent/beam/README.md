@@ -47,3 +47,7 @@ cd evaluation/retrieval_agent
 ```
 
 For more details, see the official BEAM repository: https://github.com/mohammadtavakoli78/BEAM
+
+## Note on Scoring
+
+The official BEAM evaluation code casts rubric scores to `int()` before summing, which causes 0.5 scores to be silently dropped (converted to 0). This implementation preserves float scores (0.0, 0.5, 1.0) to properly reflect partial compliance. As a result, scores may differ by a few percentage points compared to running the official BEAM code directly.
