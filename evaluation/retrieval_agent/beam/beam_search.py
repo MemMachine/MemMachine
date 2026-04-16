@@ -49,7 +49,7 @@ def truncate_history_to_context_window(
     # Try to start from a new line to avoid cutting in the middle
     first_newline = truncated.find("\n")
     if first_newline != -1:
-        truncated = truncated[first_newline + 1:]
+        truncated = truncated[first_newline + 1 :]
 
     return truncated
 
@@ -130,7 +130,9 @@ def build_full_content_from_chat(chat_data: list[dict]) -> str:
 
                 if content:
                     time_info = f" [{time_anchor}]" if time_anchor else ""
-                    lines.append(f"[{batch_num}:{turn_idx}] {role}:{time_info} {content}")
+                    lines.append(
+                        f"[{batch_num}:{turn_idx}] {role}:{time_info} {content}"
+                    )
 
     return "\n".join(lines)
 
@@ -198,8 +200,14 @@ async def beam_search(
                 "category": category,
                 "difficulty": difficulty,
             }
-            for key in ["ideal_response", "answer", "abstention_type",
-                       "contradiction_type", "ordering_type", "rubric"]:
+            for key in [
+                "ideal_response",
+                "answer",
+                "abstention_type",
+                "contradiction_type",
+                "ordering_type",
+                "rubric",
+            ]:
                 if key in question:
                     extra_attrs[key] = question[key]
 
@@ -219,7 +227,6 @@ async def beam_search(
             )
 
     # Process questions by category
-    categories = list(questions_data.keys())
     for category, questions in questions_data.items():
         for question in questions:
             tasks.append(bounded_process(category, question))
@@ -325,7 +332,8 @@ async def main():
 
     # Determine agent name based on test target
     agent_name = (
-        "ToolSelectAgent" if args.test_target == "retrieval_agent"
+        "ToolSelectAgent"
+        if args.test_target == "retrieval_agent"
         else "MemMachineAgent"
     )
 

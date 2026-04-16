@@ -108,7 +108,9 @@ async def beam_ingest(
         t = time.perf_counter()
         await memory.add_memory_episodes(episodes=episodes)
         elapsed = time.perf_counter() - t
-        print(f"Ingested {total_messages} messages from {total_batches} batches in {elapsed:.3f}s")
+        print(
+            f"Ingested {total_messages} messages from {total_batches} batches in {elapsed:.3f}s"
+        )
 
     stats = {
         "session_id": session_id,
@@ -117,7 +119,9 @@ async def beam_ingest(
         "data_path": data_path,
     }
 
-    print(f"\nBEAM ingestion completed: {total_messages} messages from {total_batches} batches")
+    print(
+        f"\nBEAM ingestion completed: {total_messages} messages from {total_batches} batches"
+    )
     return stats
 
 

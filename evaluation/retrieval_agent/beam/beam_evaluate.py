@@ -6,8 +6,8 @@ import json
 import sys
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import json_repair
 from scipy.stats import kendalltau
@@ -21,7 +21,6 @@ from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 from evaluation.retrieval_agent.llm_judge import (  # noqa: E402
     create_judge_fn,
 )
-
 
 # BEAM unified LLM judge prompt
 UNIFIED_LLM_JUDGE_PROMPT = """You are an expert evaluator tasked with judging whether the LLM's response demonstrates compliance with the specified RUBRIC CRITERION.
@@ -148,7 +147,9 @@ def extract_facts_from_response(response: str, question: str) -> list[str]:
     return lines
 
 
-def llm_equivalence(first_snippet: str, second_snippet: str, call_fn: Callable[[str], str]) -> bool:
+def llm_equivalence(
+    first_snippet: str, second_snippet: str, call_fn: Callable[[str], str]
+) -> bool:
     """Check if two snippets describe the same event/fact using LLM.
 
     Args:
@@ -170,7 +171,9 @@ def llm_equivalence(first_snippet: str, second_snippet: str, call_fn: Callable[[
     return "yes" in response
 
 
-def align_with_llm(reference: list[str], system: list[str], call_fn: Callable[[str], str]) -> tuple[list[str], list[str]]:
+def align_with_llm(
+    reference: list[str], system: list[str], call_fn: Callable[[str], str]
+) -> tuple[list[str], list[str]]:
     """Align system facts with reference facts using LLM equivalence.
 
     Args:
@@ -203,7 +206,11 @@ def align_with_llm(reference: list[str], system: list[str], call_fn: Callable[[s
     return reference, system_out
 
 
-def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[str], call_fn: Callable[[str], str] | None = None) -> dict:
+def compute_kendall_tau_normalized(
+    reference_list: list[str],
+    system_list: list[str],
+    call_fn: Callable[[str], str] | None = None,
+) -> dict:
     """Compute event ordering score using Kendall tau-b normalized.
 
     Args:
@@ -225,7 +232,9 @@ def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[
 
     # Apply LLM-based alignment if call_fn is provided
     if call_fn is not None:
-        reference_list, system_list = align_with_llm(reference_list, system_list, call_fn)
+        reference_list, system_list = align_with_llm(
+            reference_list, system_list, call_fn
+        )
     union = list(dict.fromkeys(reference_list + system_list))
     tie_rank = len(union) + 1
 
@@ -244,7 +253,11 @@ def compute_kendall_tau_normalized(reference_list: list[str], system_list: list[
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
 
     # Compute Kendall tau-b normalized
     ref_ranks = to_rank(reference_list)
@@ -314,7 +327,9 @@ def evaluate_with_rubric(
         reference_list = extract_facts_from_response("\n".join(rubric), question)
         system_list = extract_facts_from_response(response, question)
 
-        event_ordering_result = compute_kendall_tau_normalized(reference_list, system_list, call_fn)
+        event_ordering_result = compute_kendall_tau_normalized(
+            reference_list, system_list, call_fn
+        )
 
     return {
         "rubric_score": round(rubric_score, 4),
@@ -381,7 +396,11 @@ def process_beam_sample(
         "criterion_reasonings": eval_result["criterion_reasonings"],
         "llm_judge_responses": [
             {"score": s, "reason": r}
-            for s, r in zip(eval_result["criterion_scores"], eval_result["criterion_reasonings"])
+            for s, r in zip(
+                eval_result["criterion_scores"],
+                eval_result["criterion_reasonings"],
+                strict=True,
+            )
         ],
     }
 
@@ -407,9 +426,7 @@ def process_beam_sample(
 
 def build_parser() -> argparse.ArgumentParser:
     """Build argument parser for BEAM evaluation."""
-    parser = argparse.ArgumentParser(
-        description="Evaluate BEAM benchmark results"
-    )
+    parser = argparse.ArgumentParser(description="Evaluate BEAM benchmark results")
     parser.add_argument(
         "--data-path",
         type=str,
@@ -499,10 +516,7 @@ def main():
     for category, metrics in sorted(category_metrics.items()):
         if metrics["total"] > 0:
             avg_score = metrics["score_sum"] / metrics["total"]
-            print(
-                f"  {category}: {avg_score:.4f} "
-                f"({metrics['total']} samples)"
-            )
+            print(f"  {category}: {avg_score:.4f} ({metrics['total']} samples)")
 
     # Calculate overall average
     total_samples = sum(m["total"] for m in category_metrics.values())
