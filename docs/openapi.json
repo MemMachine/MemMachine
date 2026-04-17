@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MemMachine API",
-    "version": "0.3.7",
+    "version": "0.3.9",
     "description": "Architectural Memory Systems for AI Agents. Specialized in episodic and semantic memory management with strict namespace isolation."
   },
   "servers": [
@@ -697,7 +697,7 @@
           "Memories"
         ],
         "summary": "List Memories",
-        "description": "List memories within a project.\n\n    System returns a paginated list of memories stored in the project.\n    The page_size and page_num fields control pagination.\n\n    The filter field allows for filtering based on metadata key-value pairs.\n    The set_metadata field scopes semantic memories to matching semantic sets.\n    The type field allows specifying which memory type to list.",
+        "description": "List memories within a project.\n\n    System returns a paginated list of memories stored in the project.\n    The page_size and page_num fields control pagination.\n\n    The filter field accepts the structured filter expression language.\n    User-defined metadata keys must be referenced with the `m.` or `metadata.` prefix\n    (for example, `m.source = \"chat_v3\"`). Unknown or unsupported fields are rejected\n    instead of being ignored.\n    The set_metadata field scopes semantic memories to matching semantic sets.\n    The type field allows specifying which memory type to list.",
         "operationId": "list_memories",
         "requestBody": {
           "content": {
@@ -739,7 +739,7 @@
           "Memories"
         ],
         "summary": "Search Memories",
-        "description": "Search memories within a project.\n\n    System returns the top K relevant memories matching the natural language query.\n    The result is sorted by timestamp to help with context.\n\n    The filter field allows for filtering based on metadata key-value pairs.\n    The set_metadata field scopes semantic memories to matching semantic sets.\n    The types field allows specifying which memory types to include in the search.",
+        "description": "Search memories within a project.\n\n    System returns the top K relevant memories matching the natural language query.\n    The result is sorted by timestamp to help with context.\n\n    The filter field accepts the structured filter expression language.\n    User-defined metadata keys must be referenced with the `m.` or `metadata.` prefix\n    (for example, `m.source = \"chat_v3\"`). Unknown or unsupported fields are rejected\n    instead of being ignored.\n    The set_metadata field scopes semantic memories to matching semantic sets.\n    The types field allows specifying which memory types to include in the search.",
         "operationId": "search_memories",
         "requestBody": {
           "content": {
