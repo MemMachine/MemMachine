@@ -148,6 +148,28 @@ class TestAddMemory:
             content="Hello world", role="user", metadata={}
         )
 
+    def test_raw_filter_passthrough(self):
+        tools, mock_memory = self._make_tools()
+
+        mock_content = Mock()
+        mock_content.episodic_memory = None
+        mock_content.semantic_memory = []
+
+        mock_search_result = Mock()
+        mock_search_result.content = mock_content
+        mock_memory.search.return_value = mock_search_result
+
+        result = tools.search_memory(query="food", filter='metadata.category = "work"')
+
+        assert result["status"] == "success"
+        mock_memory.search.assert_called_once_with(
+            query="food",
+            limit=20,
+            score_threshold=None,
+            filter_dict=None,
+            filter='metadata.category = "work"',
+        )
+
     def test_error_path(self):
         tools, mock_memory = self._make_tools()
         mock_memory.add.side_effect = RuntimeError("boom")
@@ -203,7 +225,7 @@ class TestSearchMemory:
         assert result["results"]["episodic_memory"] == {"episodes": [{"content": "hi"}]}
         assert result["results"]["semantic_memory"] == [{"name": "likes pizza"}]
         mock_memory.search.assert_called_once_with(
-            query="food", limit=20, score_threshold=None, filter_dict=None
+            query="food", limit=20, score_threshold=None, filter_dict=None, filter=None
         )
 
     def test_error_path(self):
@@ -368,5 +390,5 @@ class TestFactoryFunctions:
         search_fn("hello", None, 10)
 
         mock_memory.search.assert_called_once_with(
-            query="hello", limit=10, score_threshold=None, filter_dict=None
+            query="hello", limit=10, score_threshold=None, filter_dict=None, filter=None
         )

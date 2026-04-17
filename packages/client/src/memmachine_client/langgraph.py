@@ -203,6 +203,7 @@ class MemMachineTools:
         limit: int = 20,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
+        filter: str | None = None,
     ) -> dict[str, Any]:
         """
         Search for memories in MemMachine.
@@ -223,7 +224,8 @@ class MemMachineTools:
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 20)
             score_threshold: Minimum score to include in results
-            filter_dict: Additional filters for the search
+            filter_dict: Additional key-value filters for the search
+            filter: Optional raw filter string passed through to the Python client
 
         Returns:
             Dictionary containing search results and relevant memories
@@ -238,6 +240,7 @@ class MemMachineTools:
                 limit=limit,
                 score_threshold=score_threshold,
                 filter_dict=filter_dict,
+                filter=filter,
             )
 
             # Format results for easier consumption
