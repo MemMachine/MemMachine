@@ -111,7 +111,7 @@ export class MemMachineMemory {
    *
    * @param ids - The unique identifier or list of identifiers of the memories to be deleted.
    * @param type - The type of memory to delete.
-   * @returns A promise that resolves when the memory is successfully deleted.
+   * @returns A promise that resolves when the memory or memories are successfully deleted.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
   delete(ids: string | string[], type: MemoryType): Promise<void> {
