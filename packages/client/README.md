@@ -13,11 +13,15 @@ A Python client library for the MemMachine memory system.
 ## Installation
 
 ```bash
-# Install from source (for development)
-pip install -e .
+pip install memmachine-client
+```
 
-# Or install dependencies
-pip install requests urllib3
+### Development installation
+
+If you are working on the package locally, install it from source instead:
+
+```bash
+pip install -e .
 ```
 
 ## Quick Start
