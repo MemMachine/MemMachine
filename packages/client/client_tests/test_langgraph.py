@@ -2,6 +2,8 @@
 
 from unittest.mock import Mock, patch
 
+from memmachine_common.api import EpisodeType
+
 from memmachine_client.langgraph import (
     MemMachineTools,
     create_add_memory_tool,
@@ -145,7 +147,7 @@ class TestAddMemory:
         assert result["uids"] == ["uid-123"]
         assert result["content"] == "Hello world"
         mock_memory.add.assert_called_once_with(
-            content="Hello world", role="user", metadata={}
+            content="Hello world", role="user", metadata={}, episode_type=None
         )
 
     def test_raw_filter_passthrough(self):
@@ -169,6 +171,18 @@ class TestAddMemory:
             filter_dict=None,
             filter='metadata.category = "work"',
         )
+
+    def test_episode_type_string_is_normalized(self):
+        tools, mock_memory = self._make_tools()
+        mock_result = Mock()
+        mock_result.uid = "uid-ep"
+        mock_memory.add.return_value = [mock_result]
+
+        result = tools.add_memory(content="Hello world", episode_type="message")
+
+        assert result["status"] == "success"
+        mock_memory.add.assert_called_once()
+        assert mock_memory.add.call_args.kwargs["episode_type"] == EpisodeType.MESSAGE
 
     def test_error_path(self):
         tools, mock_memory = self._make_tools()
@@ -345,7 +359,7 @@ class TestFactoryFunctions:
         mock_memory.add.return_value = [mock_result]
 
         add_fn = create_add_memory_tool(tools)
-        result = add_fn("test content", None, None)
+        result = add_fn("test content", None, None, None)
 
         assert result["status"] == "success"
         assert result["uids"] == ["uid-1"]
@@ -357,7 +371,7 @@ class TestFactoryFunctions:
         mock_memory.add.return_value = [mock_result]
 
         add_fn = create_add_memory_tool(tools)
-        result = add_fn("content", "u1", None)
+        result = add_fn("content", "u1", None, "message")
 
         assert result["status"] == "success"
 
