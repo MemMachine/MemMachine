@@ -164,11 +164,48 @@ describe('MemMachine Memory', () => {
     expect(deleteResponse).toBeUndefined()
   })
 
+  it('should delete multiple episodic memories successfully', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({
+      data: null
+    })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+    const deleteResponse = await memory.delete(['1', '2'], 'episodic')
+    expect(deleteResponse).toBeUndefined()
+    expect(postSpy).toHaveBeenCalledWith('/memories/episodic/delete', {
+      ...mockProjectContext,
+      episodic_ids: ['1', '2']
+    })
+  })
+
+  it('should delete multiple semantic memories successfully', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({
+      data: null
+    })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+    const deleteResponse = await memory.delete(['1', '2'], 'semantic')
+    expect(deleteResponse).toBeUndefined()
+    expect(postSpy).toHaveBeenCalledWith('/memories/semantic/delete', {
+      ...mockProjectContext,
+      semantic_ids: ['1', '2']
+    })
+  })
+
   it('should throw error if id is empty when deleting memory', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
     const project = client.project(mockProjectContext)
     const memory = project.memory(mockMemoryContext)
-    await expect(memory.delete('', 'episodic')).rejects.toThrow('Memory ID must be a non-empty string')
+    await expect(memory.delete('', 'episodic')).rejects.toThrow('Memory ID must be a non-empty string or non-empty string array')
+  })
+
+  it('should throw error if any id is empty when deleting multiple memories', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+    await expect(memory.delete(['1', ''], 'episodic')).rejects.toThrow('Memory ID must be a non-empty string or non-empty string array')
   })
 
   it('should throw error if memory type is invalid when deleting memory', async () => {
