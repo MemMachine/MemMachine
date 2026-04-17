@@ -114,7 +114,7 @@ export class MemMachineMemory {
    * @returns A promise that resolves when the memory is successfully deleted.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
-  delete(id: string, type: MemoryType): Promise<void> {
+  delete(id: string | string[], type: MemoryType): Promise<void> {
     return this._deleteMemory(id, type)
   }
 
@@ -258,9 +258,11 @@ export class MemMachineMemory {
    * @returns A promise that resolves when the memory is successfully deleted.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
-  private async _deleteMemory(id: string, memoryType: MemoryType): Promise<void> {
-    if (!id || !id.trim()) {
-      throw new MemMachineAPIError('Memory ID must be a non-empty string')
+  private async _deleteMemory(id: string | string[], memoryType: MemoryType): Promise<void> {
+    const ids = Array.isArray(id) ? id : [id]
+
+    if (ids.length === 0 || ids.some(memoryId => !memoryId || !memoryId.trim())) {
+      throw new MemMachineAPIError('Memory ID must be a non-empty string or non-empty string array')
     }
 
     this._validateMemoryType(memoryType)
@@ -272,8 +274,8 @@ export class MemMachineMemory {
 
     const payload = {
       ...this.projectContext,
-      ...(memoryType === 'episodic' ? { episodic_id: id } : {}),
-      ...(memoryType === 'semantic' ? { semantic_id: id } : {})
+      ...(memoryType === 'episodic' ? (ids.length === 1 ? { episodic_id: ids[0] } : { episodic_ids: ids }) : {}),
+      ...(memoryType === 'semantic' ? (ids.length === 1 ? { semantic_id: ids[0] } : { semantic_ids: ids }) : {})
     }
 
     try {
