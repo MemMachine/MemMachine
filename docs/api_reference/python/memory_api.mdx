@@ -50,7 +50,7 @@ results = client.memories.search(
     expand_context=2,
     score_threshold=0.65,
     agent_mode=True,
-    filter_dict={"source": "chat_v3"},
+    filter_dict={"m.source": "chat_v3"},
 )
 ```
 
@@ -63,7 +63,7 @@ results = client.memories.search(
 | `expand_context` | `int` | `0`          | Number of neighboring episodic entries to include around each long-term match. |
 | `score_threshold` | `float` | `None`     | Minimum episodic retrieval score to keep. Not supported when `agent_mode=True`. |
 | `agent_mode`  | `bool`   | `False`      | Whether to use retrieval-agent search orchestration.         |
-| `filter_dict` | `dict`   | `None`       | Key-value filters to apply to the search (metadata matching). |
+| `filter_dict` | `dict`   | `None`       | Structured filter criteria. User metadata fields should be prefixed with `m.` / `metadata.` (for example `m.source`). |
 | `timeout`     | `int`    | `None`       | Request timeout in seconds. Uses client default if omitted.  |
 
 ------
