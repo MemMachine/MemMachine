@@ -132,8 +132,8 @@ def main():
 
     print(f"Query: {query}")
     print("Results found:")
-    for idx, item in enumerate(results.get('episodic_memory', [])):
-        print(f"[{idx+1}] {item['content']} (Role: {item['producer_role']})")
+    for idx, item in enumerate(results.episodic_memory or []):
+        print(f"[{idx+1}] {item.content} (Role: {item.producer_role})")
 
 if __name__ == "__main__":
     main()
