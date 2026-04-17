@@ -385,9 +385,11 @@ class Memory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
             filter_dict: Additional filters for the search (key-value pairs as strings).
-                        These filters will be merged with built-in filters from metadata.
-                        User-provided filters take precedence over built-in filters
-                        if there are key conflicts.
+                        For user metadata fields, use `metadata.` / `m.` prefixes
+                        (for example `metadata.category`). These filters will be
+                        merged with built-in filters from metadata. User-provided
+                        filters take precedence over built-in filters if there are
+                        key conflicts.
             timeout: Request timeout in seconds (uses client default if not provided)
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
@@ -903,8 +905,9 @@ class Memory:
 
         Examples:
             {"metadata.user_id": "test"} -> "metadata.user_id='test'"
-            {"category": "work", "type": "preference"} -> "category='work' AND type='preference'"
-            {"name": "O'Brien"} -> "name='O''Brien'"  # Single quotes are escaped
+            {"metadata.category": "work", "m.type": "preference"}
+                -> "metadata.category='work' AND m.type='preference'"
+            {"metadata.name": "O'Brien"} -> "metadata.name='O''Brien'"  # Single quotes are escaped
 
         """
         conditions = []

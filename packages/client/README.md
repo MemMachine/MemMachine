@@ -80,7 +80,7 @@ Interface for managing episodic and profile memory.
 #### Methods
 
 - `add(content, producer, produced_for, episode_type, metadata)` - Add a memory
-- `search(query, limit, filter_dict)` - Search memories
+- `search(query, limit, filter_dict)` - Search memories (`filter_dict` keys should use `metadata.` / `m.` prefixes for user metadata fields)
 - `get_context()` - Get current context
 
 ## Examples
@@ -110,7 +110,10 @@ print(f"Episodic memory: {results.get('episodic_memory', [])}")
 print(f"Profile memory: {results.get('profile_memory', [])}")
 
 # Search with filters
-work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
+work_results = memory.search(
+    "Tell me about work",
+    filter_dict={"metadata.category": "work"},
+)
 print(f"Work results: {work_results}")
 ```
 
