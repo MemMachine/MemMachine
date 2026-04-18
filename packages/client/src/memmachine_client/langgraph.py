@@ -223,7 +223,7 @@ class MemMachineTools:
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 20)
             score_threshold: Minimum score to include in results
-            filter_dict: Additional filters for the search
+            filter_dict: Additional metadata filters for the search. User metadata keys must be prefixed with `m.` / `metadata.`. Unknown or misspelled fields return a 400 error.
 
         Returns:
             Dictionary containing search results and relevant memories

@@ -384,10 +384,17 @@ class Memory:
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
             score_threshold: Minimum score to include in results.
-            filter_dict: Additional filters for the search (key-value pairs as strings).
+            filter_dict: Additional metadata filters for the search (key-value pairs as strings).
+                        User metadata keys must be prefixed with `m.` / `metadata.`.
                         These filters will be merged with built-in filters from metadata.
                         User-provided filters take precedence over built-in filters
-                        if there are key conflicts.
+                        only when the exact same key is supplied. Built-in filters use the
+                        `metadata.` prefix; to override one, use the matching `metadata.<key>`
+                        form. Mixing `m.<key>` with a built-in `metadata.<key>` is treated as
+                        two distinct conditions by this merge (both are sent to the server),
+                        which after server-side normalization can produce a contradictory
+                        `metadata.<key>=A AND metadata.<key>=B` filter. Unknown or misspelled
+                        user metadata fields return a 400 error.
             timeout: Request timeout in seconds (uses client default if not provided)
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
