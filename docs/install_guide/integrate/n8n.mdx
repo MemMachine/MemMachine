@@ -97,7 +97,7 @@ Retrieves historical context to inject into an LLM prompt.
 | **query**             | String       | -                  | **Required.** Natural language query for semantic search.    |
 | **limit**             | Number       | 50                 | Maximum number of memory results to return.                  |
 | **scoreThreshold**    | Number       | -                  | Minimum relevance score required to include a memory.        |
-| **filter**            | String       | -                  | Filter expression to refine memory search results.           |
+| **filter**            | String       | -                  | Filter expression to refine memory search results. Prefix user metadata fields with `m.` / `metadata.` (for example `m.user_id = "123"`). Unknown or misspelled fields return a 400 error.           |
 | **expandContext**     | Number       | 0                  | Number of extra episodes to include for context.             |
 | **sessionId**         | String       | -                  | **Required.** Unique session identifier.                     |
 | **groupId**           | String       | `default`          | Unique group identifier.                                     |

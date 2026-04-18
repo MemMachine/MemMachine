@@ -58,7 +58,7 @@ Retrieve relevant context, memories, or profile for a user.
 | types           | multipleSelect | ['episodic', 'semantic'] | Memory types; leave empty to search all types            |
 | query           | string         | -                        | **Required** Natural language query for memory retrieval |
 | limit           | number         | 10                       | **Required** Maximum number of search results            |
-| filter          | string         | -                        | Condition to filter memories                             |
+| filter          | string         | -                        | Condition to filter memories. Prefix user metadata fields with `m.` / `metadata.` (for example `m.source = "chat_v3"`). Unknown or misspelled fields now return a 400 error. |
 | contextTemplate | string         | default template         | Template for building memory context                     |
 
 **Output**
