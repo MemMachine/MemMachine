@@ -101,10 +101,10 @@ export function formatEpisodes(episodes: FormattableEpisode[]): string {
  * @returns JSON string of the grouped features.
  */
 export function formatSemanticMemories(features: SemanticMemory[]): string {
-  const structured: Record<string, Record<string, string>> = {}
+  const structured = Object.create(null) as Record<string, Record<string, string>>
   for (const feature of features) {
     if (!(feature.tag in structured)) {
-      structured[feature.tag] = {}
+      structured[feature.tag] = Object.create(null) as Record<string, string>
     }
     structured[feature.tag]![feature.feature_name] = feature.value
   }
