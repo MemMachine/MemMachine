@@ -1003,3 +1003,182 @@ async def test_user_tags_preserved_after_ingestion_and_consolidation(
     # "bugfix" and "decision" survive (each had < 2 entries)
     assert "bugfix" in remaining_tags
     assert "decision" in remaining_tags
+
+
+@pytest.mark.asyncio
+async def test_consolidation_retries_on_none_response(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """When llm_consolidate_features returns None on the first attempt but
+    succeeds on the second, consolidation completes and features are removed."""
+    hist1 = await add_history(episode_storage, content="msg1")
+    hist2 = await add_history(episode_storage, content="msg2")
+
+    id1 = await semantic_storage.add_feature(
+        set_id="user-retry-none",
+        category_name=semantic_category.name,
+        feature="feat_x",
+        value="value x",
+        tag="retry_tag",
+        embedding=np.array([1.0, 0.0]),
+    )
+    id2 = await semantic_storage.add_feature(
+        set_id="user-retry-none",
+        category_name=semantic_category.name,
+        feature="feat_y",
+        value="value y",
+        tag="retry_tag",
+        embedding=np.array([0.0, 1.0]),
+    )
+    await semantic_storage.add_citations(id1, [hist1])
+    await semantic_storage.add_citations(id2, [hist2])
+
+    filter_str = f"set_id IN ('user-retry-none') AND category_name IN ('{semantic_category.name}')"
+    memories = await _collect(
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(filter_str),
+            load_citations=True,
+        )
+    )
+
+    valid_response = SemanticConsolidateMemoryRes(
+        consolidated_memories=[
+            LLMReducedFeature(tag="retry_tag", feature="combined", value="combined x+y")
+        ],
+        keep_memories=[],
+    )
+    llm_mock = AsyncMock(side_effect=[None, valid_response])
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-retry-none",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    assert llm_mock.await_count == 2
+    assert await semantic_storage.get_feature(id1) is None
+    assert await semantic_storage.get_feature(id2) is None
+    remaining = await _collect(
+        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+    )
+    assert len(remaining) == 1
+    assert remaining[0].value == "combined x+y"
+
+
+@pytest.mark.asyncio
+async def test_consolidation_exhausts_retries_and_returns(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """When llm_consolidate_features always returns None, _deduplicate_features
+    logs a warning and returns without raising and without touching features."""
+    id1 = await semantic_storage.add_feature(
+        set_id="user-retry-exhaust",
+        category_name=semantic_category.name,
+        feature="feat_a",
+        value="value a",
+        tag="exhaust_tag",
+        embedding=np.array([1.0, 0.0]),
+    )
+    id2 = await semantic_storage.add_feature(
+        set_id="user-retry-exhaust",
+        category_name=semantic_category.name,
+        feature="feat_b",
+        value="value b",
+        tag="exhaust_tag",
+        embedding=np.array([0.0, 1.0]),
+    )
+
+    filter_str = f"set_id IN ('user-retry-exhaust') AND category_name IN ('{semantic_category.name}')"
+    memories = await _collect(
+        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+    )
+
+    llm_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-retry-exhaust",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    assert llm_mock.await_count == 2
+    assert await semantic_storage.get_feature(id1) is not None
+    assert await semantic_storage.get_feature(id2) is not None
+
+
+@pytest.mark.asyncio
+async def test_consolidation_skips_context_length_error(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """A context-length exception during consolidation is handled gracefully:
+    no exception propagates and features are left unchanged."""
+
+    class ContextLengthExceededError(Exception):
+        code = "context_length_exceeded"
+
+    id1 = await semantic_storage.add_feature(
+        set_id="user-consolidate-ctx",
+        category_name=semantic_category.name,
+        feature="feat_p",
+        value="value p",
+        tag="ctx_tag",
+        embedding=np.array([1.0, 0.0]),
+    )
+    id2 = await semantic_storage.add_feature(
+        set_id="user-consolidate-ctx",
+        category_name=semantic_category.name,
+        feature="feat_q",
+        value="value q",
+        tag="ctx_tag",
+        embedding=np.array([0.0, 1.0]),
+    )
+
+    filter_str = f"set_id IN ('user-consolidate-ctx') AND category_name IN ('{semantic_category.name}')"
+    memories = await _collect(
+        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+    )
+
+    async def raise_ctx_error(*args, **kwargs):
+        raise ExternalServiceAPIError("context window exceeded") from ContextLengthExceededError(
+            "input exceeds context window"
+        )
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        raise_ctx_error,
+    )
+
+    await ingestion_service._deduplicate_features(
+        set_id="user-consolidate-ctx",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    assert await semantic_storage.get_feature(id1) is not None
+    assert await semantic_storage.get_feature(id2) is not None

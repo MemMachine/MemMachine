@@ -3,11 +3,16 @@
 
 import argparse
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Callable
 
 import json_repair
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+_MAX_JUDGE_ATTEMPTS = 2
 
 ACCURACY_PROMPT = """
 Your task is to label an answer to a question as 'CORRECT' or 'WRONG'. You will be given the following data:
@@ -153,9 +158,26 @@ def evaluate_llm_judge(
         gold_answer=gold_answer,
         generated_answer=generated_answer,
     )
-    raw = call_fn(prompt)
-    label = json_repair.loads(raw)["label"]
-    return 1 if label == "CORRECT" else 0
+    for attempt in range(1, _MAX_JUDGE_ATTEMPTS + 1):
+        raw = call_fn(prompt)
+        try:
+            result = json_repair.loads(raw)
+            label = result.get("label") if isinstance(result, dict) else None
+        except Exception:
+            label = None
+        if label is not None:
+            return 1 if label == "CORRECT" else 0
+        if attempt < _MAX_JUDGE_ATTEMPTS:
+            logger.warning(
+                "LLM judge missing 'label' on attempt %d/%d, retrying",
+                attempt,
+                _MAX_JUDGE_ATTEMPTS,
+            )
+    logger.error(
+        "LLM judge failed to return a valid 'label' after %d attempts; defaulting to WRONG",
+        _MAX_JUDGE_ATTEMPTS,
+    )
+    return 0
 
 
 def main():
