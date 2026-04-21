@@ -95,6 +95,9 @@ def load_beam_questions(questions_path: str) -> dict[str, list[dict]]:
 def load_beam_chat_data(chat_path: str) -> list[dict]:
     """Load BEAM chat data from chat.json file.
 
+    Supports both 100K/500K/1M format (nested with plan-X keys)
+    and 10M format (flat batch structure).
+
     Args:
         chat_path: Path to chat.json file.
 
@@ -103,7 +106,28 @@ def load_beam_chat_data(chat_path: str) -> list[dict]:
     """
     print(f"Loading BEAM chat data from {chat_path}")
     with open(chat_path, "r", encoding="utf-8") as f:
-        chat_data = json.load(f)
+        raw_data = json.load(f)
+
+    # Detect format: 100K/500K/1M has nested "plan-X" keys
+    # 10M has flat batch structure
+    chat_data = []
+    if raw_data and isinstance(raw_data, list) and len(raw_data) > 0:
+        first_item = raw_data[0]
+        if isinstance(first_item, dict):
+            # Check if first item has "plan-X" key (100K/500K/1M format)
+            has_plan_key = any(key.startswith("plan-") for key in first_item.keys())
+            if has_plan_key:
+                # 100K/500K/1M format: flatten nested structure
+                print("Detected 100K/500K/1M format (nested plan-X keys)")
+                for item in raw_data:
+                    for plan_key, batches in item.items():
+                        if plan_key.startswith("plan-"):
+                            chat_data.extend(batches)
+            else:
+                # 10M format: use as-is
+                print("Detected 10M format (flat batch structure)")
+                chat_data = raw_data
+
     print(f"Loaded {len(chat_data)} batches from BEAM chat")
     return chat_data
 
