@@ -92,9 +92,8 @@ jobs:
           remove-stale-when-updated: true
 
           # --- Rate limiting ---
-          # Default 30 ops/run. Drip-processes the initial backlog over days
-          # rather than mass-closing. Raise to ~100 in a follow-up PR after
-          # steady-state behavior is confirmed.
+          # Cap processing at 100 ops/run to rate-limit backlog cleanup over
+          # multiple days rather than mass-closing everything in a single run.
           operations-per-run: 100
 
           # Process oldest-first so the backlog tail gets attention before new items.
