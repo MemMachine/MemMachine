@@ -41,7 +41,7 @@ def load_beam_chat_data(data_path: str) -> list[dict]:
         first_item = raw_data[0]
         if isinstance(first_item, dict):
             # Check if first item has "plan-X" key (100K/500K/1M format)
-            has_plan_key = any(key.startswith("plan-") for key in first_item.keys())
+            has_plan_key = any(key.startswith("plan-") for key in first_item)
             if has_plan_key:
                 # 100K/500K/1M format: flatten nested structure
                 print("Detected 100K/500K/1M format (nested plan-X keys)")
