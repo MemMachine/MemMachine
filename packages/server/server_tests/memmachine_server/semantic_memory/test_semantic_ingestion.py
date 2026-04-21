@@ -1164,9 +1164,9 @@ async def test_consolidation_skips_context_length_error(
     )
 
     async def raise_ctx_error(*args, **kwargs):
-        raise ExternalServiceAPIError("context window exceeded") from ContextLengthExceededError(
-            "input exceeds context window"
-        )
+        raise ExternalServiceAPIError(
+            "context window exceeded"
+        ) from ContextLengthExceededError("input exceeds context window")
 
     monkeypatch.setattr(
         "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
@@ -1175,6 +1175,178 @@ async def test_consolidation_skips_context_length_error(
 
     await ingestion_service._deduplicate_features(
         set_id="user-consolidate-ctx",
+        memories=memories,
+        semantic_category=semantic_category,
+        resources=resources,
+    )
+
+    assert await semantic_storage.get_feature(id1) is not None
+    assert await semantic_storage.get_feature(id2) is not None
+
+
+@pytest.mark.asyncio
+async def test_consolidation_retries_on_exception(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    semantic_prompt,
+    monkeypatch,
+):
+    """A non-context exception on the first call must not short-circuit the
+    loop — the helper retries once and proceeds with the successful response."""
+    id1 = await semantic_storage.add_feature(
+        set_id="user-retry-exc",
+        category_name=semantic_category.name,
+        feature="feat_a",
+        value="value a",
+        tag="exc_tag",
+        embedding=np.array([1.0, 0.0]),
+    )
+    await semantic_storage.add_feature(
+        set_id="user-retry-exc",
+        category_name=semantic_category.name,
+        feature="feat_b",
+        value="value b",
+        tag="exc_tag",
+        embedding=np.array([0.0, 1.0]),
+    )
+
+    valid_response = SemanticConsolidateMemoryRes(
+        consolidated_memories=[
+            LLMReducedFeature(tag="exc_tag", feature="combined", value="combined a+b")
+        ],
+        keep_memories=[id1],
+    )
+
+    async def flaky(*args, **kwargs):
+        if llm_mock.await_count == 1:
+            raise ValueError("structured-output validation failed")
+        return valid_response
+
+    llm_mock = AsyncMock(side_effect=flaky)
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    result = await ingestion_service._try_consolidate(
+        set_id="user-retry-exc",
+        features=[],
+        model=resources.language_model,
+        consolidation_prompt=semantic_prompt.consolidation_prompt,
+    )
+
+    assert llm_mock.await_count == 2
+    assert result is valid_response
+
+
+@pytest.mark.asyncio
+async def test_consolidation_exhausted_exceptions_respects_debug_fail_loudly(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    semantic_prompt,
+    monkeypatch,
+):
+    """When every attempt raises a non-context exception, _try_consolidate
+    re-raises under debug_fail_loudly only after the retry is exhausted."""
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            debug_fail_loudly=True,
+        )
+    )
+
+    async def always_raise(*args, **kwargs):
+        raise ValueError("structured-output validation failed")
+
+    llm_mock = AsyncMock(side_effect=always_raise)
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        llm_mock,
+    )
+
+    with pytest.raises(ValueError, match="structured-output validation failed"):
+        await ingestion_service._try_consolidate(
+            set_id="user-exc-loud",
+            features=[],
+            model=resources.language_model,
+            consolidation_prompt=semantic_prompt.consolidation_prompt,
+        )
+
+    # Retry must still happen before the loud re-raise.
+    assert llm_mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_deduplicate_features_context_length_does_not_raise_in_debug_mode(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    resources: Resources,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """Context-length errors during consolidation must be handled gracefully
+    even when debug_fail_loudly is True, matching the feature-update path."""
+
+    class ContextLengthExceededError(Exception):
+        code = "context_length_exceeded"
+
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=2,
+            debug_fail_loudly=True,
+        )
+    )
+
+    id1 = await semantic_storage.add_feature(
+        set_id="user-ctx-loud",
+        category_name=semantic_category.name,
+        feature="feat_p",
+        value="value p",
+        tag="ctx_tag",
+        embedding=np.array([1.0, 0.0]),
+    )
+    id2 = await semantic_storage.add_feature(
+        set_id="user-ctx-loud",
+        category_name=semantic_category.name,
+        feature="feat_q",
+        value="value q",
+        tag="ctx_tag",
+        embedding=np.array([0.0, 1.0]),
+    )
+
+    filter_str = (
+        f"set_id IN ('user-ctx-loud') AND category_name IN ('{semantic_category.name}')"
+    )
+    memories = await _collect(
+        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+    )
+
+    async def raise_ctx_error(*args, **kwargs):
+        raise ExternalServiceAPIError(
+            "context window exceeded"
+        ) from ContextLengthExceededError("input exceeds context window")
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_consolidate_features",
+        raise_ctx_error,
+    )
+
+    # Must not raise even though debug_fail_loudly=True.
+    await ingestion_service._deduplicate_features(
+        set_id="user-ctx-loud",
         memories=memories,
         semantic_category=semantic_category,
         resources=resources,

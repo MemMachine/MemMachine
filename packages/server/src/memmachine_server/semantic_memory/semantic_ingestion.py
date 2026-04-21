@@ -35,6 +35,15 @@ logger = logging.getLogger(__name__)
 _MAX_CONSOLIDATION_ATTEMPTS = 2
 
 
+class _ConsolidationContextLengthError(Exception):
+    """Signals that consolidation must be skipped due to a context-length error.
+
+    Caught inside the ingestion service to distinguish the graceful-skip path
+    from genuine consolidation failure, so that `debug_fail_loudly` does not
+    raise for scenarios the feature-update path already handles silently.
+    """
+
+
 def _is_context_length_exceeded_error(error: Exception) -> bool:
     seen: set[int] = set()
     current: BaseException | None = error
@@ -382,10 +391,15 @@ class IngestionService:
         model: LanguageModel,
         consolidation_prompt: str,
     ) -> SemanticConsolidateMemoryRes | None:
-        """Call llm_consolidate_features with retry on None (parse failure).
+        """Call llm_consolidate_features with retry on transient failures.
 
-        Returns None when all attempts fail or a non-retryable error occurs.
-        Raises only when self._debug_fail_loudly is True and a non-context error fires.
+        Retries on parse/validation exceptions and on ``None`` returns (which
+        indicate a structured-output parse failure upstream). A context-length
+        exception is raised as :class:`_ConsolidationContextLengthError` so
+        the caller can skip the group without tripping ``debug_fail_loudly``.
+        Returns ``None`` once retries are exhausted, raising instead when
+        ``self._debug_fail_loudly`` is True and the last failure was not a
+        context-length error.
         """
         for attempt in range(1, _MAX_CONSOLIDATION_ATTEMPTS + 1):
             try:
@@ -400,18 +414,33 @@ class IngestionService:
                         "Skipping consolidation for set %s due to non-retryable context length error",
                         set_id,
                     )
-                else:
-                    logger.exception("Failed to update features while calling LLM")
-                    if self._debug_fail_loudly:
-                        raise
+                    raise _ConsolidationContextLengthError from err
+                if attempt < _MAX_CONSOLIDATION_ATTEMPTS:
+                    logger.warning(
+                        "Consolidation raised %s on attempt %d/%d for set %s, retrying",
+                        type(err).__name__,
+                        attempt,
+                        _MAX_CONSOLIDATION_ATTEMPTS,
+                        set_id,
+                    )
+                    continue
+                logger.exception(
+                    "Failed to consolidate features while calling LLM for set %s on attempt %d/%d",
+                    set_id,
+                    attempt,
+                    _MAX_CONSOLIDATION_ATTEMPTS,
+                )
+                if self._debug_fail_loudly:
+                    raise
                 return None
             if result is not None:
                 return result
             if attempt < _MAX_CONSOLIDATION_ATTEMPTS:
                 logger.warning(
-                    "Consolidation returned None on attempt %d/%d, retrying",
+                    "Consolidation returned None on attempt %d/%d for set %s, retrying",
                     attempt,
                     _MAX_CONSOLIDATION_ATTEMPTS,
+                    set_id,
                 )
         return None
 
@@ -423,12 +452,15 @@ class IngestionService:
         semantic_category: InstanceOf[SemanticCategory],
         resources: InstanceOf[Resources],
     ) -> None:
-        consolidate_resp = await self._try_consolidate(
-            set_id=set_id,
-            features=list(memories),
-            model=resources.language_model,
-            consolidation_prompt=semantic_category.prompt.consolidation_prompt,
-        )
+        try:
+            consolidate_resp = await self._try_consolidate(
+                set_id=set_id,
+                features=list(memories),
+                model=resources.language_model,
+                consolidation_prompt=semantic_category.prompt.consolidation_prompt,
+            )
+        except _ConsolidationContextLengthError:
+            return
 
         if consolidate_resp is None or consolidate_resp.keep_memories is None:
             logger.warning(

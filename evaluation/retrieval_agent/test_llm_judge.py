@@ -24,9 +24,13 @@ def test_wrong_label_returns_0():
     assert evaluate_llm_judge("q", "gold", "gen", call_fn) == 0
 
 
-def test_unknown_label_returns_0():
-    call_fn = _call_fn_returning(json.dumps({"label": "MAYBE"}))
+def test_unknown_label_retries_then_returns_0():
+    call_fn = _call_fn_returning(
+        json.dumps({"label": "MAYBE"}),
+        json.dumps({"label": "MAYBE"}),
+    )
     assert evaluate_llm_judge("q", "gold", "gen", call_fn) == 0
+    assert call_fn.call_count == _MAX_JUDGE_ATTEMPTS
 
 
 def test_call_fn_called_once_on_success():
@@ -82,9 +86,35 @@ def test_non_dict_both_attempts_returns_0():
     [
         (json.dumps({"label": "CORRECT"}), 1),
         (json.dumps({"label": "WRONG"}), 0),
-        (json.dumps({"label": "anything else"}), 0),
     ],
 )
 def test_label_values(raw, expected):
     call_fn = _call_fn_returning(raw)
     assert evaluate_llm_judge("q", "gold", "gen", call_fn) == expected
+
+
+def test_non_string_label_retries():
+    """Non-string label (e.g. numeric) is invalid and triggers retry."""
+    call_fn = _call_fn_returning(
+        json.dumps({"label": 123}),
+        json.dumps({"label": "CORRECT"}),
+    )
+    assert evaluate_llm_judge("q", "gold", "gen", call_fn) == 1
+    assert call_fn.call_count == 2
+
+
+def test_dict_label_retries():
+    """Nested-dict label is invalid and triggers retry."""
+    call_fn = _call_fn_returning(
+        json.dumps({"label": {"nested": "x"}}),
+        json.dumps({"label": "WRONG"}),
+    )
+    assert evaluate_llm_judge("q", "gold", "gen", call_fn) == 0
+    assert call_fn.call_count == 2
+
+
+def test_label_with_whitespace_and_case_normalized():
+    """Labels are stripped and upper-cased before matching."""
+    call_fn = _call_fn_returning(json.dumps({"label": "  correct\n"}))
+    assert evaluate_llm_judge("q", "gold", "gen", call_fn) == 1
+    assert call_fn.call_count == 1

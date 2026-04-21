@@ -160,16 +160,21 @@ def evaluate_llm_judge(
     )
     for attempt in range(1, _MAX_JUDGE_ATTEMPTS + 1):
         raw = call_fn(prompt)
+        label: str | None = None
         try:
             result = json_repair.loads(raw)
-            label = result.get("label") if isinstance(result, dict) else None
+            raw_label = result.get("label") if isinstance(result, dict) else None
+            if isinstance(raw_label, str):
+                normalized = raw_label.strip().upper()
+                if normalized in {"CORRECT", "WRONG"}:
+                    label = normalized
         except Exception:
             label = None
         if label is not None:
             return 1 if label == "CORRECT" else 0
         if attempt < _MAX_JUDGE_ATTEMPTS:
             logger.warning(
-                "LLM judge missing 'label' on attempt %d/%d, retrying",
+                "LLM judge missing or invalid 'label' on attempt %d/%d, retrying",
                 attempt,
                 _MAX_JUDGE_ATTEMPTS,
             )
