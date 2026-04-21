@@ -101,4 +101,4 @@ jobs:
           ascending: true
 
           # Wire the workflow_dispatch input through for deliberate dry-runs.
-          debug-only: ${{ github.event.inputs.debug-only || 'false' }}
+          debug-only: ${{ inputs['debug-only'] }}
