@@ -25,9 +25,10 @@ python beam_download.py --size 1M --output ./beam_data
 
 # Download multiple sizes at once
 python beam_download.py --size 100K 500K 1M --output ./beam_data
-```
 
-**Note**: 10M dataset is not supported in this script.
+# Download 10M dataset 
+python beam_download.py --size 10M --output ./beam_data
+```
 
 ## Usage
 
