@@ -820,6 +820,25 @@ async def test_generate_response_runtime_exception_mapping(
 
 
 @pytest.mark.asyncio
+async def test_generate_response_preserves_original_error_message(
+    mock_async_openai,
+    minimal_config,
+):
+    # Regression for #1309: the wrapped ExternalServiceAPIError must carry the
+    # original LLM error text so _is_exceed_context_window_error can key off it.
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = openai.BadRequestError(
+        "This model's maximum context length is 202752 tokens...",
+        response=MagicMock(),
+        body=None,
+    )
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    with pytest.raises(ExternalServiceAPIError, match="context length"):
+        await lm.generate_response()
+
+
+@pytest.mark.asyncio
 async def test_metrics_collection(mock_async_openai, full_config):
     """Test that metrics are collected on a successful call."""
     mock_usage = MagicMock()
