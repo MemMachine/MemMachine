@@ -104,11 +104,13 @@ def get_dataset_name(size: str) -> str:
     """Get the Hugging Face dataset name for a given size.
 
     Args:
-        size: Dataset size (e.g., "100K", "500K", "1M").
+        size: Dataset size (e.g., "100K", "500K", "1M", "10M").
 
     Returns:
         Hugging Face dataset name.
     """
+    if size == "10M":
+        return "Mohammadta/BEAM-10M"
     return "Mohammadta/BEAM"
 
 
@@ -213,8 +215,8 @@ def main():
         "--size",
         nargs="+",
         required=True,
-        choices=["100K", "500K", "1M"],
-        help="Dataset size(s) to download (e.g., 100K, 500K, 1M)",
+        choices=["100K", "500K", "1M", "10M"],
+        help="Dataset size(s) to download (e.g., 100K, 500K, 1M, 10M)",
     )
     parser.add_argument(
         "--output",
