@@ -448,3 +448,83 @@ async def test_metrics_collection(mock_async_openai, full_config):
     total_counter.increment.assert_any_call(value=150)
 
     latency_histogram.observe.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_response_strips_leading_think_block(
+    mock_async_openai,
+    minimal_config,
+):
+    """generate_response strips a leading <think>...</think> block from output_text."""
+    mock_response = MagicMock()
+    mock_response.output_text = "<think>internal reasoning</think>Hello, world!"
+    mock_response.output = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.responses.create.return_value = mock_response
+
+    lm = OpenAIResponsesLanguageModel(minimal_config)
+    content, _ = await lm.generate_response(
+        system_prompt="sys",
+        user_prompt="usr",
+    )
+
+    assert content == "Hello, world!"
+
+
+@pytest.mark.asyncio
+async def test_generate_response_strips_multiline_think_block(
+    mock_async_openai,
+    minimal_config,
+):
+    """generate_response strips a multi-line <think>...</think> block from output_text."""
+    mock_response = MagicMock()
+    mock_response.output_text = '<think>\nline one\nline two\n</think>\n{"answer": 42}'
+    mock_response.output = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.responses.create.return_value = mock_response
+
+    lm = OpenAIResponsesLanguageModel(minimal_config)
+    content, _ = await lm.generate_response(
+        system_prompt="sys",
+        user_prompt="usr",
+    )
+
+    assert content == '{"answer": 42}'
+
+
+@pytest.mark.asyncio
+async def test_generate_parsed_response_fallback_strips_think_and_parses(
+    mock_async_openai,
+    minimal_config,
+):
+    """generate_parsed_response falls back to stripping think blocks and parsing
+    output_text when output_parsed is None."""
+    from pydantic import BaseModel as PydanticBaseModel
+
+    class MyModel(PydanticBaseModel):
+        value: int
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.output_text = '<think>reasoning here</think>{"value": 7}'
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    # generate_parsed_response uses responses.parse, not responses.create
+    mock_client.with_options.return_value.responses.parse = AsyncMock(
+        return_value=mock_response
+    )
+
+    lm = OpenAIResponsesLanguageModel(minimal_config)
+    result = await lm.generate_parsed_response(
+        output_format=MyModel,
+        system_prompt="sys",
+        user_prompt="usr",
+    )
+
+    assert result is not None
+    assert result.value == 7

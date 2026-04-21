@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from itertools import chain
 
 import numpy as np
-from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
+from pydantic import BaseModel, Field, InstanceOf, TypeAdapter, ValidationError
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
@@ -212,6 +212,21 @@ class IngestionService:
                             message.uid,
                             semantic_category.name,
                         )
+                        if message.uid not in mark_messages:
+                            mark_messages.append(message.uid)
+                        continue
+
+                    if isinstance(err, ValidationError):
+                        logger.warning(
+                            "Skipping message %s for semantic type %s due to "
+                            "non-retryable parse error (%s): %s",
+                            message.uid,
+                            semantic_category.name,
+                            type(err).__name__,
+                            err,
+                        )
+                        if self._debug_fail_loudly:
+                            raise
                         if message.uid not in mark_messages:
                             mark_messages.append(message.uid)
                         continue
