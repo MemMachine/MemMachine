@@ -1,0 +1,104 @@
+# Warn-then-close idle issues and PRs via actions/stale.
+#
+# Documentation: https://github.com/actions/stale
+#
+# Policy:
+#   * Issues: 60d idle -> Stale label + warn comment; +14d grace -> close  (~74d total).
+#   * PRs:    45d idle -> Stale label + warn comment; +14d grace -> close  (~59d total).
+#   * Any comment or edit resets the idle clock (remove-stale-when-updated).
+#   * The `keep-open` label pauses the stale timer indefinitely. Apply it to
+#     low-priority-but-valid items (e.g., roadmap features waiting for a champion).
+#   * Milestoned items and draft PRs are exempt (active planning / author-WIP).
+#   * Exempt labels also include existing priority/security/help-wanted markers
+#     so anything maintainers have intentionally flagged stays open.
+#
+# Injection-safety note:
+#   This workflow has no `run:` steps and the only template expression is a
+#   typed boolean from workflow_dispatch (`inputs.debug-only`). There is no
+#   untrusted user content in any command context.
+#
+
+name: Close stale issues and PRs
+
+on:
+  schedule:
+    # Daily at 01:30 UTC — low-traffic window.
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+    inputs:
+      debug-only:
+        description: 'Run as a dry-run (no labels, comments, or closes)'
+        type: boolean
+        default: false
+
+permissions:
+  issues: write
+  pull-requests: write
+  actions: write  # required for the state cache cursor the action writes
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v10
+        with:
+          # --- Timing ---
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          days-before-pr-stale: 45
+          days-before-pr-close: 14
+
+          # --- Labels ---
+          stale-issue-label: 'Stale'
+          stale-pr-label: 'Stale'
+          # `keep-open` must be created in the repo before the first real run:
+          #   gh label create keep-open --color 0e8a16 \
+          #     --description "Exempt from stale-bot auto-close"
+          # The others already exist in this repo.
+          exempt-issue-labels: 'keep-open,priority: high,priority: blocker,security,good first issue,help wanted'
+          exempt-pr-labels: 'keep-open,security,safe-to-test'
+
+          # --- Exempt active work ---
+          exempt-all-milestones: true
+          exempt-draft-pr: true
+          # Intentionally false for v1: many legacy issues have absent
+          # assignees. Revisit after ~1 month of data; consider switching to
+          # an explicit `exempt-assignees` list of core maintainer handles.
+          exempt-all-assignees: false
+
+          # --- Messaging ---
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has not had
+            recent activity. It will be closed in 14 days if no further activity
+            occurs. If this issue is still relevant, please comment to keep it open,
+            or add the `keep-open` label if it should remain open indefinitely
+            (e.g., a roadmap item awaiting a champion). Thank you for your
+            contributions.
+          close-issue-message: >
+            This issue was automatically closed due to inactivity. If it is still
+            relevant, please reopen it or file a new issue referencing this one.
+          stale-pr-message: >
+            This pull request has been automatically marked as stale because it has
+            not had recent activity. It will be closed in 14 days if no further
+            activity occurs. If you are still working on this, please push a commit
+            or leave a comment. Reviewers: please respond, or add the `keep-open`
+            label if this PR should be held open for a longer review cycle.
+          close-pr-message: >
+            This pull request was automatically closed due to inactivity. Feel free
+            to reopen it if you'd like to continue the work.
+          close-issue-reason: 'not_planned'
+
+          # --- Activity resets the clock ---
+          remove-stale-when-updated: true
+
+          # --- Rate limiting ---
+          # Default 30 ops/run. Drip-processes the initial backlog over days
+          # rather than mass-closing. Raise to ~100 in a follow-up PR after
+          # steady-state behavior is confirmed.
+          operations-per-run: 100
+
+          # Process oldest-first so the backlog tail gets attention before new items.
+          ascending: true
+
+          # Wire the workflow_dispatch input through for deliberate dry-runs.
+          debug-only: ${{ github.event.inputs.debug-only || 'false' }}
