@@ -15,14 +15,61 @@ from tqdm import tqdm
 
 
 def convert_chats_to_json(data: list) -> list:
-    """Convert BEAM chat data from pickle format to JSON.
+    """Convert BEAM chat data from pickle/HuggingFace format to JSON.
+
+    Supports two formats:
+    - 100K/500K/1M: List of message dicts with question_type, content, etc.
+    - 10M: List of plan dicts with plan-X keys containing batch lists.
 
     Args:
-        data: List of chat batches in pickle format.
+        data: List of chat batches in pickle or HuggingFace format.
 
     Returns:
         List of chat batches in JSON format.
     """
+    if not data or not isinstance(data, list):
+        return []
+
+    # Detect format: 10M has plan-X dict structure
+    first_item = data[0]
+    is_10m_format = isinstance(first_item, dict) and any(
+        key.startswith("plan-") for key in first_item
+    )
+
+    if is_10m_format:
+        return _convert_10m_chats_to_json(data)
+    return _convert_standard_chats_to_json(data)
+
+
+def _convert_10m_chats_to_json(data: list) -> list:
+    """Convert 10M format chat data to JSON."""
+    json_object = []
+    batch_map = {}  # batch_number -> turns list
+
+    for plan_dict in data:
+        for batches in plan_dict.values():
+            if batches is None:
+                continue
+            if not isinstance(batches, list):
+                continue
+
+            for batch in batches:
+                batch_num = batch.get("batch_number", 0)
+                turns = batch.get("turns", [])
+
+                if batch_num not in batch_map:
+                    batch_map[batch_num] = []
+                batch_map[batch_num].extend(turns)
+
+    # Convert to ordered list by batch_number
+    for batch_num in sorted(batch_map.keys()):
+        json_object.append({"batch_number": batch_num, "turns": batch_map[batch_num]})
+
+    return json_object
+
+
+def _convert_standard_chats_to_json(data: list) -> list:
+    """Convert 100K/500K/1M format chat data to JSON."""
     json_object = []
 
     for index, batch in enumerate(data):
