@@ -155,6 +155,12 @@ async def test_add_segments_with_message_context(
     result = await partition.get_segment_contexts([seg.uuid])
     assert result[seg.uuid][0].context == ctx
 
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
+        ).scalar_one()
+    assert row.context == {"type": "message", "source": "User"}
+
 
 @pytest.mark.asyncio
 async def test_add_segments_with_citation_context(
@@ -386,7 +392,7 @@ async def test_contexts_property_filter(
 async def test_contexts_filter_by_context_source(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Filter using ``context.source`` resolves via the type-tagged JSON path."""
+    """Filter using ``context.source`` is not supported."""
     ep = uuid4()
     s0 = _seg(
         event_uuid=ep,
@@ -409,22 +415,20 @@ async def test_contexts_filter_by_context_source(
     await partition.add_segments(_links(s0, s1, s2))
 
     filt = Comparison(field="context.source", op="=", value="Alice")
-    result = await partition.get_segment_contexts(
-        [s0.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
-        property_filter=filt,
-    )
-    ctx = result[s0.uuid]
-    # s1 excluded (source=Bob); s0 seed, s2 forward.
-    assert [s.uuid for s in ctx] == [s0.uuid, s2.uuid]
+    with pytest.raises(ValueError, match="Unknown filter field"):
+        await partition.get_segment_contexts(
+            [s0.uuid],
+            max_backward_segments=5,
+            max_forward_segments=5,
+            property_filter=filt,
+        )
 
 
 @pytest.mark.asyncio
 async def test_contexts_filter_by_context_type(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Filter using ``context.type`` discriminates between Context subtypes."""
+    """Filter using ``context.type`` is not supported."""
     ep = uuid4()
     s0 = _seg(
         event_uuid=ep,
@@ -447,15 +451,13 @@ async def test_contexts_filter_by_context_type(
     await partition.add_segments(_links(s0, s1, s2))
 
     filt = Comparison(field="context.type", op="=", value="message")
-    result = await partition.get_segment_contexts(
-        [s0.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
-        property_filter=filt,
-    )
-    ctx = result[s0.uuid]
-    # s1 excluded (type=citation); s0 seed, s2 forward.
-    assert [s.uuid for s in ctx] == [s0.uuid, s2.uuid]
+    with pytest.raises(ValueError, match="Unknown filter field"):
+        await partition.get_segment_contexts(
+            [s0.uuid],
+            max_backward_segments=5,
+            max_forward_segments=5,
+            property_filter=filt,
+        )
 
 
 @pytest.mark.asyncio
