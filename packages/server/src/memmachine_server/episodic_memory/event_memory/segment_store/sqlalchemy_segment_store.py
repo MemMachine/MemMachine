@@ -22,6 +22,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Uuid,
     delete,
@@ -82,7 +83,7 @@ logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
 
-_ContextAdapter = TypeAdapter(Context | None)
+_ContextAdapter = TypeAdapter(Context)
 _BlockAdapter = TypeAdapter(Block)
 
 
@@ -118,12 +119,8 @@ class SegmentRow(BaseSegmentStore):
     timestamp_timezone_offset: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    context: MappedColumn[dict[str, JsonValue] | None] = mapped_column(
-        _JSON_AUTO, nullable=True
-    )
-    block: MappedColumn[dict[str, JsonValue]] = mapped_column(
-        _JSON_AUTO, nullable=False
-    )
+    context: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
+    block: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
     properties: MappedColumn[dict[str, JsonValue]] = mapped_column(
         _JSON_AUTO, nullable=False, default=dict
     )
@@ -232,12 +229,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 "offset": segment.offset,
                 "timestamp": ensure_tz_aware(segment.timestamp),
                 "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
-                "context": (
-                    segment.context.model_dump(mode="json")
-                    if segment.context is not None
-                    else None
-                ),
-                "block": segment.block.model_dump(mode="json"),
+                "context": segment.context.model_dump_json().encode("utf-8"),
+                "block": segment.block.model_dump_json().encode("utf-8"),
                 "properties": encode_properties(segment.properties),
             }
             for segment in segments
@@ -657,16 +650,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         raise ValueError(f"Unknown filter field: {field!r}")
 
     @staticmethod
-    def _segment_from_segment_row(
-        row: SegmentRow,
-    ) -> Segment:
+    def _segment_from_segment_row(row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""
-        context = (
-            _ContextAdapter.validate_python(row.context)
-            if row.context is not None
-            else None
-        )
-        block = _BlockAdapter.validate_python(row.block)
+        context = _ContextAdapter.validate_json(row.context)
+        block = _BlockAdapter.validate_json(row.block)
         properties = decode_properties(row.properties)
         original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
         timestamp = ensure_tz_aware(row.timestamp).astimezone(original_timezone)

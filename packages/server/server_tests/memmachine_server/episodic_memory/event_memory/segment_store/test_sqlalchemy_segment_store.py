@@ -1,7 +1,5 @@
 """Tests for SQLAlchemySegmentStore — SQLite (unit) and PostgreSQL (integration)."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -16,6 +14,7 @@ from memmachine_server.common.filter.filter_parser import Comparison
 from memmachine_server.episodic_memory.event_memory.data_types import (
     CitationContext,
     MessageContext,
+    NullContext,
     Segment,
     Text,
 )
@@ -32,6 +31,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
 
 PARTITION_KEY = "test_partition"
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
+_NULL_CONTEXT = NullContext()
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ def _seg(
     offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
-    context: MessageContext | CitationContext | None = None,
+    context: MessageContext | CitationContext | NullContext = _NULL_CONTEXT,
     properties: dict | None = None,
 ) -> Segment:
     return Segment(
@@ -159,7 +159,8 @@ async def test_add_segments_with_message_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert row.context == {"type": "message", "source": "User"}
+    assert row.context == b'{"type":"message","source":"User"}'
+    assert row.block == b'{"type":"text","text":"hello"}'
 
 
 @pytest.mark.asyncio
@@ -181,8 +182,14 @@ async def test_add_segments_with_no_context(
     seg = _seg()
     await partition.add_segments(_links(seg))
 
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
+        ).scalar_one()
+    assert row.context == b'{"type":"null"}'
+
     result = await partition.get_segment_contexts([seg.uuid])
-    assert result[seg.uuid][0].context is None
+    assert result[seg.uuid][0].context == NullContext()
 
 
 @pytest.mark.asyncio
@@ -925,6 +932,14 @@ async def test_pg_mixed_context_types(
     all_segs = [s_msg, s_cite, s_none]
     await partition.add_segments(_links(*all_segs))
 
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(
+                select(SegmentRow).where(SegmentRow.uuid == s_none.uuid)
+            )
+        ).scalar_one()
+    assert row.context == b'{"type":"null"}'
+
     result = await partition.get_segment_contexts([s_msg.uuid])
     assert result[s_msg.uuid][0].context == ctx_msg
 
@@ -932,4 +947,4 @@ async def test_pg_mixed_context_types(
     assert result[s_cite.uuid][0].context == ctx_cite
 
     result = await partition.get_segment_contexts([s_none.uuid])
-    assert result[s_none.uuid][0].context is None
+    assert result[s_none.uuid][0].context == NullContext()
