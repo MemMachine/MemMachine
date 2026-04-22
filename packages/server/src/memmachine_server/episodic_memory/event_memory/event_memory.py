@@ -36,12 +36,10 @@ from memmachine_server.common.vector_store.data_types import (
 )
 
 from .data_types import (
-    INDEXED_CONTEXT_PROPERTIES_SCHEMA,
     Block,
     CitationContext,
     Content,
     Context,
-    ContextUnion,
     DateTimeStyle,
     Derivative,
     Event,
@@ -153,42 +151,18 @@ class EventMemory:
         {_SEGMENT_UUID_FIELD_NAME, _TIMESTAMP_FIELD_NAME}
     )
 
-    # Prefix applied to Context field names in the vector store. Reserved.
-    _CONTEXT_VECTOR_RECORD_FIELD_PREFIX: ClassVar[str] = "_context_"
-
-    @classmethod
-    def _context_vector_record_property_name(cls, field_name: str) -> str:
-        """Return the vector record property name for a Context field name."""
-        return f"{cls._CONTEXT_VECTOR_RECORD_FIELD_PREFIX}{field_name}"
-
-    @classmethod
-    def _required_fields_for_context_type(
-        cls,
-        context_type: type[ContextUnion],
-    ) -> frozenset[str]:
-        """Return the storage fields required by a concrete Context type."""
-        field_names = set(context_type.model_fields)
-        return frozenset(
-            cls._context_vector_record_property_name(name)
-            for name in INDEXED_CONTEXT_PROPERTIES_SCHEMA
-            if name in field_names
-        )
-
     @classmethod
     def expected_vector_store_collection_schema(cls) -> dict[str, type[PropertyValue]]:
         """
         Return the vector store collection schema expected by EventMemory.
 
         Callers should merge this with any user or external system-defined properties
-        when creating the collection so that EventMemory's reserved fields are filterable.
+        when creating the collection so that EventMemory's reserved fields are efficiently filterable.
         """
-        schema: dict[str, type[PropertyValue]] = {
+        return {
             cls._SEGMENT_UUID_FIELD_NAME: cast(type[PropertyValue], str),
             cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
         }
-        for name, storage_type in INDEXED_CONTEXT_PROPERTIES_SCHEMA.items():
-            schema[cls._context_vector_record_property_name(name)] = storage_type
-        return schema
 
     def __init__(self, params: EventMemoryParams) -> None:
         """
@@ -212,18 +186,6 @@ class EventMemory:
             raise ValueError(
                 f"Collection schema missing fields required by EventMemory: "
                 f"{', '.join(sorted(missing_base_fields))}"
-            )
-        missing_context_fields = (
-            frozenset(EventMemory.expected_vector_store_collection_schema())
-            - self._schema_fields
-            - EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES
-        )
-        if missing_context_fields:
-            logger.warning(
-                "EventMemory collection schema is missing context fields: "
-                "%s. Ingesting events with the corresponding Context "
-                "subtypes will fail until the schema is updated.",
-                ", ".join(sorted(missing_context_fields)),
             )
 
         self._embedder = params.embedder
@@ -280,16 +242,14 @@ class EventMemory:
     @classmethod
     def _is_reserved_field(cls, field: str) -> bool:
         """Returns whether a property field is reserved."""
-        return field in cls._BASE_EVENT_MEMORY_FIELD_NAMES or field.startswith(
-            cls._CONTEXT_VECTOR_RECORD_FIELD_PREFIX
-        )
+        return field in cls._BASE_EVENT_MEMORY_FIELD_NAMES
 
     def _validate_events(self, events: Iterable[Event]) -> None:
         """
         Validate a batch of events before encoding.
 
         Raises ValueError if any event supplies a reserved field name in its properties,
-        or if the collection schema is missing fields required by any event's Context type.
+        or if the collection schema is missing fields required by EventMemory.
         """
         events = list(events)
 
@@ -305,14 +265,9 @@ class EventMemory:
                 f"{', '.join(sorted(reserved_fields))}"
             )
 
-        required_fields: set[str] = set(EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES)
-        for event in events:
-            match event.body:
-                case Content(context=context) if context is not None:
-                    required_fields.update(
-                        EventMemory._required_fields_for_context_type(type(context))
-                    )
-        missing_fields = required_fields - self._schema_fields
+        missing_fields = (
+            EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
+        )
         if missing_fields:
             raise ValueError(
                 f"Events require properties missing from the collection schema: "
@@ -464,10 +419,6 @@ class EventMemory:
         # System-defined metadata (underscore-prefixed).
         properties[cls._SEGMENT_UUID_FIELD_NAME] = str(derivative.segment_uuid)
         properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
-
-        if derivative.context is not None:
-            for name, value in derivative.context.model_dump(exclude_none=True).items():
-                properties[cls._context_vector_record_property_name(name)] = value
 
         # User-defined properties.
         properties.update(derivative.properties)
@@ -739,17 +690,12 @@ class EventMemory:
         """
         Translates canonical filter field name to vector record property.
 
-        Event memory base properties (`foo`) translate to `_foo`..
-        Context properties (`context.foo`) translate to `_context_foo`.
+        Event memory base properties (`foo`) translate to `_foo`.
         User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
         """
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
-        context_prefix = "context."
-        if field.startswith(context_prefix):
-            subfield = field.removeprefix(context_prefix)
-            return cls._context_vector_record_property_name(subfield)
         return f"_{field}"
 
     async def query(

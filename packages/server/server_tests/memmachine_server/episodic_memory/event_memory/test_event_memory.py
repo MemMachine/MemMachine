@@ -78,6 +78,19 @@ def _ts(minutes: int) -> datetime.datetime:
 
 
 # ===================================================================
+# schema
+# ===================================================================
+
+
+class TestSchema:
+    def test_expected_vector_store_collection_schema_only_has_base_fields(self):
+        assert EventMemory.expected_vector_store_collection_schema() == {
+            "_segment_uuid": str,
+            "_timestamp": datetime.datetime,
+        }
+
+
+# ===================================================================
 # encode_events
 # ===================================================================
 
@@ -137,8 +150,8 @@ class TestEncodeEvents:
 
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
-        assert props["_context_type"] == "message"
-        assert props["_context_source"] == "Alice"
+        assert "_context_type" not in props
+        assert "_context_source" not in props
 
     async def test_citation_context(
         self,
@@ -150,8 +163,8 @@ class TestEncodeEvents:
 
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
-        assert props["_context_type"] == "citation"
-        assert props["_context_source"] == "paper.pdf"
+        assert "_context_type" not in props
+        assert "_context_source" not in props
 
     async def test_no_context(
         self,
@@ -239,7 +252,9 @@ class TestEncodeEvents:
         record = next(iter(fake_vector_store_collection.records.values()))
         assert _record_properties(record)["color"] == "red"
 
-    async def test_missing_schema_fields_raises(self, fake_embedder):
+    async def test_missing_context_schema_fields_still_allows_ingest(
+        self, fake_embedder
+    ):
         # Collection without context fields.
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
@@ -259,8 +274,13 @@ class TestEncodeEvents:
             )
         )
         event = _make_event("hi", context=MessageContext(source="Alice"))
-        with pytest.raises(ValueError, match="missing from the collection schema"):
-            await em.encode_events([event])
+        await em.encode_events([event])
+
+        assert len(collection.records) == 1
+        record = next(iter(collection.records.values()))
+        props = _record_properties(record)
+        assert "_context_type" not in props
+        assert "_context_source" not in props
 
     async def test_init_raises_on_missing_base_field(self, fake_embedder):
         # Collection without _timestamp — base field required at init.
@@ -917,6 +937,21 @@ class TestQueryWithFilter:
         result = await event_memory.query(
             "thing",
             property_filter=Comparison(field="m.color", op="=", value="purple"),
+        )
+        assert result.scored_segment_contexts == []
+
+    async def test_context_filter_returns_no_results(self, event_memory: EventMemory):
+        """Context fields are no longer filterable."""
+        event = _make_event("hi", context=MessageContext(source="Alice"))
+        await event_memory.encode_events([event])
+
+        result = await event_memory.query(
+            "hi",
+            property_filter=Comparison(
+                field="context.source",
+                op="=",
+                value="Alice",
+            ),
         )
         assert result.scored_segment_contexts == []
 
