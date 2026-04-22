@@ -586,7 +586,7 @@ class EventMemory:
         self,
         event: Event,
         items: Iterable[Block],
-        context: Context | None,
+        context: Context,
     ) -> list[Segment]:
         """Split content items into single-block segments, propagating context."""
         segments: list[Segment] = []
@@ -661,7 +661,7 @@ class EventMemory:
         ]
 
     @staticmethod
-    def _format_with_context(text: str, context: Context | None) -> str:
+    def _format_with_context(text: str, context: Context) -> str:
         """Format text within its context."""
         match context:
             case MessageContext(source=source):
@@ -674,7 +674,7 @@ class EventMemory:
     def _extract_derivative_texts(
         self,
         *,
-        context: Context | None,
+        context: Context,
         text: str,
     ) -> list[str]:
         """Derive formatted text strings from a text block."""

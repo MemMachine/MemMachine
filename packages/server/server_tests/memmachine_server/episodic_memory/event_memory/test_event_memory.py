@@ -26,6 +26,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
     FileRef,
     MessageContext,
+    NullContext,
     QueryResult,
     ReadFile,
     ScoredSegmentContext,
@@ -49,6 +50,7 @@ _async = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 _T0 = datetime.datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
+_NULL_CONTEXT = NullContext()
 
 
 def _record_properties(record: Record) -> dict[str, PropertyValue]:
@@ -61,7 +63,7 @@ def _make_event(
     text: str,
     *,
     timestamp: datetime.datetime = _T0,
-    context=None,
+    context: MessageContext | CitationContext | NullContext = _NULL_CONTEXT,
     properties=None,
 ) -> Event:
     return Event(
@@ -477,7 +479,7 @@ def _make_segment(
     offset: int = 0,
     timestamp: datetime.datetime = _T0,
     text: str = "text",
-    context=None,
+    context: MessageContext | CitationContext | NullContext = _NULL_CONTEXT,
 ) -> Segment:
     return Segment(
         uuid=uuid4(),

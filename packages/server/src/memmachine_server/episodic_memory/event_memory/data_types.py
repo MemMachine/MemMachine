@@ -79,7 +79,13 @@ class CitationContext(BaseModel):
     location: str | None = None
 
 
-ContextUnion = MessageContext | CitationContext
+class NullContext(BaseModel):
+    """No context is attached."""
+
+    type: Literal["null"] = "null"
+
+
+ContextUnion = MessageContext | CitationContext | NullContext
 
 Context = Annotated[
     ContextUnion,
@@ -91,10 +97,10 @@ Context = Annotated[
 
 
 class Content(BaseModel):
-    """A list of item blocks with optional context."""
+    """A list of item blocks with context."""
 
     type: Literal["content"] = "content"
-    context: Context | None = None
+    context: Context = Field(default_factory=NullContext)
     items: list[Block]
 
 
@@ -152,7 +158,7 @@ class Segment(BaseModel):
     index: int
     offset: int
     timestamp: datetime
-    context: Context | None = None
+    context: Context = Field(default_factory=NullContext)
     block: Block
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
@@ -184,7 +190,7 @@ class Derivative(BaseModel):
     uuid: UUID
     segment_uuid: UUID
     timestamp: datetime
-    context: Context | None = None
+    context: Context = Field(default_factory=NullContext)
     text: str
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
