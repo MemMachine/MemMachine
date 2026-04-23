@@ -367,6 +367,7 @@ class Memory:
         filter_dict: dict[str, str] | None = None,
         timeout: int | None = None,
         *,
+        filter: str | None = None,
         set_metadata: dict[str, JsonValue] | None = None,
         agent_mode: bool = False,
     ) -> SearchResult:
@@ -389,6 +390,8 @@ class Memory:
                         User-provided filters take precedence over built-in filters
                         if there are key conflicts.
             timeout: Request timeout in seconds (uses client default if not provided)
+            filter: Optional raw filter string. If provided together with built-in or
+                    `filter_dict` filters, all filters are combined with AND.
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
@@ -412,11 +415,13 @@ class Memory:
         if filter_dict:
             merged_filters.update(filter_dict)
 
-        # Use v2 API: convert to v2 format
-        # Convert merged filter_dict to string format: key='value' AND key='value'
-        filter_str = ""
-        if merged_filters:
-            filter_str = self._dict_to_filter_string(merged_filters)
+        dict_filter_str = self._dict_to_filter_string(merged_filters) if merged_filters else ""
+        explicit_filter = filter.strip() if filter else ""
+
+        if dict_filter_str and explicit_filter:
+            filter_str = f"{dict_filter_str} AND ({explicit_filter})"
+        else:
+            filter_str = dict_filter_str or explicit_filter
 
         # Use shared API Pydantic models
         spec = SearchMemoriesSpec(
@@ -457,6 +462,7 @@ class Memory:
         page_size: int = 100,
         page_num: int = 0,
         filter_dict: dict[str, str] | None = None,
+        filter: str | None = None,
         set_metadata: dict[str, JsonValue] | None = None,
         timeout: int | None = None,
     ) -> ListResult:
@@ -470,6 +476,8 @@ class Memory:
             page_size: Page size (server default is 100)
             page_num: Page number (0-based)
             filter_dict: Optional extra filters; merged with built-in context filters
+            filter: Optional raw filter string. If provided together with built-in or
+                    `filter_dict` filters, all filters are combined with AND.
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
             timeout: Request timeout override
 
@@ -485,9 +493,13 @@ class Memory:
         if filter_dict:
             merged_filters.update(filter_dict)
 
-        filter_str = (
-            self._dict_to_filter_string(merged_filters) if merged_filters else ""
-        )
+        dict_filter_str = self._dict_to_filter_string(merged_filters) if merged_filters else ""
+        explicit_filter = filter.strip() if filter else ""
+
+        if dict_filter_str and explicit_filter:
+            filter_str = f"{dict_filter_str} AND ({explicit_filter})"
+        else:
+            filter_str = dict_filter_str or explicit_filter
 
         spec = ListMemoriesSpec(
             org_id=self.__org_id,
