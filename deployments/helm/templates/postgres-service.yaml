@@ -1,4 +1,4 @@
-{{- if .Values.postgres.enabled }}
+{{- if and .Values.postgres.enabled (ne .Values.episodicBackend "age") }}
 # postgres-service.yaml
 # ClusterIP Service for internal access to PostgreSQL on port 5432.
 # DNS inside the cluster: memmachine-postgres.<namespace>.svc.cluster.local

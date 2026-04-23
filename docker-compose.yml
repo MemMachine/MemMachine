@@ -56,6 +56,48 @@ services:
     networks:
       - memmachine-network
 
+  # Apache AGE: PostgreSQL + openCypher + pgvector in a single container.
+  #
+  # Opt-in via the ``age`` profile. Intended for the "run postgres-age
+  # alongside a locally-installed memmachine-server" workflow (Option 2 in
+  # DOCKER_COMPOSE_README). For a full in-compose AGE stack where
+  # MemMachine itself runs against AGE rather than Neo4j, use the separate
+  # ``docker-compose.age.yml`` file instead — it's self-contained and
+  # mirrors the helm chart's ``episodicBackend=age`` single-Postgres
+  # behavior.
+  #
+  # The profile deliberately does not pull in ``memmachine`` so that the
+  # default ``docker compose up`` flow continues to work unchanged for
+  # Neo4j users.
+  postgres-age:
+    # apache/age only ships the AGE extension, so we layer pgvector on top
+    # via a local Dockerfile. ``docker compose --profile age build`` produces
+    # the image; operators who prefer a pre-built image can override
+    # ``AGE_IMAGE`` and skip the build.
+    image: ${AGE_IMAGE:-memmachine/postgres-age:pg16-1.6.0}
+    build:
+      context: ./deployments/docker/postgres-age
+    container_name: memmachine-postgres-age
+    restart: unless-stopped
+    profiles:
+      - age
+    ports:
+      - "${AGE_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${AGE_DB:-memmachine}
+      POSTGRES_USER: ${AGE_USER:-memmachine}
+      POSTGRES_PASSWORD: ${AGE_PASSWORD:-memmachine_password}
+    volumes:
+      - postgres_age_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AGE_USER:-memmachine} -d ${AGE_DB:-memmachine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - memmachine-network
+
   # MemMachine application
   memmachine:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
@@ -118,6 +160,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  postgres_age_data:
     driver: local
   neo4j_data:
     driver: local

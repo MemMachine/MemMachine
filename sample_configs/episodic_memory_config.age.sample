@@ -1,0 +1,121 @@
+logging:
+  path: mem-machine.log
+  level: info #| debug | error
+
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    embedder: openai_embedder
+    reranker: my_reranker_id
+    vector_graph_store: my_storage_id  # Using Apache AGE
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+retrieval_agent:
+  llm_model: openai_model
+  reranker: my_reranker_id
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage        # pgvector on the same (or another) Postgres
+  config_database: profile_storage
+
+session_manager:
+  database: profile_storage
+
+prompt:
+  default_project_categories:
+  - profile_prompt
+
+resources:
+  databases:
+    # Pair the AGE backend below with the standard pgvector semantic backend
+    # here to run the complete MemMachine stack on a single Postgres instance
+    # (Apache-2.0-compatible; no Neo4j required).
+    profile_storage:
+      provider: postgres
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: <YOUR_PASSWORD_HERE>
+        db_name: postgres
+        pool_size: 5
+        max_overflow: 10
+        pool_timeout: 30
+        pool_recycle: -1
+        pool_pre_ping: false
+
+    # Apache AGE Configuration: openCypher over PostgreSQL with pgvector-backed
+    # vector similarity search on side tables.
+    my_storage_id:
+      provider: age
+      config:
+        host: localhost
+        port: 5432
+        user: postgres
+        password: <YOUR_PASSWORD_HERE>
+        db_name: postgres
+
+        # AGE graph name (also used as the Postgres schema for AGE catalog
+        # tables and as the prefix for the pgvector side tables). Must be a
+        # valid Postgres identifier.
+        graph_name: mem_graph
+
+        # Index creation thresholds (optional - defaults shown)
+        range_index_creation_threshold: 10000
+        vector_index_creation_threshold: 10000
+
+        # Force exact similarity search (optional - default: false)
+        # Set to true to disable ANN and always use exact KNN.
+        force_exact_similarity_search: false
+
+        # pgvector HNSW tuning (optional - defaults shown)
+        hnsw_m: 16                 # Max neighbors per layer
+        hnsw_ef_construction: 64   # Build-time quality
+
+        # SQLAlchemy connection pool tuning (optional)
+        pool_size: 5
+        max_overflow: 10
+        pool_timeout: 30
+        pool_recycle: -1
+        pool_pre_ping: false
+
+    sqlite_test:
+      provider: sqlite
+      config:
+        path: sqlite_test.db
+
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        max_input_length: 2048
+        model: "text-embedding-3-small"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: <YOUR_API_KEY>
+        base_url: "https://api.openai.com/v1"
+
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"

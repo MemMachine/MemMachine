@@ -1,0 +1,81 @@
+{{- if .Values.postgresAge.enabled }}
+# postgres-age-deployment.yaml
+# Deploys an Apache AGE-enabled PostgreSQL instance (openCypher over Postgres
+# with pgvector), suitable as an Apache-2.0-licensed alternative to Neo4j for
+# episodic memory storage.
+#
+# The referenced image (.Values.postgresAge.image) must ship BOTH the ``age``
+# and ``vector`` extensions. The upstream apache/age image only ships AGE, so
+# operators should build the combined image from
+# deployments/docker/postgres-age/ and push it to their registry before
+# enabling this deployment.
+#
+# postgresAge.enabled controls only whether this in-cluster Deployment (plus
+# its Service/PVC) renders. Pointing MemMachine at AGE is a separate,
+# orthogonal decision controlled by the top-level ``episodicBackend`` value
+# (``neo4j`` | ``age``) — see the chart README. Typical in-cluster AGE stack:
+# ``episodicBackend=age`` + ``postgresAge.enabled=true`` + ``neo4j.enabled=false``.
+# Side tables for vector similarity are created in the ``public`` schema of
+# the same database, keyed by vertex uid. Data is persisted to
+# postgres-age-pvc at /var/lib/postgresql/data.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memmachine-postgres-age
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memmachine-postgres-age
+  template:
+    metadata:
+      labels:
+        app: memmachine-postgres-age
+    spec:
+      containers:
+        - name: postgres-age
+          image: {{ .Values.postgresAge.image }}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresAge.database }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresAge.user }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-age-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+          resources:
+            {{- toYaml .Values.postgresAge.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgresAge.user }}
+                - -d
+                - {{ .Values.postgresAge.database }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: postgres-age-storage
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-age-storage
+          persistentVolumeClaim:
+            claimName: postgres-age-pvc
+{{- end }}

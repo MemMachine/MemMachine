@@ -133,6 +133,58 @@ docker-compose down -v
 - **Neo4j** (ports 7474, 7687): Episodic memory with vector similarity
 - **MemMachine** (port 8080): Main API server (uses pre-built `memmachine/memmachine` image)
 
+### Apache AGE: single-Postgres alternative to Neo4j
+
+MemMachine can run against Apache AGE (openCypher over PostgreSQL, Apache-2.0) instead of Neo4j. AGE's image ships both the ``age`` and ``vector`` extensions, so one Postgres instance backs both the graph store and semantic memory — the same way the helm chart's ``episodicBackend=age`` mode does.
+
+**Option 1 (recommended): full AGE stack via `docker-compose.age.yml`**
+
+Mirrors the helm single-stack experience. Use this file instead of ``docker-compose.yml`` (not alongside it — both define a ``memmachine`` service).
+
+```bash
+# 1. Copy the AGE sample config and edit it (set API key; change
+#    host from ``localhost`` to ``postgres-age`` so MemMachine resolves
+#    the service name over the compose network).
+cp sample_configs/episodic_memory_config.age.sample configuration.yml
+
+# 2. Bring the stack up — one database, one command.
+docker compose -f docker-compose.age.yml up
+```
+
+**Option 2: AGE container + locally-installed server**
+
+If you'd rather run the server outside Docker, start just the AGE service from the base file and point a pip-installed MemMachine at it.
+
+```bash
+# 1. Start just the AGE-enabled Postgres from the base compose file.
+docker compose --profile age up postgres-age
+
+# 2. Install the server and point it at postgres-age on localhost.
+pip install memmachine
+cp sample_configs/episodic_memory_config.age.sample configuration.yml
+# Edit configuration.yml: keep host: localhost, set port to ${AGE_PORT:-5433},
+# and replace placeholders with your API key / password.
+memmachine-server --config configuration.yml
+```
+
+Both options use the same config shape:
+
+```yaml
+resources:
+  databases:
+    my_storage_id:
+      provider: age
+      config:
+        host: postgres-age     # or localhost for Option 2
+        port: 5432             # or ${AGE_PORT:-5433} for Option 2
+        user: ${AGE_USER:-memmachine}
+        password: ${AGE_PASSWORD:-memmachine_password}
+        db_name: ${AGE_DB:-memmachine}
+        graph_name: mem_graph
+```
+
+See ``sample_configs/episodic_memory_config.age.sample`` for a complete example including the pgvector-backed semantic-memory configuration that rides on the same Postgres.
+
 ## Configuration
 
 Key files:

@@ -339,6 +339,24 @@ class ConfigService:
             )
             for name, conf in db_manager.conf.relational_db_confs.items()
         )
+        databases.extend(
+            ResourceInfo(
+                name=name,
+                provider="nebula_graph",
+                status=ResourceStatus.READY,
+                error=None,
+            )
+            for name in db_manager.conf.nebula_graph_confs
+        )
+        databases.extend(
+            ResourceInfo(
+                name=name,
+                provider="age",
+                status=ResourceStatus.READY,
+                error=None,
+            )
+            for name in db_manager.conf.age_confs
+        )
 
         return ResourcesStatus(
             embedders=embedders,

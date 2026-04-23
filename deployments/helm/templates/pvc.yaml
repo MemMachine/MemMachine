@@ -21,12 +21,27 @@ spec:
       storage: {{ .Values.pvcSize }}
   storageClassName: {{ .Values.storageClass }}
 {{- end }}
-{{- if .Values.postgres.enabled }}
+{{- if and .Values.postgres.enabled (ne .Values.episodicBackend "age") }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
+  namespace: {{ $namespace }}
+spec:
+  accessModes:
+    - {{ .Values.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.pvcSize }}
+  storageClassName: {{ .Values.storageClass }}
+{{- end }}
+{{- if .Values.postgresAge.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-age-pvc
   namespace: {{ $namespace }}
 spec:
   accessModes:

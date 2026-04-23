@@ -5,7 +5,7 @@
 # container image version changes.
 apiVersion: v2
 name: memmachine
-description: A Helm chart for deploying memmachine, Neo4j, and Postgres
+description: A Helm chart for deploying memmachine with Neo4j or Apache AGE and Postgres
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "v0.2.6"

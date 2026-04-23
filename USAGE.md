@@ -6,7 +6,7 @@ This guide helps AI coding assistants (like Cursor, Claude Code, Codex, etc.) un
 
 MemMachine provides two types of memory:
 
-- **Episodic Memory**: Stores conversational episodes (messages, interactions) in a graph database (Neo4j). Supports both short-term (recent context) and long-term (summarized) storage.
+- **Episodic Memory**: Stores conversational episodes (messages, interactions) in a graph database. Supported backends are Neo4j, NebulaGraph, and Apache AGE (openCypher over PostgreSQL). Supports both short-term (recent context) and long-term (summarized) storage.
 - **Semantic Memory**: User-specific facts, preferences, and knowledge extracted from conversations. Uses vector embeddings for semantic search and is stored in PostgreSQL.
 
 ## Installation

@@ -1,0 +1,19 @@
+{{- if .Values.postgresAge.enabled }}
+# postgres-age-service.yaml
+# ClusterIP Service for internal access to the AGE-enabled PostgreSQL on
+# port 5432. DNS inside the cluster:
+#   memmachine-postgres-age.<namespace>.svc.cluster.local
+# Point the MemMachine AgeConf at host: memmachine-postgres-age to use this
+# as the episodic-memory backend.
+apiVersion: v1
+kind: Service
+metadata:
+  name: memmachine-postgres-age
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: memmachine-postgres-age
+  ports:
+    - port: 5432
+      targetPort: 5432
+{{- end }}

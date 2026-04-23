@@ -1,5 +1,6 @@
 """Utility functions and constants for MemMachine installation scripts."""
 
+from dataclasses import dataclass
 from enum import Enum
 
 LINUX_JDK_TAR_NAME = "jdk-21_linux-x64_bin.tar.gz"
@@ -49,6 +50,20 @@ DEFAULT_OLLAMA_EMBEDDING_DIMENSIONS = 768
 DEFAULT_NEO4J_URI = "bolt://localhost:7687"
 DEFAULT_NEO4J_USERNAME = "neo4j"
 DEFAULT_NEO4J_PASSWORD = "memmachine"
+
+@dataclass(frozen=True)
+class AgeDefaults:
+    """Fallback values the wizard uses when prompting for an AGE instance."""
+
+    host: str = "localhost"
+    port: int = 5432
+    user: str = "postgres"
+    password: str = "postgres"
+    database: str = "memmachine"
+    graph_name: str = "mem_graph"
+
+
+AGE_DEFAULTS = AgeDefaults()
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 

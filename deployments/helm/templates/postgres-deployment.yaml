@@ -1,4 +1,4 @@
-{{- if .Values.postgres.enabled }}
+{{- if and .Values.postgres.enabled (ne .Values.episodicBackend "age") }}
 # postgres-deployment.yaml
 # Deploys PostgreSQL with the pgvector extension (1 replica).
 # Used by MemMachine for: episode storage, semantic memory, profile/config data,
@@ -6,6 +6,11 @@
 # from the postgres-secret Secret. The database is initialized with UTF-8
 # encoding and C locale via POSTGRES_INITDB_ARGS.
 # Data is persisted to the postgres-pvc PVC at /var/lib/postgresql/data.
+#
+# In AGE mode (``episodicBackend=age``) this deployment is skipped: the
+# postgres-age image already ships the ``vector`` extension, so semantic
+# memory rides on the same Postgres as the graph store — one database
+# service for the whole stack.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

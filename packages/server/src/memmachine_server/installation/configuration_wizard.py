@@ -21,6 +21,7 @@ from memmachine_server.common.configuration import (
     SessionManagerConf,
 )
 from memmachine_server.common.configuration.database_conf import (
+    AgeConf,
     DatabasesConf,
     Neo4jConf,
     SqlAlchemyConf,
@@ -47,6 +48,7 @@ from memmachine_server.common.configuration.reranker_conf import (
 )
 from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine_server.installation.utilities import (
+    AGE_DEFAULTS,
     DEFAULT_BEDROCK_EMBEDDING_MODEL,
     DEFAULT_BEDROCK_MODEL,
     DEFAULT_NEO4J_PASSWORD,
@@ -68,6 +70,11 @@ class ConfigurationWizard:
     """Interactive configuration wizard for MemMachine."""
 
     NEO4J_DB_ID = "neo4j_db"
+    AGE_DB_ID = "age_db"
+    # Companion SqlAlchemyConf pointing at the same Postgres instance as
+    # AGE_DB_ID. Lets semantic memory's pgvector store share a database with
+    # AGE's graph catalog — the whole point of the AGE backend.
+    AGE_POSTGRES_DB_ID = "age_postgres_db"
     SQLITE_DB_ID = "sqlite_db"
     LANGUAGE_MODEL_NAME = "llm_model"
     EMBEDDER_NAME = "my_embedder"
@@ -80,6 +87,10 @@ class ConfigurationWizard:
         neo4j_provided: bool
         destination: str
         prompt: bool = False
+        # "neo4j" (default) or "age". Picks which graph backend the wizard
+        # writes into the generated configuration. Default preserves existing
+        # installer behavior; AGE is the Apache-2.0 alternative.
+        graph_backend: str = "neo4j"
 
     def __init__(self, args: Params) -> None:
         """Initialize the configuration wizard with parameters."""
@@ -87,6 +98,11 @@ class ConfigurationWizard:
         self.configuration_path: Path = Path(self.destination, "cfg.yml")
         self.prompt: bool = args.prompt
         self.neo4j_provided: bool = args.neo4j_provided
+        if args.graph_backend not in ("neo4j", "age"):
+            raise ValueError(
+                f"graph_backend must be 'neo4j' or 'age' (got {args.graph_backend!r})"
+            )
+        self.graph_backend: str = args.graph_backend
 
     def run_wizard(self) -> str:
         """Run the configuration wizard and write the configuration file."""
@@ -121,11 +137,21 @@ class ConfigurationWizard:
 
     @cached_property
     def semantic_manager_conf(self) -> SemanticMemoryConf:
-        """Generate semantic memory configuration."""
+        """Generate semantic memory configuration.
+
+        In AGE mode, semantic memory rides on the companion SqlAlchemyConf
+        that points at the same Postgres instance as AGE — the single-stack
+        promise. In Neo4j mode, semantic memory is left unconfigured
+        (``database=None``) so the ``SemanticMemoryConf`` validator
+        auto-disables it; the Neo4j wizard flow never provisioned a
+        pgvector-capable relational database for semantic use.
+        """
         return SemanticMemoryConf(
             llm_model=self.LANGUAGE_MODEL_NAME,
             embedding_model=self.EMBEDDER_NAME,
-            database=self.NEO4J_DB_ID,
+            database=(
+                self.AGE_POSTGRES_DB_ID if self.graph_backend == "age" else None
+            ),
             config_database=self.SQLITE_DB_ID,
         )
 
@@ -143,8 +169,13 @@ class ConfigurationWizard:
         return LongTermMemoryConfPartial(
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
-            vector_graph_store=self.NEO4J_DB_ID,
+            vector_graph_store=self.graph_db_id,
         )
+
+    @property
+    def graph_db_id(self) -> str:
+        """DB id the long-term-memory ``vector_graph_store`` resolves to."""
+        return self.AGE_DB_ID if self.graph_backend == "age" else self.NEO4J_DB_ID
 
     @cached_property
     def retrieval_agent_conf(self) -> RetrievalAgentConf:
@@ -310,14 +341,36 @@ class ConfigurationWizard:
 
     @cached_property
     def database_conf(self) -> DatabasesConf:
-        neo4j_db_conf = self.neo4j_configs
         db_provider = SupportedDB.from_provider("sqlite")
         sqlite_db_conf = cast(
             SqlAlchemyConf,
             db_provider.build_config({"path": "memmachine.db"}),
         )
+        if self.graph_backend == "age":
+            # Register the same Postgres instance twice: once as an AgeConf
+            # for the graph store, once as a SqlAlchemyConf so semantic
+            # memory's pgvector store can ride along. Both rely on the
+            # Dockerfile in deployments/docker/postgres-age/ shipping both
+            # the ``age`` and ``vector`` extensions.
+            age_conf = self.age_configs
+            age_postgres_conf = SqlAlchemyConf(
+                dialect="postgresql",
+                driver="asyncpg",
+                host=age_conf.host,
+                port=age_conf.port,
+                user=age_conf.user,
+                password=age_conf.password,
+                db_name=age_conf.db_name,
+            )
+            return DatabasesConf(
+                age_confs={self.AGE_DB_ID: age_conf},
+                relational_db_confs={
+                    self.SQLITE_DB_ID: sqlite_db_conf,
+                    self.AGE_POSTGRES_DB_ID: age_postgres_conf,
+                },
+            )
         return DatabasesConf(
-            neo4j_confs={self.NEO4J_DB_ID: neo4j_db_conf},
+            neo4j_confs={self.NEO4J_DB_ID: self.neo4j_configs},
             relational_db_confs={self.SQLITE_DB_ID: sqlite_db_conf},
         )
 
@@ -340,6 +393,45 @@ class ConfigurationWizard:
             uri=neo4j_uri,
             user=neo4j_username,
             password=SecretStr(neo4j_password),
+        )
+
+    @cached_property
+    def age_configs(self) -> AgeConf:
+        # Always prompt for AGE connection details. Unlike Neo4j, there's no
+        # installer flow that pre-stands-up a local AGE-enabled Postgres, so
+        # ``AGE_DEFAULTS`` is the presented default rather than an assumed
+        # truth.
+        age_host = (
+            input(f"Enter AGE Postgres host [{AGE_DEFAULTS.host}]: ").strip()
+            or AGE_DEFAULTS.host
+        )
+        age_port = int(
+            input(f"Enter AGE Postgres port [{AGE_DEFAULTS.port}]: ").strip()
+            or AGE_DEFAULTS.port
+        )
+        age_user = (
+            input(f"Enter AGE Postgres user [{AGE_DEFAULTS.user}]: ").strip()
+            or AGE_DEFAULTS.user
+        )
+        age_password = (
+            input(f"Enter AGE Postgres password [{AGE_DEFAULTS.password}]: ").strip()
+            or AGE_DEFAULTS.password
+        )
+        age_db_name = (
+            input(f"Enter AGE database name [{AGE_DEFAULTS.database}]: ").strip()
+            or AGE_DEFAULTS.database
+        )
+        age_graph_name = (
+            input(f"Enter AGE graph name [{AGE_DEFAULTS.graph_name}]: ").strip()
+            or AGE_DEFAULTS.graph_name
+        )
+        return AgeConf(
+            host=age_host,
+            port=age_port,
+            user=age_user,
+            password=SecretStr(age_password),
+            db_name=age_db_name,
+            graph_name=age_graph_name,
         )
 
     @cached_property
