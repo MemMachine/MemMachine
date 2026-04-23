@@ -21,7 +21,7 @@ Typical users do not need to install it directly unless they are building agains
 For local development inside the MemMachine monorepo:
 
 ```bash
-pip install -e .
+pip install -e packages/common
 ```
 
 ## Source
