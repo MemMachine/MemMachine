@@ -1,5 +1,6 @@
 """SQLAlchemy implementation of the SegmentStore interface."""
 
+import json
 import logging
 import re
 from collections import defaultdict
@@ -13,7 +14,6 @@ from pydantic import (
     Field,
     InstanceOf,
     JsonValue,
-    TypeAdapter,
     field_validator,
 )
 from sqlalchemy import (
@@ -61,18 +61,35 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.payload_codec import (
+    PayloadCodec,
+    PayloadCodecLoader,
+)
+from memmachine_server.common.payload_codec.payload_codec_config import (
+    PlaintextPayloadCodecConfig,
+    decode_payload_codec_config,
+    encode_payload_codec_config,
+)
+from memmachine_server.common.payload_codec.plaintext_payload_codec import (
+    PlaintextPayloadCodec,
+)
 from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
 from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    Block,
-    Context,
+    NullContext,
     Segment,
+    decode_block,
+    decode_context,
+    encode_block,
+    encode_context,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
     SegmentStorePartitionAlreadyExistsError,
+    SegmentStorePartitionConfig,
+    SegmentStorePartitionConfigMismatchError,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.segment_store import (
     SegmentStore,
@@ -82,9 +99,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store.segment_store 
 logger = logging.getLogger(__name__)
 
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
-
-_ContextAdapter = TypeAdapter(Context)
-_BlockAdapter = TypeAdapter(Block)
 
 
 # ORM models
@@ -100,6 +114,10 @@ class PartitionRow(BaseSegmentStore):
     __tablename__ = "segment_store_pt"
 
     partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
+    payload_codec_config: MappedColumn[dict[str, JsonValue]] = mapped_column(
+        _JSON_AUTO,
+        nullable=False,
+    )
 
 
 class SegmentRow(BaseSegmentStore):
@@ -183,12 +201,21 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         self,
         partition_key: str,
         engine: AsyncEngine,
+        config: SegmentStorePartitionConfig,
+        payload_codec: PayloadCodec,
     ) -> None:
         """Initialize with a partition key and engine."""
         self._partition_key = partition_key
         self._engine = engine
+        self._config = config
+        self._payload_codec = payload_codec
         self._create_session = async_sessionmaker(engine, expire_on_commit=False)
         self._is_sqlite = engine.dialect.name == "sqlite"
+
+    @override
+    @property
+    def config(self) -> SegmentStorePartitionConfig:
+        return self._config
 
     async def _lock_partition_for_write(self, session: AsyncSession) -> None:
         """Acquire a shared lock on the partition row to prevent concurrent deletion."""
@@ -229,8 +256,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 "offset": segment.offset,
                 "timestamp": ensure_tz_aware(segment.timestamp),
                 "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
-                "context": segment.context.model_dump_json().encode("utf-8"),
-                "block": segment.block.model_dump_json().encode("utf-8"),
+                "context": self._payload_codec.encode(
+                    json.dumps(encode_context(segment.context)).encode("utf-8")
+                ),
+                "block": self._payload_codec.encode(
+                    json.dumps(encode_block(segment.block)).encode("utf-8")
+                ),
                 "properties": encode_properties(segment.properties),
             }
             for segment in segments
@@ -297,7 +328,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             if max_backward_segments <= 0 and max_forward_segments <= 0:
                 return {
                     seed_segment_uuid: [
-                        SQLAlchemySegmentStorePartition._segment_from_segment_row(
+                        self._segment_from_segment_row(
                             seed_segment_row,
                         )
                     ]
@@ -329,7 +360,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     seed_uuid, ([], [])
                 )
                 segments_by_seed[seed_uuid] = [
-                    SQLAlchemySegmentStorePartition._segment_from_segment_row(row)
+                    self._segment_from_segment_row(row)
                     for row in [*reversed(backward_rows), seed_row, *forward_rows]
                 ]
 
@@ -649,11 +680,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             return SegmentRow.properties[key], "properties_json"
         raise ValueError(f"Unknown filter field: {field!r}")
 
-    @staticmethod
-    def _segment_from_segment_row(row: SegmentRow) -> Segment:
+    def _segment_from_segment_row(self, row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""
-        context = _ContextAdapter.validate_json(row.context)
-        block = _BlockAdapter.validate_json(row.block)
+        context = decode_context(json.loads(self._payload_codec.decode(row.context)))
+        if context is None:
+            context = NullContext()
+        block = decode_block(json.loads(self._payload_codec.decode(row.block)))
         properties = decode_properties(row.properties)
         original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
         timestamp = ensure_tz_aware(row.timestamp).astimezone(original_timezone)
@@ -676,9 +708,16 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine.
+        payload_codec_loader (PayloadCodecLoader | None):
+            Optional loader for non-plaintext payload codecs
+            (default: None).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
+    payload_codec_loader: InstanceOf[PayloadCodecLoader] | None = Field(
+        default=None,
+        description="Optional loader for non-plaintext payload codecs",
+    )
 
     @field_validator("engine")
     @classmethod
@@ -704,6 +743,7 @@ class SQLAlchemySegmentStore(SegmentStore):
     def __init__(self, params: SQLAlchemySegmentStoreParams) -> None:
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
+        self._payload_codec_loader = params.payload_codec_loader
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self._is_postgresql = self._engine.dialect.name == "postgresql"
@@ -739,7 +779,11 @@ class SQLAlchemySegmentStore(SegmentStore):
     )
 
     @override
-    async def create_partition(self, partition_key: str) -> None:
+    async def create_partition(
+        self,
+        partition_key: str,
+        config: SegmentStorePartitionConfig,
+    ) -> None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
         async with self._engine.begin() as connection:
             if self._is_postgresql:
@@ -747,21 +791,21 @@ class SQLAlchemySegmentStore(SegmentStore):
                     SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
                 )
 
-            exists = (
+            try:
                 await connection.execute(
-                    select(PartitionRow.partition_key).where(
-                        PartitionRow.partition_key == partition_key
+                    insert(PartitionRow).values(
+                        partition_key=partition_key,
+                        payload_codec_config=encode_payload_codec_config(
+                            config.payload_codec_config
+                        ),
                     )
                 )
-            ).scalar()
-            if exists is not None:
-                raise SegmentStorePartitionAlreadyExistsError(partition_key)
-
-            await connection.execute(
-                insert(PartitionRow).values(partition_key=partition_key)
-            )
+            except IntegrityError as err:
+                raise SegmentStorePartitionAlreadyExistsError(partition_key) from err
             if self._is_postgresql:
-                await self._create_pg_child_tables(connection, partition_key)
+                await SQLAlchemySegmentStore._create_pg_child_tables(
+                    connection, partition_key
+                )
 
     @override
     async def open_partition(
@@ -769,54 +813,71 @@ class SQLAlchemySegmentStore(SegmentStore):
     ) -> SQLAlchemySegmentStorePartition | None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
         async with self._create_session() as session:
-            exists = (
-                await session.execute(
-                    select(PartitionRow.partition_key).where(
-                        PartitionRow.partition_key == partition_key
-                    )
-                )
-            ).scalar()
-        if exists is None:
+            partition_row = await SQLAlchemySegmentStore._get_partition_row(
+                session, partition_key
+            )
+        if partition_row is None:
             return None
 
-        return SQLAlchemySegmentStorePartition(
-            partition_key=partition_key,
-            engine=self._engine,
-        )
+        return await self._partition_from_partition_row(partition_row)
 
     @override
     async def open_or_create_partition(
-        self, partition_key: str
+        self,
+        partition_key: str,
+        config: SegmentStorePartitionConfig,
     ) -> SQLAlchemySegmentStorePartition:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
         try:
-            async with self._engine.begin() as connection:
+            async with self._create_session() as session, session.begin():
                 if self._is_postgresql:
-                    await connection.execute(
+                    await session.execute(
                         SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
                     )
 
-                exists = (
-                    await connection.execute(
-                        select(PartitionRow.partition_key).where(
-                            PartitionRow.partition_key == partition_key
+                partition_row = await SQLAlchemySegmentStore._get_partition_row(
+                    session, partition_key
+                )
+                if partition_row is None:
+                    payload_codec = await self._load_payload_codec(config)
+                    await session.execute(
+                        insert(PartitionRow).values(
+                            partition_key=partition_key,
+                            payload_codec_config=encode_payload_codec_config(
+                                config.payload_codec_config
+                            ),
                         )
                     )
-                ).scalar()
-                if exists is None:
-                    await connection.execute(
-                        insert(PartitionRow).values(partition_key=partition_key)
-                    )
                     if self._is_postgresql:
-                        await self._create_pg_child_tables(connection, partition_key)
+                        connection = await session.connection()
+                        await SQLAlchemySegmentStore._create_pg_child_tables(
+                            connection, partition_key
+                        )
+
+                    return SQLAlchemySegmentStorePartition(
+                        partition_key=partition_key,
+                        engine=self._engine,
+                        config=config,
+                        payload_codec=payload_codec,
+                    )
+
+                SQLAlchemySegmentStore._raise_if_partition_config_mismatch(
+                    partition_row, config
+                )
+                return await self._partition_from_partition_row(partition_row)
 
         except IntegrityError:
             pass  # Concurrent creation: partition now exists.
 
-        return SQLAlchemySegmentStorePartition(
-            partition_key=partition_key,
-            engine=self._engine,
-        )
+        async with self._create_session() as session:
+            partition_row = await SQLAlchemySegmentStore._get_partition_row(
+                session, partition_key
+            )
+        if partition_row is None:
+            raise RuntimeError(f"Partition {partition_key!r} could not be opened")
+
+        self._raise_if_partition_config_mismatch(partition_row, config)
+        return await self._partition_from_partition_row(partition_row)
 
     @override
     async def close_partition(
@@ -838,7 +899,9 @@ class SQLAlchemySegmentStore(SegmentStore):
                     .with_for_update()
                 )
             if self._is_postgresql:
-                await self._drop_pg_child_tables(connection, partition_key)
+                await SQLAlchemySegmentStore._drop_pg_child_tables(
+                    connection, partition_key
+                )
 
             # CASCADE from PartitionRow deletes segments and derivatives.
             await connection.execute(
@@ -859,6 +922,79 @@ class SQLAlchemySegmentStore(SegmentStore):
             raise ValueError(
                 f"Partition key {partition_key!r} is too long "
                 f"({len(partition_key)} characters). Maximum is 32."
+            )
+
+    async def _load_payload_codec(
+        self,
+        config: SegmentStorePartitionConfig,
+    ) -> PayloadCodec:
+        """Materialize a live payload codec for a partition config."""
+        if isinstance(config.payload_codec_config, PlaintextPayloadCodecConfig):
+            return PlaintextPayloadCodec()
+        if self._payload_codec_loader is None:
+            raise ValueError("Encrypted payload codec requires a payload codec loader")
+        return await self._payload_codec_loader.load(config.payload_codec_config)
+
+    async def _partition_from_partition_row(
+        self,
+        partition_row: PartitionRow,
+    ) -> SQLAlchemySegmentStorePartition:
+        """Materialize a partition handle from a DB row."""
+        config = SegmentStorePartitionConfig(
+            payload_codec_config=decode_payload_codec_config(
+                partition_row.payload_codec_config
+            )
+        )
+        return await self._partition_from_config(
+            partition_row.partition_key,
+            config,
+        )
+
+    async def _partition_from_config(
+        self,
+        partition_key: str,
+        config: SegmentStorePartitionConfig,
+        *,
+        payload_codec: PayloadCodec | None = None,
+    ) -> SQLAlchemySegmentStorePartition:
+        """Materialize a partition handle from config."""
+        if payload_codec is None:
+            payload_codec = await self._load_payload_codec(config)
+        return SQLAlchemySegmentStorePartition(
+            partition_key=partition_key,
+            engine=self._engine,
+            config=config,
+            payload_codec=payload_codec,
+        )
+
+    @staticmethod
+    async def _get_partition_row(
+        session: AsyncSession,
+        partition_key: str,
+    ) -> PartitionRow | None:
+        """Fetch a partition row by key."""
+        return (
+            await session.execute(
+                select(PartitionRow).where(PartitionRow.partition_key == partition_key)
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _raise_if_partition_config_mismatch(
+        partition_row: PartitionRow,
+        config: SegmentStorePartitionConfig,
+    ) -> None:
+        """Raise if an existing partition row does not match the requested config."""
+        existing_config = SegmentStorePartitionConfig(
+            payload_codec_config=decode_payload_codec_config(
+                partition_row.payload_codec_config
+            )
+        )
+        if existing_config != config:
+            raise SegmentStorePartitionConfigMismatchError(
+                partition_row.partition_key,
+                existing_config,
+                config,
             )
 
     @staticmethod

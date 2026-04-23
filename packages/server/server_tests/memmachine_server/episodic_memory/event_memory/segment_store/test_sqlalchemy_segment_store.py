@@ -1,8 +1,10 @@
 """Tests for SQLAlchemySegmentStore — SQLite (unit) and PostgreSQL (integration)."""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import override
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,6 +13,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.filter.filter_parser import Comparison
+from memmachine_server.common.payload_codec import (
+    PayloadCodec,
+    PayloadCodecLoader,
+)
+from memmachine_server.common.payload_codec.payload_codec_config import (
+    AESGCMPayloadCodecConfig,
+    PayloadCodecConfig,
+    PlaintextPayloadCodecConfig,
+)
 from memmachine_server.episodic_memory.event_memory.data_types import (
     CitationContext,
     MessageContext,
@@ -20,6 +31,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionAlreadyExistsError,
+    SegmentStorePartitionConfig,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
     BaseSegmentStore,
@@ -32,6 +44,35 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
 PARTITION_KEY = "test_partition"
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
 _NULL_CONTEXT = NullContext()
+
+
+class PrefixPayloadCodec(PayloadCodec):
+    """Codec that prefixes payloads so loader wiring is easy to assert."""
+
+    def __init__(self, prefix: bytes = b"prefix:") -> None:
+        self._prefix = prefix
+
+    @override
+    def encode(self, value: bytes) -> bytes:
+        return self._prefix + value
+
+    @override
+    def decode(self, value: bytes) -> bytes:
+        if not value.startswith(self._prefix):
+            raise ValueError("encoded payload is missing the expected prefix")
+        return value[len(self._prefix) :]
+
+
+class PrefixPayloadCodecLoader(PayloadCodecLoader):
+    """Loader that returns the prefix codec and records configs it receives."""
+
+    def __init__(self) -> None:
+        self.loaded_configs: list[PayloadCodecConfig] = []
+
+    @override
+    async def load(self, config: PayloadCodecConfig) -> PayloadCodec:
+        self.loaded_configs.append(config)
+        return PrefixPayloadCodec()
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +105,11 @@ def _seg(
 def _links(*segments: Segment) -> dict[Segment, list[UUID]]:
     """Build a segment-to-derivative-UUIDs mapping with one derivative per segment."""
     return {seg: [uuid4()] for seg in segments}
+
+
+def _plaintext_partition_config() -> SegmentStorePartitionConfig:
+    """Return the default plaintext partition config."""
+    return SegmentStorePartitionConfig()
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +157,27 @@ def store(request) -> SQLAlchemySegmentStore:
 async def partition(
     store: SQLAlchemySegmentStore,
 ) -> SQLAlchemySegmentStorePartition:
-    return await store.open_or_create_partition(PARTITION_KEY)
+    return await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
+
+
+@pytest_asyncio.fixture
+async def sqlite_store_with_loader(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+) -> AsyncIterator[tuple[SQLAlchemySegmentStore, PrefixPayloadCodecLoader]]:
+    loader = PrefixPayloadCodecLoader()
+    store = SQLAlchemySegmentStore(
+        SQLAlchemySegmentStoreParams(
+            engine=sqlalchemy_sqlite_engine,
+            payload_codec_loader=loader,
+        )
+    )
+    await store.startup()
+    yield store, loader
+    async with sqlalchemy_sqlite_engine.begin() as conn:
+        await conn.run_sync(BaseSegmentStore.metadata.drop_all)
 
 
 # ===================================================================
@@ -159,8 +225,8 @@ async def test_add_segments_with_message_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert row.context == b'{"type":"message","source":"User"}'
-    assert row.block == b'{"type":"text","text":"hello"}'
+    assert json.loads(row.context) == {"type": "message", "source": "User"}
+    assert json.loads(row.block) == {"type": "text", "text": "hello"}
 
 
 @pytest.mark.asyncio
@@ -186,7 +252,7 @@ async def test_add_segments_with_no_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert row.context == b'{"type":"null"}'
+    assert json.loads(row.context) == {"type": "null"}
 
     result = await partition.get_segment_contexts([seg.uuid])
     assert result[seg.uuid][0].context == NullContext()
@@ -475,10 +541,16 @@ async def test_contexts_session_isolation(store: SQLAlchemySegmentStore) -> None
     s_seed = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1)
     s_after = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2)
 
-    other_partition = await store.open_or_create_partition("other_session")
+    other_partition = await store.open_or_create_partition(
+        "other_session",
+        _plaintext_partition_config(),
+    )
     await other_partition.add_segments(_links(s_other))
 
-    partition = await store.open_or_create_partition(PARTITION_KEY)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
     await partition.add_segments(_links(s_seed, s_after))
 
     result = await partition.get_segment_contexts(
@@ -662,7 +734,10 @@ async def test_delete_segments_partial(
 async def _get_partition(engine: AsyncEngine) -> SQLAlchemySegmentStorePartition:
     """Create a partition handle that shares the engine."""
     store = SQLAlchemySegmentStore(SQLAlchemySegmentStoreParams(engine=engine))
-    return await store.open_or_create_partition(PARTITION_KEY)
+    return await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
 
 
 @pytest.mark.asyncio
@@ -697,7 +772,10 @@ async def test_concurrent_reads_during_writes(
 ) -> None:
     """Reads should not fail or block indefinitely while writes are happening."""
     engine = store._engine
-    partition = await store.open_or_create_partition(PARTITION_KEY)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
 
     # Seed some data.
     ep = uuid4()
@@ -734,7 +812,10 @@ async def test_concurrent_context_reads_during_deletes(
 ) -> None:
     """get_segment_contexts should not crash if segments are deleted concurrently."""
     engine = store._engine
-    partition = await store.open_or_create_partition(PARTITION_KEY)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
 
     # Register segments across multiple events.
     events = [uuid4() for _ in range(5)]
@@ -776,17 +857,73 @@ async def test_concurrent_context_reads_during_deletes(
 
 
 @pytest.mark.asyncio
+async def test_open_or_create_partition_defaults_to_plaintext_config(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        "plaintext_default",
+        _plaintext_partition_config(),
+    )
+    assert partition.config.payload_codec_config == PlaintextPayloadCodecConfig()
+
+
+@pytest.mark.asyncio
+async def test_open_or_create_partition_uses_codec_loader_when_configured(
+    sqlite_store_with_loader: tuple[
+        SQLAlchemySegmentStore,
+        PrefixPayloadCodecLoader,
+    ],
+) -> None:
+    store, loader = sqlite_store_with_loader
+    config = SegmentStorePartitionConfig(
+        payload_codec_config=AESGCMPayloadCodecConfig(
+            key_ref="partition_key",
+            wrapped_dek=b"wrapped-dek",
+            nonce_size=12,
+            associated_data=b"partition:context",
+        )
+    )
+
+    partition = await store.open_or_create_partition(
+        "encrypted_partition",
+        config=config,
+    )
+    assert partition.config == config
+
+    segment = _seg(text="codec")
+    await partition.add_segments(_links(segment))
+
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(
+                select(SegmentRow).where(SegmentRow.uuid == segment.uuid)
+            )
+        ).scalar_one()
+
+    assert row.context.startswith(b"prefix:")
+    assert row.block.startswith(b"prefix:")
+    assert all(
+        isinstance(item, AESGCMPayloadCodecConfig) for item in loader.loaded_configs
+    )
+
+    reopened = await store.open_partition("encrypted_partition")
+    assert reopened is not None
+    result = await reopened.get_segment_contexts([segment.uuid])
+    assert result[segment.uuid][0].uuid == segment.uuid
+
+
+@pytest.mark.asyncio
 async def test_create_partition(store: SQLAlchemySegmentStore) -> None:
-    await store.create_partition("new_partition")
+    await store.create_partition("new_partition", _plaintext_partition_config())
     partition = await store.open_partition("new_partition")
     assert partition is not None
 
 
 @pytest.mark.asyncio
 async def test_create_partition_already_exists(store: SQLAlchemySegmentStore) -> None:
-    await store.create_partition("dup_partition")
+    await store.create_partition("dup_partition", _plaintext_partition_config())
     with pytest.raises(SegmentStorePartitionAlreadyExistsError):
-        await store.create_partition("dup_partition")
+        await store.create_partition("dup_partition", _plaintext_partition_config())
 
 
 @pytest.mark.asyncio
@@ -797,14 +934,17 @@ async def test_open_partition_nonexistent(store: SQLAlchemySegmentStore) -> None
 
 @pytest.mark.asyncio
 async def test_open_partition_existing(store: SQLAlchemySegmentStore) -> None:
-    await store.create_partition("existing")
+    await store.create_partition("existing", _plaintext_partition_config())
     partition = await store.open_partition("existing")
     assert partition is not None
 
 
 @pytest.mark.asyncio
 async def test_open_or_create_partition_creates(store: SQLAlchemySegmentStore) -> None:
-    partition = await store.open_or_create_partition("fresh")
+    partition = await store.open_or_create_partition(
+        "fresh",
+        _plaintext_partition_config(),
+    )
     assert partition is not None
     # Verify it was actually created.
     opened = await store.open_partition("fresh")
@@ -815,14 +955,20 @@ async def test_open_or_create_partition_creates(store: SQLAlchemySegmentStore) -
 async def test_open_or_create_partition_idempotent(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    await store.create_partition("idem")
-    partition = await store.open_or_create_partition("idem")
+    await store.create_partition("idem", _plaintext_partition_config())
+    partition = await store.open_or_create_partition(
+        "idem",
+        _plaintext_partition_config(),
+    )
     assert partition is not None
 
 
 @pytest.mark.asyncio
 async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> None:
-    partition = await store.open_or_create_partition("to_delete")
+    partition = await store.open_or_create_partition(
+        "to_delete",
+        _plaintext_partition_config(),
+    )
     seg = _seg()
     await partition.add_segments(_links(seg))
 
@@ -836,7 +982,10 @@ async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> N
 async def test_delete_partition_cascades_segments(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    partition = await store.open_or_create_partition("cascade_test")
+    partition = await store.open_or_create_partition(
+        "cascade_test",
+        _plaintext_partition_config(),
+    )
     seg = _seg()
     d1 = uuid4()
     await partition.add_segments({seg: [d1]})
@@ -844,7 +993,10 @@ async def test_delete_partition_cascades_segments(
     await store.delete_partition("cascade_test")
 
     # Re-create the partition and verify data is gone.
-    new_partition = await store.open_or_create_partition("cascade_test")
+    new_partition = await store.open_or_create_partition(
+        "cascade_test",
+        _plaintext_partition_config(),
+    )
     result = await new_partition.get_segment_contexts([seg.uuid])
     assert result == {}
     deriv_result = await new_partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
@@ -861,11 +1013,11 @@ async def test_partition_key_validation_invalid_chars(
     store: SQLAlchemySegmentStore,
 ) -> None:
     with pytest.raises(ValueError, match="invalid characters"):
-        await store.create_partition("UPPER")
+        await store.create_partition("UPPER", _plaintext_partition_config())
     with pytest.raises(ValueError, match="invalid characters"):
-        await store.create_partition("has-hyphen")
+        await store.create_partition("has-hyphen", _plaintext_partition_config())
     with pytest.raises(ValueError, match="invalid characters"):
-        await store.create_partition("has space")
+        await store.create_partition("has space", _plaintext_partition_config())
 
 
 @pytest.mark.asyncio
@@ -873,7 +1025,7 @@ async def test_partition_key_validation_too_long(
     store: SQLAlchemySegmentStore,
 ) -> None:
     with pytest.raises(ValueError, match="too long"):
-        await store.create_partition("a" * 33)
+        await store.create_partition("a" * 33, _plaintext_partition_config())
 
 
 # --- PostgreSQL-only ---
@@ -885,7 +1037,10 @@ async def test_pg_context_preserved_via_lateral_join(
     pg_store: SQLAlchemySegmentStore,
 ) -> None:
     """Context is preserved when retrieved via the LATERAL join path (multiple seeds)."""
-    partition = await pg_store.open_or_create_partition(PARTITION_KEY)
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
     ep = uuid4()
     ctx_user = MessageContext(source="User")
     ctx_assistant = MessageContext(source="Assistant")
@@ -921,7 +1076,10 @@ async def test_pg_mixed_context_types(
     pg_store: SQLAlchemySegmentStore,
 ) -> None:
     """Different context types (message, citation, None) round-trip correctly on PG."""
-    partition = await pg_store.open_or_create_partition(PARTITION_KEY)
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
     ctx_msg = MessageContext(source="User")
     ctx_cite = CitationContext(source="paper.pdf", source_type="file", location="p.3")
 
@@ -938,7 +1096,7 @@ async def test_pg_mixed_context_types(
                 select(SegmentRow).where(SegmentRow.uuid == s_none.uuid)
             )
         ).scalar_one()
-    assert row.context == b'{"type":"null"}'
+    assert json.loads(row.context) == {"type": "null"}
 
     result = await partition.get_segment_contexts([s_msg.uuid])
     assert result[s_msg.uuid][0].context == ctx_msg
