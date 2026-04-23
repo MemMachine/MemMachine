@@ -72,6 +72,10 @@ add_memory = create_add_memory_tool(tools)
 search_memory = create_search_memory_tool(tools)
 ```
 
+The generated tools support:
+- raw search filter strings via `filter='metadata.category = "work"'`
+- `episode_type` as either an `EpisodeType` enum or a string value like `"message"`
+
 ### 3. Use in LangGraph Nodes
 
 ```python
@@ -82,12 +86,14 @@ def memory_node(state: AgentState):
     search_result = search_memory(
         query=state["messages"][-1].content,
         user_id=state["user_id"],
+        filter='metadata.category = "work"',
     )
 
     # Add new memory
     add_memory(
         content=state["messages"][-1].content,
         user_id=state["user_id"],
+        episode_type="message",
     )
 
     return {

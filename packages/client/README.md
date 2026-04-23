@@ -106,11 +106,11 @@ memory.add("I work as a software engineer", metadata={"type": "fact", "category"
 
 # Search memories
 results = memory.search("What do I like to eat?")
-print(f"Episodic memory: {results.get('episodic_memory', [])}")
-print(f"Profile memory: {results.get('profile_memory', [])}")
+print(f"Episodic memory: {results.episodic_memory or []}")
+print(f"Semantic memory: {results.semantic_memory or []}")
 
 # Search with filters
-work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
+work_results = memory.search("Tell me about work", filter_dict={"metadata.category": "work"})
 print(f"Work results: {work_results}")
 ```
 

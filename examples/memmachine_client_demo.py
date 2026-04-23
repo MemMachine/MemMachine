@@ -36,19 +36,18 @@ def print_memory_results(results, query="") -> None:
     if query:
         print(f"\n🔍 Query: {query}")
 
-    if not results or not results.get("episodic_memory"):
+    episodic_memories = results.episodic_memory or []
+    if not episodic_memories:
         print("   No memories found.")
         return
 
-    episodic_memories = results["episodic_memory"]
-    if episodic_memories and len(episodic_memories) > 0:
-        print(f"   Found {len(episodic_memories[0])} relevant memories:")
-        for i, memory in enumerate(episodic_memories[0][:3], 1):  # Show top 3
-            print(f"      Time: {memory['timestamp']}")
-            print(f"   {i}. {memory['content']}")
-            if memory.get("user_metadata"):
-                print(f"      Metadata: {memory['user_metadata']}")
-            print()
+    print(f"   Found {len(episodic_memories)} relevant memories:")
+    for i, memory in enumerate(episodic_memories[:3], 1):  # Show top 3
+        print(f"      Time: {memory.timestamp}")
+        print(f"   {i}. {memory.content}")
+        if memory.user_metadata:
+            print(f"      Metadata: {memory.user_metadata}")
+        print()
 
 
 def demo_advanced_memory_features() -> None:
@@ -127,7 +126,7 @@ def demo_advanced_memory_features() -> None:
         query = "What programming languages do I know?"
         results = memory.search(
             query=query,
-            filter_dict={"category": "programming"},
+            filter_dict={"metadata.category": "programming"},
             limit=5,
         )
         print_memory_results(results, query)
@@ -136,7 +135,7 @@ def demo_advanced_memory_features() -> None:
         query = "What conferences have I attended?"
         results = memory.search(
             query=query,
-            filter_dict={"category": "conference"},
+            filter_dict={"metadata.category": "conference"},
             limit=5,
         )
         print_memory_results(results, query)

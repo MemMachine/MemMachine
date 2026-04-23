@@ -64,7 +64,7 @@ All agents in this directory use MemMachine’s REST or SDK layers, and each sub
 
 ### 5. Python Client Demo (`memmachine_client_demo.py`)
 - **Purpose**: Simple Python script for REST API usage with MemMachine.
-- **Key action**: walk through creating, reading, and searching memory entries.
+- **Key action**: walk through creating, reading, and searching memory entries using the current typed `SearchResult` API and metadata-prefixed filter examples.
 - **Use Case**: Quick functional tests and reference code for Python client calls.
 
 ### 6. Interactive Notebook (`MemMachine_V2_Complete_Guide.ipynb`)
