@@ -6,6 +6,12 @@ import { MemMachineProject, type Project, type ProjectContext } from '@/project'
 import { VERSION } from '@/version'
 import type { ClientOptions, HealthStatus } from './memmachine-client.types'
 
+function hasProxyEnv(): boolean {
+  if (typeof process === 'undefined' || !process.env) return false
+  const { HTTPS_PROXY, HTTP_PROXY, https_proxy, http_proxy } = process.env
+  return Boolean(HTTPS_PROXY || HTTP_PROXY || https_proxy || http_proxy)
+}
+
 /**
  * Main API client for interacting with the MemMachine RESTful service.
  *
@@ -53,7 +59,7 @@ export class MemMachineClient {
   client: AxiosInstance
 
   constructor(options?: ClientOptions) {
-    const { base_url = 'https://api.memmachine.ai/v2', api_key, timeout, max_retries } = options ?? {}
+    const { base_url = 'https://api.memmachine.ai/v2', api_key, timeout, max_retries, adapter } = options ?? {}
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -63,10 +69,13 @@ export class MemMachineClient {
       headers['Authorization'] = `Bearer ${api_key}`
     }
 
+    const resolvedAdapter = adapter ?? (hasProxyEnv() ? 'fetch' : undefined)
+
     this.client = axios.create({
       baseURL: base_url,
       headers,
-      timeout: timeout ?? 60000
+      timeout: timeout ?? 60000,
+      ...(resolvedAdapter ? { adapter: resolvedAdapter } : {})
     })
 
     axiosRetry(this.client, {
