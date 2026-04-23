@@ -19,7 +19,7 @@ All properties in this interface are optional.
 | :--- | :--- | :--- |
 | `top_k` | `number` | The maximum number of relevant memories to return. |
 | `score_threshold` | `number` | The minimum similarity score required for a memory to be included in results. |
-| `filter` | `string` | A metadata-based filter string to narrow the search scope. |
+| `filter` | `string` | A structured filter string. User metadata fields must be prefixed with `m.` / `metadata.` (for example `m.source = "chat_v3"`). Unsupported fields are rejected. |
 | `expand_context` | `number` | The number of surrounding chronological episodes to retrieve for each hit. |
 | `types` | [`MemoryType[]`](../types/MemoryType) | Restricts the search to specific memory classifications (e.g., `semantic`). |
 | `agent_mode` | `boolean` | Enables top-level retrieval-agent orchestration for episodic retrieval. |
@@ -38,6 +38,7 @@ const memory = project.memory();
 const searchConfig: SearchMemoriesOptions = {
   top_k: 5,
   score_threshold: 0.75,
+  filter: 'm.source = "chat_v3"',
   expand_context: 2, // Get 2 messages before and after each hit
   types: ['episodic', 'semantic'],
   agent_mode: true
