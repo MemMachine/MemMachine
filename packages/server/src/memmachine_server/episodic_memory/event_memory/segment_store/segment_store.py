@@ -12,10 +12,19 @@ from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
 )
+from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
+    SegmentStorePartitionConfig,
+)
 
 
 class SegmentStorePartition(ABC):
     """Partition-scoped handle for a segment store."""
+
+    @property
+    @abstractmethod
+    def config(self) -> SegmentStorePartitionConfig:
+        """The configuration for this partition."""
+        raise NotImplementedError
 
     @abstractmethod
     async def add_segments(
@@ -132,13 +141,19 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_partition(self, partition_key: str) -> None:
+    async def create_partition(
+        self,
+        partition_key: str,
+        config: SegmentStorePartitionConfig,
+    ) -> None:
         """
         Create a new partition.
 
         Args:
             partition_key (str):
-                The key of the partition to create.
+                The key of the partition.
+            config (SegmentStorePartitionConfig):
+                Configuration for the partition.
 
         Raises:
             SegmentStorePartitionAlreadyExistsError: If the partition already exists.
@@ -162,7 +177,9 @@ class SegmentStore(ABC):
 
     @abstractmethod
     async def open_or_create_partition(
-        self, partition_key: str
+        self,
+        partition_key: str,
+        config: SegmentStorePartitionConfig,
     ) -> SegmentStorePartition:
         """
         Open the partition if it exists, or create it if it does not.
@@ -170,10 +187,16 @@ class SegmentStore(ABC):
         Args:
             partition_key (str):
                 The key of the partition.
+            config (SegmentStorePartitionConfig):
+                Configuration for the partition.
 
         Returns:
             SegmentStorePartition:
                 A partition-scoped handle.
+
+        Raises:
+            SegmentStorePartitionConfigMismatchError:
+                If the partition already exists with a different configuration.
         """
         raise NotImplementedError
 

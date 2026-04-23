@@ -14,6 +14,10 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     MessageContext,
     Segment,
     Text,
+    decode_block,
+    decode_context,
+    encode_block,
+    encode_context,
 )
 
 SAMPLE_PROPERTIES = {
@@ -157,3 +161,24 @@ class TestContextModels:
     def test_context_models_do_not_declare_index_hints(self):
         assert not hasattr(MessageContext, "indexed_properties")
         assert not hasattr(CitationContext, "indexed_properties")
+
+
+class TestContextAndBlockSerialization:
+    def test_context_round_trip(self):
+        context = MessageContext(source="user")
+
+        serialized = encode_context(context)
+        deserialized = decode_context(serialized)
+
+        assert deserialized == context
+
+    def test_context_none_round_trip(self):
+        assert decode_context(encode_context(None)) is None
+
+    def test_block_round_trip(self):
+        block = Text(text="hello")
+
+        serialized = encode_block(block)
+        deserialized = decode_block(serialized)
+
+        assert deserialized == block

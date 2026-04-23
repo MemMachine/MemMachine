@@ -2,11 +2,13 @@
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from typing import override
 from uuid import UUID
 
 import pytest
 
 from memmachine_server.common.filter.filter_parser import (
+    FilterExpr,
     demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
@@ -22,6 +24,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartition,
+    SegmentStorePartitionConfig,
 )
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
@@ -39,12 +42,22 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_c
 class InMemorySegmentStorePartition(SegmentStorePartition):
     """Minimal in-memory segment store partition for testing."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config: SegmentStorePartitionConfig | None = None,
+    ) -> None:
+        self._config = config or SegmentStorePartitionConfig()
         self.segments: dict[UUID, Segment] = {}
         self.segment_order: list[UUID] = []
         self.event_to_segments: dict[UUID, list[UUID]] = defaultdict(list)
         self.segment_to_derivatives: dict[UUID, list[UUID]] = {}
 
+    @override
+    @property
+    def config(self) -> SegmentStorePartitionConfig:
+        return self._config
+
+    @override
     async def add_segments(
         self,
         segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
@@ -55,13 +68,14 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
             self.event_to_segments[segment.event_uuid].append(segment.uuid)
             self.segment_to_derivatives[segment.uuid] = list(derivative_uuids)
 
+    @override
     async def get_segment_contexts(
         self,
         seed_segment_uuids: Iterable[UUID],
         *,
         max_backward_segments: int = 0,
         max_forward_segments: int = 0,
-        property_filter: object = None,
+        property_filter: FilterExpr | None = None,
     ) -> dict[UUID, list[Segment]]:
         # Normalize canonical field names (e.g. "m.color" → "color") to
         # match the raw keys stored in segment.properties.
@@ -101,6 +115,7 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
             return demangle_user_metadata_key(internal_name)
         return field
 
+    @override
     async def get_segment_uuids_by_event_uuids(
         self,
         event_uuids: Iterable[UUID],
@@ -112,6 +127,7 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 result[event_uuid] = list(segment_uuids)
         return result
 
+    @override
     async def get_derivative_uuids_by_segment_uuids(
         self,
         segment_uuids: Iterable[UUID],
@@ -123,6 +139,7 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 result[segment_uuid] = list(derivative_uuids)
         return result
 
+    @override
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],

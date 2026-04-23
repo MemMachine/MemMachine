@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     InstanceOf,
     JsonValue,
+    TypeAdapter,
     field_serializer,
     field_validator,
 )
@@ -91,6 +92,29 @@ Context = Annotated[
     ContextUnion,
     Field(discriminator="type"),
 ]
+
+_CONTEXT_ADAPTER = TypeAdapter(Context | None)
+_BLOCK_ADAPTER = TypeAdapter(Block)
+
+
+def encode_context(context: Context | None) -> dict[str, JsonValue] | None:
+    """Encode a context into JSON-compatible data."""
+    return _CONTEXT_ADAPTER.dump_python(context, mode="json")
+
+
+def decode_context(encoded: Mapping[str, JsonValue] | None) -> Context | None:
+    """Decode a context from JSON-compatible data."""
+    return _CONTEXT_ADAPTER.validate_python(encoded)
+
+
+def encode_block(block: Block) -> dict[str, JsonValue]:
+    """Encode a block into JSON-compatible data."""
+    return _BLOCK_ADAPTER.dump_python(block, mode="json")
+
+
+def decode_block(encoded: Mapping[str, JsonValue]) -> Block:
+    """Decode a block from JSON-compatible data."""
+    return _BLOCK_ADAPTER.validate_python(encoded)
 
 
 # Body: top-level event payload
