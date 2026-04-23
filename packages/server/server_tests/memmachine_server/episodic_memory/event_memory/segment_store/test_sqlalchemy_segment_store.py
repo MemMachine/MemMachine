@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.filter.filter_parser import Comparison
 from memmachine_server.common.payload_codec import (
+    KMSEnvelopePayloadCodecConfig,
+    KMSEnvelopePayloadCodecLoader,
     PayloadCodec,
-    PayloadCodecLoader,
 )
 from memmachine_server.common.payload_codec.payload_codec_config import (
     AESGCMPayloadCodecConfig,
-    PayloadCodecConfig,
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
@@ -63,14 +63,14 @@ class PrefixPayloadCodec(PayloadCodec):
         return value[len(self._prefix) :]
 
 
-class PrefixPayloadCodecLoader(PayloadCodecLoader):
+class PrefixPayloadCodecLoader(KMSEnvelopePayloadCodecLoader):
     """Loader that returns the prefix codec and records configs it receives."""
 
     def __init__(self) -> None:
-        self.loaded_configs: list[PayloadCodecConfig] = []
+        self.loaded_configs: list[KMSEnvelopePayloadCodecConfig] = []
 
     @override
-    async def load(self, config: PayloadCodecConfig) -> PayloadCodec:
+    async def load(self, config: KMSEnvelopePayloadCodecConfig) -> PayloadCodec:
         self.loaded_configs.append(config)
         return PrefixPayloadCodec()
 

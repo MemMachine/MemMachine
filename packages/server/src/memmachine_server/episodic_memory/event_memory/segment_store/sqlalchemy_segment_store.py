@@ -62,8 +62,9 @@ from memmachine_server.common.filter.sql_filter_util import (
     compile_sql_filter,
 )
 from memmachine_server.common.payload_codec import (
+    KMSEnvelopePayloadCodecConfig,
+    KMSEnvelopePayloadCodecLoader,
     PayloadCodec,
-    PayloadCodecLoader,
 )
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
@@ -708,15 +709,15 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine.
-        payload_codec_loader (PayloadCodecLoader | None):
-            Optional loader for non-plaintext payload codecs
+        payload_codec_loader (KMSEnvelopePayloadCodecLoader | None):
+            Optional loader for KMS envelope-encrypted payload codecs
             (default: None).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
-    payload_codec_loader: InstanceOf[PayloadCodecLoader] | None = Field(
+    payload_codec_loader: InstanceOf[KMSEnvelopePayloadCodecLoader] | None = Field(
         default=None,
-        description="Optional loader for non-plaintext payload codecs",
+        description="Optional loader for KMS envelope-encrypted payload codecs",
     )
 
     @field_validator("engine")
@@ -929,11 +930,20 @@ class SQLAlchemySegmentStore(SegmentStore):
         config: SegmentStorePartitionConfig,
     ) -> PayloadCodec:
         """Materialize a live payload codec for a partition config."""
-        if isinstance(config.payload_codec_config, PlaintextPayloadCodecConfig):
-            return PlaintextPayloadCodec()
-        if self._payload_codec_loader is None:
-            raise ValueError("Encrypted payload codec requires a payload codec loader")
-        return await self._payload_codec_loader.load(config.payload_codec_config)
+        if isinstance(config.payload_codec_config, KMSEnvelopePayloadCodecConfig):
+            if self._payload_codec_loader is None:
+                raise ValueError(
+                    "KMS envelope payload codec requires a payload codec loader"
+                )
+            return await self._payload_codec_loader.load(config.payload_codec_config)
+        match config.payload_codec_config:
+            case PlaintextPayloadCodecConfig():
+                return PlaintextPayloadCodec()
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported payload codec config: "
+                    f"{type(config.payload_codec_config).__name__}"
+                )
 
     async def _partition_from_partition_row(
         self,
