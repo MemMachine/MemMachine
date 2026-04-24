@@ -133,7 +133,7 @@ jobs:
           MEMORY_BACKEND_URL: http://127.0.0.1:8080
         run: |
           uv run --group dev jupyter nbconvert --execute --to notebook --ExecutePreprocessor.timeout=600 \
-            examples/rest_api_set_metadata.ipynb
+            examples/rest_api_set_metadata/rest_api_set_metadata.ipynb
 
       - name: Stop MemMachine server and database
         if: always()
