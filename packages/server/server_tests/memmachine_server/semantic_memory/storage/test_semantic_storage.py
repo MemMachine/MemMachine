@@ -1218,6 +1218,98 @@ async def test_get_set_ids_with_older_than_and_min_uningested(
 
 
 @pytest.mark.asyncio
+async def test_purge_ingested_rows_fully_ingested(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    """Purge deletes all rows for a set_id when every message is ingested."""
+    history_ids = [
+        await _add_episode(episode_storage, content=f"purge-msg-{idx}")
+        for idx in range(3)
+    ]
+
+    for h_id in history_ids:
+        await semantic_storage.add_history_to_set(set_id="purge_user", history_id=h_id)
+
+    # Mark all 3 as ingested
+    await semantic_storage.mark_messages_ingested(
+        set_id="purge_user",
+        history_ids=history_ids,
+    )
+
+    deleted = await semantic_storage.purge_ingested_rows(["purge_user"])
+    assert deleted == 3
+
+    total = await semantic_storage.get_history_messages_count(
+        set_ids=["purge_user"],
+    )
+    assert total == 0
+
+
+@pytest.mark.asyncio
+async def test_purge_ingested_rows_skips_partially_ingested(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    """Purge preserves rows when a set still has uningested messages,
+    keeping the (set_id, history_id) duplicate guard intact."""
+    history_ids = [
+        await _add_episode(episode_storage, content=f"partial-msg-{idx}")
+        for idx in range(3)
+    ]
+
+    for h_id in history_ids:
+        await semantic_storage.add_history_to_set(
+            set_id="partial_user", history_id=h_id
+        )
+
+    # Mark 2 of 3 as ingested — 1 still pending
+    await semantic_storage.mark_messages_ingested(
+        set_id="partial_user",
+        history_ids=history_ids[:2],
+    )
+
+    # Purge should skip this set entirely
+    deleted = await semantic_storage.purge_ingested_rows(["partial_user"])
+    assert deleted == 0
+
+    # All 3 rows should remain
+    total = await semantic_storage.get_history_messages_count(
+        set_ids=["partial_user"],
+    )
+    assert total == 3
+
+
+@pytest.mark.asyncio
+async def test_purge_ingested_rows_empty_list(
+    semantic_storage: SemanticStorage,
+    episode_storage,
+):
+    history_ids = [
+        await _add_episode(episode_storage, content=f"keep-msg-{idx}")
+        for idx in range(2)
+    ]
+
+    for h_id in history_ids:
+        await semantic_storage.add_history_to_set(set_id="keep_user", history_id=h_id)
+
+    await semantic_storage.mark_messages_ingested(
+        set_id="keep_user",
+        history_ids=history_ids[:1],
+    )
+
+    # Purge with empty list should be a no-op
+    deleted = await semantic_storage.purge_ingested_rows([])
+    assert deleted == 0
+
+    # Data should be unchanged
+    total = await semantic_storage.get_history_messages_count(
+        set_ids=["keep_user"],
+    )
+    assert total == 2
+
+
+@pytest.mark.asyncio
 async def test_filter_features_by_created_at_date(
     semantic_storage: SemanticStorage,
 ):
@@ -1380,6 +1472,24 @@ async def test_filter_features_by_created_at_range(
     )
     assert len(results) == 1
     assert results[0].value == "note2"
+
+
+@pytest.mark.asyncio
+async def test_add_feature_with_null_bytes_does_not_crash(
+    semantic_storage: SemanticStorage,
+):
+    """Regression test for issue #1147: null bytes in feature values must not crash."""
+    feature_id = await semantic_storage.add_feature(
+        set_id="user1",
+        category_name="profile",
+        feature="cultural\x00focus",
+        value="D\x00a de Los Muertos",
+        tag="Ins\x00ights",
+        embedding=np.array([1.0] * 1536, dtype=float),
+    )
+
+    stored = await semantic_storage.get_feature(feature_id)
+    assert stored is not None
 
 
 @pytest.mark.asyncio

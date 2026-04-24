@@ -133,6 +133,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                     model=self._model,
                     messages=input_prompts,
                     response_format=output_format,
+                    store=False,
                 )
             except openai.OpenAIError as e:
                 error_message = (
@@ -210,6 +211,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                     args: dict = {
                         "model": self._model,
                         "messages": input_prompts,
+                        "store": False,
                     }
                     if tools:
                         args["tools"] = tools
@@ -222,6 +224,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                     openai.RateLimitError,
                     openai.APITimeoutError,
                     openai.APIConnectionError,
+                    openai.InternalServerError,
                 ) as e:
                     # Exception may be retried.
                     if attempt >= max_attempts:

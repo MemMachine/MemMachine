@@ -45,6 +45,42 @@ def get_memmachine_config_dir() -> str:
     return str(Path("~/.config/memmachine").expanduser())
 
 
+def _safe_extract_zip(zip_path: str, extract_to: str) -> None:
+    """Extract a zip file safely, rejecting dangerous entries.
+
+    Guards against:
+    - Path traversal (zip-slip): entries whose resolved path escapes ``extract_to``.
+    - Symlink-based escapes: symlink entries are rejected outright so a
+      malicious symlink cannot redirect a later member outside the target dir.
+
+    Each member is validated and extracted individually so the resolved path
+    is checked against the real filesystem state at extraction time.
+    """
+    dest = Path(extract_to).resolve()
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        for member in zip_ref.infolist():
+            # Reject symlink entries (external_attr encodes Unix file type in
+            # the upper 16 bits; 0xA000 is the symlink type mask).
+            is_symlink = (member.external_attr >> 16) & 0xF000 == 0xA000
+            if is_symlink:
+                raise ValueError(
+                    f"Zip entry {member.filename!r} is a symlink and was rejected"
+                )
+
+            # Resolve the target path *before* extraction and confirm it stays
+            # within dest.  Use Path.is_relative_to() (Py >= 3.9) for a robust,
+            # platform-aware boundary check that avoids brittle string-prefix
+            # comparisons.
+            member_path = (dest / member.filename).resolve()
+            if member_path != dest and not member_path.is_relative_to(dest):
+                raise ValueError(
+                    f"Zip entry {member.filename!r} would extract outside "
+                    f"target directory"
+                )
+
+            zip_ref.extract(member, extract_to)
+
+
 class Installer(ABC):
     """Abstract base class for MemMachine installers."""
 
@@ -111,9 +147,13 @@ class LinuxEnvironment:
         urllib.request.urlretrieve(url, dest)
 
     def extract_tar(self, tar_path: str, extract_to: str) -> None:
-        """Extract a .tar.gz file on Linux or macOS."""
+        """Extract a .tar.gz file on Linux or macOS.
+
+        Uses the ``data`` extraction filter to prevent path-traversal
+        attacks (e.g. entries containing ``../``).
+        """
         with tarfile.open(tar_path, "r:gz") as tar_ref:
-            tar_ref.extractall(extract_to)
+            tar_ref.extractall(extract_to, filter="data")
 
     def start_neo4j(self, java_home: str, neo4j_dir: str) -> None:
         logger.info("Starting Neo4j with JAVA_HOME=%s, dir=%s...", java_home, neo4j_dir)
@@ -291,9 +331,12 @@ class WindowsEnvironment:
         urllib.request.urlretrieve(url, dest)
 
     def extract_zip(self, zip_path: str, extract_to: str) -> None:
-        """Extract zip file on Windows."""
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_to)
+        """Extract zip file on Windows.
+
+        Validates that no entry would be written outside the target
+        directory (zip-slip protection).
+        """
+        _safe_extract_zip(zip_path, extract_to)
 
     def start_neo4j_service(self, install_dir: str) -> None:
         """Install and start Neo4j service on Windows."""

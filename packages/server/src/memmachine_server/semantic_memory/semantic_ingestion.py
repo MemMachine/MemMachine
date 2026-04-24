@@ -50,6 +50,27 @@ _CLUSTER_METADATA_KEY = "cluster_id"
 _MAX_CLUSTERS_PER_RUN = 5
 
 
+def _is_context_length_exceeded_error(error: Exception) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        code = getattr(current, "code", None)
+        if isinstance(code, str) and code.lower() == "context_length_exceeded":
+            return True
+
+        message = str(current).lower()
+        if (
+            "context_length_exceeded" in message
+            or "exceeds the context window" in message
+        ):
+            return True
+
+        current = current.__cause__ or current.__context__
+
+    return False
+
+
 class IngestionService:
     """
     Processes un-ingested history for each set_id and updates semantic features.
@@ -66,6 +87,15 @@ class IngestionService:
         resource_retriever: ResourceRetrieverT
         consolidated_threshold: int = 20
         debug_fail_loudly: bool = False
+        max_features_per_update: int = Field(
+            50,
+            description=(
+                "Maximum number of existing features passed to the LLM per update "
+                "call. Limiting this prevents the LLM output from overflowing its "
+                "token budget when the profile has grown very large."
+            ),
+            gt=0,
+        )
         ingestion_trigger_messages: int = 5
         ingestion_trigger_age: timedelta = timedelta(minutes=5)
         cluster_idle_ttl: timedelta | None = timedelta(days=1)
@@ -84,6 +114,7 @@ class IngestionService:
         self._resource_retriever = params.resource_retriever
         self._consolidation_threshold = params.consolidated_threshold
         self._debug_fail_loudly = params.debug_fail_loudly
+        self._max_features_per_update = params.max_features_per_update
         self._ingestion_trigger_messages = params.ingestion_trigger_messages
         self._ingestion_trigger_age: timedelta = params.ingestion_trigger_age
         self._cluster_idle_ttl = params.cluster_idle_ttl
@@ -317,10 +348,12 @@ class IngestionService:
                     feature
                     async for feature in self._semantic_storage.get_feature_set(
                         filter_expr=filter_expr,
+                        page_size=self._max_features_per_update,
                     )
                 ]
 
                 message_content = self._format_cluster_messages(cluster_messages)
+                citation_ids = [m.uid for m in cluster_messages if m.uid is not None]
 
                 try:
                     commands = await llm_feature_update(
@@ -329,7 +362,16 @@ class IngestionService:
                         model=resources.language_model,
                         update_prompt=semantic_category.prompt.update_prompt,
                     )
-                except Exception:
+                except Exception as err:
+                    if _is_context_length_exceeded_error(err):
+                        logger.warning(
+                            "Skipping cluster %s for semantic type %s due to non-retryable context length error",
+                            cluster_id,
+                            semantic_category.name,
+                        )
+                        mark_messages.update(citation_ids)
+                        continue
+
                     logger.exception(
                         "Failed to process cluster %s for semantic type %s",
                         cluster_id,
@@ -339,8 +381,6 @@ class IngestionService:
                         raise
 
                     continue
-
-                citation_ids = [m.uid for m in cluster_messages if m.uid is not None]
 
                 await self._apply_commands(
                     commands=commands,

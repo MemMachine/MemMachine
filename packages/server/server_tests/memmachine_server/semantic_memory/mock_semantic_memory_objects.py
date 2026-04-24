@@ -190,6 +190,9 @@ class MockSemanticStorage(SemanticStorage):
     ) -> AsyncIterator[SetIdT]:
         raise NotImplementedError
 
+    async def purge_ingested_rows(self, set_ids: list[SetIdT]) -> int:
+        raise NotImplementedError
+
     def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         raise NotImplementedError
 

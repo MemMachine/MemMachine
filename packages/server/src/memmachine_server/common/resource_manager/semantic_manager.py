@@ -235,6 +235,7 @@ class SemanticResourceManager:
                 cluster_split_reranker_name=cluster_split_reranker_name,
                 uningested_time_limit=self._conf.ingestion_trigger_age,
                 uningested_message_limit=self._conf.ingestion_trigger_messages,
+                max_features_per_update=self._conf.max_features_per_update,
                 cluster_idle_ttl=self._conf.cluster_idle_ttl,
             ),
         )

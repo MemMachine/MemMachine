@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -71,6 +72,17 @@ class OpenAIEmbedder(Embedder):
         75000  # Assume at most 4 tokens per Unicode code point.
     )
 
+    # Tokens that cause 500 errors on text-embedding-3-small.
+    _SPECIAL_TOKEN_PATTERN = re.compile(
+        r"<\|endoftext\|>"
+        r"|<\|im_start\|>"
+        r"|<\|im_end\|>"
+        r"|<\|fim_prefix\|>"
+        r"|<\|fim_middle\|>"
+        r"|<\|fim_suffix\|>"
+        r"|<\|endofprompt\|>"
+    )
+
     def __init__(self, params: OpenAIEmbedderParams) -> None:
         """Initialize the OpenAI embedder with configuration parameters."""
         super().__init__()
@@ -133,7 +145,10 @@ class OpenAIEmbedder(Embedder):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        inputs = [input_text or "." for input_text in inputs]
+        inputs = [
+            OpenAIEmbedder._SPECIAL_TOKEN_PATTERN.sub("", input_text) or "."
+            for input_text in inputs
+        ]
 
         inputs_chunks = [
             chunk_text_balanced(input_text, self._max_input_length)
@@ -239,9 +254,11 @@ class OpenAIEmbedder(Embedder):
                     raise
                 break
             except (
+                openai.BadRequestError,
                 openai.RateLimitError,
                 openai.APITimeoutError,
                 openai.APIConnectionError,
+                openai.InternalServerError,
             ) as err:
                 # Exception may be retried.
                 if attempt >= max_attempts:

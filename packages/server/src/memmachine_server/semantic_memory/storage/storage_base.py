@@ -189,6 +189,17 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def purge_ingested_rows(self, set_ids: list[SetIdT]) -> int:
+        """Delete history rows for the provided set_ids where all messages are marked as ingested.
+
+        Skips any set that still has un-ingested messages to preserve the duplicate guard.
+
+        Returns:
+            int: Total number of history rows deleted across all provided set_ids.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         """Return all set id's that start with the specified prefix."""
         raise NotImplementedError

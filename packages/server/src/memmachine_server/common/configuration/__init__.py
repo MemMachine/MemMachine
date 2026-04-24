@@ -181,6 +181,15 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=2.0,
         description="Z-score threshold for detecting sharp similarity drops.",
     )
+    max_features_per_update: int = Field(
+        default=50,
+        description=(
+            "Maximum number of existing features passed to the LLM per ingestion update call. "
+            "Limits the LLM response size to prevent token-budget overflow when the profile "
+            "has grown very large."
+        ),
+        gt=0,
+    )
 
     @model_validator(mode="after")
     def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:

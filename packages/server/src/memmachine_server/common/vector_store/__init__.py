@@ -1,11 +1,20 @@
 """Public exports for vector store."""
 
-from .data_types import QueryResult, Record
-from .vector_store import Collection, VectorStore
+from .data_types import (
+    QueryResult,
+    Record,
+    VectorStoreCollectionAlreadyExistsError,
+    VectorStoreCollectionConfig,
+    VectorStoreCollectionConfigMismatchError,
+)
+from .vector_store import VectorStore, VectorStoreCollection
 
 __all__ = [
-    "Collection",
     "QueryResult",
     "Record",
     "VectorStore",
+    "VectorStoreCollection",
+    "VectorStoreCollectionAlreadyExistsError",
+    "VectorStoreCollectionConfig",
+    "VectorStoreCollectionConfigMismatchError",
 ]

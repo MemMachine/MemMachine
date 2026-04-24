@@ -792,6 +792,30 @@ class Neo4jSemanticStorage(SemanticStorage):
             history_ids=[str(hid) for hid in history_ids],
         )
 
+    async def purge_ingested_rows(self, set_ids: list[SetIdT]) -> int:
+        if not set_ids:
+            return 0
+        set_ids_param = [str(s) for s in set_ids]
+        # Only purge set_ids where no uningested rows remain, so the
+        # (set_id, history_id) duplicate guard stays intact for pending sets.
+        records, _, _ = await self._driver.execute_query(
+            """
+            WITH $set_ids AS candidates
+            UNWIND candidates AS sid
+            OPTIONAL MATCH (pending:SetHistory {set_id: sid})
+            WHERE coalesce(pending.is_ingested, false) = false
+            WITH sid, count(pending) AS pending_count
+            WHERE pending_count = 0
+            MATCH (h:SetHistory {set_id: sid})
+            WHERE h.is_ingested = true
+            WITH h, count(h) AS cnt
+            DETACH DELETE h
+            RETURN coalesce(sum(cnt), 0) AS deleted
+            """,
+            set_ids=set_ids_param,
+        )
+        return int(records[0]["deleted"]) if records else 0
+
     async def _load_feature_entries(
         self,
         *,

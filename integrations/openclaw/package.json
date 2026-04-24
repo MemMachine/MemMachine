@@ -30,13 +30,18 @@
   "dependencies": {
     "@memmachine/client": "^0.0.0-development",
     "@sinclair/typebox": "^0.34.48",
-    "openclaw": "^2026.3.2"
+    "openclaw": "^2026.3.23"
   },
   "devDependencies": {
     "tsup": "^8.5.0",
     "typescript": "^5.9.3"
   },
   "openclaw": {
+    "install": {
+      "npmSpec": "@memmachine/openclaw-memmachine",
+      "localPath": "integrations/openclaw",
+      "defaultChoice": "npm"
+    },
     "extensions": [
       "./dist/index.mjs"
     ]

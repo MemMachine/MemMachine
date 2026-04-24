@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
 from pathlib import Path
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import numpy as np
 from alembic import command
@@ -20,17 +20,15 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
-    and_,
     delete,
     insert,
-    or_,
     select,
     text,
     union,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, CursorResult
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -54,6 +52,7 @@ from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
     SemanticStorage,
 )
+from memmachine_server.semantic_memory.storage.text_sanitizer import sanitize_pg_text
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +163,10 @@ class SetIngestedHistory(BaseSemanticStorage):
     )
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
+    __table_args__ = (
+        Index("ix_set_ingested_history_set_id_ingested", "set_id", "ingested"),
+    )
+
 
 async def apply_alembic_migrations(engine: AsyncEngine) -> None:
     """Run Alembic migrations for the semantic storage tables."""
@@ -236,9 +239,9 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             .values(
                 set_id=set_id,
                 semantic_category_id=category_name,
-                tag_id=tag,
-                feature=feature,
-                value=value,
+                tag_id=sanitize_pg_text(tag, context="feature.tag"),
+                feature=sanitize_pg_text(feature, context="feature.feature"),
+                value=sanitize_pg_text(value, context="feature.value"),
                 embedding=embedding,
                 json_metadata=metadata,
             )
@@ -276,11 +279,13 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         if category_name is not None:
             stmt = stmt.values(semantic_category_id=category_name)
         if feature is not None:
-            stmt = stmt.values(feature=feature)
+            stmt = stmt.values(
+                feature=sanitize_pg_text(feature, context="feature.feature")
+            )
         if value is not None:
-            stmt = stmt.values(value=value)
+            stmt = stmt.values(value=sanitize_pg_text(value, context="feature.value"))
         if tag is not None:
-            stmt = stmt.values(tag_id=tag)
+            stmt = stmt.values(tag_id=sanitize_pg_text(tag, context="feature.tag"))
         if embedding is not None:
             stmt = stmt.values(embedding=embedding)
         if metadata is not None:
@@ -712,37 +717,36 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         older_than: AwareDatetime | None = None,
     ) -> AsyncIterator[SetIdT]:
         async def _iter() -> AsyncIterator[SetIdT]:
-            stmt = select(SetIngestedHistory.set_id).distinct()
-
-            conditions = []
+            subqueries: list[Select] = []
 
             if min_uningested_messages is not None and min_uningested_messages > 0:
-                inner = aliased(SetIngestedHistory)
-
-                count_uningested = (
-                    select(func.count(inner.set_id))
-                    .where(
-                        inner.set_id
-                        == SetIngestedHistory.set_id,  # correlate on set_id
-                        inner.ingested.is_(False),
-                    )
-                    .scalar_subquery()
+                uningested_subq = (
+                    select(SetIngestedHistory.set_id)
+                    .where(SetIngestedHistory.ingested.is_(False))
+                    .group_by(SetIngestedHistory.set_id)
+                    .having(func.count() >= min_uningested_messages)
                 )
-
-                conditions.append(count_uningested >= min_uningested_messages)
+                subqueries.append(uningested_subq)
 
             if older_than is not None:
-                conditions.append(
-                    and_(
-                        SetIngestedHistory.created_at <= older_than,
+                older_subq = (
+                    select(SetIngestedHistory.set_id)
+                    .where(
                         SetIngestedHistory.ingested.is_(False),
+                        SetIngestedHistory.created_at <= older_than,
                     )
+                    .distinct()
                 )
+                subqueries.append(older_subq)
 
-            if len(conditions) == 1:
-                stmt = stmt.where(conditions[0])
-            elif len(conditions) > 1:
-                stmt = stmt.where(or_(*conditions))
+            if not subqueries:
+                # No filters: return all distinct set_ids
+                stmt = select(SetIngestedHistory.set_id).distinct()
+            elif len(subqueries) == 1:
+                stmt = subqueries[0]
+            else:
+                # OR semantics: union the subqueries
+                stmt = union(*subqueries)
 
             async with self._create_session() as session:
                 result = await session.stream(stmt)
@@ -751,6 +755,31 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
                         yield SetIdT(set_id)
 
         return _iter()
+
+    async def purge_ingested_rows(self, set_ids: list[SetIdT]) -> int:
+        if not set_ids:
+            return 0
+        # Only purge set_ids where no uningested rows remain, so the
+        # (set_id, history_id) duplicate guard stays intact for pending sets.
+        pending_alias = aliased(SetIngestedHistory)
+        pending_exists = (
+            select(pending_alias.set_id)
+            .where(
+                pending_alias.set_id == SetIngestedHistory.set_id,
+                pending_alias.ingested.is_(False),
+            )
+            .correlate(SetIngestedHistory)
+            .exists()
+        )
+        stmt = delete(SetIngestedHistory).where(
+            SetIngestedHistory.set_id.in_(set_ids),
+            SetIngestedHistory.ingested.is_(True),
+            ~pending_exists,
+        )
+        async with self._create_session() as session:
+            result = cast(CursorResult[Any], await session.execute(stmt))
+            await session.commit()
+            return result.rowcount
 
     async def get_set_ids_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
         stmt = union(

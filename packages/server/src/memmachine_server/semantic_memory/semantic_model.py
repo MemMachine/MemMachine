@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, InstanceOf
+from pydantic import BaseModel, InstanceOf, field_validator
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeIdT
@@ -33,6 +33,13 @@ class SemanticCommand(BaseModel):
     feature: str
     tag: str
     value: str
+
+    @field_validator("feature", "tag", "value", mode="after")
+    @classmethod
+    def strip_null_bytes(cls, v: str) -> str:
+        if "\x00" in v:
+            return v.replace("\x00", "")
+        return v
 
 
 @dataclass

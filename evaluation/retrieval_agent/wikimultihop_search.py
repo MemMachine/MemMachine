@@ -11,8 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
-from evaluation.retrieval_agent.wikimultihop_ingest import load_data  # noqa: E402
-from evaluation.utils import agent_utils  # noqa: E402
+from evaluation.retrieval_agent.cli_utils import positive_int  # noqa: E402
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -21,7 +20,7 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
 <instructions>
 1. Normalize inputs before deciding anything:
    - Treat `{memories}` as possibly empty.
-   - Normalize entity spellings/case/ordinals/titles and common aliases (e.g., “10Th” → “10th”; honorific variants).
+   - Normalize entity spellings/case/ordinals/titles and common aliases (e.g., "10Th" → "10th"; honorific variants).
    - If `{question}` is malformed, underspecified, or missing key constraints, ask exactly one concise clarifying question instead of answering.
 
 2. Choose the evidence basis using this strict priority:
@@ -30,8 +29,8 @@ ANSWER_PROMPT = """You are asked to answer `{question}` using `{memories}` as th
    (c) **Open-domain fallback**: Use general world knowledge when memories are empty/irrelevant/too vague OR do not fully determine the answer.
 
 3. Uncertainty rule:
-   - Do **not** say “unknown/not mentioned” if open-domain knowledge can reasonably answer.
-   - If neither memories nor general knowledge allow a confident answer, say “I don’t know” (optionally add a brief reason).
+   - Do **not** say "unknown/not mentioned" if open-domain knowledge can reasonably answer.
+   - If neither memories nor general knowledge allow a confident answer, say "I don't know" (optionally add a brief reason).
 
 4. Ambiguity handling:
    - If multiple plausible entities/answers remain after normalization, provide the top candidates and note the ambiguity briefly.
@@ -53,10 +52,7 @@ Question: {question}
 """
 
 
-async def run_wiki(
-    dpath: str | None = None,
-    epath: str | None = None,
-) -> tuple[str, dict[str, Any]]:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -77,14 +73,36 @@ async def run_wiki(
         help="Testing with memmachine(bypass agent), retrieval_agent, or pure llm",
         choices=["memmachine", "retrieval_agent", "llm"],
     )
+    parser.add_argument(
+        "--config-path",
+        required=True,
+        help="Path to configuration.yml",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=positive_int,
+        default=10,
+        help="Max number of concurrent questions (use 1 for local/Ollama models)",
+    )
 
-    args = parser.parse_args()
+    return parser
+
+
+async def run_wiki(
+    dpath: str | None = None,
+    epath: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    from evaluation.retrieval_agent.wikimultihop_ingest import load_data
+    from evaluation.utils import agent_utils
+
+    args = build_parser().parse_args()
 
     print("Starting WikiMultiHop test...")
     print(f"Data path: {args.data_path}")
     print(f"Evaluation result path: {args.eval_result_path}")
     print(f"Length: {args.length}")
     print(f"Test target: {args.test_target}")
+    print(f"Concurrency: {args.concurrency}")
 
     data_path = args.data_path
     eval_result_path = args.eval_result_path
@@ -94,13 +112,10 @@ async def run_wiki(
     if epath:
         eval_result_path = epath
 
-    vector_graph_store = agent_utils.init_vector_graph_store(
-        neo4j_uri="bolt://localhost:7687"
-    )
+    resource_manager = agent_utils.load_eval_config(args.config_path)
     memory, model, query_agent = await agent_utils.init_memmachine_params(
-        vector_graph_store=vector_graph_store,
+        resource_manager=resource_manager,
         session_id="group1",  # Wikimultihop dataset does not have session concept
-        model_name="gpt-5-mini",
         agent_name="ToolSelectAgent"
         if args.test_target == "retrieval_agent"
         else "MemMachineAgent",
@@ -116,11 +131,11 @@ async def run_wiki(
     attribute_matrix = agent_utils.init_attribute_matrix()
     full_content = "\n".join(contexts)
     num_processed = 0
-    for q, a, t, f_list in zip(
-        questions, answers, types, supporting_facts, strict=True
-    ):
-        tasks.append(
-            agent_utils.process_question(
+    sem = asyncio.Semaphore(args.concurrency)
+
+    async def bounded_process(q, a, t, f_list):
+        async with sem:
+            return await agent_utils.process_question(
                 ANSWER_PROMPT,
                 query_agent,
                 memory,
@@ -132,9 +147,13 @@ async def run_wiki(
                 "",
                 full_content=full_content if args.test_target == "llm" else None,
             )
-        )
 
-        if len(tasks) % 10 == 0 or (q == questions[-1]):
+    for index, (q, a, t, f_list) in enumerate(
+        zip(questions, answers, types, supporting_facts, strict=True), start=1
+    ):
+        tasks.append(bounded_process(q, a, t, f_list))
+
+        if len(tasks) >= args.concurrency or index == len(questions):
             responses = await asyncio.gather(*tasks)
             tasks = []
             agent_utils.update_results(responses, attribute_matrix, results)

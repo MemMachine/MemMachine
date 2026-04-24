@@ -348,6 +348,78 @@ class TestSessionMemoryPublicAPI:
         assert mock_model.call_count == 4
 
     @pytest.mark.asyncio
+    async def test_summary_exceed_context_window_single_episode(
+        self, mock_data_manager
+    ):
+        class ChunkingLanguageModel(LanguageModel):
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def generate_response(
+                self,
+                system_prompt: str | None = None,
+                user_prompt: str | None = None,
+                tools: list[dict[str, Any]] | None = None,
+                tool_choice: str | dict[str, str] | None = None,
+                max_attempts: int = 1,
+            ) -> tuple[str, Any]:
+                prompt = user_prompt or ""
+                if len(prompt) > 10000:
+                    raise ValueError("User prompt exceeds context window")
+                self.call_count += 1
+                match = re.search(r"summary:(\d+)(?: \d+)?$", prompt)
+                prev_summary = int(match.group(1)) if match else 0
+                messages = re.findall(r'"([^"]*)"', prompt)
+                return (
+                    f"summary:{prev_summary + sum(len(message) for message in messages)}",
+                    "",
+                )
+
+            async def generate_response_with_token_usage(
+                self,
+                system_prompt: str | None = None,
+                user_prompt: str | None = None,
+                tools: list[dict[str, Any]] | None = None,
+                tool_choice: str | dict[str, str] | None = None,
+                max_attempts: int = 1,
+            ) -> tuple[str, Any, int, int]:
+                response, tool_output = await self.generate_response(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    max_attempts=max_attempts,
+                )
+                return response, tool_output, 0, 0
+
+            async def generate_parsed_response(
+                self,
+                output_format: type[T],
+                system_prompt: str | None = None,
+                user_prompt: str | None = None,
+                max_attempts: int = 1,
+            ) -> T:
+                return cast(T, "summary")
+
+        model = ChunkingLanguageModel()
+        params = ShortTermMemoryConsolidator.Params(
+            summary_user_prompt="User prompt: {episodes} {summary} {max_length}",
+            summary_system_prompt="System Prompt",
+            max_summary_length_words=100,
+            session_key="test_session",
+            model=model,
+            data_manager=mock_data_manager,
+        )
+        consolidator = ShortTermMemoryConsolidator(params)
+
+        oversized_content = "a" * 12000
+        episode = create_test_episode(content=oversized_content)
+        summary = await consolidator._create_summary("", [episode])
+
+        assert summary == "summary:12000"
+        assert model.call_count > 1
+
+    @pytest.mark.asyncio
     async def test_summary_catch_up(self, mock_model, mock_data_manager):
         params = ShortTermMemoryConsolidator.Params(
             summary_user_prompt="User prompt: {episodes} {summary} {max_length}",

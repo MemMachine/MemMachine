@@ -213,6 +213,7 @@ async def test_generate_response_success(mock_async_openai, minimal_config):
         {"role": "system", "content": "System prompt"},
         {"role": "user", "content": "User prompt"},
     ]
+    assert call_args.kwargs["store"] is False
 
 
 @pytest.mark.asyncio
@@ -395,6 +396,35 @@ async def test_generate_response_fail_after_max_retries(
     assert mock_sleep.call_count == 2
     mock_sleep.assert_any_await(1)
     mock_sleep.assert_any_await(2)
+
+
+@pytest.mark.asyncio
+@patch("asyncio.sleep", new_callable=AsyncMock)
+async def test_generate_response_retry_on_internal_server_error(
+    mock_sleep,
+    mock_async_openai,
+    minimal_config,
+):
+    """Test retry logic on InternalServerError."""
+    mock_response = MagicMock()
+    mock_response.choices[0].message.content = "Success after retry"
+    mock_response.choices[0].message.tool_calls = None
+    mock_response.usage = None
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.side_effect = [
+        openai.InternalServerError(
+            "internal server error", response=MagicMock(), body=None
+        ),
+        mock_response,
+    ]
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    content, _ = await lm.generate_response(max_attempts=2)
+
+    assert content == "Success after retry"
+    assert mock_client.chat.completions.create.call_count == 2
+    mock_sleep.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio

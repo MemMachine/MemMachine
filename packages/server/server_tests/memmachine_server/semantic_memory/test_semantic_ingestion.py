@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.data_types import (
+    ExternalServiceAPIError,
+    SimilarityMetric,
+)
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
@@ -981,6 +984,51 @@ async def test_reingest_event_id_reuses_cluster(
 
 
 @pytest.mark.asyncio
+async def test_process_single_set_marks_context_length_errors_as_ingested(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    monkeypatch,
+):
+    class ContextLengthExceededError(Exception):
+        code = "context_length_exceeded"
+
+    message_id = await add_history(
+        episode_storage,
+        content="very long message that exceeds model context",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-context-overflow",
+        history_id=message_id,
+    )
+
+    async def mock_context_length_error(*args, **kwargs):
+        err = ContextLengthExceededError("input exceeds context window")
+        raise ExternalServiceAPIError("LLM request failed") from err
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        mock_context_length_error,
+    )
+
+    await ingestion_service._process_single_set("user-context-overflow")
+
+    assert (
+        await _collect_history_messages(
+            semantic_storage,
+            set_ids=["user-context-overflow"],
+            is_ingested=False,
+        )
+        == []
+    )
+    assert await _collect_history_messages(
+        semantic_storage,
+        set_ids=["user-context-overflow"],
+        is_ingested=True,
+    ) == [message_id]
+
+
+@pytest.mark.asyncio
 async def test_consolidation_groups_by_tag(
     ingestion_service: IngestionService,
     semantic_storage: SemanticStorage,
@@ -1389,6 +1437,60 @@ async def test_process_single_set_raises_in_debug_mode_for_invalid_ids(
 
     with pytest.raises(ValueError, match="user-888"):
         await ingestion_service._process_single_set("user-888")
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_limits_features_sent_to_llm(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    semantic_category: SemanticCategory,
+    monkeypatch,
+):
+    """The feature lookup for each message must pass a page_size cap so that a
+    very large profile does not cause the LLM response to overflow its token budget."""
+    message_id = await add_history(episode_storage, content="I love sushi")
+    await semantic_storage.add_history_to_set(set_id="user-222", history_id=message_id)
+
+    # Seed more features than the expected cap
+    for i in range(60):
+        await semantic_storage.add_feature(
+            set_id="user-222",
+            category_name=semantic_category.name,
+            feature=f"feature_{i}",
+            value=f"value_{i}",
+            tag="misc",
+            embedding=np.array([float(i), float(-i)]),
+        )
+
+    llm_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_mock,
+    )
+
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            consolidated_threshold=100,
+            debug_fail_loudly=False,
+            ingestion_trigger_messages=1,
+        )
+    )
+
+    await ingestion_service._process_single_set("user-222")
+
+    # get_feature_set must have been called with a non-None page_size
+    # to prevent sending all 60 features to the LLM at once.
+    llm_mock.assert_awaited_once()
+    assert llm_mock.await_args is not None
+    passed_features: list[SemanticFeature] = llm_mock.await_args.kwargs["features"]
+    assert len(passed_features) < 60, (
+        "Expected feature set to be capped before calling the LLM, "
+        f"but {len(passed_features)} features were passed"
+    )
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,7 @@ information extraction and a vector database for semantic search capabilities.
 """
 
 import asyncio
+import contextlib
 import logging
 from asyncio import Task
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
@@ -116,6 +117,8 @@ class SemanticService:
         uningested_time_limit: timedelta = timedelta(minutes=5)
         cluster_idle_ttl: timedelta | None = timedelta(days=1)
 
+        max_features_per_update: int = 50
+
         resource_manager: InstanceOf[ResourceManager]
 
         default_embedder: InstanceOf[Embedder]
@@ -150,6 +153,7 @@ class SemanticService:
         ] = params.default_category_retriever
 
         self._consolidation_threshold = params.consolidation_threshold
+        self._max_features_per_update = params.max_features_per_update
 
         self._cluster_ingestion_message_limit = params.uningested_message_limit
         self._cluster_ingestion_time_limit = params.uningested_time_limit
@@ -157,6 +161,7 @@ class SemanticService:
 
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
+        self._shutdown_event = asyncio.Event()
         self._debug_fail_loudly = params.debug_fail_loudly
 
     async def start(self) -> None:
@@ -166,6 +171,7 @@ class SemanticService:
             return
 
         self._is_shutting_down = False
+        self._shutdown_event.clear()
         self._ingestion_task = asyncio.create_task(self._background_ingestion_task())
 
     async def stop(self) -> None:
@@ -175,6 +181,7 @@ class SemanticService:
             return
 
         self._is_shutting_down = True
+        self._shutdown_event.set()
         await self._ingestion_task
         self._ingestion_task = None
 
@@ -243,7 +250,7 @@ class SemanticService:
     async def add_messages(
         self, set_id: SetIdT, history_ids: Sequence[EpisodeIdT]
     ) -> None:
-        logger.info("Adding messages to set %s: %s", set_id, history_ids)
+        logger.debug("Adding %d messages to set %s", len(history_ids), set_id)
 
         res = await asyncio.gather(
             *[
@@ -799,6 +806,11 @@ class SemanticService:
         async for set_id in self._semantic_storage.get_set_ids_starts_with(prefix):
             yield set_id
 
+    async def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep that wakes early when shutdown is requested."""
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._shutdown_event.wait(), timeout=seconds)
+
     def _build_cluster_splitter(self) -> ClusterSplitterProtocol:
         if self._cluster_split_params.enabled:
             if self._cluster_split_reranker_name:
@@ -814,6 +826,7 @@ class SemanticService:
                 semantic_storage=self._semantic_storage,
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
+                max_features_per_update=self._max_features_per_update,
                 ingestion_trigger_messages=self._cluster_ingestion_message_limit,
                 ingestion_trigger_age=self._cluster_ingestion_time_limit,
                 cluster_idle_ttl=self._cluster_idle_ttl,
@@ -823,32 +836,46 @@ class SemanticService:
             ),
         )
 
+        backoff_sec = self._background_ingestion_interval_sec
+
         while not self._is_shutting_down:
-            dirty_sets = self._semantic_storage.get_history_set_ids(
-                min_uningested_messages=1,
-            )
+            dirty_sets = [
+                set_id
+                async for set_id in self._semantic_storage.get_history_set_ids(
+                    min_uningested_messages=1,
+                )
+            ]
 
-            first_set_id: SetIdT | None = None
-            async for set_id in dirty_sets:
-                first_set_id = set_id
-                break
-
-            if first_set_id is None:
-                await asyncio.sleep(self._background_ingestion_interval_sec)
+            if len(dirty_sets) == 0:
+                # Reset backoff so prior error-induced backoff doesn't carry
+                # over across long idle periods.
+                backoff_sec = self._background_ingestion_interval_sec
+                await self._interruptible_sleep(self._background_ingestion_interval_sec)
                 continue
 
-            async def _stream_set_ids(
-                first_id: SetIdT, remaining: AsyncIterator[SetIdT]
-            ) -> AsyncIterator[SetIdT]:
-                yield first_id
-                async for set_id in remaining:
-                    yield set_id
-
+            had_errors = False
             try:
-                await ingestion_service.process_set_ids(
-                    _stream_set_ids(first_set_id, dirty_sets)
-                )
+                await ingestion_service.process_set_ids(dirty_sets)
             except Exception:
                 if self._debug_fail_loudly:
                     raise
-                logger.exception("background task crashed, restarting")
+                had_errors = True
+                logger.exception(
+                    "background ingestion failed, backing off %.1fs", backoff_sec
+                )
+
+            # Always attempt purge — purge_ingested_rows only deletes rows
+            # for fully-ingested sets, so partially-failed sets are skipped
+            # and their duplicate guard is preserved.
+            purged = await self._semantic_storage.purge_ingested_rows(dirty_sets)
+            if purged:
+                logger.info(
+                    "purged %d ingested rows for %d sets", purged, len(dirty_sets)
+                )
+
+            if had_errors:
+                await self._interruptible_sleep(backoff_sec)
+                backoff_sec = min(backoff_sec * 2, 60.0)
+            else:
+                backoff_sec = self._background_ingestion_interval_sec
+                await self._interruptible_sleep(self._background_ingestion_interval_sec)
