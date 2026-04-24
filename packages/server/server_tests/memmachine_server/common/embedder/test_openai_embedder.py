@@ -124,3 +124,48 @@ async def test_embed_fail_after_max_retries_on_internal_server_error(mock_sleep)
     assert mock_sleep.call_count == 2
     mock_sleep.assert_any_await(1)
     mock_sleep.assert_any_await(2)
+
+
+@pytest.mark.asyncio
+async def test_embed_oversized_input_with_no_max_input_length():
+    """Regression for #1298: text > 75,000 chars must not raise ValueError.
+
+    When max_input_length is None, _embed() must fall back to
+    max_total_input_length_per_request (75,000) as the chunking bound so that
+    cluster_texts() never receives a text that exceeds its hard limit.
+    Prior to the fix, this raised ValueError("Text length ... exceeds
+    max_total_length_per_cluster ..."), which surfaced as HTTP 500.
+    """
+    mock_client = AsyncMock(spec=openai.AsyncOpenAI)
+
+    mock_embedding = MagicMock()
+    mock_embedding.embedding = [0.1] * 256
+
+    mock_response = MagicMock()
+    mock_response.data = [mock_embedding]
+    mock_response.usage.prompt_tokens = 10
+    mock_response.usage.total_tokens = 10
+
+    mock_client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    embedder = OpenAIEmbedder(
+        OpenAIEmbedderParams(
+            client=mock_client,
+            model="test-model",
+            dimensions=256,
+            max_input_length=None,  # default — reproduces the crash scenario
+        )
+    )
+
+    # 80,000 chars exceeds the 75,000-char cluster hard limit by 5,000.
+    long_text = "x" * 80_000
+
+    # Before the fix this raised:
+    #   ValueError: Text length 80000 exceeds max_total_length_per_cluster 75000
+    result = await embedder.ingest_embed([long_text])
+
+    assert len(result) == 1
+    assert len(result[0]) == 256
+    # The text must have been split: balanced chunks of 80,000 chars at limit
+    # 75,000 produce two chunks of 40,000 each, each in its own cluster.
+    assert mock_client.embeddings.create.call_count >= 2
