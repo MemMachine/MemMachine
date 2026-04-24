@@ -12,8 +12,10 @@ from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
 from memmachine_server.common.filter.filter_parser import And, Comparison
+from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_llm import (
     LLMReducedFeature,
+    SemanticConsolidateMemoryRes,
     llm_consolidate_features,
     llm_feature_update,
 )
@@ -29,6 +31,17 @@ from memmachine_server.semantic_memory.semantic_model import (
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 
 logger = logging.getLogger(__name__)
+
+_MAX_CONSOLIDATION_ATTEMPTS = 2
+
+
+class _ConsolidationContextLengthError(Exception):
+    """Signals that consolidation must be skipped due to a context-length error.
+
+    Caught inside the ingestion service to distinguish the graceful-skip path
+    from genuine consolidation failure, so that `debug_fail_loudly` does not
+    raise for scenarios the feature-update path already handles silently.
+    """
 
 
 def _is_context_length_exceeded_error(error: Exception) -> bool:
@@ -370,6 +383,67 @@ class IngestionService:
 
         await asyncio.gather(*category_tasks)
 
+    async def _try_consolidate(
+        self,
+        *,
+        set_id: str,
+        features: list[SemanticFeature],
+        model: LanguageModel,
+        consolidation_prompt: str,
+    ) -> SemanticConsolidateMemoryRes | None:
+        """Call llm_consolidate_features with retry on transient failures.
+
+        Retries on parse/validation exceptions and on ``None`` returns (which
+        indicate a structured-output parse failure upstream). A context-length
+        exception is raised as :class:`_ConsolidationContextLengthError` so
+        the caller can skip the group without tripping ``debug_fail_loudly``.
+        Returns ``None`` once retries are exhausted, raising instead when
+        ``self._debug_fail_loudly`` is True and the last failure was not a
+        context-length error.
+        """
+        for attempt in range(1, _MAX_CONSOLIDATION_ATTEMPTS + 1):
+            try:
+                result = await llm_consolidate_features(
+                    features=features,
+                    model=model,
+                    consolidate_prompt=consolidation_prompt,
+                )
+            except Exception as err:
+                if _is_context_length_exceeded_error(err):
+                    logger.warning(
+                        "Skipping consolidation for set %s due to non-retryable context length error",
+                        set_id,
+                    )
+                    raise _ConsolidationContextLengthError from err
+                if attempt < _MAX_CONSOLIDATION_ATTEMPTS:
+                    logger.warning(
+                        "Consolidation raised %s on attempt %d/%d for set %s, retrying",
+                        type(err).__name__,
+                        attempt,
+                        _MAX_CONSOLIDATION_ATTEMPTS,
+                        set_id,
+                    )
+                    continue
+                logger.exception(
+                    "Failed to consolidate features while calling LLM for set %s on attempt %d/%d",
+                    set_id,
+                    attempt,
+                    _MAX_CONSOLIDATION_ATTEMPTS,
+                )
+                if self._debug_fail_loudly:
+                    raise
+                return None
+            if result is not None:
+                return result
+            if attempt < _MAX_CONSOLIDATION_ATTEMPTS:
+                logger.warning(
+                    "Consolidation returned None on attempt %d/%d for set %s, retrying",
+                    attempt,
+                    _MAX_CONSOLIDATION_ATTEMPTS,
+                    set_id,
+                )
+        return None
+
     async def _deduplicate_features(
         self,
         *,
@@ -379,19 +453,20 @@ class IngestionService:
         resources: InstanceOf[Resources],
     ) -> None:
         try:
-            consolidate_resp = await llm_consolidate_features(
+            consolidate_resp = await self._try_consolidate(
+                set_id=set_id,
                 features=list(memories),
                 model=resources.language_model,
-                consolidate_prompt=semantic_category.prompt.consolidation_prompt,
+                consolidation_prompt=semantic_category.prompt.consolidation_prompt,
             )
-        except (ValueError, TypeError):
-            logger.exception("Failed to update features while calling LLM")
-            if self._debug_fail_loudly:
-                raise
+        except _ConsolidationContextLengthError:
             return
 
         if consolidate_resp is None or consolidate_resp.keep_memories is None:
-            logger.warning("Failed to consolidate features")
+            logger.warning(
+                "Failed to consolidate features after %d attempts",
+                _MAX_CONSOLIDATION_ATTEMPTS,
+            )
             if self._debug_fail_loudly:
                 raise ValueError("Failed to consolidate features")
             return

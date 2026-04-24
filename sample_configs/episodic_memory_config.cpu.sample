@@ -50,7 +50,7 @@ resources:
       provider: neo4j
       config:
         uri: 'bolt://localhost:7687'
-        username: neo4j
+        user: neo4j
         password: <YOUR_PASSWORD_HERE>
         max_connection_pool_size: 100
         connection_acquisition_timeout: 60.0

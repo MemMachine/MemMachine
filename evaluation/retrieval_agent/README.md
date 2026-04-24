@@ -459,3 +459,33 @@ For the full argument reference run:
 ./run_test.sh --help
 ./run_test.sh wikimultihop --help
 ```
+
+---
+
+## Deleting Ingested Data
+
+`run_test.sh delete` removes all episodes a prior `ingest` wrote to the configured
+long-term memory store for each benchmark's session key(s). Use it between runs to
+reuse the same `RESULT_POSTFIX` without double-counting earlier data.
+
+```sh
+# From evaluation/retrieval_agent/
+./run_test.sh locomo       exp1 delete retrieval_agent
+./run_test.sh wikimultihop exp1 delete retrieval_agent
+./run_test.sh hotpotqa     exp1 delete retrieval_agent
+./run_test.sh longmemeval  exp1 delete retrieval_agent
+```
+
+Notes:
+
+- `delete` ignores `SPLIT_NAME` and `LENGTH` — only `RESULT_POSTFIX` and
+  `TEST_TARGET` are needed. `TEST_TARGET` is accepted for argument symmetry with
+  `ingest`/`search` but is unused by the delete path.
+- For LoCoMo the delete iterates all 10 conversation groups (`group_0` … `group_9`),
+  since ingestion uses one session per conversation.
+- For WikiMultiHop / HotpotQA the delete clears the single fixed session_id used
+  by ingestion (`group1` and `hotpotqa_group` respectively).
+- For LongMemEval the session_id is derived from `RESULT_POSTFIX`
+  (`longmemeval_<RESULT_POSTFIX>`), matching the ingest-time session.
+- Concurrency flags (`--ingest-concurrency`, `--search-concurrency`,
+  `--judge-concurrency`) are rejected with `delete`.

@@ -192,6 +192,20 @@ async def hotpotqa_search(
             json.dump(results, f, indent=4)
 
 
+async def hotpotqa_delete(config_path: str):
+    from evaluation.utils import agent_utils
+
+    resource_manager = agent_utils.load_eval_config(config_path)
+    memory, _, _ = await agent_utils.init_memmachine_params(
+        resource_manager=resource_manager,
+        session_id="hotpotqa_group",
+    )
+
+    print("Deleting episodes for session_id='hotpotqa_group'...")
+    await memory.delete_session_episodes()
+    print("Completed HotpotQA delete.")
+
+
 def load_hotpotqa_dataset(length: int, split: str) -> list[dict[str, any]]:
     from datasets import load_dataset
 
@@ -213,7 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-type",
         required=False,
-        help="Type of run: ingest or search",
+        help="Type of run: ingest, search, or delete",
         default="search",
     )
     parser.add_argument(
@@ -252,6 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
 async def main():
     args = build_parser().parse_args()
 
+    if args.run_type == "delete":
+        await hotpotqa_delete(args.config_path)
+        return
+
     dataset = load_hotpotqa_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
@@ -277,7 +295,7 @@ async def main():
         )
     else:
         raise ValueError(
-            f"Unknown run type: {args.run_type}, please use 'ingest' or 'search'."
+            f"Unknown run type: {args.run_type}, please use 'ingest', 'search', or 'delete'."
         )
 
 
