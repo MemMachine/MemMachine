@@ -71,6 +71,43 @@ def utc_offset_seconds(dt: datetime) -> int:
     return int(offset.total_seconds()) if offset is not None else 0
 
 
+async def merge_async_iterators[T](
+    iterators: list[AsyncIterator[T]],
+) -> AsyncGenerator[T, None]:
+    """Merge multiple async iterators into one, running them in parallel."""
+    if not iterators:
+        return
+
+    done_sentinel = object()
+    queue: asyncio.Queue[T | object | BaseException] = asyncio.Queue()
+    done_count = 0
+    n = len(iterators)
+
+    async def producer(iterator: AsyncIterator[T]) -> None:
+        try:
+            async for item in iterator:
+                await queue.put(item)
+            await queue.put(done_sentinel)
+        except BaseException as e:
+            await queue.put(e)
+
+    tasks = [asyncio.create_task(producer(it)) for it in iterators]
+
+    try:
+        while done_count < n:
+            item = await queue.get()
+            if item is done_sentinel:
+                done_count += 1
+            elif isinstance(item, BaseException):
+                raise item
+            else:
+                yield item
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def async_with[T](
     async_context_manager: AbstractAsyncContextManager,
     awaitable: Awaitable[T],
