@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("sentence_transformers")
 
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer  # ty: ignore[unresolved-import]
 
 from memmachine_server.common.embedder.sentence_transformer_embedder import (
     SentenceTransformerEmbedder,

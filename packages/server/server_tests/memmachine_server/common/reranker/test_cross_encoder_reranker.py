@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("sentence_transformers")
 
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder  # ty: ignore[unresolved-import]
 
 from memmachine_server.common.reranker.cross_encoder_reranker import (
     CrossEncoderReranker,

@@ -378,7 +378,7 @@ class SupportedDB(StrEnum):
                 "to build a SQLAlchemy configuration."
             )
         conf_copy = {**conf, "dialect": self.dialect, "driver": self.driver}
-        return SqlAlchemyConf(**conf_copy)  # type: ignore[arg-type]
+        return SqlAlchemyConf(**conf_copy)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     @property
     def is_neo4j(self) -> bool:

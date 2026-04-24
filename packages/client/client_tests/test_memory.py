@@ -62,12 +62,12 @@ class TestMemory:
     def test_init_missing_org_id_raises_error(self, mock_client):
         """Test that missing org_id raises TypeError."""
         with pytest.raises(TypeError, match=r"missing.*required.*argument.*org_id"):
-            Memory(client=mock_client, project_id="test_project")  # type: ignore[call-arg]
+            Memory(client=mock_client, project_id="test_project")  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
     def test_init_missing_project_id_raises_error(self, mock_client):
         """Test that missing project_id raises TypeError."""
         with pytest.raises(TypeError, match=r"missing.*required.*argument.*project_id"):
-            Memory(client=mock_client, org_id="test_org")  # type: ignore[call-arg]
+            Memory(client=mock_client, org_id="test_org")  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
     def test_init_with_string_ids(self, mock_client):
         """Test Memory initialization with string IDs."""

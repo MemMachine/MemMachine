@@ -7,7 +7,7 @@ import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar, cast
 
 from nltk import sent_tokenize
 
@@ -15,6 +15,13 @@ T = TypeVar("T")
 P = ParamSpec("P")
 
 DEFAULT_MERGE_QUEUE_MAXSIZE = 1024
+
+
+class _Done:
+    """Sentinel type used to signal completion in merge_async_iterators."""
+
+
+_DONE = _Done()
 
 
 async def merge_async_iterators[T](
@@ -26,8 +33,7 @@ async def merge_async_iterators[T](
     if not iterators:
         return
 
-    done_sentinel = object()
-    queue: asyncio.Queue[T | object | BaseException] = asyncio.Queue(
+    queue: asyncio.Queue[T | BaseException | _Done] = asyncio.Queue(
         maxsize=max_queue_size
     )
     done_count = 0
@@ -37,7 +43,7 @@ async def merge_async_iterators[T](
         try:
             async for item in iterator:
                 await queue.put(item)
-            await queue.put(done_sentinel)
+            await queue.put(_DONE)
         except BaseException as e:
             await queue.put(e)
 
@@ -46,12 +52,12 @@ async def merge_async_iterators[T](
     try:
         while done_count < n:
             item = await queue.get()
-            if item is done_sentinel:
+            if isinstance(item, _Done):
                 done_count += 1
             elif isinstance(item, BaseException):
                 raise item
             else:
-                yield item
+                yield cast(T, item)
     finally:
         for task in tasks:
             task.cancel()

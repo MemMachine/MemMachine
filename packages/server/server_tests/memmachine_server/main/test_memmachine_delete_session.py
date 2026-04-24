@@ -152,7 +152,7 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     )
 
     mm = MemMachine(conf=conf, resources=resources)
-    mm._cleanup_semantic_history = cleanup_mock  # type: ignore[method-assign]
+    mm._cleanup_semantic_history = cleanup_mock  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     await mm.delete_session(_SD())
 

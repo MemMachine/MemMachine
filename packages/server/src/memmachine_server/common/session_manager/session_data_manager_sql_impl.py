@@ -8,6 +8,7 @@ from typing import Annotated, Any
 from pydantic import JsonValue
 from sqlalchemy import (
     JSON,
+    Connection,
     ForeignKeyConstraint,
     Integer,
     PrimaryKeyConstraint,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -101,7 +102,7 @@ class SessionDataManagerSQL(SessionDataManager):
     async def create_tables(self) -> None:
         """Create the necessary tables in the database."""
 
-        def _check_migration_needed(conn: AsyncConnection) -> bool:
+        def _check_migration_needed(conn: Connection) -> bool:
             inspector = inspect(conn)
             assert inspector is not None
 

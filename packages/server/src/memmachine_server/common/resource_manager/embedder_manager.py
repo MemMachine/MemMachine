@@ -218,7 +218,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
     def _build_sentence_transformer_embedders(self, name: str) -> Embedder:
         conf = self.conf.sentence_transformer[name]
 
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer  # ty: ignore
 
         from memmachine_server.common.embedder.sentence_transformer_embedder import (
             SentenceTransformerEmbedder,

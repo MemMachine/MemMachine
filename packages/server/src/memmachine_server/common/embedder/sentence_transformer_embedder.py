@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import numpy as np
 from pydantic import BaseModel, Field, InstanceOf
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer  # ty: ignore[unresolved-import]
 
 from memmachine_server.common.data_types import (
     ExternalServiceAPIError,

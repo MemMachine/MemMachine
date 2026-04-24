@@ -20,7 +20,7 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from nebulagraph_python.py_data_types import NVector
+from nebulagraph_python.py_data_types import NVector  # ty: ignore[unresolved-import]
 
 from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
@@ -48,7 +48,7 @@ from .data_types import (
 from .vector_graph_store import VectorGraphStore
 
 if TYPE_CHECKING:
-    from nebulagraph_python.client import NebulaAsyncClient
+    from nebulagraph_python.client import NebulaAsyncClient  # ty: ignore
 
 logger = logging.getLogger(__name__)
 

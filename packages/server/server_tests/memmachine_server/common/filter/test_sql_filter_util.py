@@ -97,6 +97,7 @@ def _query_names(session: Session, filter_str: str) -> set[str]:
     """Parse filter, compile to SQL, execute, and return set of matching names."""
     expr = parse_filter(filter_str)
     clause = compile_sql_filter(expr, _resolve_field)
+    assert clause is not None
     stmt = select(Item.name).where(clause)
     return {row[0] for row in session.execute(stmt)}
 

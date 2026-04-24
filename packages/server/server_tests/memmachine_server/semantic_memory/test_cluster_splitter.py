@@ -96,7 +96,7 @@ class TestValidateSplitIndices:
         assert validate_split_indices([5, 3], 10) == [3, 5]
 
     def test_non_integer_returns_empty(self):
-        assert validate_split_indices(["a", "b"], 10) == []  # type: ignore[list-item]
+        assert validate_split_indices(["a", "b"], 10) == []  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
 
     def test_single_message_window(self):
         assert validate_split_indices([1], 2) == [1]

@@ -44,7 +44,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(scope="module")
 def embedder():
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import SentenceTransformer  # ty: ignore
 
     from memmachine_server.common.embedder.sentence_transformer_embedder import (
         SentenceTransformerEmbedder,
@@ -63,7 +63,7 @@ def embedder():
 
 @pytest.fixture(scope="module")
 def reranker():
-    from sentence_transformers import CrossEncoder
+    from sentence_transformers import CrossEncoder  # ty: ignore
 
     from memmachine_server.common.reranker.cross_encoder_reranker import (
         CrossEncoderReranker,

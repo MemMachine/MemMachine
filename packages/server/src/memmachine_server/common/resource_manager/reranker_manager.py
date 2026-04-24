@@ -190,7 +190,7 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return self._rerankers[name]
 
     async def _build_cross_encoder_reranker(self, name: str) -> Reranker:
-        from sentence_transformers import CrossEncoder
+        from sentence_transformers import CrossEncoder  # ty: ignore[unresolved-import]
 
         from memmachine_server.common.reranker.cross_encoder_reranker import (
             CrossEncoderReranker,

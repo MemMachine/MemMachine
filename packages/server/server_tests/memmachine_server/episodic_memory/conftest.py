@@ -50,7 +50,7 @@ async def nebula_client_factory():
 
     async def _create_client(connection_info: dict):
         try:
-            from nebulagraph_python.client import (
+            from nebulagraph_python.client import (  # ty: ignore[unresolved-import]
                 NebulaAsyncClient,
                 SessionConfig,
                 SessionPoolConfig,
