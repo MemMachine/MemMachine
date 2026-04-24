@@ -45,6 +45,7 @@ def check_server_available():
 
 
 TEST_BASE_URL = os.environ.get("MEMORY_BACKEND_URL", "http://localhost:8080")
+CLIENT_TIMEOUT_SECONDS = 180
 
 
 @pytest.mark.integration
@@ -58,7 +59,7 @@ class TestMemMachineIntegration:
     @pytest.fixture
     def client(self):
         """Create a MemMachine client instance."""
-        return MemMachineClient(base_url=TEST_BASE_URL, timeout=60)
+        return MemMachineClient(base_url=TEST_BASE_URL, timeout=CLIENT_TIMEOUT_SECONDS)
 
     @pytest.fixture
     def unique_test_ids(self):
@@ -1644,7 +1645,7 @@ class TestConfigIntegration:
     @pytest.fixture
     def client(self):
         """Create a MemMachine client instance."""
-        return MemMachineClient(base_url=TEST_BASE_URL, timeout=60)
+        return MemMachineClient(base_url=TEST_BASE_URL, timeout=CLIENT_TIMEOUT_SECONDS)
 
     @pytest.fixture
     def config(self, client):

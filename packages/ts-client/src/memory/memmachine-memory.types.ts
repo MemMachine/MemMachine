@@ -18,12 +18,12 @@ export type MemoryType = 'episodic' | 'semantic'
 export type MemoryProducerRole = 'user' | 'assistant' | 'system'
 
 /**
- * Represents an episodic memory entry in MemMachine.
+ * Represents an episodic memory entry returned by search.
  *
  * @property uid - Unique identifier for the memory entry.
- * @property score - Relevance score of the memory entry.
+ * @property score - Relevance score of the memory entry (may be null).
  * @property content - Content of the memory entry.
- * @property created_at - Timestamp when the memory entry was created.
+ * @property created_at - Timestamp when the memory entry was created (may be null).
  * @property producer_id - ID of the entity that produced the memory entry.
  * @property producer_role - Role of the producer.
  * @property produced_for_id - ID of the entity for whom the memory was produced.
@@ -32,16 +32,53 @@ export type MemoryProducerRole = 'user' | 'assistant' | 'system'
  */
 export interface EpisodicMemory {
   uid: string
-  score: number
+  score?: number | null
   content: string
+  created_at?: string | null
+
+  producer_id: string
+  producer_role: string
+  produced_for_id?: string | null
+
+  episode_type?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+/**
+ * Represents an episodic memory entry returned by list.
+ *
+ * Unlike {@link EpisodicMemory} (the search-response shape), list
+ * responses include storage fields like `session_key` and `sequence_num`
+ * but do not carry a relevance `score`.
+ *
+ * @property uid - Unique identifier for the memory entry.
+ * @property content - Content of the memory entry.
+ * @property session_key - Key of the session that owns the episode.
+ * @property created_at - Timestamp when the memory entry was created.
+ * @property producer_id - ID of the entity that produced the memory entry.
+ * @property producer_role - Role of the producer.
+ * @property produced_for_id - ID of the entity for whom the memory was produced.
+ * @property sequence_num - Monotonic ordering within the session.
+ * @property episode_type - Type of episode associated with the memory entry.
+ * @property content_type - Storage content type (e.g. "string").
+ * @property filterable_metadata - Indexed metadata usable as filters.
+ * @property metadata - Additional metadata associated with the memory entry.
+ */
+export interface ListEpisodicMemory {
+  uid: string
+  content: string
+  session_key: string
   created_at: string
 
   producer_id: string
   producer_role: string
-  produced_for_id?: string
+  produced_for_id?: string | null
 
-  episode_type: string
-  metadata?: Record<string, unknown>
+  sequence_num?: number
+  episode_type?: string
+  content_type?: string
+  filterable_metadata?: Record<string, unknown> | null
+  metadata?: Record<string, unknown> | null
 }
 
 /**
@@ -134,13 +171,17 @@ export interface SearchMemoriesOptions {
 /**
  * Represents the result of searching memories in MemMachine.
  *
+ * Both `episodic_memory` and `semantic_memory` may be omitted or null
+ * when the corresponding memory type was not requested or produced no
+ * results — the server uses `response_model_exclude_none`.
+ *
  * @property status - Status code of the search operation result.
  * @property content - Content of the search result, including episodic and semantic memories.
  */
 export interface SearchMemoriesResult {
   status: number
   content: {
-    episodic_memory: {
+    episodic_memory?: {
       long_term_memory: {
         episodes: EpisodicMemory[]
       }
@@ -148,8 +189,26 @@ export interface SearchMemoriesResult {
         episodes: EpisodicMemory[]
         episode_summary: string[]
       }
-    }
-    semantic_memory: SemanticMemory[]
+    } | null
+    semantic_memory?: SemanticMemory[] | null
+  }
+}
+
+/**
+ * Represents the result of listing memories in MemMachine.
+ *
+ * Unlike {@link SearchMemoriesResult}, list results contain flat arrays
+ * of episodes and semantic memories rather than a nested long-term /
+ * short-term structure.
+ *
+ * @property status - Status code of the list operation result.
+ * @property content - Content of the list result, including episodic and semantic memories.
+ */
+export interface ListMemoriesResult {
+  status: number
+  content: {
+    episodic_memory?: ListEpisodicMemory[] | null
+    semantic_memory?: SemanticMemory[] | null
   }
 }
 

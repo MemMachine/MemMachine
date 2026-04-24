@@ -105,3 +105,47 @@ Here are the required configuration entries:
 - `searchThreshold`: Minimum similarity score for recall.
 - `topK`: Maximum number of memories to return.
 - `userId`: User identifier for memory scoping.
+
+## Memory scoping and `userId`
+
+The `userId` field controls how `autoRecall` scopes its search and how
+`autoCapture` tags stored memories. The behaviour depends on whether `userId`
+has been set to a real per-human-user value:
+
+### Default `userId` (`"openclaw"`) — session-only recall
+
+When `userId` is omitted or left as the default value `"openclaw"`, the plugin
+uses the session's ephemeral `sessionId` as the sole discriminator. Recall is
+restricted to memories captured in the **current conversation session** (the
+session started by `/new` or `/reset`). Memories from earlier conversations are
+not retrieved.
+
+This is the safe default. It prevents memories from one user's questions from
+leaking into another user's (or even the same user's later) questions.
+
+### Configured `userId` — cross-session long-term recall
+
+When `userId` is set to a stable, per-human-user identifier — for example the
+Slack user ID of the person talking to the bot — `autoRecall` retrieves all
+memories previously stored under that `user_id`. This enables genuine long-term
+memory: preferences, decisions, and facts persist across separate sessions.
+
+```json5
+{
+  "config": {
+    "userId": "U012AB3CD"  // Slack user ID, Telegram user ID, etc.
+  }
+}
+```
+
+To use this correctly, set `userId` dynamically per user in your integration
+layer (e.g. per-channel account config, middleware, or environment variable).
+All users sharing the same `userId` value share their memory pool.
+
+### What happens when `sessionId` is unavailable
+
+If OpenClaw does not supply a `sessionId` for a particular hook invocation
+(for example in some one-shot or legacy agent run modes), `autoRecall` skips
+the search entirely rather than issuing an unscoped query that would match all
+stored memories. You will see an `info`-level log line from the plugin when
+this occurs.

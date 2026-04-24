@@ -51,103 +51,55 @@ class ContentType(Enum):
 class EpisodeEntry(BaseModel):
     """Payload used when creating a new episode entry."""
 
-    content: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_CONTENT),
-    ]
-    producer_id: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_PRODUCER_ID),
-    ]
-    producer_role: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_PRODUCER_ROLE),
-    ]
-    produced_for_id: Annotated[
-        str | None,
-        Field(default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID),
-    ]
-    episode_type: Annotated[
-        EpisodeType | None,
-        Field(default=None, description=SpecDoc.EPISODE_TYPE),
-    ]
-    metadata: Annotated[
-        dict[str, JsonValue] | None,
-        Field(default=None, description=SpecDoc.EPISODE_METADATA),
-    ]
-    created_at: Annotated[
-        AwareDatetime | None,
-        Field(default=None, description=SpecDoc.EPISODE_CREATED_AT),
-    ]
+    content: str = Field(..., description=SpecDoc.EPISODE_CONTENT)
+    producer_id: str = Field(..., description=SpecDoc.EPISODE_PRODUCER_ID)
+    producer_role: str = Field(..., description=SpecDoc.EPISODE_PRODUCER_ROLE)
+    produced_for_id: str | None = Field(
+        default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID
+    )
+    episode_type: EpisodeType | None = Field(
+        default=None, description=SpecDoc.EPISODE_TYPE
+    )
+    metadata: dict[str, JsonValue] | None = Field(
+        default=None, description=SpecDoc.EPISODE_METADATA
+    )
+    created_at: AwareDatetime | None = Field(
+        default=None, description=SpecDoc.EPISODE_CREATED_AT
+    )
 
 
 class EpisodeResponse(EpisodeEntry):
     """Episode data returned in search responses."""
 
-    uid: Annotated[
-        EpisodeIdT,
-        Field(..., description=SpecDoc.EPISODE_UID),
-    ]
-    score: Annotated[
-        float | None,
-        Field(default=None, description=SpecDoc.EPISODE_SCORE),
-    ]
+    uid: EpisodeIdT = Field(..., description=SpecDoc.EPISODE_UID)
+    score: float | None = Field(default=None, description=SpecDoc.EPISODE_SCORE)
 
 
 class Episode(BaseModel):
     """Episode data returned in list responses."""
 
-    uid: Annotated[
-        EpisodeIdT,
-        Field(..., description=SpecDoc.EPISODE_UID),
-    ]
-    content: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_CONTENT),
-    ]
-    session_key: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_SESSION_KEY),
-    ]
-    created_at: Annotated[
-        AwareDatetime,
-        Field(..., description=SpecDoc.EPISODE_CREATED_AT),
-    ]
-
-    producer_id: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_PRODUCER_ID),
-    ]
-    producer_role: Annotated[
-        str,
-        Field(..., description=SpecDoc.EPISODE_PRODUCER_ROLE),
-    ]
-    produced_for_id: Annotated[
-        str | None,
-        Field(default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID),
-    ]
-
-    sequence_num: Annotated[
-        int,
-        Field(default=0, description=SpecDoc.EPISODE_SEQUENCE_NUM),
-    ]
-
-    episode_type: Annotated[
-        EpisodeType,
-        Field(default=EpisodeType.MESSAGE, description=SpecDoc.EPISODE_TYPE),
-    ]
-    content_type: Annotated[
-        ContentType,
-        Field(default=ContentType.STRING, description=SpecDoc.EPISODE_CONTENT_TYPE),
-    ]
-    filterable_metadata: Annotated[
-        dict[str, PropertyValue] | None,
-        Field(default=None, description=SpecDoc.EPISODE_FILTERABLE_METADATA),
-    ]
-    metadata: Annotated[
-        dict[str, JsonValue] | None,
-        Field(default=None, description=SpecDoc.EPISODE_METADATA),
-    ]
+    uid: EpisodeIdT = Field(..., description=SpecDoc.EPISODE_UID)
+    content: str = Field(..., description=SpecDoc.EPISODE_CONTENT)
+    session_key: str = Field(..., description=SpecDoc.EPISODE_SESSION_KEY)
+    created_at: AwareDatetime = Field(..., description=SpecDoc.EPISODE_CREATED_AT)
+    producer_id: str = Field(..., description=SpecDoc.EPISODE_PRODUCER_ID)
+    producer_role: str = Field(..., description=SpecDoc.EPISODE_PRODUCER_ROLE)
+    produced_for_id: str | None = Field(
+        default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID
+    )
+    sequence_num: int = Field(default=0, description=SpecDoc.EPISODE_SEQUENCE_NUM)
+    episode_type: EpisodeType = Field(
+        default=EpisodeType.MESSAGE, description=SpecDoc.EPISODE_TYPE
+    )
+    content_type: ContentType = Field(
+        default=ContentType.STRING, description=SpecDoc.EPISODE_CONTENT_TYPE
+    )
+    filterable_metadata: dict[str, PropertyValue] | None = Field(
+        default=None, description=SpecDoc.EPISODE_FILTERABLE_METADATA
+    )
+    metadata: dict[str, JsonValue] | None = Field(
+        default=None, description=SpecDoc.EPISODE_METADATA
+    )
 
     def __hash__(self) -> int:
         """Hash an episode by its UID."""
@@ -164,43 +116,24 @@ class SemanticFeature(BaseModel):
     class Metadata(BaseModel):
         """Storage metadata for a semantic feature, including id and citations."""
 
-        citations: Annotated[
-            list[EpisodeIdT] | None,
-            Field(default=None, description=SpecDoc.SEMANTIC_METADATA_CITATIONS),
-        ]
-        id: Annotated[
-            FeatureIdT | None,
-            Field(default=None, description=SpecDoc.SEMANTIC_METADATA_ID),
-        ]
-        other: Annotated[
-            dict[str, Any] | None,
-            Field(default=None, description=SpecDoc.SEMANTIC_METADATA_OTHER),
-        ]
+        citations: list[EpisodeIdT] | None = Field(
+            default=None, description=SpecDoc.SEMANTIC_METADATA_CITATIONS
+        )
+        id: FeatureIdT | None = Field(
+            default=None, description=SpecDoc.SEMANTIC_METADATA_ID
+        )
+        other: dict[str, Any] | None = Field(
+            default=None, description=SpecDoc.SEMANTIC_METADATA_OTHER
+        )
 
-    set_id: Annotated[
-        SetIdT | None,
-        Field(default=None, description=SpecDoc.SEMANTIC_SET_ID),
-    ]
-    category: Annotated[
-        str,
-        Field(..., description=SpecDoc.SEMANTIC_CATEGORY),
-    ]
-    tag: Annotated[
-        str,
-        Field(..., description=SpecDoc.SEMANTIC_TAG),
-    ]
-    feature_name: Annotated[
-        str,
-        Field(..., description=SpecDoc.SEMANTIC_FEATURE_NAME),
-    ]
-    value: Annotated[
-        str,
-        Field(..., description=SpecDoc.SEMANTIC_VALUE),
-    ]
-    metadata: Annotated[
-        Metadata,
-        Field(default_factory=Metadata, description=SpecDoc.SEMANTIC_METADATA),
-    ]
+    set_id: SetIdT | None = Field(default=None, description=SpecDoc.SEMANTIC_SET_ID)
+    category: str = Field(..., description=SpecDoc.SEMANTIC_CATEGORY)
+    tag: str = Field(..., description=SpecDoc.SEMANTIC_TAG)
+    feature_name: str = Field(..., description=SpecDoc.SEMANTIC_FEATURE_NAME)
+    value: str = Field(..., description=SpecDoc.SEMANTIC_VALUE)
+    metadata: Metadata = Field(
+        default_factory=Metadata, description=SpecDoc.SEMANTIC_METADATA
+    )
 
 
 class InvalidNameError(ValueError):

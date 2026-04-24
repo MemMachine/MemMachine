@@ -9,7 +9,8 @@ import type {
   SearchMemoriesOptions,
   SearchMemoriesResult,
   AddMemoryResult,
-  ListMemoriesOptions
+  ListMemoriesOptions,
+  ListMemoriesResult
 } from './memmachine-memory.types'
 
 /**
@@ -99,23 +100,23 @@ export class MemMachineMemory {
    * Lists memories within MemMachine for the current project.
    *
    * @param options - Additional options for listing memories.
-   * @returns A promise that resolves to the search results.
+   * @returns A promise that resolves to the list results.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
-  list(options?: ListMemoriesOptions): Promise<SearchMemoriesResult> {
+  list(options?: ListMemoriesOptions): Promise<ListMemoriesResult> {
     return this._listMemories(options)
   }
 
   /**
-   * Deletes a memory from MemMachine.
+   * Deletes one or more memories from MemMachine.
    *
-   * @param id - The unique identifier of the memory to be deleted.
+   * @param ids - The unique identifier or list of identifiers of the memories to be deleted.
    * @param type - The type of memory to delete.
-   * @returns A promise that resolves when the memory is successfully deleted.
+   * @returns A promise that resolves when the memory or memories are successfully deleted.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
-  delete(id: string, type: MemoryType): Promise<void> {
-    return this._deleteMemory(id, type)
+  delete(ids: string | string[], type: MemoryType): Promise<void> {
+    return this._deleteMemory(ids, type)
   }
 
   /**
@@ -228,10 +229,10 @@ export class MemMachineMemory {
    * Implements the logic to list memories within MemMachine.
    *
    * @param options - Additional options for listing memories.
-   * @returns A promise that resolves to the search results.
+   * @returns A promise that resolves to the list results.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
-  private async _listMemories(options?: ListMemoriesOptions): Promise<SearchMemoriesResult> {
+  private async _listMemories(options?: ListMemoriesOptions): Promise<ListMemoriesResult> {
     const { page_size = 10, page_num = 0, filter = '', type = 'episodic' } = options ?? {}
 
     const payload = {
@@ -251,29 +252,35 @@ export class MemMachineMemory {
   }
 
   /**
-   * Implements the logic to delete a memory from MemMachine.
+   * Implements the logic to delete one or more memories from MemMachine.
    *
-   * @param id - The unique identifier of the memory to be deleted.
+   * @param ids - The unique identifier or list of identifiers of the memories to be deleted.
    * @param memoryType - The type of memory to delete.
-   * @returns A promise that resolves when the memory is successfully deleted.
+   * @returns A promise that resolves when the specified memory or memories are successfully deleted.
    * @throws {@link MemMachineAPIError} if the API request fails.
    */
-  private async _deleteMemory(id: string, memoryType: MemoryType): Promise<void> {
-    if (!id || !id.trim()) {
-      throw new MemMachineAPIError('Memory ID must be a non-empty string')
+  private async _deleteMemory(ids: string | string[], memoryType: MemoryType): Promise<void> {
+    this._validateMemoryType(memoryType)
+
+    const rawIds = Array.isArray(ids) ? ids : [ids]
+    if (rawIds.some(i => typeof i !== 'string')) {
+      throw new MemMachineAPIError('All memory IDs must be strings')
     }
 
-    this._validateMemoryType(memoryType)
+    const normalizedIds = [...new Set(rawIds.map(i => i.trim()).filter(Boolean))]
+    if (normalizedIds.length === 0) {
+      throw new MemMachineAPIError('At least one non-empty memory ID must be provided')
+    }
 
     const urlMap: Record<MemoryType, string> = {
       episodic: '/memories/episodic/delete',
       semantic: '/memories/semantic/delete'
     }
 
+    const idField = memoryType === 'episodic' ? 'episodic_ids' : 'semantic_ids'
     const payload = {
       ...this.projectContext,
-      ...(memoryType === 'episodic' ? { episodic_id: id } : {}),
-      ...(memoryType === 'semantic' ? { semantic_id: id } : {})
+      [idField]: normalizedIds
     }
 
     try {

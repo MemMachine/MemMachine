@@ -5,7 +5,7 @@ usage_locomo() {
     echo
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
-    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
+    echo "  RUN_TYPE          Run ingestion, search, or delete [ingest | search | delete]"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
     echo "Options:"
     echo "  --ingest-concurrency N"
@@ -21,13 +21,13 @@ usage_locomo() {
 }
 
 usage_wiki() {
-    echo "WikiMultihop Usage: wikimultihop $0 RESULT_POSTFIX RUN_TYPE TEST_TARGET LENGTH"
+    echo "WikiMultihop Usage: wikimultihop $0 RESULT_POSTFIX RUN_TYPE TEST_TARGET [LENGTH]"
     echo
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
-    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
+    echo "  RUN_TYPE          Run ingestion, search, or delete [ingest | search | delete]"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
-    echo "  LENGTH            Number of examples to run [1 - 12576]"
+    echo "  LENGTH            Number of examples to run [1 - 12576] (ingest/search only)"
     echo "Options:"
     echo "  --search-concurrency N"
     echo "                     Optional max concurrent WikiMultiHop search requests"
@@ -39,16 +39,19 @@ usage_wiki() {
 }
 
 usage_hotpotqa() {
-    echo "HotpotQA Usage: $0 hotpotqa RESULT_POSTFIX RUN_TYPE SPLIT_NAME TEST_TARGET LENGTH"
+    echo "HotpotQA Usage:"
+    echo "  $0 hotpotqa RESULT_POSTFIX {ingest|search} SPLIT_NAME TEST_TARGET LENGTH"
+    echo "  $0 hotpotqa RESULT_POSTFIX delete TEST_TARGET"
     echo
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
-    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
+    echo "  RUN_TYPE          Run ingestion, search, or delete [ingest | search | delete]"
     echo "  SPLIT_NAME        Dataset split name [train | validation]. Train set contains 19.9%"
     echo "                      easy, 62.8% medium, 17.3% hard questions. Validation set contains"
-    echo "                      hard questions only."
+    echo "                      hard questions only. (ingest/search only)"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
     echo "  LENGTH            Number of examples to run [train set 1 - 90447 | validation set 1 - 7405]"
+    echo "                      (ingest/search only)"
     echo "Options:"
     echo "  --search-concurrency N"
     echo "                     Optional max concurrent HotpotQA search requests"
@@ -60,14 +63,16 @@ usage_hotpotqa() {
 }
 
 usage_longmemeval() {
-    echo "LongMemEval Usage: $0 longmemeval RESULT_POSTFIX RUN_TYPE SPLIT_NAME TEST_TARGET LENGTH"
+    echo "LongMemEval Usage:"
+    echo "  $0 longmemeval RESULT_POSTFIX {ingest|search} SPLIT_NAME TEST_TARGET LENGTH"
+    echo "  $0 longmemeval RESULT_POSTFIX delete TEST_TARGET"
     echo
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
-    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
-    echo "  SPLIT_NAME        Dataset split name, e.g. longmemeval_s_cleaned"
+    echo "  RUN_TYPE          Run ingestion, search, or delete [ingest | search | delete]"
+    echo "  SPLIT_NAME        Dataset split name, e.g. longmemeval_s_cleaned (ingest/search only)"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
-    echo "  LENGTH            Number of examples to run [1 - split size]"
+    echo "  LENGTH            Number of examples to run [1 - split size] (ingest/search only)"
     echo "Options:"
     echo "  --search-concurrency N"
     echo "                     Optional max concurrent LongMemEval search requests"
@@ -199,7 +204,11 @@ validate_args() {
                 echo "--ingest-concurrency is only supported for locomo ingest"
                 exit 1
             fi
-            if [ "$#" -ne 5 ]; then
+            if [ "${3:-}" = "delete" ]; then
+                if [ "$#" -ne 4 ]; then
+                    show_help wikimultihop
+                fi
+            elif [ "$#" -ne 5 ]; then
                 show_help wikimultihop
             fi
             if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
@@ -218,7 +227,11 @@ validate_args() {
                 echo "--ingest-concurrency is only supported for locomo ingest"
                 exit 1
             fi
-            if [ "$#" -ne 6 ]; then
+            if [ "${3:-}" = "delete" ]; then
+                if [ "$#" -ne 4 ]; then
+                    show_help hotpotqa
+                fi
+            elif [ "$#" -ne 6 ]; then
                 show_help hotpotqa
             fi
             if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
@@ -237,7 +250,11 @@ validate_args() {
                 echo "--ingest-concurrency is only supported for locomo ingest"
                 exit 1
             fi
-            if [ "$#" -ne 6 ]; then
+            if [ "${3:-}" = "delete" ]; then
+                if [ "$#" -ne 4 ]; then
+                    show_help longmemeval
+                fi
+            elif [ "$#" -ne 6 ]; then
                 show_help longmemeval
             fi
             if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
@@ -308,22 +325,39 @@ run_test() {
         wikimultihop)
             RESULT_POSTFIX=$2
             INGEST=$3
-            TEST_TARGET=$4
-            LENGTH=$5
+            if [ "$INGEST" = "delete" ]; then
+                TEST_TARGET=$4
+                LENGTH=""
+            else
+                TEST_TARGET=$4
+                LENGTH=$5
+            fi
             ;;
         hotpotqa)
             RESULT_POSTFIX=$2
             INGEST=$3
-            SPLIT_NAME=$4
-            TEST_TARGET=$5
-            LENGTH=$6
+            if [ "$INGEST" = "delete" ]; then
+                SPLIT_NAME=""
+                TEST_TARGET=$4
+                LENGTH=""
+            else
+                SPLIT_NAME=$4
+                TEST_TARGET=$5
+                LENGTH=$6
+            fi
             ;;
         longmemeval)
             RESULT_POSTFIX=$2
             INGEST=$3
-            SPLIT_NAME=$4
-            TEST_TARGET=$5
-            LENGTH=$6
+            if [ "$INGEST" = "delete" ]; then
+                SPLIT_NAME=""
+                TEST_TARGET=$4
+                LENGTH=""
+            else
+                SPLIT_NAME=$4
+                TEST_TARGET=$5
+                LENGTH=$6
+            fi
             ;;
         *)
             echo "Unknown test: $TEST"
@@ -352,12 +386,17 @@ run_test() {
     FINAL_SCORE_FILE="${SCRIPT_DIR}/result/final_score/${TEST}_${TEST_TARGET}_${RESULT_POSTFIX}.result"
     SESSION_ID="${TEST}_${RESULT_POSTFIX}"
 
-    rm -f "$RESULT_FILE" "$EVAL_FILE" "$FINAL_SCORE_FILE"
+    if [ "$INGEST" != "delete" ]; then
+        rm -f "$RESULT_FILE" "$EVAL_FILE" "$FINAL_SCORE_FILE"
+    fi
+
+    DELETE_CMD=()
 
     case "$TEST" in
         locomo)
             INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/locomo_ingest.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --config-path "$CONFIG_FILE")
             SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/locomo_search.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            DELETE_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/locomo_delete.py" --data-path "$SCRIPT_DIR/../data/locomo10.json" --config-path "$CONFIG_FILE")
             if [ -n "${INGEST_CONCURRENCY:-}" ]; then
                 INGEST_CMD+=(--concurrency "$INGEST_CONCURRENCY")
             fi
@@ -368,6 +407,7 @@ run_test() {
         wikimultihop)
             INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/wikimultihop_ingest.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --length "$LENGTH" --config-path "$CONFIG_FILE")
             SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/wikimultihop_search.py" --data-path "$SCRIPT_DIR/../data/wikimultihop.json" --eval-result-path "$RESULT_FILE" --test-target "$TEST_TARGET" --length "$LENGTH" --config-path "$CONFIG_FILE")
+            DELETE_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/wikimultihop_delete.py" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
@@ -375,6 +415,7 @@ run_test() {
         hotpotqa)
             INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
+            DELETE_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/hotpotQA_test.py" --run-type delete --test-target "$TEST_TARGET" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
@@ -384,6 +425,7 @@ run_test() {
             PYTHON_INSTALL_CMD='uv run python -m pip install -r requirements.txt'
             INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/longmemeval_test.py" --run-type ingest --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
             SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/longmemeval_test.py" --run-type search --eval-result-path "$RESULT_FILE" --length "$LENGTH" --split-name "$SPLIT_NAME" --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
+            DELETE_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/longmemeval_test.py" --run-type delete --test-target "$TEST_TARGET" --session-id "$SESSION_ID" --config-path "$CONFIG_FILE")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
@@ -405,6 +447,8 @@ run_test() {
         "${EVALUATE_CMD[@]}"
         "${PYTHON_CMD[@]}" "$SCRIPT_DIR/generate_scores.py" --data-path "$EVAL_FILE" > "$FINAL_SCORE_FILE"
         cat "$FINAL_SCORE_FILE"
+    elif [[ "$INGEST" = "delete" ]]; then
+        "${DELETE_CMD[@]}"
     else
         echo "Unknown RUN_TYPE: $INGEST"
         show_help "$TEST"

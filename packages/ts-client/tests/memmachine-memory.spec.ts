@@ -144,31 +144,37 @@ describe('MemMachine Memory', () => {
 
   it('should delete episodic memory successfully', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
-    jest.spyOn(client.client, 'post').mockResolvedValue({
-      data: null
-    })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({ data: null })
     const project = client.project(mockProjectContext)
     const memory = project.memory(mockMemoryContext)
     const deleteResponse = await memory.delete('1', 'episodic')
     expect(deleteResponse).toBeUndefined()
+    expect(postSpy).toHaveBeenCalledWith('/memories/episodic/delete', {
+      ...mockProjectContext,
+      episodic_ids: ['1']
+    })
   })
 
   it('should delete semantic memory successfully', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
-    jest.spyOn(client.client, 'post').mockResolvedValue({
-      data: null
-    })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({ data: null })
     const project = client.project(mockProjectContext)
     const memory = project.memory(mockMemoryContext)
     const deleteResponse = await memory.delete('1', 'semantic')
     expect(deleteResponse).toBeUndefined()
+    expect(postSpy).toHaveBeenCalledWith('/memories/semantic/delete', {
+      ...mockProjectContext,
+      semantic_ids: ['1']
+    })
   })
 
   it('should throw error if id is empty when deleting memory', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
     const project = client.project(mockProjectContext)
     const memory = project.memory(mockMemoryContext)
-    await expect(memory.delete('', 'episodic')).rejects.toThrow('Memory ID must be a non-empty string')
+    await expect(memory.delete('', 'episodic')).rejects.toThrow(
+      'At least one non-empty memory ID must be provided'
+    )
   })
 
   it('should throw error if memory type is invalid when deleting memory', async () => {
@@ -179,6 +185,16 @@ describe('MemMachine Memory', () => {
     await expect(memory.delete('1', 'invalid-type')).rejects.toThrow('Invalid memory type: invalid-type')
   })
 
+  it('should throw MemMachineAPIError when array contains a non-string ID', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post')
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+    // @ts-ignore
+    await expect(memory.delete(['id1', null], 'episodic')).rejects.toThrow('All memory IDs must be strings')
+    expect(postSpy).not.toHaveBeenCalled()
+  })
+
   it('should handle error when deleting memory', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
     jest.spyOn(client.client, 'post').mockRejectedValue(new Error('Network Error'))
@@ -187,5 +203,45 @@ describe('MemMachine Memory', () => {
     await expect(memory.delete('1', 'episodic')).rejects.toThrow(
       /Failed to delete episodic memory with payload: .*: Network Error/
     )
+  })
+
+  it('should post episodic_ids payload when batch-deleting episodic memories', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({ data: null })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+
+    await memory.delete(['id1', 'id2'], 'episodic')
+
+    expect(postSpy).toHaveBeenCalledWith('/memories/episodic/delete', {
+      ...mockProjectContext,
+      episodic_ids: ['id1', 'id2']
+    })
+  })
+
+  it('should post semantic_ids payload when batch-deleting semantic memories', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post').mockResolvedValue({ data: null })
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+
+    await memory.delete(['id1', 'id2'], 'semantic')
+
+    expect(postSpy).toHaveBeenCalledWith('/memories/semantic/delete', {
+      ...mockProjectContext,
+      semantic_ids: ['id1', 'id2']
+    })
+  })
+
+  it('should throw before making any request when deleting with an empty array', async () => {
+    const client = new MemMachineClient({ api_key: 'test-api-key' })
+    const postSpy = jest.spyOn(client.client, 'post')
+    const project = client.project(mockProjectContext)
+    const memory = project.memory(mockMemoryContext)
+
+    await expect(memory.delete([], 'episodic')).rejects.toThrow(
+      'At least one non-empty memory ID must be provided'
+    )
+    expect(postSpy).not.toHaveBeenCalled()
   })
 })

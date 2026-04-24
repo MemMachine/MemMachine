@@ -5,10 +5,13 @@
  * @module memmachine-memory
  */
 export { MemMachineMemory } from './memmachine-memory'
+export { formatEpisodes, formatSemanticMemories, formatSearchResult } from './format'
+export type { FormattableEpisode } from './format'
 
 export type {
   MemoryType,
   EpisodicMemory,
+  ListEpisodicMemory,
   SemanticMemory,
   MemoryContext,
   MemoryProducerRole,
@@ -16,5 +19,6 @@ export type {
   AddMemoryResult,
   SearchMemoriesOptions,
   SearchMemoriesResult,
-  ListMemoriesOptions
+  ListMemoriesOptions,
+  ListMemoriesResult,
 } from './memmachine-memory.types'
