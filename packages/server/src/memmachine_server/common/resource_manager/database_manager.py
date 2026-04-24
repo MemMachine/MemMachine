@@ -27,7 +27,7 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
 # This allows type hints without requiring nebulagraph_python to be installed
 # unless NebulaGraph is actually used. The actual import happens at use site.
 if TYPE_CHECKING:
-    from nebulagraph_python.client import NebulaAsyncClient  # ty: ignore
+    from nebulagraph_python.client import NebulaAsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +334,7 @@ class DatabaseManager:
             # Import at use site (not at module level) to make nebulagraph_python
             # an optional dependency - only required if NebulaGraph is actually used.
             # This avoids ImportError for users who only use Neo4j/PostgreSQL.
-            from nebulagraph_python.client import (  # ty: ignore[unresolved-import]
+            from nebulagraph_python.client import (
                 NebulaAsyncClient,
                 SessionConfig,
                 SessionPoolConfig,

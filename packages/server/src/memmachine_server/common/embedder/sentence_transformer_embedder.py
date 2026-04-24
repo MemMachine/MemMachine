@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import numpy as np
 from pydantic import BaseModel, Field, InstanceOf
-from sentence_transformers import SentenceTransformer  # ty: ignore[unresolved-import]
+from sentence_transformers import SentenceTransformer
 
 from memmachine_server.common.data_types import (
     ExternalServiceAPIError,
@@ -106,7 +106,9 @@ class SentenceTransformerEmbedder(Embedder):
             for input_text in inputs
         ]
 
-        chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
+        chunks: list[str] = [
+            chunk for input_chunks in inputs_chunks for chunk in input_chunks
+        ]
 
         embed_call_uuid = uuid4()
 

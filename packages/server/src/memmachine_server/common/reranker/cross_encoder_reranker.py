@@ -3,7 +3,7 @@
 import asyncio
 
 from pydantic import BaseModel, Field, InstanceOf
-from sentence_transformers import CrossEncoder  # ty: ignore[unresolved-import]
+from sentence_transformers import CrossEncoder
 
 from memmachine_server.common.utils import chunk_text, unflatten_like
 

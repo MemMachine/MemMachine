@@ -68,7 +68,7 @@ def nebula_connection_info():
 async def nebula_client(nebula_connection_info):
     """Create NebulaGraph async client for testing, skip if unavailable."""
     try:
-        from nebulagraph_python.client import (  # ty: ignore[unresolved-import]
+        from nebulagraph_python.client import (
             NebulaAsyncClient,
             SessionConfig,
         )
