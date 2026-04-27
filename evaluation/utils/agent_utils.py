@@ -385,7 +385,7 @@ async def init_memmachine_params(
     session_id: str = "",
     agent_name: str = "ToolSelectAgent",
     message_sentence_chunking: bool = False,
-) -> tuple[EpisodicMemory, LanguageModel, AgentToolBase]:
+) -> tuple[EpisodicMemory, LanguageModel, AgentToolBase, str, str]:
     """Initialize MemMachine components from a ResourceManagerImpl.
 
     Components are resolved from the loaded configuration:
@@ -394,7 +394,15 @@ async def init_memmachine_params(
     - Reranker:           ``retrieval_agent.reranker`` (fallback:
                           ``episodic_memory.long_term_memory.reranker``)
     - Vector graph store: ``episodic_memory.long_term_memory.vector_graph_store``
-    - Agent + answer LM: ``retrieval_agent.llm_model``
+    - Agent model:        ``retrieval_agent.llm_model``
+    - Answer model:       ``retrieval_agent.answer_llm_model`` (falls back to ``llm_model``)
+
+    Returns:
+        A tuple of (memory, answer_model, query_agent, agent_model_id, answer_model_id).
+
+        The model ID strings (``agent_model_id``, ``answer_model_id``) are returned
+        for logging purposes - they are stored in evaluation results to track which
+        models were used for each experiment.
     """
     conf = resource_manager.config
     ltm_conf = conf.episodic_memory.long_term_memory
@@ -433,6 +441,10 @@ async def init_memmachine_params(
         raise ValueError("retrieval_agent.llm_model is not set in configuration.yml")
     agent_model = await resource_manager.get_language_model(agent_model_id)
 
+    # Answer model: use answer_llm_model if set, otherwise fall back to llm_model
+    answer_model_id = conf.retrieval_agent.answer_llm_model or conf.retrieval_agent.llm_model
+    answer_model = await resource_manager.get_language_model(answer_model_id)
+
     normalized_session_id = session_id or "evaluation_session"
 
     long_term_memory = LongTermMemory(
@@ -456,7 +468,4 @@ async def init_memmachine_params(
 
     query_agent = await init_agent(agent_model, reranker, agent_name)
 
-    # Resolve again so each caller gets an independent reference (the manager caches internally)
-    answer_model = await resource_manager.get_language_model(agent_model_id)
-
-    return memory, answer_model, query_agent
+    return memory, answer_model, query_agent, agent_model_id, answer_model_id

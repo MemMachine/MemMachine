@@ -103,7 +103,7 @@ async def main():
     args = parser.parse_args()
 
     resource_manager = agent_utils.load_eval_config(args.config_path)
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="group1",  # Wikimultihop dataset does not have session concept
     )
