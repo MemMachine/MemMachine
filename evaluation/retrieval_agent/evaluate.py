@@ -9,6 +9,7 @@ import threading
 from collections import defaultdict
 from pathlib import Path
 
+from memmachine_server.common.configuration import Configuration
 from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,7 +23,9 @@ from evaluation.retrieval_agent.llm_judge import (  # noqa: E402
 )
 
 
-def process_sample(group_key: str, item: dict, call_fn):
+def process_sample(
+    group_key: str, item: dict, call_fn, judge_model_id: str | None = None
+):
     question = str(item["question"])
     locomo_answer = str(item["golden_answer"])
     response = str(item["model_answer"])
@@ -41,6 +44,8 @@ def process_sample(group_key: str, item: dict, call_fn):
         "category": category,
         "llm_score": llm_score,
     }
+    if judge_model_id:
+        res["judge_model_id"] = judge_model_id
     for key, val in item.items():
         if key not in [
             "question",
@@ -89,6 +94,11 @@ def main():
 
     call_fn = create_judge_fn(args.config_path)
 
+    config = Configuration.load_yml_file(args.config_path)
+    judge_model_id = (
+        config.retrieval_agent.judge_llm_model or config.retrieval_agent.llm_model
+    )
+
     with open(args.data_path, "r") as f:
         data = json.load(f)
 
@@ -102,7 +112,7 @@ def main():
         max_workers=args.max_workers
     ) as executor:
         futures = [
-            executor.submit(process_sample, group_key, item, call_fn)
+            executor.submit(process_sample, group_key, item, call_fn, judge_model_id)
             for group_key, item in sample_tasks
         ]
 
