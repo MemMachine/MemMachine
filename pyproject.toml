@@ -23,8 +23,8 @@ constraint-dependencies = [
 
 [dependency-groups]
 dev = [
-    "complexipy>=4.2.0",
-    "complexipy>=5.3.0",
+    "complexipy>=5.4.0",
+    "complexipy>=5.4.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.2.0",
     "ruff==0.15.11",
