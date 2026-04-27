@@ -349,11 +349,11 @@ class TestMemMachineIntegration:
             "Should find both morning and afternoon memories without filter"
         )
 
-        # Search with filter (filter_dict is converted to SQL-like string format)
+        # Search with filter (user metadata fields use the metadata. prefix in filter_dict)
         try:
             results = memory.search(
                 "What do I like to drink?",
-                filter_dict={"time": "morning"},
+                filter_dict={"metadata.time": "morning"},
                 limit=10,
             )
             assert isinstance(results, SearchResult)
