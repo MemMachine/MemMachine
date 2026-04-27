@@ -239,21 +239,3 @@ def event_memory_with_sentences(
             derive_sentences=True,
         )
     )
-
-
-@pytest.fixture
-def event_memory_with_eviction(
-    fake_vector_store_collection,
-    fake_segment_store_partition,
-    fake_embedder,
-):
-    return EventMemory(
-        EventMemoryParams(
-            vector_store_collection=fake_vector_store_collection,
-            segment_store_partition=fake_segment_store_partition,
-            embedder=fake_embedder,
-            eviction_similarity_threshold=0.5,
-            eviction_target_size=3,
-            eviction_search_limit=20,
-        )
-    )
