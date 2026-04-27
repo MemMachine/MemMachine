@@ -74,7 +74,7 @@ class EventMemoryParams(BaseModel):
             (default: False).
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation
-            (default: 2000).
+            (default: 500).
     """
 
     vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
@@ -99,7 +99,7 @@ class EventMemoryParams(BaseModel):
         description="Whether to derive sentence-level derivatives from content",
     )
     max_text_chunk_length: int = Field(
-        2000,
+        500,
         description="Max code-point length for text chunking in segment creation",
     )
 
