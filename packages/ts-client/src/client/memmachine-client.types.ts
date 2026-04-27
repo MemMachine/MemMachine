@@ -5,12 +5,19 @@
  * @property api_key - API key for authentication (optional).
  * @property timeout - Request timeout in milliseconds (optional).
  * @property max_retries - Maximum number of retry attempts for failed requests (optional).
+ * @property adapter - Axios adapter to use for HTTP requests (optional).
+ *   When unset, `'fetch'` is selected automatically if an HTTPS/HTTP proxy env var
+ *   is detected (`HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy`, or `http_proxy`);
+ *   otherwise axios' default adapter is used.
+ *   Set explicitly to opt in or out (e.g. `'fetch'` to force Node's native fetch,
+ *   which handles CONNECT tunneling through TLS-terminating proxies correctly).
  */
 export interface ClientOptions {
   base_url?: string
   api_key?: string
   timeout?: number
   max_retries?: number
+  adapter?: 'http' | 'https' | 'fetch'
 }
 
 /**

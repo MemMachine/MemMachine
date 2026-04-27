@@ -24,6 +24,7 @@ constraints = [
 
 [manifest.dependency-groups]
 dev = [
+    { name = "complexipy", specifier = ">=4.2.0" },
     { name = "complexipy", specifier = ">=5.3.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },

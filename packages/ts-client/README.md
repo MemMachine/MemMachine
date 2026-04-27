@@ -129,6 +129,22 @@ Provides methods to manage and interact with the memory in MemMachine.
 - `MemoryType` — Allowed values: 'episodic' | 'semantic'
 - `MemoryProducerRole` — Allowed values: 'user' | 'assistant' | 'system'
 
+## HTTPS proxy environments
+
+When the client runs behind a TLS-terminating HTTPS proxy (e.g. corporate egress proxies, sandboxed CI runners), axios' default HTTP/HTTPS adapter can fail with errors like `stream has been aborted`. The client automatically selects Node's native `fetch` adapter when it detects `HTTPS_PROXY`, `HTTP_PROXY`, or their lowercase equivalents in the environment, because `fetch` (backed by undici) handles `CONNECT` tunneling through these proxies correctly.
+
+You can also pin the adapter explicitly via the `adapter` option:
+
+```typescript
+// Force Node's fetch adapter regardless of env vars
+const client = new MemMachineClient({ api_key: 'your_api_key', adapter: 'fetch' })
+
+// Opt out of auto-detection and keep axios' default http adapter
+const client = new MemMachineClient({ api_key: 'your_api_key', adapter: 'http' })
+```
+
+An explicit `adapter` value always wins over the env-var auto-detection. When no `adapter` is passed and no proxy env var is set, behavior is unchanged from axios' default.
+
 ## Examples
 
 See [basic usage examples](../../../examples/ts_rest_client_demo/) for practical code demonstrating memory management, project operations, and error handling with the MemMachine REST Client.
