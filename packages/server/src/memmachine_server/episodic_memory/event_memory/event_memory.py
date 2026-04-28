@@ -690,7 +690,9 @@ class EventMemory:
 
             if not is_continuation:
                 if not first:
-                    context_string += json.dumps(accumulated_text) + "\n"
+                    context_string += (
+                        json.dumps(accumulated_text, ensure_ascii=False) + "\n"
+                    )
                 first = False
                 accumulated_text = ""
                 context_string += EventMemory._segment_header(segment, format_options)
@@ -704,7 +706,7 @@ class EventMemory:
             last_segment = segment
 
         if not first:
-            context_string += json.dumps(accumulated_text) + "\n"
+            context_string += json.dumps(accumulated_text, ensure_ascii=False) + "\n"
 
         return context_string.strip()
 
