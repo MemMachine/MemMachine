@@ -61,11 +61,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
-from memmachine_server.common.payload_codec import (
-    KMSEnvelopePayloadCodecConfig,
-    KMSEnvelopePayloadCodecLoader,
-    PayloadCodec,
-)
+from memmachine_server.common.payload_codec import PayloadCodec
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
     decode_payload_codec_config,
@@ -709,16 +705,9 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine.
-        payload_codec_loader (KMSEnvelopePayloadCodecLoader | None):
-            Optional loader for KMS envelope-encrypted payload codecs
-            (default: None).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
-    payload_codec_loader: InstanceOf[KMSEnvelopePayloadCodecLoader] | None = Field(
-        default=None,
-        description="Optional loader for KMS envelope-encrypted payload codecs",
-    )
 
     @field_validator("engine")
     @classmethod
@@ -744,7 +733,6 @@ class SQLAlchemySegmentStore(SegmentStore):
     def __init__(self, params: SQLAlchemySegmentStoreParams) -> None:
         """Initialize with an async SQLAlchemy engine."""
         self._engine = params.engine
-        self._payload_codec_loader = params.payload_codec_loader
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
 
         self._is_postgresql = self._engine.dialect.name == "postgresql"
@@ -930,12 +918,6 @@ class SQLAlchemySegmentStore(SegmentStore):
         config: SegmentStorePartitionConfig,
     ) -> PayloadCodec:
         """Materialize a live payload codec for a partition config."""
-        if isinstance(config.payload_codec_config, KMSEnvelopePayloadCodecConfig):
-            if self._payload_codec_loader is None:
-                raise ValueError(
-                    "KMS envelope payload codec requires a payload codec loader"
-                )
-            return await self._payload_codec_loader.load(config.payload_codec_config)
         match config.payload_codec_config:
             case PlaintextPayloadCodecConfig():
                 return PlaintextPayloadCodec()

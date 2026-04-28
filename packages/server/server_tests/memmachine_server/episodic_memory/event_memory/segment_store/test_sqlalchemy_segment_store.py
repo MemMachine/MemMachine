@@ -4,7 +4,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from typing import override
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,13 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.filter.filter_parser import Comparison
-from memmachine_server.common.payload_codec import (
-    KMSEnvelopePayloadCodecConfig,
-    KMSEnvelopePayloadCodecLoader,
-    PayloadCodec,
-)
 from memmachine_server.common.payload_codec.payload_codec_config import (
-    AESGCMPayloadCodecConfig,
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
@@ -44,35 +37,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
 PARTITION_KEY = "test_partition"
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
 _NULL_CONTEXT = NullContext()
-
-
-class PrefixPayloadCodec(PayloadCodec):
-    """Codec that prefixes payloads so loader wiring is easy to assert."""
-
-    def __init__(self, prefix: bytes = b"prefix:") -> None:
-        self._prefix = prefix
-
-    @override
-    def encode(self, value: bytes) -> bytes:
-        return self._prefix + value
-
-    @override
-    def decode(self, value: bytes) -> bytes:
-        if not value.startswith(self._prefix):
-            raise ValueError("encoded payload is missing the expected prefix")
-        return value[len(self._prefix) :]
-
-
-class PrefixPayloadCodecLoader(KMSEnvelopePayloadCodecLoader):
-    """Loader that returns the prefix codec and records configs it receives."""
-
-    def __init__(self) -> None:
-        self.loaded_configs: list[KMSEnvelopePayloadCodecConfig] = []
-
-    @override
-    async def load(self, config: KMSEnvelopePayloadCodecConfig) -> PayloadCodec:
-        self.loaded_configs.append(config)
-        return PrefixPayloadCodec()
 
 
 # ---------------------------------------------------------------------------
@@ -161,23 +125,6 @@ async def partition(
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
-
-
-@pytest_asyncio.fixture
-async def sqlite_store_with_loader(
-    sqlalchemy_sqlite_engine: AsyncEngine,
-) -> AsyncIterator[tuple[SQLAlchemySegmentStore, PrefixPayloadCodecLoader]]:
-    loader = PrefixPayloadCodecLoader()
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(
-            engine=sqlalchemy_sqlite_engine,
-            payload_codec_loader=loader,
-        )
-    )
-    await store.startup()
-    yield store, loader
-    async with sqlalchemy_sqlite_engine.begin() as conn:
-        await conn.run_sync(BaseSegmentStore.metadata.drop_all)
 
 
 # ===================================================================
@@ -865,51 +812,6 @@ async def test_open_or_create_partition_defaults_to_plaintext_config(
         _plaintext_partition_config(),
     )
     assert partition.config.payload_codec_config == PlaintextPayloadCodecConfig()
-
-
-@pytest.mark.asyncio
-async def test_open_or_create_partition_uses_codec_loader_when_configured(
-    sqlite_store_with_loader: tuple[
-        SQLAlchemySegmentStore,
-        PrefixPayloadCodecLoader,
-    ],
-) -> None:
-    store, loader = sqlite_store_with_loader
-    config = SegmentStorePartitionConfig(
-        payload_codec_config=AESGCMPayloadCodecConfig(
-            key_ref="partition_key",
-            wrapped_dek=b"wrapped-dek",
-            nonce_size=12,
-            associated_data=b"partition:context",
-        )
-    )
-
-    partition = await store.open_or_create_partition(
-        "encrypted_partition",
-        config=config,
-    )
-    assert partition.config == config
-
-    segment = _seg(text="codec")
-    await partition.add_segments(_links(segment))
-
-    async with partition._create_session() as session:
-        row = (
-            await session.execute(
-                select(SegmentRow).where(SegmentRow.uuid == segment.uuid)
-            )
-        ).scalar_one()
-
-    assert row.context.startswith(b"prefix:")
-    assert row.block.startswith(b"prefix:")
-    assert all(
-        isinstance(item, AESGCMPayloadCodecConfig) for item in loader.loaded_configs
-    )
-
-    reopened = await store.open_partition("encrypted_partition")
-    assert reopened is not None
-    result = await reopened.get_segment_contexts([segment.uuid])
-    assert result[segment.uuid][0].uuid == segment.uuid
 
 
 @pytest.mark.asyncio
