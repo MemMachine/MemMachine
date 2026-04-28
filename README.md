@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/memmachine-memmachine-badge.png)](https://mseep.ai/app/memmachine-memmachine)
+
 # MemMachine
 
 <div align="center">
