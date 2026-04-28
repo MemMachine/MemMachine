@@ -34,32 +34,8 @@ class Text(BaseModel):
     text: str
 
 
-class Image(BaseModel):
-    """An image."""
-
-    type: Literal["image"] = "image"
-
-
-class Audio(BaseModel):
-    """Audio content."""
-
-    type: Literal["audio"] = "audio"
-
-
-class Video(BaseModel):
-    """Video content."""
-
-    type: Literal["video"] = "video"
-
-
-class FileRef(BaseModel):
-    """Reference to a file."""
-
-    type: Literal["file_ref"] = "file_ref"
-
-
 Block = Annotated[
-    Text | Image | Audio | Video | FileRef,
+    Text,
     Field(discriminator="type"),
 ]
 
@@ -128,15 +104,8 @@ class Content(BaseModel):
     items: list[Block]
 
 
-class ReadFile(BaseModel):
-    """Request the system to read a file."""
-
-    type: Literal["read_file"] = "read_file"
-    file: FileRef
-
-
 Body = Annotated[
-    Content | ReadFile,
+    Content,
     Field(discriminator="type"),
 ]
 

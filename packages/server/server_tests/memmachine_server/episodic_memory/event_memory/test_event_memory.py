@@ -24,11 +24,9 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     CitationContext,
     Content,
     Event,
-    FileRef,
     MessageContext,
     NullContext,
     QueryResult,
-    ReadFile,
     ScoredSegmentContext,
     Segment,
     Text,
@@ -180,26 +178,6 @@ class TestEncodeEvents:
         props = _record_properties(record)
         assert "_context_type" not in props
         assert "_context_source" not in props
-
-    async def test_read_file_body(
-        self,
-        event_memory: EventMemory,
-        fake_segment_store_partition: InMemorySegmentStorePartition,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
-    ):
-        event = Event(
-            uuid=uuid4(),
-            timestamp=_T0,
-            body=ReadFile(file=FileRef()),
-        )
-        await event_memory.encode_events([event])
-
-        # 1 segment, 0 derivatives, 0 vector records.
-        assert len(fake_segment_store_partition.segments) == 1
-        segment = next(iter(fake_segment_store_partition.segments.values()))
-        assert isinstance(segment.block, FileRef)
-        assert fake_segment_store_partition.segment_to_derivatives[segment.uuid] == []
-        assert len(fake_vector_store_collection.records) == 0
 
     async def test_long_text_chunking(
         self,
@@ -447,24 +425,6 @@ class TestForgetEvents:
         await event_memory.encode_events([_make_event("keep me")])
         await event_memory.forget_events([uuid4()])
         assert len(fake_segment_store_partition.segments) == 1
-
-    async def test_forget_read_file(
-        self,
-        event_memory: EventMemory,
-        fake_segment_store_partition: InMemorySegmentStorePartition,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
-    ):
-        event = Event(
-            uuid=uuid4(),
-            timestamp=_T0,
-            body=ReadFile(file=FileRef()),
-        )
-        await event_memory.encode_events([event])
-        assert len(fake_segment_store_partition.segments) == 1
-        assert len(fake_vector_store_collection.records) == 0
-
-        await event_memory.forget_events([event.uuid])
-        assert len(fake_segment_store_partition.segments) == 0
 
 
 # ===================================================================

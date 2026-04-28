@@ -37,11 +37,9 @@ from .data_types import (
     DateTimeStyle,
     Derivative,
     Event,
-    FileRef,
     FormatOptions,
     MessageContext,
     QueryResult,
-    ReadFile,
     ScoredSegmentContext,
     Segment,
     Text,
@@ -357,18 +355,6 @@ class EventMemory:
                     items=primitives,
                     context=context,
                 )
-            case ReadFile(file=file_ref):
-                return [
-                    Segment(
-                        uuid=uuid4(),
-                        event_uuid=event.uuid,
-                        index=0,
-                        offset=0,
-                        timestamp=event.timestamp,
-                        block=file_ref,
-                        properties=event.properties,
-                    )
-                ]
             case _:
                 logger.warning("Unsupported body type: %s", type(event.body))
                 return []
@@ -433,8 +419,6 @@ class EventMemory:
                 derivative_texts = self._extract_derivative_texts(
                     context=segment.context, text=text
                 )
-            case FileRef():
-                return []
             case _:
                 logger.warning("Non-text primitive derivatives are not yet supported")
                 return []
