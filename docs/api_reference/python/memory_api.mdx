@@ -50,7 +50,7 @@ results = client.memories.search(
     expand_context=2,
     score_threshold=0.65,
     agent_mode=True,
-    filter_dict={"source": "chat_v3"},
+    filter_dict={"m.source": "chat_v3"},
 )
 ```
 
@@ -63,8 +63,12 @@ results = client.memories.search(
 | `expand_context` | `int` | `0`          | Number of neighboring episodic entries to include around each long-term match. |
 | `score_threshold` | `float` | `None`     | Minimum episodic retrieval score to keep. Not supported when `agent_mode=True`. |
 | `agent_mode`  | `bool`   | `False`      | Whether to use retrieval-agent search orchestration.         |
-| `filter_dict` | `dict`   | `None`       | Key-value filters to apply to the search (metadata matching). |
+| `filter_dict` | `dict`   | `None`       | Metadata filters to apply to the search. User metadata keys must be prefixed with `m.` / `metadata.` (for example `{"m.source": "chat_v3"}`). Unknown or misspelled fields return a 400 error. |
 | `timeout`     | `int`    | `None`       | Request timeout in seconds. Uses client default if omitted.  |
+
+<Note>
+When constructing filters, always prefix user metadata fields with `m.` or `metadata.`. For example, use `{"m.user_id": "123"}` instead of `{"user_id": "123"}`. Filters that reference unknown or unqualified fields now fail fast with a 400 error instead of being ignored.
+</Note>
 
 ------
 

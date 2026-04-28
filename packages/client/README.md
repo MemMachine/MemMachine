@@ -110,7 +110,7 @@ print(f"Episodic memory: {results.get('episodic_memory', [])}")
 print(f"Profile memory: {results.get('profile_memory', [])}")
 
 # Search with filters
-work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
+work_results = memory.search("Tell me about work", filter_dict={"m.category": "work"})
 print(f"Work results: {work_results}")
 ```
 
