@@ -186,7 +186,7 @@ def fake_vector_store_collection(fake_embedder):
     config = VectorStoreCollectionConfig(
         vector_dimensions=fake_embedder.dimensions,
         similarity_metric=fake_embedder.similarity_metric,
-        properties_schema={
+        indexed_properties_schema={
             **EventMemory.expected_vector_store_collection_schema(),
             "color": str,
         },

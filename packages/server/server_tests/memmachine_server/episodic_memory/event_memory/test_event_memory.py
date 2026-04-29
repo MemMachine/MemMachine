@@ -239,7 +239,7 @@ class TestEncodeEvents:
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
-            properties_schema={
+            indexed_properties_schema={
                 "_segment_uuid": str,
                 "_timestamp": datetime.datetime,
             },
@@ -267,7 +267,7 @@ class TestEncodeEvents:
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
-            properties_schema={
+            indexed_properties_schema={
                 "_segment_uuid": str,
             },
         )

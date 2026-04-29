@@ -138,7 +138,7 @@ class EventMemory:
         self._vector_store_collection = params.vector_store_collection
         self._segment_store_partition = params.segment_store_partition
         self._schema_fields = frozenset(
-            params.vector_store_collection.config.properties_schema
+            params.vector_store_collection.config.indexed_properties_schema
         )
 
         missing_base_fields = (
