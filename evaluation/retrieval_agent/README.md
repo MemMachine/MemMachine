@@ -451,6 +451,19 @@ From `evaluation/retrieval_agent/`:
 ./run_test.sh locomo exp1 ingest retrieval_agent --ingest-concurrency 2
 ./run_test.sh locomo exp1 search retrieval_agent
 ./run_test.sh locomo exp1 search retrieval_agent --search-concurrency 1 --judge-concurrency 4
+
+# BEAM — See `beam/README.md` for detailed documentation
+
+Quick reference:
+```bash
+# Download dataset
+cd evaluation/retrieval_agent/beam
+python beam_download.py --size 100K --output ./beam_data
+
+# Run benchmark (from retrieval_agent directory)
+cd evaluation/retrieval_agent
+./run_test.sh beam exp1 search retrieval_agent /path/to/chat.json /path/to/probing_questions.json
+```
 ```
 
 For the full argument reference run:
@@ -458,6 +471,7 @@ For the full argument reference run:
 ```sh
 ./run_test.sh --help
 ./run_test.sh wikimultihop --help
+./run_test.sh beam --help
 ```
 
 ---
