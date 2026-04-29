@@ -48,6 +48,9 @@ class VectorStoreCollection(ABC):
         Args:
             records (Iterable[Record]):
                 Iterable of records to upsert.
+                Records containing properties
+                not in the indexed properties schema
+                are allowed.
         """
         raise NotImplementedError
 
@@ -56,8 +59,8 @@ class VectorStoreCollection(ABC):
         self,
         *,
         query_vectors: Iterable[Sequence[float]],
+        limit: int,
         score_threshold: float | None = None,
-        limit: int | None = None,
         property_filter: FilterExpr | None = None,
         return_vector: bool = False,
         return_properties: bool = True,
@@ -68,12 +71,10 @@ class VectorStoreCollection(ABC):
         Args:
             query_vectors (Iterable[Sequence[float]]):
                 The vectors to compare against.
+            limit (int):
+                Maximum number of matching records to return per query vector.
             score_threshold (float | None):
                 Score threshold to consider a match
-                (default: None).
-            limit (int | None):
-                Maximum number of matching records to return per query vector.
-                If None, return as many matching records as possible
                 (default: None).
             property_filter (FilterExpr | None):
                 Filter expression tree.
@@ -146,7 +147,7 @@ class VectorStore(ABC):
     The consumer is responsible for sharding names across processes.
 
     Different namespaces are fully independent (separate native collections).
-    Multiple logical collections with the same (namespace, vector dimensions, similarity metric, properties schema)
+    Multiple logical collections with the same (namespace, vector dimensions, similarity metric, indexed properties schema)
     may share a native collection to reduce overhead.
 
     Naming constraints:
