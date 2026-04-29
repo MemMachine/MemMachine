@@ -26,6 +26,7 @@ from memmachine_common.api.spec import (
     AddSemanticTagResponse,
     AddSemanticTagSpec,
     ConfigureEpisodicMemorySpec,
+    ConfigureEventMemorySpec,
     ConfigureSemanticSetSpec,
     CreateSemanticSetTypeResponse,
     CreateSemanticSetTypeSpec,
@@ -36,7 +37,9 @@ from memmachine_common.api.spec import (
     DeleteSemanticTagSpec,
     DisableSemanticCategorySpec,
     EpisodicMemoryConfigEntry,
+    EventMemoryConfigEntry,
     GetEpisodicMemoryConfigSpec,
+    GetEventMemoryConfigSpec,
     GetFeatureSpec,
     GetSemanticCategorySetIdsResponse,
     GetSemanticCategorySetIdsSpec,
@@ -429,7 +432,7 @@ class Memory:
             agent_mode=agent_mode,
             filter=filter_str,
             set_metadata=set_metadata,
-            types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
+            types=[MemoryType.Episodic, MemoryType.Semantic, MemoryType.Event],
         )
         v2_search_data = spec.model_dump(mode="json", exclude_none=True)
 
@@ -1807,6 +1810,108 @@ class Memory:
             logger.debug("Successfully configured episodic memory")
         except Exception:
             logger.exception("Failed to configure episodic memory")
+            raise
+        else:
+            return True
+
+    def get_event_memory_config(
+        self,
+        timeout: int | None = None,
+    ) -> EventMemoryConfigEntry:
+        """
+        Get event memory configuration for this project.
+
+        Args:
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            The event memory configuration entry.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot get event memory config: client has been closed")
+
+        spec = GetEventMemoryConfigSpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memory/event/config/get",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            result = EventMemoryConfigEntry(**response_data)
+            logger.debug("Successfully retrieved event memory config")
+        except Exception:
+            logger.exception("Failed to get event memory config")
+            raise
+        else:
+            return result
+
+    def configure_event_memory(
+        self,
+        *,
+        embedder: str,
+        reranker: str | None = None,
+        properties_schema: dict[str, str] | None = None,
+        derive_sentences: bool = False,
+        max_text_chunk_length: int = 500,
+        timeout: int | None = None,
+    ) -> bool:
+        """
+        Configure event memory for this project.
+
+        Args:
+            embedder: Resource ID of the Embedder instance.
+            reranker: Resource ID of the Reranker instance, or None.
+            properties_schema: User-defined filterable properties and their types.
+            derive_sentences: Whether to derive sentence-level derivatives.
+            max_text_chunk_length: Max code-point length for text chunking.
+            timeout: Request timeout in seconds (uses client default if not provided).
+
+        Returns:
+            True if configuration was successful.
+
+        Raises:
+            requests.RequestException: If the request fails.
+            RuntimeError: If the client has been closed.
+
+        """
+        if self._client_closed:
+            raise RuntimeError("Cannot configure event memory: client has been closed")
+
+        spec = ConfigureEventMemorySpec(
+            org_id=self.__org_id,
+            project_id=self.__project_id,
+            embedder=embedder,
+            reranker=reranker,
+            properties_schema=properties_schema or {},
+            derive_sentences=derive_sentences,
+            max_text_chunk_length=max_text_chunk_length,
+        )
+        v2_data = spec.model_dump(mode="json", exclude_none=True)
+
+        try:
+            response = self.client.request(
+                "POST",
+                f"{self.client.base_url}/api/v2/memory/event/config",
+                json=v2_data,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            logger.debug("Successfully configured event memory")
+        except Exception:
+            logger.exception("Failed to configure event memory")
             raise
         else:
             return True

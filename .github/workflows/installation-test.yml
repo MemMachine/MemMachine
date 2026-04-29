@@ -73,6 +73,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          python -m pip install "$(ls *common*.whl)"
           whl_name=$(ls *server*.whl)
           python -m pip install --find-links . "$whl_name"
 
@@ -105,6 +106,7 @@ jobs:
         run: |
           set -eo pipefail
           export PYTHONUTF8=1
+          python -m pip install "$(ls *common*.whl)"
           whl_name=$(ls *server*.whl)
           python -m pip install --find-links . "$whl_name"
 
@@ -124,6 +126,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          python -m pip install "$(ls *common*.whl)"
           whl_name=$(ls *server*.whl)
           python -m pip install --find-links . "$whl_name"
 

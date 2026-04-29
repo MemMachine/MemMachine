@@ -32,6 +32,7 @@ def _make_empty_memmachine() -> AsyncMock:
     empty = MagicMock()
     empty.episodic_memory = None
     empty.semantic_memory = None
+    empty.event_memory = None
 
     memmachine.query_search.return_value = empty
     memmachine.list_search.return_value = empty

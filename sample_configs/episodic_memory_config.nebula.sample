@@ -14,6 +14,22 @@ episodic_memory:
     llm_model: openai_model
     message_capacity: 500
 
+# Event memory (optional — omit this section to disable event memory)
+# Requires a VectorStore and SegmentStore backend (not yet available in all deployments).
+#
+# event_memory_store:
+#   vector_store: my_vector_store_id
+#   segment_store: my_segment_store_id
+#
+# event_memory:
+#   embedder: openai_embedder
+#   reranker: my_reranker_id          # optional — omit to use embedding scores
+#   properties_schema:                # optional — user-defined filterable properties
+#     source_role: str
+#     target_id: str
+#   derive_sentences: false
+#   max_text_chunk_length: 2000
+
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder

@@ -52,6 +52,10 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          # Install common first to ensure the freshly built version is used
+          common_whl=$(ls dist/memmachine_common-*.whl | head -1)
+          pip install "$common_whl"
+
           whl_name=$(ls dist/memmachine_server-*.whl | head -1)
           pip install --find-links dist/ "$whl_name"
 
@@ -85,9 +89,10 @@ jobs:
           print('MemoryType enum values correct')
 
           # Test ALL_MEMORY_TYPES
-          assert len(ALL_MEMORY_TYPES) == 2
+          assert len(ALL_MEMORY_TYPES) == 3
           assert MemoryType.Semantic in ALL_MEMORY_TYPES
           assert MemoryType.Episodic in ALL_MEMORY_TYPES
+          assert MemoryType.Event in ALL_MEMORY_TYPES
           print('ALL_MEMORY_TYPES correct')
           "
 

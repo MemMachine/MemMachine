@@ -59,6 +59,14 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          # Install common first to ensure the freshly built version is used
+          common_whl=$(python -c "import pathlib; d=sorted(pathlib.Path('dist').glob('memmachine_common-*.whl')); print(d[0] if d else '')")
+          if [ -z "$common_whl" ]; then
+            echo "No common wheel found" >&2
+            exit 1
+          fi
+          python -m pip install "$common_whl"
+
           whl_name=$(python -c "import pathlib; d=sorted(pathlib.Path('dist').glob('memmachine_client-*.whl')); print(d[0] if d else '')")
           if [ -z "$whl_name" ]; then
             echo "No client wheel found" >&2

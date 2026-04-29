@@ -117,6 +117,12 @@ class MockShortTermMemoryDataManager(SessionDataManager):
     ) -> None:
         pass
 
+    async def get_event_memory_conf(self, session_key: str):
+        return None
+
+    async def set_event_memory_conf(self, session_key: str, conf=None):
+        pass
+
 
 T = TypeVar("T")
 

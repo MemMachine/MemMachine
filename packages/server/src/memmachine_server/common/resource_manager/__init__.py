@@ -13,6 +13,12 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
+
+# TODO: This should be in its dedicated file.
+# There's no safe way to define package exports this way.
+# e.g. importing the impl here for export will be circular.
 
 
 @runtime_checkable
@@ -55,6 +61,14 @@ class CommonResourceManager(Protocol):
 
     async def get_metrics_factory(self, name: str) -> MetricsFactory:
         """Return the metrics factory by name."""
+        raise NotImplementedError
+
+    async def get_vector_store(self, name: str) -> VectorStore:
+        """Return a vector store by name."""
+        raise NotImplementedError
+
+    async def get_segment_store(self, name: str) -> SegmentStore:
+        """Return a segment store by name."""
         raise NotImplementedError
 
     async def get_session_data_manager(self) -> SessionDataManager:

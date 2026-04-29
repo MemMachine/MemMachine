@@ -20,11 +20,10 @@ from typing_extensions import Self
 
 from . import EpisodeType, MemoryType
 from .doc import Examples, SpecDoc
+from .event_memory.data_types import EventMemoryQueryResult
+from .event_memory.properties import PropertyValue
 
 UTC = timezone.utc
-
-PropertyValue = bool | int | float | str | datetime
-"""Type for stored property values (duplicated here to avoid server dependency)."""
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
@@ -876,6 +875,10 @@ class SearchResultContent(BaseModel):
         list[SemanticFeature] | None,
         Field(default=None, description=SpecDoc.SEARCH_SEMANTIC_MEMORY),
     ]
+    event_memory: Annotated[
+        EventMemoryQueryResult | None,
+        Field(default=None, description=SpecDoc.SEARCH_EVENT_MEMORY),
+    ]
 
 
 class ListResult(BaseModel):
@@ -1551,6 +1554,72 @@ class ConfigureEpisodicMemorySpec(_WithOrgAndProj):
         Field(
             default=None,
             description=SpecDoc.EPISODIC_STM_ENABLED,
+        ),
+    ]
+
+
+class GetEventMemoryConfigSpec(_WithOrgAndProj):
+    """Specification model for getting event memory configuration."""
+
+
+class EventMemoryConfigEntry(BaseModel):
+    """Response model for event memory configuration."""
+
+    embedder: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_EMBEDDER),
+    ]
+    reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EVENT_MEMORY_RERANKER),
+    ]
+    properties_schema: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=SpecDoc.EVENT_MEMORY_PROPERTIES_SCHEMA,
+        ),
+    ]
+    derive_sentences: Annotated[
+        bool,
+        Field(default=False, description=SpecDoc.EVENT_MEMORY_DERIVE_SENTENCES),
+    ]
+    max_text_chunk_length: Annotated[
+        int,
+        Field(
+            default=500,
+            description=SpecDoc.EVENT_MEMORY_MAX_TEXT_CHUNK_LENGTH,
+        ),
+    ]
+
+
+class ConfigureEventMemorySpec(_WithOrgAndProj):
+    """Specification model for configuring event memory for a session."""
+
+    embedder: Annotated[
+        str,
+        Field(..., description=SpecDoc.EVENT_MEMORY_EMBEDDER),
+    ]
+    reranker: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EVENT_MEMORY_RERANKER),
+    ]
+    properties_schema: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=SpecDoc.EVENT_MEMORY_PROPERTIES_SCHEMA,
+        ),
+    ]
+    derive_sentences: Annotated[
+        bool,
+        Field(default=False, description=SpecDoc.EVENT_MEMORY_DERIVE_SENTENCES),
+    ]
+    max_text_chunk_length: Annotated[
+        int,
+        Field(
+            default=500,
+            description=SpecDoc.EVENT_MEMORY_MAX_TEXT_CHUNK_LENGTH,
         ),
     ]
 

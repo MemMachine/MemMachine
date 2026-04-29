@@ -113,6 +113,8 @@ def _minimal_conf(
     )
     ret.default_long_term_memory_embedder = "default-embedder"
     ret.default_long_term_memory_reranker = "default-reranker"
+    ret.event_memory_store = None
+    ret.event_memory = None
     ret.retrieval_agent = RetrievalAgentConf()
     semantic_conf = MagicMock()
     semantic_conf.llm_model = None

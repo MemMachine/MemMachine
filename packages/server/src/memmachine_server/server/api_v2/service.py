@@ -13,6 +13,7 @@ from memmachine_common.api.spec import (
     DeleteMemoriesSpec,
     Episode,
     EpisodicSearchResult,
+    EventMemoryQueryResult,
     ListMemoriesSpec,
     ListResult,
     ListResultContent,
@@ -116,6 +117,7 @@ async def _search_target_memories(
     content = SearchResultContent(
         episodic_memory=None,
         semantic_memory=None,
+        event_memory=None,
     )
     if results.episodic_memory is not None:
         content.episodic_memory = EpisodicSearchResult(
@@ -126,6 +128,10 @@ async def _search_target_memories(
             SemanticFeature(**f.model_dump(mode="json"))
             for f in results.semantic_memory
         ]
+    if results.event_memory is not None:
+        content.event_memory = EventMemoryQueryResult.model_validate(
+            results.event_memory.model_dump(mode="json")
+        )
     return SearchResult(
         status=0,
         content=content,

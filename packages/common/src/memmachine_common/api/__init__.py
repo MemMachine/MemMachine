@@ -8,6 +8,7 @@ class MemoryType(Enum):
 
     Semantic = "semantic"
     Episodic = "episodic"
+    Event = "event"
 
 
 class EpisodeType(Enum):

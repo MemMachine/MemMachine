@@ -155,6 +155,22 @@ class SpecDoc:
 
     SEARCH_SEMANTIC_MEMORY = "Semantic memory search results."
 
+    SEARCH_EVENT_MEMORY = "Event memory search results"
+
+    EVENT_MEMORY_SEGMENTS = "Matched segments with full metadata"
+
+    EVENT_MEMORY_EMBEDDER = "Resource ID of the Embedder instance"
+    EVENT_MEMORY_RERANKER = "Resource ID of the Reranker instance, or null"
+    EVENT_MEMORY_PROPERTIES_SCHEMA = (
+        "User-defined filterable properties and their types"
+    )
+    EVENT_MEMORY_DERIVE_SENTENCES = (
+        "Whether to derive sentence-level derivatives from content"
+    )
+    EVENT_MEMORY_MAX_TEXT_CHUNK_LENGTH = (
+        "Max code-point length for text chunking in segment creation"
+    )
+
     LIST_EPISODIC_MEMORY = "Listed episodic memory entries."
 
     LIST_SEMANTIC_MEMORY = "Listed semantic memory entries."
@@ -1298,6 +1314,26 @@ class RouterDoc:
 
     Only provided (non-null) values are updated. Fields not specified
     in the request retain their current values.
+
+    Returns 404 if the project does not exist.
+    """
+
+    GET_EVENT_MEMORY_CONFIG = """
+    Get event memory configuration for a project.
+
+    Returns the current event memory configuration for the specified
+    project, including embedder, reranker, properties schema, and
+    chunking options.
+
+    Returns 404 if the project does not exist or has no event memory
+    configuration.
+    """
+
+    CONFIGURE_EVENT_MEMORY = """
+    Configure event memory for a project.
+
+    Sets the event memory configuration for a specific project session.
+    This replaces the entire configuration — all fields must be provided.
 
     Returns 404 if the project does not exist.
     """

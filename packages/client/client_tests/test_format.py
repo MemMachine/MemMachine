@@ -177,6 +177,7 @@ class TestFormatSearchResult:
             content=SearchResultContent(
                 episodic_memory=None,
                 semantic_memory=None,
+                event_memory=None,
             ),
         )
         assert format_search_result(result) == ""
@@ -199,6 +200,7 @@ class TestFormatSearchResult:
                     ),
                 ),
                 semantic_memory=None,
+                event_memory=None,
             ),
         )
         formatted = format_search_result(result)
@@ -219,6 +221,7 @@ class TestFormatSearchResult:
             content=SearchResultContent(
                 episodic_memory=None,
                 semantic_memory=[feature],
+                event_memory=None,
             ),
         )
         formatted = format_search_result(result)
@@ -251,6 +254,7 @@ class TestFormatSearchResult:
                     ),
                 ),
                 semantic_memory=[feature],
+                event_memory=None,
             ),
         )
         formatted = format_search_result(result)
