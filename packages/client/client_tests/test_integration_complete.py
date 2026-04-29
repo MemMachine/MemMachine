@@ -353,7 +353,7 @@ class TestMemMachineIntegration:
         try:
             results = memory.search(
                 "What do I like to drink?",
-                filter_dict={"time": "morning"},
+                filter_dict={"m.time": "morning"},
                 limit=10,
             )
             assert isinstance(results, SearchResult)
@@ -488,7 +488,7 @@ class TestMemMachineIntegration:
         )
 
         # Search with custom filters only - built-in filters are automatically merged
-        custom_filters = {"category": "profession"}
+        custom_filters = {"m.category": "profession"}
         try:
             results = memory.search(
                 "What is my profession?",

@@ -9,7 +9,6 @@ import pytest
 import pytest_asyncio
 from neo4j import AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
-from sqlalchemy import StaticPool
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.core.waiting_utils import wait_container_is_ready
@@ -317,11 +316,9 @@ async def sqlalchemy_pg_engine(pg_server):
 
 
 @pytest_asyncio.fixture
-async def sqlalchemy_sqlite_engine():
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-    )
+async def sqlalchemy_sqlite_engine(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
 
     yield engine
     await engine.dispose()
