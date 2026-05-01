@@ -127,7 +127,7 @@ def demo_advanced_memory_features() -> None:
         query = "What programming languages do I know?"
         results = memory.search(
             query=query,
-            filter_dict={"category": "programming"},
+            filter_dict={"metadata.category": "programming"},
             limit=5,
         )
         print_memory_results(results, query)
@@ -136,7 +136,7 @@ def demo_advanced_memory_features() -> None:
         query = "What conferences have I attended?"
         results = memory.search(
             query=query,
-            filter_dict={"category": "conference"},
+            filter_dict={"metadata.category": "conference"},
             limit=5,
         )
         print_memory_results(results, query)
