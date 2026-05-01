@@ -160,7 +160,7 @@ async def run_locomo(  # noqa: C901
                 speaker = message["speaker"]
                 full_content.append(f"[{session_datetime}] {speaker}: {text}")
 
-        memory, model, query_agent = await agent_utils.init_memmachine_params(
+        memory, answer_model, query_agent, agent_model_id, answer_model_id = await agent_utils.init_memmachine_params(
             resource_manager=resource_manager,
             session_id=group_id,
             agent_name="ToolSelectAgent"
@@ -198,7 +198,7 @@ async def run_locomo(  # noqa: C901
                 ANSWER_PROMPT,
                 query_agent,
                 memory,
-                model,
+                answer_model,
                 question,
                 answer,
                 category,
@@ -206,6 +206,10 @@ async def run_locomo(  # noqa: C901
                 adversarial_answer,
                 20,
                 full_content_str if args.test_target == "llm" else None,
+                extra_attributes={
+                    "agent_model_id": agent_model_id,
+                    "answer_model_id": answer_model_id,
+                },
             )
             return question_response
 

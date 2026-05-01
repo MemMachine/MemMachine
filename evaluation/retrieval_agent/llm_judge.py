@@ -57,7 +57,9 @@ def create_judge_fn(config_path: str) -> Callable[[str], str]:
 
     config = Configuration.load_yml_file(config_path)
     lms = config.resources.language_models
-    llm_id = config.retrieval_agent.llm_model
+
+    # Use judge_llm_model if set, otherwise fall back to llm_model
+    llm_id = config.retrieval_agent.judge_llm_model or config.retrieval_agent.llm_model
     if not llm_id:
         raise ValueError("retrieval_agent.llm_model is not set in configuration.yml")
 
