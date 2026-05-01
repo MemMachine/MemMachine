@@ -9,10 +9,11 @@ class SpyEmbedder(Embedder):
     """Test double that records calls and produces deterministic embeddings."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.ingest_calls: list[list[str]] = []
         self.search_calls: list[list[str]] = []
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[str],
         max_attempts: int = 1,
@@ -20,7 +21,7 @@ class SpyEmbedder(Embedder):
         self.ingest_calls.append(list(inputs))
         return [self._vector(text) for text in inputs]
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[str],
         max_attempts: int = 1,
@@ -52,17 +53,18 @@ class LengthEmbedder(Embedder):
     """Returns a random vector of length n"""
 
     def __init__(self, n: int) -> None:
+        super().__init__()
         self.n = n
 
     def _embed(self, inputs: list[str]) -> list[list[float]]:
         return [[random.random() for _ in range(self.n)] for _ in inputs]
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self, inputs: list[str], max_attempts: int = 1
     ) -> list[list[float]]:
         return self._embed(inputs)
 
-    async def search_embed(
+    async def _search_embed(
         self, queries: list[str], max_attempts: int = 1
     ) -> list[list[float]]:
         return self._embed(queries)

@@ -13,6 +13,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_store import VectorStore
 
 
 @runtime_checkable
@@ -37,6 +38,10 @@ class CommonResourceManager(Protocol):
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return the vector graph store by name."""
+        raise NotImplementedError
+
+    async def get_vector_store(self, name: str) -> VectorStore:
+        """Return the vector store by name."""
         raise NotImplementedError
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:

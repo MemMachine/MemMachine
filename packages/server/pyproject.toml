@@ -57,6 +57,9 @@ gpu = [
 nebula = [
     "nebula5-python>=5.2.1",
 ]
+qdrant = [
+    "qdrant-client>=1.17.0",
+]
 
 [project.scripts]
 memmachine-server = "memmachine_server.server.app:main"

@@ -154,6 +154,10 @@ class SQLConfigurationError(MemMachineError):
     """Error related to SQL configuration."""
 
 
+class QdrantConfigurationError(MemMachineError):
+    """Error related to Qdrant configuration."""
+
+
 class InvalidLanguageModelError(MemMachineError):
     """Exception raised for invalid language model."""
 

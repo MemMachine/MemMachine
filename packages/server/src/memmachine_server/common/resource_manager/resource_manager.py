@@ -36,6 +36,7 @@ from memmachine_server.common.session_manager.session_data_manager_sql_impl impo
     SessionDataManagerSQL,
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
@@ -118,6 +119,10 @@ class ResourceManagerImpl:
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
         return await self._database_manager.get_vector_graph_store(name)
+
+    async def get_vector_store(self, name: str) -> VectorStore:
+        """Return a vector store by name."""
+        return await self._database_manager.get_vector_store(name)
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""
