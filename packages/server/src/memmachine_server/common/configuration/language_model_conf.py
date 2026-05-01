@@ -98,6 +98,74 @@ class OpenAIChatCompletionsLanguageModelConf(
         return v
 
 
+class LiteLLMLanguageModelConf(
+    MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
+):
+    """Configuration for LiteLLM-backed language models.
+
+    LiteLLM routes a single `model` spec (e.g. ``anthropic/claude-sonnet-4-6``)
+    to whichever underlying provider the prefix selects, picking up that
+    backing's standard env vars (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``,
+    ``AWS_*``, ...) at call time. Set ``api_base`` to point at a LiteLLM
+    proxy server for centralized credential management.
+    """
+
+    model: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "LiteLLM model spec, e.g. 'anthropic/claude-sonnet-4-6', "
+            "'openai/gpt-4o', 'bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0'."
+        ),
+    )
+    api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Optional explicit API key. Most users leave this unset and let "
+            "LiteLLM resolve credentials from each backing's standard env var "
+            "(ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) at call time. Set this "
+            "only when routing through a LiteLLM proxy."
+        ),
+    )
+    api_base: str | None = Field(
+        default=None,
+        description=(
+            "Optional base URL. Set to a LiteLLM proxy endpoint "
+            "(e.g. 'http://localhost:4000') for proxy mode."
+        ),
+    )
+    api_version: str | None = Field(
+        default=None,
+        description="Optional API version (Azure-style endpoints).",
+    )
+    drop_params: bool = Field(
+        default=True,
+        description=(
+            "Forward `drop_params=True` to litellm.acompletion so unsupported "
+            "kwargs are stripped per backing rather than raising."
+        ),
+    )
+    extra_kwargs: dict[str, Any] | None = Field(
+        default=None,
+        description="Extra kwargs forwarded verbatim to litellm.acompletion.",
+    )
+    max_retry_interval_seconds: int = Field(
+        default=120,
+        description="Max retry interval in seconds when retrying API calls.",
+        gt=0,
+    )
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, v: str | None) -> str | None:
+        """Ensure the base URL includes a scheme and host when provided."""
+        if v is not None:
+            parsed_url = urlparse(v)
+            if not parsed_url.scheme or not parsed_url.netloc:
+                raise ValueError(f"Invalid api_base URL: api_base={v}")
+        return v
+
+
 class AmazonBedrockLanguageModelConf(
     MetricsFactoryIdMixin, YamlSerializableMixin, AWSCredentialsMixin
 ):
@@ -155,6 +223,7 @@ class LanguageModelsConf(BaseModel):
         OpenAIChatCompletionsLanguageModelConf,
     ] = {}
     amazon_bedrock_language_model_confs: dict[str, AmazonBedrockLanguageModelConf] = {}
+    litellm_language_model_confs: dict[str, LiteLLMLanguageModelConf] = {}
 
     def get_openai_responses_language_model_name(self) -> str | None:
         """Get the name of the first OpenAI Responses language model, if any."""
@@ -173,6 +242,16 @@ class LanguageModelsConf(BaseModel):
         if self.amazon_bedrock_language_model_confs:
             return next(iter(self.amazon_bedrock_language_model_confs))
         return None
+
+    def get_litellm_language_model_name(self) -> str | None:
+        """Get the name of the first LiteLLM language model, if any."""
+        if self.litellm_language_model_confs:
+            return next(iter(self.litellm_language_model_confs))
+        return None
+
+    def get_litellm_language_model_conf(self, name: str) -> "LiteLLMLanguageModelConf":
+        """Get LiteLLM language model configuration by name."""
+        return self.litellm_language_model_confs[name]
 
     def get_openai_responses_language_model_conf(
         self, name: str

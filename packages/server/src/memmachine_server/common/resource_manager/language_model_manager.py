@@ -9,6 +9,7 @@ from pydantic import SecretStr
 from memmachine_server.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
     LanguageModelsConf,
+    LiteLLMLanguageModelConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
 )
@@ -39,6 +40,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
             name in self.conf.openai_responses_language_model_confs
             or name in self.conf.openai_chat_completions_language_model_confs
             or name in self.conf.amazon_bedrock_language_model_confs
+            or name in self.conf.litellm_language_model_confs
         )
 
     def _get_not_found_error(self, name: str) -> Exception:
@@ -51,6 +53,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         names.update(self.conf.openai_responses_language_model_confs)
         names.update(self.conf.openai_chat_completions_language_model_confs)
         names.update(self.conf.amazon_bedrock_language_model_confs)
+        names.update(self.conf.litellm_language_model_confs)
         return names
 
     async def build_all(self) -> dict[str, LanguageModel]:
@@ -84,6 +87,9 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         if name in self.conf.amazon_bedrock_language_model_confs:
             del self.conf.amazon_bedrock_language_model_confs[name]
             removed = True
+        if name in self.conf.litellm_language_model_confs:
+            del self.conf.litellm_language_model_confs[name]
+            removed = True
         return removed
 
     def add_language_model_config(
@@ -92,14 +98,15 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         provider: str,
         config: OpenAIResponsesLanguageModelConf
         | OpenAIChatCompletionsLanguageModelConf
-        | AmazonBedrockLanguageModelConf,
+        | AmazonBedrockLanguageModelConf
+        | LiteLLMLanguageModelConf,
     ) -> None:
         """
         Add a new language model configuration at runtime.
 
         Args:
             name: The name/id for the language model.
-            provider: The provider type ('openai-responses', 'openai-chat-completions', 'amazon-bedrock').
+            provider: The provider type ('openai-responses', 'openai-chat-completions', 'amazon-bedrock', 'litellm').
             config: The provider-specific configuration object.
 
         """
@@ -136,6 +143,16 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                     "Expected AmazonBedrockLanguageModelConf for provider 'amazon-bedrock'"
                 )
             self.conf.amazon_bedrock_language_model_confs[name] = config
+        elif provider == "litellm":
+            from memmachine_server.common.configuration.language_model_conf import (
+                LiteLLMLanguageModelConf,
+            )
+
+            if not isinstance(config, LiteLLMLanguageModelConf):
+                raise ValueError(
+                    "Expected LiteLLMLanguageModelConf for provider 'litellm'"
+                )
+            self.conf.litellm_language_model_confs[name] = config
         else:
             raise ValueError(f"Unknown language model provider: {provider}")
 
@@ -167,6 +184,8 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
             ret = self._build_openai_chat_completions_language_model(name)
         if name in self.conf.amazon_bedrock_language_model_confs:
             ret = self._build_amazon_bedrock_language_model(name)
+        if name in self.conf.litellm_language_model_confs:
+            ret = self._build_litellm_language_model(name)
         if ret is None:
             raise InvalidLanguageModelError(
                 f"Language model with name {name} not found."
@@ -265,6 +284,27 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 model_id=conf.model_id,
                 inference_config=conf.inference_config,
                 additional_model_request_fields=conf.additional_model_request_fields,
+                max_retry_interval_seconds=conf.max_retry_interval_seconds,
+                metrics_factory=conf.get_metrics_factory(),
+            ),
+        )
+
+    def _build_litellm_language_model(self, name: str) -> LanguageModel:
+        from memmachine_server.common.language_model.litellm_language_model import (
+            LiteLLMLanguageModel,
+            LiteLLMLanguageModelParams,
+        )
+
+        conf = self.conf.litellm_language_model_confs[name]
+
+        return LiteLLMLanguageModel(
+            LiteLLMLanguageModelParams(
+                model=conf.model,
+                api_key=conf.api_key.get_secret_value() if conf.api_key else None,
+                api_base=conf.api_base,
+                api_version=conf.api_version,
+                drop_params=conf.drop_params,
+                extra_kwargs=conf.extra_kwargs,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
             ),
