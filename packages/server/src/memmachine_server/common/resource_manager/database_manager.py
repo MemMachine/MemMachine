@@ -1,8 +1,9 @@
-"""Manage database engines for SQL, Neo4j, and NebulaGraph backends."""
+"""Manage database engines for SQL, Neo4j, NebulaGraph, and VectorStore backends."""
 
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
@@ -12,11 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
+    SQLiteVectorStoreConf,
+    SQLiteVectorStoreEngine,
 )
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
     Neo4JConfigurationError,
     QdrantConfigurationError,
     SQLConfigurationError,
+    VectorStoreConfigurationError,
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
@@ -24,10 +29,13 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store.vector_search_engine import (
+    VectorSearchEngine,
+)
 
 # TYPE_CHECKING is True only when type checkers (mypy, pyright) run, False at runtime.
-# This allows type hints without requiring nebulagraph_python to be installed
-# unless NebulaGraph is actually used. The actual import happens at use site.
+# This allows type hints without requiring nebulagraph_python or qdrant_client to be
+# installed unless those backends are actually used. Imports happen at use sites.
 if TYPE_CHECKING:
     from nebulagraph_python.client import NebulaAsyncClient
     from qdrant_client import AsyncQdrantClient
@@ -42,6 +50,7 @@ class DatabaseManager:
         """Initialize with database configuration."""
         self.conf = conf
         self.graph_stores: dict[str, VectorGraphStore] = {}
+        self.vector_stores: dict[str, VectorStore] = {}
         self.sql_engines: dict[str, AsyncEngine] = {}
         self.neo4j_drivers: dict[str, AsyncDriver] = {}
         # String annotation "NebulaAsyncClient" (forward reference) because the type
@@ -49,13 +58,17 @@ class DatabaseManager:
         # Type checkers see it, but runtime treats it as a string literal.
         self.nebula_clients: dict[str, NebulaAsyncClient] = {}
         self.qdrant_clients: dict[str, AsyncQdrantClient] = {}
-        self.vector_stores: dict[str, VectorStore] = {}
+        # SQLAlchemy engines that back SQLite-based vector stores. Tracked
+        # separately from `sql_engines` (which holds user-facing relational
+        # databases) so vector store internals don't collide with caller names.
+        self.vector_store_sql_engines: dict[str, AsyncEngine] = {}
 
         self._lock = Lock()
         self._neo4j_locks: dict[str, Lock] = {}
         self._sql_locks: dict[str, Lock] = {}
         self._nebula_locks: dict[str, Lock] = {}
         self._qdrant_locks: dict[str, Lock] = {}
+        self._vector_store_locks: dict[str, Lock] = {}
 
     async def build_all(self, validate: bool = False) -> Self:
         """Optionally eagerly initialize all backends."""
@@ -75,8 +88,23 @@ class DatabaseManager:
             self.async_get_qdrant_client(name, validate=validate)
             for name in self.conf.qdrant_confs
         ]
+        sqlite_vs_tasks = [
+            self.async_get_sqlite_vector_store(name)
+            for name in self.conf.sqlite_vector_store_confs
+        ]
+        sqlite_vec_vs_tasks = [
+            self.async_get_sqlite_vec_vector_store(name)
+            for name in self.conf.sqlite_vec_vector_store_confs
+        ]
         # Lazy build will occur in get_* calls, but build_all can trigger them
-        tasks = neo4j_tasks + relation_db_tasks + nebula_tasks + qdrant_tasks
+        tasks = (
+            neo4j_tasks
+            + relation_db_tasks
+            + nebula_tasks
+            + qdrant_tasks
+            + sqlite_vs_tasks
+            + sqlite_vec_vs_tasks
+        )
         await asyncio.gather(*tasks)
 
         if validate:
@@ -97,21 +125,27 @@ class DatabaseManager:
                 tasks.append(self._close_async_driver(name, driver))
             for name, engine in self.sql_engines.items():
                 tasks.append(self._close_async_engine(name, engine))
+            for name, engine in self.vector_store_sql_engines.items():
+                tasks.append(self._close_async_engine(name, engine))
             for name, client in self.nebula_clients.items():
                 tasks.append(self._close_nebula_client(name, client))
             for name, client in self.qdrant_clients.items():
                 tasks.append(self._close_qdrant_client(name, client))
+            for name, vector_store in self.vector_stores.items():
+                tasks.append(self._shutdown_vector_store(name, vector_store))
             await asyncio.gather(*tasks)
             self.graph_stores.clear()
             self.vector_stores.clear()
             self.neo4j_drivers.clear()
             self.sql_engines.clear()
+            self.vector_store_sql_engines.clear()
             self.nebula_clients.clear()
             self.qdrant_clients.clear()
             self._neo4j_locks.clear()
             self._sql_locks.clear()
             self._nebula_locks.clear()
             self._qdrant_locks.clear()
+            self._vector_store_locks.clear()
 
     @staticmethod
     async def _close_async_driver(name: str, driver: AsyncDriver) -> None:
@@ -571,10 +605,141 @@ class DatabaseManager:
         for name, client in self.qdrant_clients.items():
             await self.validate_qdrant_client(name, client)
 
+    # --- SQLite-backed VectorStores ---
+
+    @staticmethod
+    async def _shutdown_vector_store(name: str, vector_store: VectorStore) -> None:
+        try:
+            await vector_store.shutdown()
+        except Exception as ex:
+            logger.warning("Error shutting down VectorStore '%s': %s", name, ex)
+
+    @staticmethod
+    def _make_sqlite_search_engine_factory(
+        conf: SQLiteVectorStoreConf,
+    ) -> Callable[[int, SimilarityMetric], VectorSearchEngine]:
+        """Build a (ndim, metric) -> VectorSearchEngine factory from config.
+
+        Imports are deferred so the engine packages remain optional unless
+        their backend is actually used.
+        """
+        match conf.vector_search_engine:
+            case SQLiteVectorStoreEngine.USEARCH:
+                from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
+                    USearchVectorSearchEngine,
+                )
+
+                def usearch_factory(
+                    num_dimensions: int, similarity_metric: SimilarityMetric
+                ) -> VectorSearchEngine:
+                    return USearchVectorSearchEngine(
+                        num_dimensions=num_dimensions,
+                        similarity_metric=similarity_metric,
+                    )
+
+                return usearch_factory
+            case SQLiteVectorStoreEngine.HNSWLIB:
+                from memmachine_server.common.vector_store.vector_search_engine.hnswlib_engine import (
+                    HnswlibVectorSearchEngine,
+                )
+
+                def hnswlib_factory(
+                    num_dimensions: int, similarity_metric: SimilarityMetric
+                ) -> VectorSearchEngine:
+                    return HnswlibVectorSearchEngine(
+                        num_dimensions=num_dimensions,
+                        similarity_metric=similarity_metric,
+                    )
+
+                return hnswlib_factory
+
+    async def async_get_sqlite_vector_store(self, name: str) -> VectorStore:
+        """Return a SQLiteVectorStore, creating it if necessary (lazy)."""
+        if name not in self._vector_store_locks:
+            async with self._lock:
+                self._vector_store_locks.setdefault(name, Lock())
+
+        async with self._vector_store_locks[name]:
+            if name in self.vector_stores:
+                return self.vector_stores[name]
+
+            conf = self.conf.sqlite_vector_store_confs.get(name)
+            if not conf:
+                raise ValueError(f"SQLiteVectorStore config '{name}' not found.")
+
+            from memmachine_server.common.vector_store.sqlite_vector_store import (
+                SQLiteVectorStore,
+                SQLiteVectorStoreParams,
+            )
+
+            engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            self.vector_store_sql_engines[name] = engine
+
+            try:
+                store = SQLiteVectorStore(
+                    SQLiteVectorStoreParams(
+                        sqlalchemy_engine=engine,
+                        vector_search_engine_factory=self._make_sqlite_search_engine_factory(
+                            conf
+                        ),
+                        index_directory=conf.index_directory,
+                        save_threshold=conf.save_threshold,
+                    )
+                )
+                await store.startup()
+            except Exception as e:
+                await engine.dispose()
+                self.vector_store_sql_engines.pop(name, None)
+                raise VectorStoreConfigurationError(
+                    f"SQLiteVectorStore '{name}' failed to start: {e}",
+                ) from e
+
+            self.vector_stores[name] = store
+            return store
+
+    async def async_get_sqlite_vec_vector_store(self, name: str) -> VectorStore:
+        """Return a SQLiteVecVectorStore, creating it if necessary (lazy)."""
+        if name not in self._vector_store_locks:
+            async with self._lock:
+                self._vector_store_locks.setdefault(name, Lock())
+
+        async with self._vector_store_locks[name]:
+            if name in self.vector_stores:
+                return self.vector_stores[name]
+
+            conf = self.conf.sqlite_vec_vector_store_confs.get(name)
+            if not conf:
+                raise ValueError(f"SQLiteVecVectorStore config '{name}' not found.")
+
+            from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
+                SQLiteVecVectorStore,
+                SQLiteVecVectorStoreParams,
+            )
+
+            engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            self.vector_store_sql_engines[name] = engine
+
+            try:
+                store = SQLiteVecVectorStore(SQLiteVecVectorStoreParams(engine=engine))
+                await store.startup()
+            except Exception as e:
+                await engine.dispose()
+                self.vector_store_sql_engines.pop(name, None)
+                raise VectorStoreConfigurationError(
+                    f"SQLiteVecVectorStore '{name}' failed to start: {e}",
+                ) from e
+
+            self.vector_stores[name] = store
+            return store
+
     async def get_vector_store(self, name: str) -> VectorStore:
         """Return a vector store by name, auto-detecting the backend."""
         if name in self.conf.qdrant_confs:
             await self.async_get_qdrant_client(name, validate=True)
             return self.vector_stores[name]
+        if name in self.conf.sqlite_vector_store_confs:
+            return await self.async_get_sqlite_vector_store(name)
+        if name in self.conf.sqlite_vec_vector_store_confs:
+            return await self.async_get_sqlite_vec_vector_store(name)
 
-        raise ValueError(f"VectorStore '{name}' not found in qdrant_confs")
+        raise ValueError(f"VectorStore '{name}' not found")

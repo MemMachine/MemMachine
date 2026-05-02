@@ -158,6 +158,10 @@ class QdrantConfigurationError(MemMachineError):
     """Error related to Qdrant configuration."""
 
 
+class VectorStoreConfigurationError(MemMachineError):
+    """Error related to VectorStore configuration."""
+
+
 class InvalidLanguageModelError(MemMachineError):
     """Exception raised for invalid language model."""
 

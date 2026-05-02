@@ -7,6 +7,9 @@ from memmachine_server.common.configuration.database_conf import (
     Neo4jConf,
     QdrantConf,
     SqlAlchemyConf,
+    SQLiteVectorStoreConf,
+    SQLiteVectorStoreEngine,
+    SQLiteVecVectorStoreConf,
     SupportedDB,
 )
 
@@ -16,6 +19,14 @@ def test_parse_supported_db_enums():
     assert SupportedDB.from_provider("postgres") == SupportedDB.POSTGRES
     assert SupportedDB.from_provider("sqlite") == SupportedDB.SQLITE
     assert SupportedDB.from_provider("qdrant") == SupportedDB.QDRANT
+    assert (
+        SupportedDB.from_provider("sqlite_vector_store")
+        == SupportedDB.SQLITE_VECTOR_STORE
+    )
+    assert (
+        SupportedDB.from_provider("sqlite_vec_vector_store")
+        == SupportedDB.SQLITE_VEC_VECTOR_STORE
+    )
 
     neo4j_db = SupportedDB.NEO4J
     assert neo4j_db.conf_cls == Neo4jConf
@@ -34,6 +45,16 @@ def test_parse_supported_db_enums():
     assert qdrant_db.conf_cls == QdrantConf
     assert qdrant_db.dialect is None
     assert qdrant_db.driver is None
+
+    sqlite_vs_db = SupportedDB.SQLITE_VECTOR_STORE
+    assert sqlite_vs_db.conf_cls == SQLiteVectorStoreConf
+    assert sqlite_vs_db.dialect is None
+    assert sqlite_vs_db.driver is None
+
+    sqlite_vec_vs_db = SupportedDB.SQLITE_VEC_VECTOR_STORE
+    assert sqlite_vec_vs_db.conf_cls == SQLiteVecVectorStoreConf
+    assert sqlite_vec_vs_db.dialect is None
+    assert sqlite_vec_vs_db.driver is None
 
 
 def test_sqlite_without_path_raises():
@@ -96,6 +117,21 @@ def db_conf_dict() -> dict:
                     "registry_replication_factor": 3,
                 },
             },
+            "my_sqlite_vs": {
+                "provider": "sqlite_vector_store",
+                "config": {
+                    "path": "vs.db",
+                    "vector_search_engine": "hnswlib",
+                    "index_directory": "/tmp/vs_indexes",
+                    "save_threshold": 500,
+                },
+            },
+            "my_sqlite_vec_vs": {
+                "provider": "sqlite_vec_vector_store",
+                "config": {
+                    "path": "vec_vs.db",
+                },
+            },
         },
     }
 
@@ -149,6 +185,19 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert qdrant_conf.is_distributed is True
     assert qdrant_conf.registry_replication_factor == 3
 
+    # SQLiteVectorStore (hnswlib engine)
+    sqlite_vs_conf = storage_conf.sqlite_vector_store_confs["my_sqlite_vs"]
+    assert isinstance(sqlite_vs_conf, SQLiteVectorStoreConf)
+    assert sqlite_vs_conf.path == "vs.db"
+    assert sqlite_vs_conf.vector_search_engine == SQLiteVectorStoreEngine.HNSWLIB
+    assert sqlite_vs_conf.index_directory == "/tmp/vs_indexes"
+    assert sqlite_vs_conf.save_threshold == 500
+
+    # SQLiteVecVectorStore
+    sqlite_vec_vs_conf = storage_conf.sqlite_vec_vector_store_confs["my_sqlite_vec_vs"]
+    assert isinstance(sqlite_vec_vs_conf, SQLiteVecVectorStoreConf)
+    assert sqlite_vec_vs_conf.path == "vec_vs.db"
+
 
 def test_read_db_password_from_env(monkeypatch, db_conf_dict):
     monkeypatch.setenv("MY_DB_PASSWORD", "env-db-password")
@@ -174,7 +223,10 @@ def test_parse_unknown_provider_raises():
     input_dict = {
         "databases": {"bad_storage": {"provider": "unknown_db", "host": "localhost"}},
     }
-    message = "Supported providers are: neo4j, postgres, sqlite, nebula_graph, qdrant"
+    message = (
+        "Supported providers are: neo4j, postgres, sqlite, nebula_graph, qdrant, "
+        "sqlite_vector_store, sqlite_vec_vector_store"
+    )
     with pytest.raises(ValueError, match=message):
         DatabasesConf.parse(input_dict)
 
@@ -184,6 +236,10 @@ def test_parse_empty_storage_returns_empty_conf():
     storage_conf = DatabasesConf.parse(input_dict)
     assert storage_conf.neo4j_confs == {}
     assert storage_conf.relational_db_confs == {}
+    assert storage_conf.nebula_graph_confs == {}
+    assert storage_conf.qdrant_confs == {}
+    assert storage_conf.sqlite_vector_store_confs == {}
+    assert storage_conf.sqlite_vec_vector_store_confs == {}
 
 
 def test_serialize_deserialize_database_conf(db_conf_dict):
@@ -267,3 +323,46 @@ def test_qdrant_build_config():
     assert config.host == "qdrant.local"
     assert config.port == 9333
     assert config.is_distributed is True
+
+
+def test_sqlite_vector_store_conf_defaults():
+    conf = SQLiteVectorStoreConf(path="local.db")
+    assert conf.path == "local.db"
+    # USearch is the default search engine provider.
+    assert conf.vector_search_engine == SQLiteVectorStoreEngine.USEARCH
+    # Index persistence is opt-in.
+    assert conf.index_directory is None
+    assert conf.save_threshold == 1000
+
+
+def test_sqlite_vector_store_conf_does_not_expose_engine_tuning_knobs():
+    """Per-engine tuning knobs (M, ef_*) must not leak into configuration."""
+    fields = SQLiteVectorStoreConf.model_fields
+    assert "m" not in fields
+    assert "ef_construction" not in fields
+    assert "ef_search" not in fields
+
+
+def test_sqlite_vector_store_conf_requires_path():
+    with pytest.raises(ValueError, match="non-empty 'path'"):
+        SQLiteVectorStoreConf(path="")
+
+
+def test_sqlite_vec_vector_store_conf_requires_path():
+    with pytest.raises(ValueError, match="non-empty 'path'"):
+        SQLiteVecVectorStoreConf(path="")
+
+
+def test_sqlite_vector_store_build_config():
+    config = SupportedDB.SQLITE_VECTOR_STORE.build_config(
+        {"path": "vs.db", "vector_search_engine": "hnswlib"}
+    )
+    assert isinstance(config, SQLiteVectorStoreConf)
+    assert config.path == "vs.db"
+    assert config.vector_search_engine == SQLiteVectorStoreEngine.HNSWLIB
+
+
+def test_sqlite_vec_vector_store_build_config():
+    config = SupportedDB.SQLITE_VEC_VECTOR_STORE.build_config({"path": "vec.db"})
+    assert isinstance(config, SQLiteVecVectorStoreConf)
+    assert config.path == "vec.db"

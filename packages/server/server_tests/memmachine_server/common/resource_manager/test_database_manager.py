@@ -10,10 +10,23 @@ from memmachine_server.common.configuration.database_conf import (
     Neo4jConf,
     QdrantConf,
     SqlAlchemyConf,
+    SQLiteVectorStoreConf,
+    SQLiteVectorStoreEngine,
+    SQLiteVecVectorStoreConf,
 )
-from memmachine_server.common.errors import QdrantConfigurationError
+from memmachine_server.common.errors import (
+    QdrantConfigurationError,
+    VectorStoreConfigurationError,
+)
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+
+
+def _empty_vector_store_confs(conf: MagicMock) -> None:
+    """Set vector-store-related conf dicts to empty on a DatabasesConf mock."""
+    conf.qdrant_confs = {}
+    conf.sqlite_vector_store_confs = {}
+    conf.sqlite_vec_vector_store_confs = {}
 
 
 @pytest.fixture
@@ -43,7 +56,7 @@ def mock_conf():
     }
     conf.sqlite_confs = {}
     conf.nebula_graph_confs = {}
-    conf.qdrant_confs = {}
+    _empty_vector_store_confs(conf)
     return conf
 
 
@@ -93,7 +106,7 @@ async def test_build_and_validate_sqlite():
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
     conf.nebula_graph_confs = {}
-    conf.qdrant_confs = {}
+    _empty_vector_store_confs(conf)
     conf.relational_db_confs = {
         "sqlite1": SqlAlchemyConf(
             dialect="sqlite",
@@ -140,7 +153,7 @@ async def test_neo4j_pool_lifecycle_kwargs():
     conf.neo4j_confs = {"neo1": neo4j_conf}
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
-    conf.qdrant_confs = {}
+    _empty_vector_store_confs(conf)
 
     mock_driver = MagicMock()
     mock_driver.close = AsyncMock()
@@ -179,7 +192,7 @@ async def test_sqlalchemy_pool_lifecycle_kwargs():
     )
     conf.neo4j_confs = {}
     conf.nebula_graph_confs = {}
-    conf.qdrant_confs = {}
+    _empty_vector_store_confs(conf)
     conf.relational_db_confs = {"db1": sql_conf}
 
     mock_engine = MagicMock(spec=AsyncEngine)
@@ -210,7 +223,7 @@ async def test_neo4j_pool_lifecycle_kwargs_none_omitted():
     conf.neo4j_confs = {"neo1": neo4j_conf}
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
-    conf.qdrant_confs = {}
+    _empty_vector_store_confs(conf)
 
     mock_driver = MagicMock()
     mock_driver.close = AsyncMock()
@@ -246,7 +259,7 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
     )
     conf.neo4j_confs = {}
     conf.nebula_graph_confs = {}
-    conf.qdrant_confs = {}
+    _empty_vector_store_confs(conf)
     conf.relational_db_confs = {"db1": sql_conf}
 
     mock_engine = MagicMock(spec=AsyncEngine)
@@ -276,6 +289,8 @@ def _qdrant_only_conf() -> MagicMock:
     conf.qdrant_confs = {
         "qdrant1": QdrantConf(host="localhost", port=6333),
     }
+    conf.sqlite_vector_store_confs = {}
+    conf.sqlite_vec_vector_store_confs = {}
     return conf
 
 
@@ -388,7 +403,7 @@ async def test_qdrant_creates_vector_store():
 
 
 @pytest.mark.asyncio
-async def test_get_vector_store():
+async def test_get_vector_store_qdrant():
     """get_vector_store returns the VectorStore for a Qdrant config."""
     conf = _qdrant_only_conf()
 
@@ -413,16 +428,6 @@ async def test_get_vector_store():
         store = await builder.get_vector_store("qdrant1")
 
     assert store is mock_store_cls.return_value
-
-
-@pytest.mark.asyncio
-async def test_get_vector_store_not_found():
-    """get_vector_store raises ValueError for unknown names."""
-    conf = _qdrant_only_conf()
-    conf.qdrant_confs = {}
-    builder = DatabaseManager(conf)
-    with pytest.raises(ValueError, match="not found"):
-        await builder.get_vector_store("missing")
 
 
 @pytest.mark.asyncio
@@ -469,6 +474,7 @@ async def test_qdrant_close():
         ),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
@@ -480,3 +486,327 @@ async def test_qdrant_close():
     assert builder.qdrant_clients == {}
     assert builder.vector_stores == {}
     mock_client.close.assert_awaited()
+
+
+# --- SQLite-backed VectorStores ---
+
+
+def _sqlite_vector_store_only_conf(**vs_overrides) -> MagicMock:
+    """Build a DatabasesConf mock with only SQLite-based vector store entries."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.qdrant_confs = {}
+    conf.sqlite_vector_store_confs = vs_overrides.get("sqlite_vector_store_confs", {})
+    conf.sqlite_vec_vector_store_confs = vs_overrides.get(
+        "sqlite_vec_vector_store_confs", {}
+    )
+    return conf
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_creates_store_and_engine():
+    """async_get_sqlite_vector_store builds an engine, store, and starts it up."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={
+            "vs1": SQLiteVectorStoreConf(
+                path="vs.db",
+                vector_search_engine=SQLiteVectorStoreEngine.USEARCH,
+                index_directory="/tmp/vs",
+                save_threshold=200,
+            )
+        }
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ) as mock_create,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ) as mock_params_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ) as mock_store_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        store = await builder.async_get_sqlite_vector_store("vs1")
+
+    assert store is mock_store_cls.return_value
+    mock_create.assert_called_once()
+    create_args = mock_create.call_args
+    assert create_args.args[0] == "sqlite+aiosqlite:///vs.db"
+
+    params_kwargs = mock_params_cls.call_args.kwargs
+    assert params_kwargs["sqlalchemy_engine"] is mock_engine
+    assert params_kwargs["index_directory"] == "/tmp/vs"
+    assert params_kwargs["save_threshold"] == 200
+    assert callable(params_kwargs["vector_search_engine_factory"])
+
+    mock_store_cls.return_value.startup.assert_awaited_once()
+    assert "vs1" in builder.vector_stores
+    assert "vs1" in builder.vector_store_sql_engines
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_default_engine_is_usearch():
+    """When no engine is configured, the factory uses USearch (the default).
+
+    Avoids touching the hnswlib import path so the test runs on CI, where
+    hnswlib build caches mismatch CPU across GitHub-hosted runners.
+    """
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ) as mock_params_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ) as mock_store_cls,
+        patch(
+            "memmachine_server.common.vector_store.vector_search_engine.usearch_engine.USearchVectorSearchEngine",
+        ) as mock_usearch_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_sqlite_vector_store("vs1")
+
+        # Invoke the factory the manager passed into params and confirm it
+        # routes to the USearch engine.
+        from memmachine_server.common.data_types import SimilarityMetric
+
+        factory = mock_params_cls.call_args.kwargs["vector_search_engine_factory"]
+        factory(8, SimilarityMetric.COSINE)
+
+    mock_usearch_cls.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_caches_after_first_call():
+    """Repeat calls return the same store without rebuilding."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ) as mock_create,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ) as mock_store_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        first = await builder.async_get_sqlite_vector_store("vs1")
+        second = await builder.async_get_sqlite_vector_store("vs1")
+
+    assert first is second
+    assert mock_create.call_count == 1
+    mock_store_cls.return_value.startup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_startup_failure_disposes_engine():
+    """If startup() fails, the engine is disposed and no state is retained."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ) as mock_store_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+        builder = DatabaseManager(conf)
+        with pytest.raises(VectorStoreConfigurationError, match="failed to start"):
+            await builder.async_get_sqlite_vector_store("vs1")
+
+    mock_engine.dispose.assert_awaited_once()
+    assert "vs1" not in builder.vector_stores
+    assert "vs1" not in builder.vector_store_sql_engines
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_unknown_name_raises():
+    conf = _sqlite_vector_store_only_conf()
+    builder = DatabaseManager(conf)
+    with pytest.raises(
+        ValueError, match="SQLiteVectorStore config 'missing' not found"
+    ):
+        await builder.async_get_sqlite_vector_store("missing")
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vec_vector_store_creates_store_and_engine():
+    """async_get_sqlite_vec_vector_store builds an engine, store, and starts it up."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vec_vector_store_confs={"vec1": SQLiteVecVectorStoreConf(path="vec.db")}
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ) as mock_create,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
+        ) as mock_params_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
+        ) as mock_store_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        store = await builder.async_get_sqlite_vec_vector_store("vec1")
+
+    assert store is mock_store_cls.return_value
+    create_args = mock_create.call_args
+    assert create_args.args[0] == "sqlite+aiosqlite:///vec.db"
+
+    params_kwargs = mock_params_cls.call_args.kwargs
+    assert params_kwargs["engine"] is mock_engine
+
+    mock_store_cls.return_value.startup.assert_awaited_once()
+    assert "vec1" in builder.vector_stores
+    assert "vec1" in builder.vector_store_sql_engines
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vec_vector_store_unknown_name_raises():
+    conf = _sqlite_vector_store_only_conf()
+    builder = DatabaseManager(conf)
+    with pytest.raises(
+        ValueError, match="SQLiteVecVectorStore config 'missing' not found"
+    ):
+        await builder.async_get_sqlite_vec_vector_store("missing")
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_dispatches_to_sqlite_backends():
+    """get_vector_store routes to the right SQLite-backed builder."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")},
+        sqlite_vec_vector_store_confs={"vec1": SQLiteVecVectorStoreConf(path="vec.db")},
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ) as mock_vs_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
+        ) as mock_vec_cls,
+    ):
+        mock_vs_cls.return_value.startup = AsyncMock()
+        mock_vs_cls.return_value.shutdown = AsyncMock()
+        mock_vec_cls.return_value.startup = AsyncMock()
+        mock_vec_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        vs = await builder.get_vector_store("vs1")
+        vec = await builder.get_vector_store("vec1")
+
+    assert vs is mock_vs_cls.return_value
+    assert vec is mock_vec_cls.return_value
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_unknown_name_raises():
+    conf = _sqlite_vector_store_only_conf()
+    builder = DatabaseManager(conf)
+    with pytest.raises(ValueError, match="VectorStore 'missing' not found"):
+        await builder.get_vector_store("missing")
+
+
+@pytest.mark.asyncio
+async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
+    """close() shuts down vector stores and disposes their engines."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ) as mock_store_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_sqlite_vector_store("vs1")
+
+        assert "vs1" in builder.vector_stores
+        assert "vs1" in builder.vector_store_sql_engines
+
+        await builder.close()
+
+    assert builder.vector_stores == {}
+    assert builder.vector_store_sql_engines == {}
+    mock_store_cls.return_value.shutdown.assert_awaited_once()
+    mock_engine.dispose.assert_awaited()
