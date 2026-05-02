@@ -2,6 +2,7 @@ import argparse
 import datetime
 import json
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from parsers import get_parser
@@ -56,6 +57,10 @@ class MigrationHack:
         os.makedirs(self.extract_dir, exist_ok=True)
         self.output_dir = "output"
         os.makedirs(self.output_dir, exist_ok=True)
+
+        # Thread safety: locks for shared resources
+        self.stats_lock = threading.Lock()
+        self.file_lock = threading.Lock()
 
         # Load message IDs from previous run if retry_failed or resume is enabled
         # Store as (conv_id, message_id) tuples for efficient filtering
@@ -260,6 +265,9 @@ class MigrationHack:
         if self.verbose:
             print(f"Extracting conversations with {workers} worker(s)...")
 
+        # Thread safety: collect results first, then update shared state
+        extraction_results = []
+
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(
@@ -278,8 +286,7 @@ class MigrationHack:
 
             for future in as_completed(futures):
                 conv_id, messages, msg_count = future.result()
-                self.conversations[conv_id] = messages
-                self.total_messages += msg_count
+                extraction_results.append((conv_id, messages, msg_count))
 
                 if not self.verbose:
                     pbar.update(1)
@@ -288,6 +295,11 @@ class MigrationHack:
 
             if not self.verbose:
                 pbar.close()
+
+        # Thread safety: update shared state after all threads complete
+        for conv_id, messages, msg_count in extraction_results:
+            self.conversations[conv_id] = messages
+            self.total_messages += msg_count
 
         # Update stats with total messages count
         self.stats["total_messages"] = self.total_messages
@@ -346,10 +358,12 @@ class MigrationHack:
             f"success_{self.run_id}.txt" if success else f"errors_{self.run_id}.txt"
         )
         filepath = os.path.join(self.output_dir, filename)
-        with open(filepath, "a") as f:
-            f.writelines(f"{conv_id}:{msg_id}\n" for msg_id in message_ids)
-            if not success and error_msg and self.verbose:
-                f.write(f"  Error: {error_msg}\n")
+        # Thread safety: use file lock to prevent concurrent writes
+        with self.file_lock:
+            with open(filepath, "a") as f:
+                f.writelines(f"{conv_id}:{msg_id}\n" for msg_id in message_ids)
+                if not success and error_msg and self.verbose:
+                    f.write(f"  Error: {error_msg}\n")
 
     def _filter_messages(self, messages, filters: dict | None = None):
         """Filter out assistant messages if user_only is enabled."""
@@ -449,6 +463,10 @@ class MigrationHack:
                 leave=True,
             )
 
+        # Thread safety: use local counters to minimize lock contention
+        local_success_count = 0
+        local_fail_count = 0
+
         # Process messages in batches
         for i in range(0, len(formatted_messages), self.batch_size):
             batch = formatted_messages[i : i + self.batch_size]
@@ -466,7 +484,7 @@ class MigrationHack:
                 # Log the success request into run-specific success file
                 if self.source == "openai":
                     self._log_message_ids(conv_id, message_ids, success=True)
-                self.stats["successful_messages"] += len(batch)
+                local_success_count += len(batch)
             except Exception as e:
                 error_msg = str(e)
                 print(
@@ -479,10 +497,16 @@ class MigrationHack:
                     self._log_message_ids(
                         conv_id, message_ids, success=False, error_msg=error_msg
                     )
-                self.stats["failed_messages"] += len(batch)
+                local_fail_count += len(batch)
             # Update progress bar if it exists
             if msg_pbar:
                 msg_pbar.update(len(batch))
+
+        # Thread safety: atomic update of shared statistics (single lock acquisition)
+        if local_success_count > 0 or local_fail_count > 0:
+            with self.stats_lock:
+                self.stats["successful_messages"] += local_success_count
+                self.stats["failed_messages"] += local_fail_count
 
         # Close progress bar if it was created
         if msg_pbar:
