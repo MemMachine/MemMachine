@@ -203,9 +203,14 @@ class EmbedderManager(BaseResourceManager[Embedder]):
 
         dimensions = conf.dimensions or 1536
 
+        # The OpenAI SDK rejects an empty api_key, but local OpenAI-compatible
+        # endpoints (Ollama, vLLM, etc.) don't require one — supply a
+        # placeholder so the client can be constructed.
+        api_key = conf.api_key.get_secret_value() or "EMPTY"
+
         params = OpenAIEmbedderParams(
             client=openai.AsyncOpenAI(
-                api_key=conf.api_key.get_secret_value(),
+                api_key=api_key,
                 base_url=conf.base_url,
             ),
             model=conf.model,
