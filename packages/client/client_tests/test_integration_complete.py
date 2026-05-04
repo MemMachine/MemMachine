@@ -1586,8 +1586,11 @@ class TestMemMachineToolsIntegration:
     @pytest.fixture
     def tools(self, unique_test_ids):
         """Create a MemMachineTools instance."""
+        client = MemMachineClient(
+            base_url=TEST_BASE_URL, timeout=CLIENT_TIMEOUT_SECONDS
+        )
         t = MemMachineTools(
-            base_url=TEST_BASE_URL,
+            client=client,
             org_id=unique_test_ids["org_id"],
             project_id=unique_test_ids["project_id"],
             user_id=unique_test_ids["user_id"],

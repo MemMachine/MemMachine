@@ -240,7 +240,7 @@ class VectorStore(ABC):
                 Name of the collection within the namespace.
 
         Returns:
-            Collection | None:
+            VectorStoreCollection | None:
                 A handle to the opened collection, or None if it does not exist.
         """
         raise NotImplementedError

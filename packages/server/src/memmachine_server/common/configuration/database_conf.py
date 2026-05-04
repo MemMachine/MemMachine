@@ -1,5 +1,6 @@
 """Storage configuration models."""
 
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any, ClassVar, Self
 
@@ -265,6 +266,61 @@ class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
     )
 
 
+class SQLiteVectorStoreEngine(StrEnum):
+    """Supported vector search engine providers for SQLiteVectorStore."""
+
+    USEARCH = "usearch"
+    HNSWLIB = "hnswlib"
+
+
+class SQLiteVectorStoreConf(YamlSerializableMixin):
+    """Configuration options for the SQLite-backed VectorStore."""
+
+    path: str = Field(
+        ...,
+        description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+    )
+    vector_search_engine: SQLiteVectorStoreEngine = Field(
+        default=SQLiteVectorStoreEngine.USEARCH,
+        description="Backing vector search engine provider",
+    )
+    index_directory: str | None = Field(
+        default=None,
+        description=(
+            "Directory used to persist per-collection ANN index files. "
+            "If None, indexes are kept in-memory only and are lost on restart."
+        ),
+    )
+    save_threshold: int = Field(
+        default=1000,
+        description=(
+            "Number of search-engine operations before the index is auto-saved "
+            "to `index_directory`. Only relevant when `index_directory` is set."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_path(self) -> Self:
+        if not self.path:
+            raise ValueError("SQLiteVectorStoreConf requires a non-empty 'path'")
+        return self
+
+
+class SQLiteVecVectorStoreConf(YamlSerializableMixin):
+    """Configuration options for the SQLite + sqlite-vec VectorStore."""
+
+    path: str = Field(
+        ...,
+        description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+    )
+
+    @model_validator(mode="after")
+    def _validate_path(self) -> Self:
+        if not self.path:
+            raise ValueError("SQLiteVecVectorStoreConf requires a non-empty 'path'")
+        return self
+
+
 class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
     """Configuration for SQLAlchemy-backed relational databases."""
 
@@ -378,6 +434,8 @@ class SupportedDB(StrEnum):
         | type[SqlAlchemyConf]
         | type[NebulaGraphConf]
         | type[QdrantConf]
+        | type[SQLiteVectorStoreConf]
+        | type[SQLiteVecVectorStoreConf]
     )
     dialect: str | None
     driver: str | None
@@ -387,6 +445,13 @@ class SupportedDB(StrEnum):
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
     NEBULA_GRAPH = ("nebula_graph", NebulaGraphConf, None, None)
     QDRANT = ("qdrant", QdrantConf, None, None)
+    SQLITE_VECTOR_STORE = ("sqlite_vector_store", SQLiteVectorStoreConf, None, None)
+    SQLITE_VEC_VECTOR_STORE = (
+        "sqlite_vec_vector_store",
+        SQLiteVecVectorStoreConf,
+        None,
+        None,
+    )
 
     def __new__(
         cls,
@@ -394,7 +459,9 @@ class SupportedDB(StrEnum):
         conf_cls: type[Neo4jConf]
         | type[SqlAlchemyConf]
         | type[NebulaGraphConf]
-        | type[QdrantConf],
+        | type[QdrantConf]
+        | type[SQLiteVectorStoreConf]
+        | type[SQLiteVecVectorStoreConf],
         dialect: str | None,
         driver: str | None,
     ) -> Self:
@@ -417,7 +484,14 @@ class SupportedDB(StrEnum):
 
     def build_config(
         self, conf: dict[str, Any]
-    ) -> Neo4jConf | SqlAlchemyConf | NebulaGraphConf | QdrantConf:
+    ) -> (
+        Neo4jConf
+        | SqlAlchemyConf
+        | NebulaGraphConf
+        | QdrantConf
+        | SQLiteVectorStoreConf
+        | SQLiteVecVectorStoreConf
+    ):
         extra: dict[str, Any] = {}
         if self.dialect is not None:
             extra["dialect"] = self.dialect
@@ -433,6 +507,8 @@ class DatabasesConf(BaseModel):
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
     nebula_graph_confs: dict[str, NebulaGraphConf] = {}
     qdrant_confs: dict[str, QdrantConf] = {}
+    sqlite_vector_store_confs: dict[str, SQLiteVectorStoreConf] = {}
+    sqlite_vec_vector_store_confs: dict[str, SQLiteVecVectorStoreConf] = {}
 
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
@@ -443,6 +519,8 @@ class DatabasesConf(BaseModel):
     SQLITE: ClassVar[str] = "sqlite"
     NEBULA_GRAPH: ClassVar[str] = "nebula_graph"
     QDRANT: ClassVar[str] = "qdrant"
+    SQLITE_VECTOR_STORE: ClassVar[str] = "sqlite_vector_store"
+    SQLITE_VEC_VECTOR_STORE: ClassVar[str] = "sqlite_vec_vector_store"
     DIALECT: ClassVar[str] = "dialect"
 
     def to_yaml_dict(self) -> dict:
@@ -470,17 +548,18 @@ class DatabasesConf(BaseModel):
         for database_id, conf in self.relational_db_confs.items():
             add_database(database_id, self.RELATIONAL_DB, conf.to_yaml_dict())
 
-        for database_id, conf in self.nebula_graph_confs.items():
-            databases[database_id] = {
-                self.PROVIDER_KEY: self.NEBULA_GRAPH,
-                self.CONFIG_KEY: conf.to_yaml_dict(),
-            }
-
-        for database_id, conf in self.qdrant_confs.items():
-            databases[database_id] = {
-                self.PROVIDER_KEY: self.QDRANT,
-                self.CONFIG_KEY: conf.to_yaml_dict(),
-            }
+        single_provider_confs: list[tuple[str, Mapping[str, YamlSerializableMixin]]] = [
+            (self.NEBULA_GRAPH, self.nebula_graph_confs),
+            (self.QDRANT, self.qdrant_confs),
+            (self.SQLITE_VECTOR_STORE, self.sqlite_vector_store_confs),
+            (self.SQLITE_VEC_VECTOR_STORE, self.sqlite_vec_vector_store_confs),
+        ]
+        for provider, confs in single_provider_confs:
+            for database_id, conf in confs.items():
+                databases[database_id] = {
+                    self.PROVIDER_KEY: provider,
+                    self.CONFIG_KEY: conf.to_yaml_dict(),
+                }
 
         return databases
 
@@ -499,12 +578,16 @@ class DatabasesConf(BaseModel):
         relational_db_dict: dict[str, SqlAlchemyConf] = {}
         nebula_graph_dict: dict[str, NebulaGraphConf] = {}
         qdrant_dict: dict[str, QdrantConf] = {}
+        sqlite_vector_store_dict: dict[str, SQLiteVectorStoreConf] = {}
+        sqlite_vec_vector_store_dict: dict[str, SQLiteVecVectorStoreConf] = {}
 
         conf_cls_to_dict: dict[type, dict] = {
             Neo4jConf: neo4j_dict,
             SqlAlchemyConf: relational_db_dict,
             NebulaGraphConf: nebula_graph_dict,
             QdrantConf: qdrant_dict,
+            SQLiteVectorStoreConf: sqlite_vector_store_dict,
+            SQLiteVecVectorStoreConf: sqlite_vec_vector_store_dict,
         }
 
         for database_id, resource_definition in databases.items():
@@ -520,4 +603,6 @@ class DatabasesConf(BaseModel):
             relational_db_confs=relational_db_dict,
             nebula_graph_confs=nebula_graph_dict,
             qdrant_confs=qdrant_dict,
+            sqlite_vector_store_confs=sqlite_vector_store_dict,
+            sqlite_vec_vector_store_confs=sqlite_vec_vector_store_dict,
         )

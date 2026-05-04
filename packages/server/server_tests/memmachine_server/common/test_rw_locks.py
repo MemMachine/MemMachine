@@ -11,8 +11,8 @@ async def test_acquire_and_release_read():
     await lock.acquire_read()
     # does not block when acquiring read lock again
     await lock.acquire_read()
-    await lock.release_read()
-    await lock.release_read()
+    lock.release_read()
+    lock.release_read()
 
 
 @pytest.mark.asyncio
@@ -32,7 +32,7 @@ async def test_readers_blocked_by_writer():
         nonlocal read_acquired
         await lock.acquire_read()
         read_acquired = True
-        await lock.release_read()
+        lock.release_read()
 
     task = asyncio.create_task(try_read())
     await asyncio.sleep(0.1)
@@ -44,7 +44,7 @@ async def test_readers_blocked_by_writer():
 
 
 @pytest.mark.asyncio
-async def test_writer_blocked_by_reader():
+async def test_writer_blocked_by_reader_explicit():
     lock = AsyncRWLock()
     await lock.acquire_read()
     write_acquired = False
@@ -58,10 +58,40 @@ async def test_writer_blocked_by_reader():
     task = asyncio.create_task(try_write())
     await asyncio.sleep(0.1)
     assert not write_acquired
-    await lock.release_read()
+    lock.release_read()
     await asyncio.sleep(0.1)
     assert write_acquired
     task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_nested_read_lock_same_task_does_not_deadlock():
+    lock = AsyncRWLock()
+    async with lock.read_lock(), lock.read_lock():
+        pass
+
+
+@pytest.mark.asyncio
+async def test_writer_blocked_by_reader():
+    lock = AsyncRWLock()
+    write_acquired = False
+
+    async def reader():
+        async with lock.read_lock():
+            await asyncio.sleep(0.1)
+
+    async def writer():
+        nonlocal write_acquired
+        await asyncio.sleep(0.01)
+        async with lock.write_lock():
+            write_acquired = True
+
+    reader_task = asyncio.create_task(reader())
+    writer_task = asyncio.create_task(writer())
+    await asyncio.sleep(0.05)
+    assert not write_acquired
+    await asyncio.gather(reader_task, writer_task)
+    assert write_acquired
 
 
 @pytest.mark.asyncio
