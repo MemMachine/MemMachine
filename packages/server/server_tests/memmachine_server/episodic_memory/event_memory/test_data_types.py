@@ -7,13 +7,11 @@ import pytest
 from pydantic import ValidationError
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    CitationContext,
-    Content,
     Derivative,
     Event,
-    MessageContext,
+    ProducerContext,
     Segment,
-    Text,
+    TextBlock,
     decode_block,
     decode_context,
     encode_block,
@@ -37,7 +35,7 @@ class TestSegmentRoundTrip:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            block=Text(text="hello"),
+            block=TextBlock(text="hello"),
             properties=SAMPLE_PROPERTIES,
         )
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
@@ -52,7 +50,7 @@ class TestSegmentRoundTrip:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            block=Text(text="hello"),
+            block=TextBlock(text="hello"),
         )
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
         assert seg2.properties == {}
@@ -64,7 +62,7 @@ class TestSegmentRoundTrip:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            block=Text(text="hello"),
+            block=TextBlock(text="hello"),
             properties={"name": "foo", "count": 7},
         )
         assert seg.properties == {"name": "foo", "count": 7}
@@ -76,12 +74,12 @@ class TestSegmentRoundTrip:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            context=MessageContext(source="user"),
-            block=Text(text="hello"),
+            context=ProducerContext(producer="user"),
+            block=TextBlock(text="hello"),
         )
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
-        assert isinstance(seg2.context, MessageContext)
-        assert seg2.context.source == "user"
+        assert isinstance(seg2.context, ProducerContext)
+        assert seg2.context.producer == "user"
 
 
 class TestEventRoundTrip:
@@ -89,7 +87,7 @@ class TestEventRoundTrip:
         evt = Event(
             uuid=uuid4(),
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            body=Content(items=[Text(text="hi")]),
+            blocks=[TextBlock(text="hi")],
             properties=SAMPLE_PROPERTIES,
         )
         evt2 = Event.model_validate(evt.model_dump(mode="json"))
@@ -122,7 +120,7 @@ class TestDeserializationErrors:
             "index": 0,
             "offset": 0,
             "timestamp": "2026-01-15T10:30:00Z",
-            "block": {"type": "text", "text": "hi"},
+            "block": {"block_type": "text", "text": "hi"},
             "properties": {"key": {"not_tagged": "value"}},
         }
         with pytest.raises(ValidationError):
@@ -135,7 +133,7 @@ class TestDeserializationErrors:
             "index": 0,
             "offset": 0,
             "timestamp": "2026-01-15T10:30:00Z",
-            "block": {"type": "text", "text": "hi"},
+            "block": {"block_type": "text", "text": "hi"},
             "properties": {"n": {"t": "int", "v": 42, "extra": "junk"}},
         }
         with pytest.raises(ValidationError):
@@ -148,7 +146,7 @@ class TestDeserializationErrors:
             "index": 0,
             "offset": 0,
             "timestamp": "2026-01-15T10:30:00Z",
-            "block": {"type": "text", "text": "hi"},
+            "block": {"block_type": "text", "text": "hi"},
             "properties": {
                 "dt": {"t": "datetime", "v": "2026-01-15T00:00:00+00:00"},
             },
@@ -159,13 +157,12 @@ class TestDeserializationErrors:
 
 class TestContextModels:
     def test_context_models_do_not_declare_index_hints(self):
-        assert not hasattr(MessageContext, "indexed_properties")
-        assert not hasattr(CitationContext, "indexed_properties")
+        assert not hasattr(ProducerContext, "indexed_properties")
 
 
 class TestContextAndBlockSerialization:
     def test_context_round_trip(self):
-        context = MessageContext(source="user")
+        context = ProducerContext(producer="user")
 
         serialized = encode_context(context)
         deserialized = decode_context(serialized)
@@ -176,7 +173,7 @@ class TestContextAndBlockSerialization:
         assert decode_context(encode_context(None)) is None
 
     def test_block_round_trip(self):
-        block = Text(text="hello")
+        block = TextBlock(text="hello")
 
         serialized = encode_block(block)
         deserialized = decode_block(serialized)

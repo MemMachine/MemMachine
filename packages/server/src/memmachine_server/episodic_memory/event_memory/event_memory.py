@@ -31,18 +31,17 @@ from memmachine_server.common.vector_store import (
 
 from .data_types import (
     Block,
-    CitationContext,
-    Content,
     Context,
     DateTimeStyle,
     Derivative,
     Event,
     FormatOptions,
-    MessageContext,
+    NullContext,
+    ProducerContext,
     QueryResult,
     ScoredSegmentContext,
     Segment,
-    Text,
+    TextBlock,
 )
 from .segment_store import SegmentStorePartition
 
@@ -337,39 +336,11 @@ class EventMemory:
         self,
         event: Event,
     ) -> list[Segment]:
-        """
-        Create segments from an event.
-
-        Args:
-            event (Event):
-                The event from which to create segments.
-
-        Returns:
-            list[Segment]: A list of created segments.
-
-        """
-        match event.body:
-            case Content(context=context, items=primitives):
-                return self._segment_event_content_items(
-                    event=event,
-                    items=primitives,
-                    context=context,
-                )
-            case _:
-                logger.warning("Unsupported body type: %s", type(event.body))
-                return []
-
-    def _segment_event_content_items(
-        self,
-        event: Event,
-        items: Iterable[Block],
-        context: Context,
-    ) -> list[Segment]:
-        """Split content items into single-block segments, propagating context."""
+        """Split an event's blocks into single-block segments, propagating context."""
         segments: list[Segment] = []
-        for index, item in enumerate(items):
-            match item:
-                case Text(text=text):
+        for index, block in enumerate(event.blocks):
+            match block:
+                case TextBlock(text=text):
                     chunks = self._text_splitter.split_text(text)
                     segments.extend(
                         Segment(
@@ -378,8 +349,8 @@ class EventMemory:
                             index=index,
                             offset=offset,
                             timestamp=event.timestamp,
-                            block=Text(text=chunk),
-                            context=context,
+                            block=TextBlock(text=chunk),
+                            context=event.context,
                             properties=event.properties,
                         )
                         for offset, chunk in enumerate(chunks)
@@ -392,8 +363,8 @@ class EventMemory:
                             index=index,
                             offset=0,
                             timestamp=event.timestamp,
-                            block=item,
-                            context=context,
+                            block=block,
+                            context=event.context,
                             properties=event.properties,
                         )
                     )
@@ -415,7 +386,7 @@ class EventMemory:
 
         """
         match segment.block:
-            case Text(text=text):
+            case TextBlock(text=text):
                 derivative_texts = self._extract_derivative_texts(
                     context=segment.context, text=text
                 )
@@ -439,12 +410,14 @@ class EventMemory:
     def _format_with_context(text: str, context: Context) -> str:
         """Format text within its context."""
         match context:
-            case MessageContext(source=source):
-                return f"{source}: {text}"
-            case CitationContext(source=source):
-                return f"From '{source}': {text}"
-            case _:
+            case ProducerContext(producer=producer):
+                return f"{producer}: {text}"
+            case NullContext():
                 return text
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported context type: {type(context).__name__}"
+                )
 
     def _extract_derivative_texts(
         self,
@@ -685,7 +658,7 @@ class EventMemory:
             if text is not None:
                 accumulated_text += text
             elif not is_continuation:
-                context_string += f"[{segment.block.type}]\n"
+                context_string += f"[{segment.block.block_type}]\n"
 
             last_segment = segment
 
@@ -767,12 +740,14 @@ class EventMemory:
         timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
 
         match segment.context:
-            case MessageContext(source=source):
-                return f"{timestamp_prefix}{source}: "
-            case CitationContext(source=source):
-                return f"{timestamp_prefix}From '{source}': "
-            case _:
+            case ProducerContext(producer=producer):
+                return f"{timestamp_prefix}{producer}: "
+            case NullContext():
                 return timestamp_prefix
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported context type: {type(segment.context).__name__}"
+                )
 
     @staticmethod
     def _format_timestamp(
@@ -822,7 +797,7 @@ class EventMemory:
     def _extract_text(block: Block) -> str | None:
         """Extract text from a block, if it contains text."""
         match block:
-            case Text(text=text):
+            case TextBlock(text=text):
                 return text
             case _:
                 return None

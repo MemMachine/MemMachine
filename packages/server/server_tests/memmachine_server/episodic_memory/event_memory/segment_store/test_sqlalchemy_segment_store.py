@@ -16,11 +16,10 @@ from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    CitationContext,
-    MessageContext,
     NullContext,
+    ProducerContext,
     Segment,
-    Text,
+    TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionAlreadyExistsError,
@@ -51,7 +50,7 @@ def _seg(
     offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
-    context: MessageContext | CitationContext | NullContext = _NULL_CONTEXT,
+    context: ProducerContext | NullContext = _NULL_CONTEXT,
     properties: dict | None = None,
 ) -> Segment:
     return Segment(
@@ -60,7 +59,7 @@ def _seg(
         index=index,
         offset=offset,
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
-        block=Text(text=text),
+        block=TextBlock(text=text),
         context=context,
         properties=properties or {},
     )
@@ -158,10 +157,10 @@ async def test_add_segments_with_properties(
 
 
 @pytest.mark.asyncio
-async def test_add_segments_with_message_context(
+async def test_add_segments_with_producer_context(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    ctx = MessageContext(source="User")
+    ctx = ProducerContext(producer="User")
     seg = _seg(context=ctx)
     await partition.add_segments(_links(seg))
 
@@ -172,20 +171,8 @@ async def test_add_segments_with_message_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert json.loads(row.context) == {"type": "message", "source": "User"}
-    assert json.loads(row.block) == {"type": "text", "text": "hello"}
-
-
-@pytest.mark.asyncio
-async def test_add_segments_with_citation_context(
-    partition: SQLAlchemySegmentStorePartition,
-) -> None:
-    ctx = CitationContext(source="docs.txt", source_type="file", location="/tmp")
-    seg = _seg(context=ctx)
-    await partition.add_segments(_links(seg))
-
-    result = await partition.get_segment_contexts([seg.uuid])
-    assert result[seg.uuid][0].context == ctx
+    assert json.loads(row.context) == {"context_type": "producer", "producer": "User"}
+    assert json.loads(row.block) == {"block_type": "text", "text": "hello"}
 
 
 @pytest.mark.asyncio
@@ -199,7 +186,7 @@ async def test_add_segments_with_no_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert json.loads(row.context) == {"type": "null"}
+    assert json.loads(row.context) == {"context_type": "null"}
 
     result = await partition.get_segment_contexts([seg.uuid])
     assert result[seg.uuid][0].context == NullContext()
@@ -409,32 +396,32 @@ async def test_contexts_property_filter(
 
 
 @pytest.mark.asyncio
-async def test_contexts_filter_by_context_source(
+async def test_contexts_filter_by_context_producer(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Filter using ``context.source`` is not supported."""
+    """Filter using ``context.producer`` is not supported."""
     ep = uuid4()
     s0 = _seg(
         event_uuid=ep,
         offset=0,
         ts_offset_seconds=0,
-        context=MessageContext(source="Alice"),
+        context=ProducerContext(producer="Alice"),
     )
     s1 = _seg(
         event_uuid=ep,
         offset=1,
         ts_offset_seconds=1,
-        context=MessageContext(source="Bob"),
+        context=ProducerContext(producer="Bob"),
     )
     s2 = _seg(
         event_uuid=ep,
         offset=2,
         ts_offset_seconds=2,
-        context=MessageContext(source="Alice"),
+        context=ProducerContext(producer="Alice"),
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.source", op="=", value="Alice")
+    filt = Comparison(field="context.producer", op="=", value="Alice")
     with pytest.raises(ValueError, match="Unknown filter field"):
         await partition.get_segment_contexts(
             [s0.uuid],
@@ -448,29 +435,29 @@ async def test_contexts_filter_by_context_source(
 async def test_contexts_filter_by_context_type(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Filter using ``context.type`` is not supported."""
+    """Filter using ``context.context_type`` is not supported."""
     ep = uuid4()
     s0 = _seg(
         event_uuid=ep,
         offset=0,
         ts_offset_seconds=0,
-        context=MessageContext(source="Alice"),
+        context=ProducerContext(producer="Alice"),
     )
     s1 = _seg(
         event_uuid=ep,
         offset=1,
         ts_offset_seconds=1,
-        context=CitationContext(source="paper.pdf"),
+        context=NullContext(),
     )
     s2 = _seg(
         event_uuid=ep,
         offset=2,
         ts_offset_seconds=2,
-        context=MessageContext(source="Bob"),
+        context=ProducerContext(producer="Bob"),
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.type", op="=", value="message")
+    filt = Comparison(field="context.context_type", op="=", value="producer")
     with pytest.raises(ValueError, match="Unknown filter field"):
         await partition.get_segment_contexts(
             [s0.uuid],
@@ -532,8 +519,8 @@ async def test_context_preserved_in_segment_contexts(
 ) -> None:
     """Context is preserved when retrieving segment contexts (backward/forward)."""
     ep = uuid4()
-    ctx_user = MessageContext(source="User")
-    ctx_assistant = MessageContext(source="Assistant")
+    ctx_user = ProducerContext(producer="User")
+    ctx_assistant = ProducerContext(producer="Assistant")
     s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, context=ctx_user)
     s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, context=ctx_assistant)
     s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2, context=ctx_user)
@@ -944,8 +931,8 @@ async def test_pg_context_preserved_via_lateral_join(
         _plaintext_partition_config(),
     )
     ep = uuid4()
-    ctx_user = MessageContext(source="User")
-    ctx_assistant = MessageContext(source="Assistant")
+    ctx_user = ProducerContext(producer="User")
+    ctx_assistant = ProducerContext(producer="Assistant")
     s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, context=ctx_user)
     s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, context=ctx_assistant)
     s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2, context=ctx_user)
@@ -977,19 +964,17 @@ async def test_pg_context_preserved_via_lateral_join(
 async def test_pg_mixed_context_types(
     pg_store: SQLAlchemySegmentStore,
 ) -> None:
-    """Different context types (message, citation, None) round-trip correctly on PG."""
+    """Different context types (producer, None) round-trip correctly on PG."""
     partition = await pg_store.open_or_create_partition(
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
-    ctx_msg = MessageContext(source="User")
-    ctx_cite = CitationContext(source="paper.pdf", source_type="file", location="p.3")
+    ctx_msg = ProducerContext(producer="User")
 
     s_msg = _seg(ts_offset_seconds=0, context=ctx_msg)
-    s_cite = _seg(ts_offset_seconds=1, context=ctx_cite)
-    s_none = _seg(ts_offset_seconds=2)
+    s_none = _seg(ts_offset_seconds=1)
 
-    all_segs = [s_msg, s_cite, s_none]
+    all_segs = [s_msg, s_none]
     await partition.add_segments(_links(*all_segs))
 
     async with partition._create_session() as session:
@@ -998,13 +983,10 @@ async def test_pg_mixed_context_types(
                 select(SegmentRow).where(SegmentRow.uuid == s_none.uuid)
             )
         ).scalar_one()
-    assert json.loads(row.context) == {"type": "null"}
+    assert json.loads(row.context) == {"context_type": "null"}
 
     result = await partition.get_segment_contexts([s_msg.uuid])
     assert result[s_msg.uuid][0].context == ctx_msg
-
-    result = await partition.get_segment_contexts([s_cite.uuid])
-    assert result[s_cite.uuid][0].context == ctx_cite
 
     result = await partition.get_segment_contexts([s_none.uuid])
     assert result[s_none.uuid][0].context == NullContext()

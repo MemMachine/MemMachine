@@ -21,15 +21,13 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStoreCollectionConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    CitationContext,
-    Content,
     Event,
-    MessageContext,
     NullContext,
+    ProducerContext,
     QueryResult,
     ScoredSegmentContext,
     Segment,
-    Text,
+    TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
@@ -61,13 +59,14 @@ def _make_event(
     text: str,
     *,
     timestamp: datetime.datetime = _T0,
-    context: MessageContext | CitationContext | NullContext = _NULL_CONTEXT,
+    context: ProducerContext | NullContext = _NULL_CONTEXT,
     properties=None,
 ) -> Event:
     return Event(
         uuid=uuid4(),
         timestamp=timestamp,
-        body=Content(context=context, items=[Text(text=text)]),
+        context=context,
+        blocks=[TextBlock(text=text)],
         properties=properties or {},
     )
 
@@ -112,7 +111,7 @@ class TestEncodeEvents:
         assert segment.event_uuid == event.uuid
         assert segment.index == 0
         assert segment.offset == 0
-        assert segment.block == Text(text="hello world")
+        assert segment.block == TextBlock(text="hello world")
 
         # One derivative record in vector store.
         assert len(fake_vector_store_collection.records) == 1
@@ -140,31 +139,18 @@ class TestEncodeEvents:
         timestamps = [s.timestamp for s in ordered_segments]
         assert timestamps == sorted(timestamps)
 
-    async def test_message_context(
+    async def test_producer_context(
         self,
         event_memory: EventMemory,
         fake_vector_store_collection: InMemoryVectorStoreCollection,
     ):
-        event = _make_event("hi", context=MessageContext(source="Alice"))
+        event = _make_event("hi", context=ProducerContext(producer="Alice"))
         await event_memory.encode_events([event])
 
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
         assert "_context_type" not in props
-        assert "_context_source" not in props
-
-    async def test_citation_context(
-        self,
-        event_memory: EventMemory,
-        fake_vector_store_collection: InMemoryVectorStoreCollection,
-    ):
-        event = _make_event("abstract", context=CitationContext(source="paper.pdf"))
-        await event_memory.encode_events([event])
-
-        record = next(iter(fake_vector_store_collection.records.values()))
-        props = _record_properties(record)
-        assert "_context_type" not in props
-        assert "_context_source" not in props
+        assert "_context_producer" not in props
 
     async def test_no_context(
         self,
@@ -177,7 +163,6 @@ class TestEncodeEvents:
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
         assert "_context_type" not in props
-        assert "_context_source" not in props
 
     async def test_long_text_chunking(
         self,
@@ -196,7 +181,7 @@ class TestEncodeEvents:
         assert offsets == list(range(len(segments)))
         for segment in segments:
             assert segment.event_uuid == event.uuid
-            assert isinstance(segment.block, Text)
+            assert isinstance(segment.block, TextBlock)
             assert len(segment.block.text) <= 2000
 
     async def test_multiple_content_items(
@@ -207,7 +192,7 @@ class TestEncodeEvents:
         event = Event(
             uuid=uuid4(),
             timestamp=_T0,
-            body=Content(items=[Text(text="first"), Text(text="second")]),
+            blocks=[TextBlock(text="first"), TextBlock(text="second")],
         )
         await event_memory.encode_events([event])
 
@@ -253,14 +238,14 @@ class TestEncodeEvents:
                 embedder=fake_embedder,
             )
         )
-        event = _make_event("hi", context=MessageContext(source="Alice"))
+        event = _make_event("hi", context=ProducerContext(producer="Alice"))
         await em.encode_events([event])
 
         assert len(collection.records) == 1
         record = next(iter(collection.records.values()))
         props = _record_properties(record)
         assert "_context_type" not in props
-        assert "_context_source" not in props
+        assert "_context_producer" not in props
 
     async def test_init_raises_on_missing_base_field(self, fake_embedder):
         # Collection without _timestamp — base field required at init.
@@ -439,7 +424,7 @@ def _make_segment(
     offset: int = 0,
     timestamp: datetime.datetime = _T0,
     text: str = "text",
-    context: MessageContext | CitationContext | NullContext = _NULL_CONTEXT,
+    context: ProducerContext | NullContext = _NULL_CONTEXT,
 ) -> Segment:
     return Segment(
         uuid=uuid4(),
@@ -447,7 +432,7 @@ def _make_segment(
         index=index,
         offset=offset,
         timestamp=timestamp,
-        block=Text(text=text),
+        block=TextBlock(text=text),
         context=context,
     )
 
@@ -571,18 +556,10 @@ class TestStringFromSegmentContext:
         assert "[" in result  # Timestamp bracket.
 
     def test_message_context(self):
-        segment = _make_segment(text="hi", context=MessageContext(source="Alice"))
+        segment = _make_segment(text="hi", context=ProducerContext(producer="Alice"))
         result = EventMemory.string_from_segment_context([segment])
         assert "Alice:" in result
         assert json.dumps("hi") in result
-
-    def test_citation_context(self):
-        segment = _make_segment(
-            text="abstract", context=CitationContext(source="paper.pdf")
-        )
-        result = EventMemory.string_from_segment_context([segment])
-        assert "From 'paper.pdf':" in result
-        assert json.dumps("abstract") in result
 
     def test_continuation_segments(self):
         event_uuid = uuid4()
@@ -593,10 +570,10 @@ class TestStringFromSegmentContext:
             index=0,
             offset=1,
             timestamp=_T0,
-            block=Text(text="part2"),
+            block=TextBlock(text="part2"),
         )
         result = EventMemory.string_from_segment_context([s1, s2])
-        # Text is accumulated into one JSON string.
+        # Text content is accumulated into one JSON string.
         assert json.dumps("part1part2") in result
         # Only one timestamp line.
         assert result.count("[") == 1
@@ -619,12 +596,12 @@ class TestRoundTrips:
         """Encoded events should be retrievable through query."""
         e1 = _make_event(
             "The quick brown fox",
-            context=MessageContext(source="Alice"),
+            context=ProducerContext(producer="Alice"),
             timestamp=_ts(0),
         )
         e2 = _make_event(
             "jumps over the lazy dog",
-            context=MessageContext(source="Bob"),
+            context=ProducerContext(producer="Bob"),
             timestamp=_ts(1),
         )
         await event_memory.encode_events([e1, e2])
@@ -637,7 +614,7 @@ class TestRoundTrips:
             seg for scored in result.scored_segment_contexts for seg in scored.segments
         ]
         all_texts = {
-            seg.block.text for seg in all_segments if isinstance(seg.block, Text)
+            seg.block.text for seg in all_segments if isinstance(seg.block, TextBlock)
         }
         assert "The quick brown fox" in all_texts
         assert "jumps over the lazy dog" in all_texts
@@ -645,14 +622,14 @@ class TestRoundTrips:
     async def test_encode_then_query_preserves_context(self, event_memory: EventMemory):
         """Query results should carry the original context."""
         event = _make_event(
-            "hello", context=MessageContext(source="Alice"), timestamp=_ts(0)
+            "hello", context=ProducerContext(producer="Alice"), timestamp=_ts(0)
         )
         await event_memory.encode_events([event])
 
         result = await event_memory.query("test")
         segment = result.scored_segment_contexts[0].segments[0]
-        assert isinstance(segment.context, MessageContext)
-        assert segment.context.source == "Alice"
+        assert isinstance(segment.context, ProducerContext)
+        assert segment.context.producer == "Alice"
 
     async def test_forget_then_query_excludes_forgotten(
         self, event_memory: EventMemory
@@ -669,7 +646,7 @@ class TestRoundTrips:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "keep this one" in all_texts
         assert "forget this one" not in all_texts
@@ -698,7 +675,7 @@ class TestRoundTrips:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "batch one" in all_texts
         assert "batch two" in all_texts
@@ -726,7 +703,7 @@ class TestRoundTrips:
         """End-to-end: encode, query, format as string."""
         event = _make_event(
             "The mitochondria is the powerhouse of the cell.",
-            context=MessageContext(source="textbook"),
+            context=ProducerContext(producer="textbook"),
             timestamp=_ts(0),
         )
         await event_memory.encode_events([event])
@@ -760,7 +737,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "red thing" in all_texts
         assert "blue thing" not in all_texts
@@ -779,7 +756,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "blue thing" in all_texts
         assert "red thing" not in all_texts
@@ -799,7 +776,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "red thing" in all_texts
         assert "green thing" in all_texts
@@ -819,7 +796,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "no color" in all_texts
         assert "has color" not in all_texts
@@ -841,7 +818,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "red small" in all_texts
         assert "blue small" not in all_texts
@@ -864,7 +841,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "red thing" in all_texts
         assert "blue thing" in all_texts
@@ -884,7 +861,7 @@ class TestQueryWithFilter:
             seg.block.text
             for scored in result.scored_segment_contexts
             for seg in scored.segments
-            if isinstance(seg.block, Text)
+            if isinstance(seg.block, TextBlock)
         }
         assert "blue thing" in all_texts
         assert "red thing" not in all_texts
@@ -904,13 +881,13 @@ class TestQueryWithFilter:
 
     async def test_context_filter_returns_no_results(self, event_memory: EventMemory):
         """Context fields are no longer filterable."""
-        event = _make_event("hi", context=MessageContext(source="Alice"))
+        event = _make_event("hi", context=ProducerContext(producer="Alice"))
         await event_memory.encode_events([event])
 
         result = await event_memory.query(
             "hi",
             property_filter=Comparison(
-                field="context.source",
+                field="context.producer",
                 op="=",
                 value="Alice",
             ),

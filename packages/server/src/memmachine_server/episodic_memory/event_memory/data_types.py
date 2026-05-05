@@ -27,46 +27,37 @@ from memmachine_server.common.properties_json import (
 # Block: leaf content type
 
 
-class Text(BaseModel):
-    """Plain text."""
+class TextBlock(BaseModel):
+    """Plain text block."""
 
-    type: Literal["text"] = "text"
+    block_type: Literal["text"] = "text"
     text: str
 
 
 Block = Annotated[
-    Text,
-    Field(discriminator="type"),
+    TextBlock,
+    Field(discriminator="block_type"),
 ]
 
 
-class MessageContext(BaseModel):
-    """The content is communicated by a source."""
+class ProducerContext(BaseModel):
+    """The content is produced by a producer."""
 
-    type: Literal["message"] = "message"
-    source: str
-
-
-class CitationContext(BaseModel):
-    """The content is cited from a source."""
-
-    type: Literal["citation"] = "citation"
-    source: str
-    source_type: str | None = None
-    location: str | None = None
+    context_type: Literal["producer"] = "producer"
+    producer: str
 
 
 class NullContext(BaseModel):
     """No context is attached."""
 
-    type: Literal["null"] = "null"
+    context_type: Literal["null"] = "null"
 
 
-ContextUnion = MessageContext | CitationContext | NullContext
+ContextUnion = ProducerContext | NullContext
 
 Context = Annotated[
     ContextUnion,
-    Field(discriminator="type"),
+    Field(discriminator="context_type"),
 ]
 
 _CONTEXT_ADAPTER = TypeAdapter(Context | None)
@@ -93,23 +84,6 @@ def decode_block(encoded: Mapping[str, JsonValue]) -> Block:
     return _BLOCK_ADAPTER.validate_python(encoded)
 
 
-# Body: top-level event payload
-
-
-class Content(BaseModel):
-    """A list of item blocks with context."""
-
-    type: Literal["content"] = "content"
-    context: Context = Field(default_factory=NullContext)
-    items: list[Block]
-
-
-Body = Annotated[
-    Content,
-    Field(discriminator="type"),
-]
-
-
 # Event, Segment, Derivative: core data models for EventMemory
 
 
@@ -118,7 +92,8 @@ class Event(BaseModel):
 
     uuid: UUID
     timestamp: datetime
-    body: Body
+    context: Context = Field(default_factory=NullContext)
+    blocks: list[Block]
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
