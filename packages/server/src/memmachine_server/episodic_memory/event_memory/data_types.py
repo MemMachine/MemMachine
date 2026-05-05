@@ -24,7 +24,13 @@ from memmachine_server.common.properties_json import (
     encode_properties,
 )
 
-# Block: leaf content type
+# Block: leaf content type.
+#
+# Different Block types do not just represent different modalities;
+# they represent different content types,
+# each requiring distinct downstream processing logic.
+# Plain text, JSON, and HTML may all be processed differently
+# despite sharing the text modality.
 
 
 class TextBlock(BaseModel):
@@ -84,7 +90,7 @@ def decode_block(encoded: Mapping[str, JsonValue]) -> Block:
     return _BLOCK_ADAPTER.validate_python(encoded)
 
 
-# Event, Segment, Derivative: core data models for EventMemory
+# Event, Segment, Derivative: core data models for EventMemory.
 
 
 class Event(BaseModel):
