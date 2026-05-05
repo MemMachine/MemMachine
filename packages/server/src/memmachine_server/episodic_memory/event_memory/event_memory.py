@@ -20,6 +20,10 @@ from memmachine_server.common.filter.filter_parser import (
     map_filter_fields,
     normalize_filter_field,
 )
+from memmachine_server.common.metrics_factory import (
+    MetricsFactory,
+    OperationTracker,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
     Record,
@@ -68,6 +72,9 @@ class EventMemoryParams(BaseModel):
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation
             (default: 500).
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory for collecting usage metrics
+            (default: None).
     """
 
     vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
@@ -94,6 +101,10 @@ class EventMemoryParams(BaseModel):
     max_text_chunk_length: int = Field(
         500,
         description="Max code-point length for text chunking in segment creation",
+    )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
     )
 
 
@@ -148,6 +159,11 @@ class EventMemory:
         self._embedder = params.embedder
         self._deriver = params.deriver
         self._reranker = params.reranker
+
+        self._tracker = OperationTracker(
+            params.metrics_factory,
+            prefix="event_memory",
+        )
 
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=params.max_text_chunk_length,
@@ -237,6 +253,13 @@ class EventMemory:
                 If any event supplies a reserved field name in its properties,
                 or if the collection schema is missing fields required by any event's Context type.
         """
+        async with self._tracker("encode_events"):
+            await self._encode_events(events)
+
+    async def _encode_events(
+        self,
+        events: Iterable[Event],
+    ) -> None:
         t_start = time.monotonic()
 
         events = list(events)
@@ -409,6 +432,24 @@ class EventMemory:
                 The query result.
 
         """
+        async with self._tracker("query"):
+            return await self._query(
+                query,
+                vector_search_limit=vector_search_limit,
+                expand_context=expand_context,
+                property_filter=property_filter,
+                format_options=format_options,
+            )
+
+    async def _query(
+        self,
+        query: str,
+        *,
+        vector_search_limit: int,
+        expand_context: int,
+        property_filter: FilterExpr | None,
+        format_options: FormatOptions | None,
+    ) -> QueryResult:
         if format_options is None:
             format_options = FormatOptions()
 
@@ -745,6 +786,11 @@ class EventMemory:
         event_uuids = set(event_uuids)
         if not event_uuids:
             return
+
+        async with self._tracker("forget_events"):
+            await self._forget_events(event_uuids)
+
+    async def _forget_events(self, event_uuids: set[UUID]) -> None:
 
         # Snapshot segment UUIDs for these events.
         segments_by_event = (

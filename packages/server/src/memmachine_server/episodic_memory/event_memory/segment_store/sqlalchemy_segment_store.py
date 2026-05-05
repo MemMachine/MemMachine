@@ -61,6 +61,10 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.metrics_factory import (
+    MetricsFactory,
+    OperationTracker,
+)
 from memmachine_server.common.payload_codec import PayloadCodec
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
@@ -200,12 +204,14 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         engine: AsyncEngine,
         config: SegmentStorePartitionConfig,
         payload_codec: PayloadCodec,
+        tracker: OperationTracker,
     ) -> None:
         """Initialize with a partition key and engine."""
         self._partition_key = partition_key
         self._engine = engine
         self._config = config
         self._payload_codec = payload_codec
+        self._tracker = tracker
         self._create_session = async_sessionmaker(engine, expire_on_commit=False)
         self._is_sqlite = engine.dialect.name == "sqlite"
 
@@ -233,7 +239,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         self,
         segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
     ) -> None:
-        async with self._create_session() as session, session.begin():
+        async with (
+            self._tracker("add_segments"),
+            self._create_session() as session,
+            session.begin(),
+        ):
             await self._lock_partition_for_write(session)
             await self._insert_segments(session, segments_to_derivative_uuids.keys())
             await self._insert_derivative_links(session, segments_to_derivative_uuids)
@@ -299,7 +309,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if not seed_segment_uuids:
             return {}
 
-        async with self._create_session() as session:
+        async with (
+            self._tracker("get_segment_contexts"),
+            self._create_session() as session,
+        ):
             seed_segments_query = select(SegmentRow).where(
                 SegmentRow.uuid.in_(seed_segment_uuids),
                 SegmentRow.partition_key == self._partition_key,
@@ -592,7 +605,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if not event_uuids:
             return {}
 
-        async with self._create_session() as session:
+        async with (
+            self._tracker("get_segment_uuids_by_event_uuids"),
+            self._create_session() as session,
+        ):
             query = select(SegmentRow.event_uuid, SegmentRow.uuid).where(
                 SegmentRow.partition_key == self._partition_key,
                 SegmentRow.event_uuid.in_(event_uuids),
@@ -613,7 +629,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if not segment_uuids:
             return {}
 
-        async with self._create_session() as session:
+        async with (
+            self._tracker("get_derivative_uuids_by_segment_uuids"),
+            self._create_session() as session,
+        ):
             query = select(
                 DerivativeLinkRow.segment_uuid, DerivativeLinkRow.uuid
             ).where(
@@ -638,7 +657,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if not segment_uuids:
             return
 
-        async with self._create_session() as session, session.begin():
+        async with (
+            self._tracker("delete_segments"),
+            self._create_session() as session,
+            session.begin(),
+        ):
             await self._lock_partition_for_write(session)
             if not self._is_sqlite:
                 # Lock rows in deterministic order to prevent deadlocks
@@ -705,9 +728,16 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine.
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory for collecting usage metrics
+            (default: None).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(..., description="Async SQLAlchemy engine")
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
 
     @field_validator("engine")
     @classmethod
@@ -735,6 +765,11 @@ class SQLAlchemySegmentStore(SegmentStore):
         self._engine = params.engine
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
 
+        self._tracker = OperationTracker(
+            params.metrics_factory,
+            prefix="segment_store_sqlalchemy",
+        )
+
         self._is_postgresql = self._engine.dialect.name == "postgresql"
         self._is_sqlite = self._engine.dialect.name == "sqlite"
 
@@ -754,7 +789,7 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def startup(self) -> None:
-        async with self._engine.begin() as connection:
+        async with self._tracker("startup"), self._engine.begin() as connection:
             await connection.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override
@@ -774,7 +809,10 @@ class SQLAlchemySegmentStore(SegmentStore):
         config: SegmentStorePartitionConfig,
     ) -> None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
-        async with self._engine.begin() as connection:
+        async with (
+            self._tracker("create_partition"),
+            self._engine.begin() as connection,
+        ):
             if self._is_postgresql:
                 await connection.execute(
                     SQLAlchemySegmentStore._PG_LOCK_PARTITIONS_TABLE
@@ -801,14 +839,15 @@ class SQLAlchemySegmentStore(SegmentStore):
         self, partition_key: str
     ) -> SQLAlchemySegmentStorePartition | None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
-        async with self._create_session() as session:
-            partition_row = await SQLAlchemySegmentStore._get_partition_row(
-                session, partition_key
-            )
-        if partition_row is None:
-            return None
+        async with self._tracker("open_partition"):
+            async with self._create_session() as session:
+                partition_row = await SQLAlchemySegmentStore._get_partition_row(
+                    session, partition_key
+                )
+            if partition_row is None:
+                return None
 
-        return await self._partition_from_partition_row(partition_row)
+            return await self._partition_from_partition_row(partition_row)
 
     @override
     async def open_or_create_partition(
@@ -817,6 +856,14 @@ class SQLAlchemySegmentStore(SegmentStore):
         config: SegmentStorePartitionConfig,
     ) -> SQLAlchemySegmentStorePartition:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
+        async with self._tracker("open_or_create_partition"):
+            return await self._open_or_create_partition(partition_key, config)
+
+    async def _open_or_create_partition(
+        self,
+        partition_key: str,
+        config: SegmentStorePartitionConfig,
+    ) -> SQLAlchemySegmentStorePartition:
         try:
             async with self._create_session() as session, session.begin():
                 if self._is_postgresql:
@@ -848,6 +895,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                         engine=self._engine,
                         config=config,
                         payload_codec=payload_codec,
+                        tracker=self._tracker,
                     )
 
                 SQLAlchemySegmentStore._raise_if_partition_config_mismatch(
@@ -877,7 +925,10 @@ class SQLAlchemySegmentStore(SegmentStore):
     @override
     async def delete_partition(self, partition_key: str) -> None:
         SQLAlchemySegmentStore._validate_partition_key(partition_key)
-        async with self._engine.begin() as connection:
+        async with (
+            self._tracker("delete_partition"),
+            self._engine.begin() as connection,
+        ):
             if not self._is_sqlite:
                 # Exclusive lock on the partition row blocks concurrent writes
                 # (which hold shared locks) until deletion completes.
@@ -957,6 +1008,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             engine=self._engine,
             config=config,
             payload_codec=payload_codec,
+            tracker=self._tracker,
         )
 
     @staticmethod
