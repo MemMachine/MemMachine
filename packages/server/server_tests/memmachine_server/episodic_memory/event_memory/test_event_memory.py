@@ -29,6 +29,9 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
     TextBlock,
 )
+from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
+    WholeTextDeriver,
+)
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
@@ -119,25 +122,6 @@ class TestEncodeEvents:
         props = _record_properties(record)
         assert props["_segment_uuid"] == str(segment.uuid)
         assert props["_timestamp"] == event.timestamp
-
-    async def test_multiple_events_sorted_by_timestamp(
-        self,
-        event_memory: EventMemory,
-        fake_segment_store_partition: InMemorySegmentStorePartition,
-    ):
-        e1 = _make_event("first", timestamp=_ts(3))
-        e2 = _make_event("second", timestamp=_ts(1))
-        e3 = _make_event("third", timestamp=_ts(2))
-
-        await event_memory.encode_events([e1, e2, e3])
-
-        # Segments stored in chronological order.
-        ordered_segments = [
-            fake_segment_store_partition.segments[uid]
-            for uid in fake_segment_store_partition.segment_order
-        ]
-        timestamps = [s.timestamp for s in ordered_segments]
-        assert timestamps == sorted(timestamps)
 
     async def test_producer_context(
         self,
@@ -236,6 +220,7 @@ class TestEncodeEvents:
                 vector_store_collection=collection,
                 segment_store_partition=partition,
                 embedder=fake_embedder,
+                deriver=WholeTextDeriver(),
             )
         )
         event = _make_event("hi", context=ProducerContext(producer="Alice"))
@@ -267,6 +252,7 @@ class TestEncodeEvents:
                     vector_store_collection=collection,
                     segment_store_partition=partition,
                     embedder=fake_embedder,
+                    deriver=WholeTextDeriver(),
                 )
             )
 

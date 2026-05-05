@@ -21,9 +21,6 @@ from memmachine_server.common.filter.filter_parser import (
     normalize_filter_field,
 )
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.utils import (
-    extract_sentences,
-)
 from memmachine_server.common.vector_store import (
     Record,
     VectorStoreCollection,
@@ -31,7 +28,6 @@ from memmachine_server.common.vector_store import (
 
 from .data_types import (
     Block,
-    Context,
     DateTimeStyle,
     Derivative,
     Event,
@@ -43,6 +39,7 @@ from .data_types import (
     Segment,
     TextBlock,
 )
+from .deriver import Deriver
 from .segment_store import SegmentStorePartition
 
 logger = logging.getLogger(__name__)
@@ -60,15 +57,14 @@ class EventMemoryParams(BaseModel):
             Vector store collection.
         segment_store_partition (SegmentStorePartition):
             Segment store partition handle for managing segments.
+        deriver (Deriver):
+            Deriver that produces derivatives from segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
         reranker (Reranker | None):
             Reranker instance for scoring search results.
             If None, embedding similarity scores are used instead
             (default: None).
-        derive_sentences (bool):
-            Whether to derive sentence-level derivatives from content
-            (default: False).
         max_text_chunk_length (int):
             Max code-point length for text chunking in segment creation
             (default: 500).
@@ -82,6 +78,10 @@ class EventMemoryParams(BaseModel):
         ...,
         description="Segment store partition handle for managing segments",
     )
+    deriver: InstanceOf[Deriver] = Field(
+        ...,
+        description="Deriver that produces derivatives from segments",
+    )
     embedder: InstanceOf[Embedder] = Field(
         ...,
         description="Embedder instance for creating embeddings",
@@ -90,10 +90,6 @@ class EventMemoryParams(BaseModel):
         None,
         description="Reranker instance for scoring search results. "
         "If None, embedding similarity scores are used instead",
-    )
-    derive_sentences: bool = Field(
-        False,
-        description="Whether to derive sentence-level derivatives from content",
     )
     max_text_chunk_length: int = Field(
         500,
@@ -150,9 +146,8 @@ class EventMemory:
             )
 
         self._embedder = params.embedder
+        self._deriver = params.deriver
         self._reranker = params.reranker
-
-        self._derive_sentences = params.derive_sentences
 
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=params.max_text_chunk_length,
@@ -247,18 +242,13 @@ class EventMemory:
         events = list(events)
         self._validate_events(events)
 
-        events = sorted(
-            events,
-            key=lambda event: (event.timestamp, event.uuid),
-        )
-
         segments = [
             segment for event in events for segment in self._create_segments(event)
         ]
         t_segment = time.monotonic()
 
         segments_to_derivatives: dict[Segment, list[Derivative]] = {
-            segment: self._derive_derivatives(segment) for segment in segments
+            segment: self._deriver.derive(segment) for segment in segments
         }
 
         derivatives = [
@@ -369,69 +359,6 @@ class EventMemory:
                         )
                     )
         return segments
-
-    def _derive_derivatives(
-        self,
-        segment: Segment,
-    ) -> list[Derivative]:
-        """
-        Derive derivatives from a segment.
-
-        Args:
-            segment (Segment):
-                The segment from which to derive derivatives.
-
-        Returns:
-            list[Derivative]: A list of derived derivatives.
-
-        """
-        match segment.block:
-            case TextBlock(text=text):
-                derivative_texts = self._extract_derivative_texts(
-                    context=segment.context, text=text
-                )
-            case _:
-                logger.warning("Non-text primitive derivatives are not yet supported")
-                return []
-
-        return [
-            Derivative(
-                uuid=uuid4(),
-                segment_uuid=segment.uuid,
-                timestamp=segment.timestamp,
-                context=segment.context,
-                block=TextBlock(text=text),
-                properties=segment.properties,
-            )
-            for text in derivative_texts
-        ]
-
-    @staticmethod
-    def _format_with_context(text: str, context: Context) -> str:
-        """Format text within its context."""
-        match context:
-            case ProducerContext(producer=producer):
-                return f"{producer}: {text}"
-            case NullContext():
-                return text
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported context type: {type(context).__name__}"
-                )
-
-    def _extract_derivative_texts(
-        self,
-        *,
-        context: Context,
-        text: str,
-    ) -> list[str]:
-        """Derive formatted text strings from a text block."""
-        if not self._derive_sentences:
-            return [EventMemory._format_with_context(text, context)]
-        return [
-            EventMemory._format_with_context(sentence, context)
-            for sentence in extract_sentences(text)
-        ]
 
     @classmethod
     def _to_vector_record_property(cls, field: str) -> str:
