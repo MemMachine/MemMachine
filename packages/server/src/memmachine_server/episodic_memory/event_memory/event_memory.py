@@ -269,7 +269,7 @@ class EventMemory:
         t_derive = time.monotonic()
 
         derivative_embeddings = await self._embedder.ingest_embed(
-            [derivative.text for derivative in derivatives],
+            [EventMemory._block_text(derivative.block) for derivative in derivatives],
         )
         t_embed = time.monotonic()
 
@@ -400,7 +400,7 @@ class EventMemory:
                 segment_uuid=segment.uuid,
                 timestamp=segment.timestamp,
                 context=segment.context,
-                text=text,
+                block=TextBlock(text=text),
                 properties=segment.properties,
             )
             for text in derivative_texts
@@ -801,6 +801,17 @@ class EventMemory:
                 return text
             case _:
                 return None
+
+    @staticmethod
+    def _block_text(block: Block) -> str:
+        """Extract text from a block; raise on non-text blocks."""
+        match block:
+            case TextBlock(text=text):
+                return text
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported block type: {type(block).__name__}"
+                )
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
         """Forget events by their UUIDs."""

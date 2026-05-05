@@ -102,7 +102,7 @@ class TestDerivativeRoundTrip:
             uuid=uuid4(),
             segment_uuid=uuid4(),
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            text="hello",
+            block=TextBlock(text="hello"),
             properties=SAMPLE_PROPERTIES,
         )
         der2 = Derivative.model_validate(der.model_dump(mode="json"))

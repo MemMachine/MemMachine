@@ -159,7 +159,7 @@ class Derivative(BaseModel):
     segment_uuid: UUID
     timestamp: datetime
     context: Context = Field(default_factory=NullContext)
-    text: str
+    block: Block
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
     @field_validator("properties", mode="before")
