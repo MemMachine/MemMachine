@@ -30,6 +30,9 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartition,
     SegmentStorePartitionConfig,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
+    TextSegmenter,
+)
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
 )
@@ -206,10 +209,11 @@ def event_memory(
 ):
     return EventMemory(
         EventMemoryParams(
-            vector_store_collection=fake_vector_store_collection,
             segment_store_partition=fake_segment_store_partition,
-            embedder=fake_embedder,
+            vector_store_collection=fake_vector_store_collection,
+            segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
+            embedder=fake_embedder,
         )
     )
 
@@ -222,10 +226,11 @@ def event_memory_with_reranker(
 ):
     return EventMemory(
         EventMemoryParams(
-            vector_store_collection=fake_vector_store_collection,
             segment_store_partition=fake_segment_store_partition,
-            embedder=fake_embedder,
+            vector_store_collection=fake_vector_store_collection,
+            segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
+            embedder=fake_embedder,
             reranker=FakeReranker(),
         )
     )
@@ -239,9 +244,10 @@ def event_memory_with_sentences(
 ):
     return EventMemory(
         EventMemoryParams(
-            vector_store_collection=fake_vector_store_collection,
             segment_store_partition=fake_segment_store_partition,
-            embedder=fake_embedder,
+            vector_store_collection=fake_vector_store_collection,
+            segmenter=TextSegmenter(),
             deriver=SentenceTextDeriver(),
+            embedder=fake_embedder,
         )
     )

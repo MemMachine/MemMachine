@@ -6,10 +6,9 @@ import logging
 import time
 from collections.abc import Iterable, Sequence
 from typing import ClassVar, cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from babel.dates import format_date, format_time, get_datetime_format
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import PropertyValue
@@ -45,6 +44,7 @@ from .data_types import (
 )
 from .deriver import Deriver
 from .segment_store import SegmentStorePartition
+from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
 
@@ -57,37 +57,40 @@ class EventMemoryParams(BaseModel):
     Parameters for EventMemory.
 
     Attributes:
+        segment_store_partition (SegmentStorePartition):
+            Segment store partition.
         vector_store_collection (VectorStoreCollection):
             Vector store collection.
-        segment_store_partition (SegmentStorePartition):
-            Segment store partition handle for managing segments.
+        segmenter (Segmenter):
+            Segmenter that segments events into segments.
         deriver (Deriver):
-            Deriver that produces derivatives from segments.
+            Deriver that derives derivatives from segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
         reranker (Reranker | None):
             Reranker instance for scoring search results.
             If None, embedding similarity scores are used instead
             (default: None).
-        max_text_chunk_length (int):
-            Max code-point length for text chunking in segment creation
-            (default: 500).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
     """
 
+    segment_store_partition: InstanceOf[SegmentStorePartition] = Field(
+        ...,
+        description="Segment store partition",
+    )
     vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
         ...,
         description="Vector store collection",
     )
-    segment_store_partition: InstanceOf[SegmentStorePartition] = Field(
+    segmenter: InstanceOf[Segmenter] = Field(
         ...,
-        description="Segment store partition handle for managing segments",
+        description="Segmenter that segments events into segments",
     )
     deriver: InstanceOf[Deriver] = Field(
         ...,
-        description="Deriver that produces derivatives from segments",
+        description="Deriver that derives derivatives from segments",
     )
     embedder: InstanceOf[Embedder] = Field(
         ...,
@@ -97,10 +100,6 @@ class EventMemoryParams(BaseModel):
         None,
         description="Reranker instance for scoring search results. "
         "If None, embedding similarity scores are used instead",
-    )
-    max_text_chunk_length: int = Field(
-        500,
-        description="Max code-point length for text chunking in segment creation",
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
@@ -141,8 +140,18 @@ class EventMemory:
                 Parameters for the EventMemory.
 
         """
-        self._vector_store_collection = params.vector_store_collection
         self._segment_store_partition = params.segment_store_partition
+        self._vector_store_collection = params.vector_store_collection
+        self._segmenter = params.segmenter
+        self._deriver = params.deriver
+        self._embedder = params.embedder
+        self._reranker = params.reranker
+
+        self._tracker = OperationTracker(
+            params.metrics_factory,
+            prefix="event_memory",
+        )
+
         self._schema_fields = frozenset(
             params.vector_store_collection.config.indexed_properties_schema
         )
@@ -155,15 +164,6 @@ class EventMemory:
                 f"Collection schema missing fields required by EventMemory: "
                 f"{', '.join(sorted(missing_base_fields))}"
             )
-
-        self._embedder = params.embedder
-        self._deriver = params.deriver
-        self._reranker = params.reranker
-
-        self._tracker = OperationTracker(
-            params.metrics_factory,
-            prefix="event_memory",
-        )
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
         self._query_phase_seconds: MetricsFactory.Histogram | None = None
@@ -178,44 +178,6 @@ class EventMemory:
                 "Time spent in each phase of query",
                 label_names=("phase",),
             )
-
-        self._text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=params.max_text_chunk_length,
-            chunk_overlap=0,
-            separators=[
-                "\n\n",
-                "],\n",
-                "},\n",
-                "),\n",
-                "]\n",
-                "}\n",
-                ")\n",
-                ",\n",
-                "\uff1f\n",  # Fullwidth question mark
-                "?\n",
-                "\uff01\n",  # Fullwidth exclamation mark
-                "!\n",
-                "\u3002\n",  # Ideographic full stop
-                ".\n",
-                "\uff1f",  # Fullwidth question mark
-                "? ",
-                "\uff01",  # Fullwidth exclamation mark
-                "! ",
-                "\u3002",  # Ideographic full stop
-                ". ",
-                "; ",
-                ": ",
-                "—",
-                "--",
-                "\uff0c",  # Fullwidth comma
-                "\u3001",  # Ideographic comma
-                ", ",
-                "\u200b",  # Zero-width space
-                " ",
-                "",
-            ],
-            keep_separator="end",
-        )
 
     @classmethod
     def _is_reserved_field(cls, field: str) -> bool:
@@ -271,7 +233,7 @@ class EventMemory:
         self._validate_events(events)
 
         segments = [
-            segment for event in events for segment in self._create_segments(event)
+            segment for event in events for segment in self._segmenter.segment(event)
         ]
         t_segmentation = time.monotonic()
 
@@ -356,44 +318,6 @@ class EventMemory:
             vector=list(derivative_embedding),
             properties=properties,
         )
-
-    def _create_segments(
-        self,
-        event: Event,
-    ) -> list[Segment]:
-        """Split an event's blocks into single-block segments, propagating context."""
-        segments: list[Segment] = []
-        for index, block in enumerate(event.blocks):
-            match block:
-                case TextBlock(text=text):
-                    chunks = self._text_splitter.split_text(text)
-                    segments.extend(
-                        Segment(
-                            uuid=uuid4(),
-                            event_uuid=event.uuid,
-                            index=index,
-                            offset=offset,
-                            timestamp=event.timestamp,
-                            block=TextBlock(text=chunk),
-                            context=event.context,
-                            properties=event.properties,
-                        )
-                        for offset, chunk in enumerate(chunks)
-                    )
-                case _:
-                    segments.append(
-                        Segment(
-                            uuid=uuid4(),
-                            event_uuid=event.uuid,
-                            index=index,
-                            offset=0,
-                            timestamp=event.timestamp,
-                            block=block,
-                            context=event.context,
-                            properties=event.properties,
-                        )
-                    )
-        return segments
 
     @classmethod
     def _to_vector_record_property(cls, field: str) -> str:

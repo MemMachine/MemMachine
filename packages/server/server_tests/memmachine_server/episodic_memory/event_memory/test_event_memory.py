@@ -36,6 +36,9 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
+    TextSegmenter,
+)
 
 from .conftest import (
     InMemorySegmentStorePartition,
@@ -217,10 +220,11 @@ class TestEncodeEvents:
         partition = InMemorySegmentStorePartition()
         em = EventMemory(
             EventMemoryParams(
-                vector_store_collection=collection,
                 segment_store_partition=partition,
-                embedder=fake_embedder,
+                vector_store_collection=collection,
+                segmenter=TextSegmenter(),
                 deriver=WholeTextDeriver(),
+                embedder=fake_embedder,
             )
         )
         event = _make_event("hi", context=ProducerContext(producer="Alice"))
@@ -251,6 +255,7 @@ class TestEncodeEvents:
                 EventMemoryParams(
                     vector_store_collection=collection,
                     segment_store_partition=partition,
+                    segmenter=TextSegmenter(),
                     embedder=fake_embedder,
                     deriver=WholeTextDeriver(),
                 )
