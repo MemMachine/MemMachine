@@ -79,8 +79,8 @@ def format_memory(episodes, summary) -> str:
 
 
 async def process_question(
-    resource_manager,
-    group_id,
+    memory,
+    answer_model,
     user,
     question,
     answer,
@@ -89,11 +89,6 @@ async def process_question(
     adversarial_answer,
 ):
     memory_start = time.time()
-    memory, answer_model, _ = await agent_utils.init_memmachine_params(
-        resource_manager=resource_manager,
-        session_id=group_id,
-    )
-
     query_response = await memory.query_memory(
         query=question, limit=30, expand_context=3
     )
@@ -110,8 +105,6 @@ async def process_question(
     episodes = long_term_episodes + short_term_episodes
     summary = summaries[0] if summaries else ""
     memory_end = time.time()
-
-    await memory.close()
 
     formatted_context = format_memory(episodes, summary)
     prompt = ANSWER_PROMPT.format(
@@ -185,6 +178,11 @@ async def main() -> None:
 
         group_id = f"group_{idx}"
 
+        memory, answer_model, _ = await agent_utils.init_memmachine_params(
+            resource_manager=resource_manager,
+            session_id=group_id,
+        )
+
         async def respond_question(qa):
             question = qa["question"]
             answer = qa.get("answer", "")
@@ -194,8 +192,8 @@ async def main() -> None:
             adversarial_answer = qa.get("adversarial_answer", "")
 
             question_response = await process_question(
-                resource_manager,
-                group_id,
+                memory,
+                answer_model,
                 user,
                 question,
                 answer,
@@ -208,9 +206,12 @@ async def main() -> None:
                 question_response,
             )
 
-        responses = []
-        for qa in qa_list:
-            responses.append(await respond_question(qa))
+        try:
+            responses = []
+            for qa in qa_list:
+                responses.append(await respond_question(qa))
+        finally:
+            await memory.close()
 
         for category, response in responses:
             category_result = results.get(category, [])
