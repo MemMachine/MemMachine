@@ -248,9 +248,16 @@ class EventMemory:
         ]
         t_derivation = time.monotonic()
 
-        derivative_embeddings = await self._embedder.ingest_embed(
-            [EventMemory._block_text(derivative.block) for derivative in derivatives],
-        )
+        derivative_texts: list[str] = []
+        for derivative in derivatives:
+            text = EventMemory._extract_text(derivative.block)
+            if text is None:
+                raise NotImplementedError(
+                    f"Unsupported block type: {type(derivative.block).__name__}"
+                )
+            derivative_texts.append(text)
+
+        derivative_embeddings = await self._embedder.ingest_embed(derivative_texts)
         t_embedding = time.monotonic()
 
         await self._segment_store_partition.add_segments(
@@ -708,17 +715,6 @@ class EventMemory:
                 return text
             case _:
                 return None
-
-    @staticmethod
-    def _block_text(block: Block) -> str:
-        """Extract text from a block; raise on non-text blocks."""
-        match block:
-            case TextBlock(text=text):
-                return text
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported block type: {type(block).__name__}"
-                )
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
         """Forget events by their UUIDs."""
