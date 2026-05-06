@@ -185,10 +185,15 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
 
         conf = self.conf.openai_responses_language_model_confs[name]
 
+        # The OpenAI SDK rejects an empty api_key, but local OpenAI-compatible
+        # endpoints (Ollama, vLLM, etc.) don't require one — supply a
+        # placeholder so the client can be constructed.
+        api_key = conf.api_key.get_secret_value() or "EMPTY"
+
         return OpenAIResponsesLanguageModel(
             OpenAIResponsesLanguageModelParams(
                 client=openai.AsyncOpenAI(
-                    api_key=conf.api_key.get_secret_value(),
+                    api_key=api_key,
                     base_url=conf.base_url,
                 ),
                 model=conf.model,
@@ -207,10 +212,15 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
 
         conf = self.conf.openai_chat_completions_language_model_confs[name]
 
+        # The OpenAI SDK rejects an empty api_key, but local OpenAI-compatible
+        # endpoints (Ollama, vLLM, etc.) don't require one — supply a
+        # placeholder so the client can be constructed.
+        api_key = conf.api_key.get_secret_value() or "EMPTY"
+
         return OpenAIChatCompletionsLanguageModel(
             OpenAIChatCompletionsLanguageModelParams(
                 client=openai.AsyncOpenAI(
-                    api_key=conf.api_key.get_secret_value(),
+                    api_key=api_key,
                     base_url=conf.base_url,
                 ),
                 model=conf.model,
