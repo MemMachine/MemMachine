@@ -165,6 +165,20 @@ class EventMemory:
             prefix="event_memory",
         )
 
+        self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
+        self._query_phase_seconds: MetricsFactory.Histogram | None = None
+        if params.metrics_factory is not None:
+            self._encode_events_phase_seconds = params.metrics_factory.get_histogram(
+                "event_memory_encode_events_phase_seconds",
+                "Time spent in each phase of encode_events",
+                label_names=("phase",),
+            )
+            self._query_phase_seconds = params.metrics_factory.get_histogram(
+                "event_memory_query_phase_seconds",
+                "Time spent in each phase of query",
+                label_names=("phase",),
+            )
+
         self._text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=params.max_text_chunk_length,
             chunk_overlap=0,
@@ -259,7 +273,7 @@ class EventMemory:
         segments = [
             segment for event in events for segment in self._create_segments(event)
         ]
-        t_segment = time.monotonic()
+        t_segmentation = time.monotonic()
 
         segments_to_derivatives: dict[Segment, list[Derivative]] = {
             segment: self._deriver.derive(segment) for segment in segments
@@ -270,12 +284,12 @@ class EventMemory:
             for segment_derivatives in segments_to_derivatives.values()
             for derivative in segment_derivatives
         ]
-        t_derive = time.monotonic()
+        t_derivation = time.monotonic()
 
         derivative_embeddings = await self._embedder.ingest_embed(
             [EventMemory._block_text(derivative.block) for derivative in derivatives],
         )
-        t_embed = time.monotonic()
+        t_embedding = time.monotonic()
 
         await self._segment_store_partition.add_segments(
             {
@@ -283,7 +297,7 @@ class EventMemory:
                 for segment, segment_derivatives in segments_to_derivatives.items()
             }
         )
-        t_seg_store = time.monotonic()
+        t_segment_store = time.monotonic()
 
         derivative_records = [
             EventMemory._build_derivative_record(derivative, derivative_embedding)
@@ -296,23 +310,30 @@ class EventMemory:
 
         if derivative_records:
             await self._vector_store_collection.upsert(records=derivative_records)
-        t_v_store = time.monotonic()
+        t_vector_store = time.monotonic()
+
+        phase_durations = {
+            "segmentation": t_segmentation - t_start,
+            "derivation": t_derivation - t_segmentation,
+            "embedding": t_embedding - t_derivation,
+            "segment_store": t_segment_store - t_embedding,
+            "vector_store": t_vector_store - t_segment_store,
+        }
 
         logger.debug(
-            "Ingest timing: "
-            "segment=%.3fs "
-            "derive=%.3fs "
-            "embed=%.3fs "
-            "seg_store=%.3fs "
-            "v_store=%.3fs "
-            "total=%.3fs",
-            t_segment - t_start,
-            t_derive - t_segment,
-            t_embed - t_derive,
-            t_seg_store - t_embed,
-            t_v_store - t_seg_store,
-            t_v_store - t_start,
+            "encode_events timing: %s total=%.3fs",
+            " ".join(
+                f"{phase}={duration:.3f}s"
+                for phase, duration in phase_durations.items()
+            ),
+            t_vector_store - t_start,
         )
+
+        if self._encode_events_phase_seconds is not None:
+            for phase, duration in phase_durations.items():
+                self._encode_events_phase_seconds.observe(
+                    duration, labels={"phase": phase}
+                )
 
     @classmethod
     def _build_derivative_record(
@@ -450,7 +471,7 @@ class EventMemory:
                 [query],
             )
         )[0]
-        t_embed = time.monotonic()
+        t_embedding = time.monotonic()
 
         # Translate filter fields for vector store.
         collection_filter = (
@@ -467,7 +488,7 @@ class EventMemory:
             return_vector=False,
             return_properties=True,
         )
-        t_v_query = time.monotonic()
+        t_vector_query = time.monotonic()
 
         # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
@@ -498,7 +519,7 @@ class EventMemory:
                 property_filter=property_filter,
             )
         )
-        t_s_query = time.monotonic()
+        t_segment_query = time.monotonic()
 
         # Filter to seeds with results, preserving similarity order.
         kept_seed_segment_uuids = [
@@ -521,7 +542,7 @@ class EventMemory:
             scores = await self._score_segment_contexts(
                 query, segment_contexts, format_options
             )
-        t_score = time.monotonic()
+        t_scoring = time.monotonic()
 
         # Reranker scores are always higher-is-better.
         # Embedding scores depend on the similarity metric.
@@ -546,23 +567,26 @@ class EventMemory:
                 reverse=higher_is_better,
             )
         ]
-        t_result = time.monotonic()
+
+        phase_durations = {
+            "embedding": t_embedding - t_start,
+            "vector_query": t_vector_query - t_embedding,
+            "segment_query": t_segment_query - t_vector_query,
+            "scoring": t_scoring - t_segment_query,
+        }
 
         logger.debug(
-            "Query timing: "
-            "embed=%.3fs "
-            "v_query=%.3fs "
-            "s_query=%.3fs "
-            "score=%.3fs "
-            "result=%.3fs "
-            "total=%.3fs",
-            t_embed - t_start,
-            t_v_query - t_embed,
-            t_s_query - t_v_query,
-            t_score - t_s_query,
-            t_result - t_score,
-            t_result - t_start,
+            "query timing: %s total=%.3fs",
+            " ".join(
+                f"{phase}={duration:.3f}s"
+                for phase, duration in phase_durations.items()
+            ),
+            time.monotonic() - t_start,
         )
+
+        if self._query_phase_seconds is not None:
+            for phase, duration in phase_durations.items():
+                self._query_phase_seconds.observe(duration, labels={"phase": phase})
 
         return QueryResult(scored_segment_contexts=scored_segment_contexts)
 
