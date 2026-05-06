@@ -81,7 +81,6 @@ def format_memory(episodes, summary) -> str:
 async def process_question(
     memory,
     answer_model,
-    user,
     question,
     answer,
     category,
@@ -169,9 +168,6 @@ async def main() -> None:
         if "conversation" not in item:
             continue
 
-        conversation = item["conversation"]
-        user = conversation["speaker_a"]
-
         qa_list = item["qa"]
 
         print(f"Processing questions for group {idx}...")
@@ -194,7 +190,6 @@ async def main() -> None:
             question_response = await process_question(
                 memory,
                 answer_model,
-                user,
                 question,
                 answer,
                 category,
