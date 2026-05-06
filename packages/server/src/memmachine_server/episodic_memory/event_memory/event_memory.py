@@ -229,15 +229,6 @@ class EventMemory:
                 f"{', '.join(sorted(reserved_fields))}"
             )
 
-        missing_fields = (
-            EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
-        )
-        if missing_fields:
-            raise ValueError(
-                f"Events require properties missing from the collection schema: "
-                f"{', '.join(sorted(missing_fields))}"
-            )
-
     async def encode_events(
         self,
         events: Iterable[Event],
