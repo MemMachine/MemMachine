@@ -179,11 +179,6 @@ class EventMemory:
                 label_names=("phase",),
             )
 
-    @classmethod
-    def _is_reserved_field(cls, field: str) -> bool:
-        """Returns whether a property field is reserved."""
-        return field in cls._BASE_EVENT_MEMORY_FIELD_NAMES
-
     def _validate_events(self, events: Iterable[Event]) -> None:
         """
         Validate a batch of events before encoding.
@@ -197,7 +192,7 @@ class EventMemory:
             field
             for event in events
             for field in event.properties
-            if EventMemory._is_reserved_field(field)
+            if field in EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES
         }
         if reserved_fields:
             raise ValueError(
