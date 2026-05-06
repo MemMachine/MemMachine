@@ -65,6 +65,9 @@ nebula = [
 qdrant = [
     "qdrant-client>=1.17.0",
 ]
+litellm = [
+    "litellm>=1.63.0",
+]
 
 [project.scripts]
 memmachine-server = "memmachine_server.server.app:main"

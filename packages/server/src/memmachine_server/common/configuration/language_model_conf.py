@@ -277,11 +277,13 @@ class LanguageModelsConf(BaseModel):
             language_model_id in self.openai_responses_language_model_confs
             or language_model_id in self.openai_chat_completions_language_model_confs
             or language_model_id in self.amazon_bedrock_language_model_confs
+            or language_model_id in self.litellm_language_model_confs
         )
 
     OPENAI_RESPONSE: ClassVar[str] = "openai-responses"
     OPEN_CHAT_COMPLETION: ClassVar[str] = "openai-chat-completions"
     AMAZON_BEDROCK: ClassVar[str] = "amazon-bedrock"
+    LITELLM: ClassVar[str] = "litellm"
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
 
@@ -304,6 +306,9 @@ class LanguageModelsConf(BaseModel):
         for lm_id, cfg in self.amazon_bedrock_language_model_confs.items():
             add_language_model(lm_id, self.AMAZON_BEDROCK, cfg.to_yaml_dict())
 
+        for lm_id, cfg in self.litellm_language_model_confs.items():
+            add_language_model(lm_id, self.LITELLM, cfg.to_yaml_dict())
+
         return language_models
 
     def to_yaml(self) -> str:
@@ -321,7 +326,7 @@ class LanguageModelsConf(BaseModel):
         if isinstance(lm, cls):
             return lm
 
-        openai_dict, aws_bedrock_dict, openai_chat_completions_dict = {}, {}, {}
+        openai_dict, aws_bedrock_dict, openai_chat_completions_dict, litellm_dict = {}, {}, {}, {}
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
@@ -336,6 +341,8 @@ class LanguageModelsConf(BaseModel):
                 )
             elif provider == "amazon-bedrock":
                 aws_bedrock_dict[lm_id] = AmazonBedrockLanguageModelConf(**conf)
+            elif provider == "litellm":
+                litellm_dict[lm_id] = LiteLLMLanguageModelConf(**conf)
             else:
                 raise ValueError(
                     f"Unknown language model provider '{provider}' for language model id '{lm_id}'",
@@ -345,4 +352,5 @@ class LanguageModelsConf(BaseModel):
             openai_responses_language_model_confs=openai_dict,
             amazon_bedrock_language_model_confs=aws_bedrock_dict,
             openai_chat_completions_language_model_confs=openai_chat_completions_dict,
+            litellm_language_model_confs=litellm_dict,
         )

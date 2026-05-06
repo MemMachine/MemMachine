@@ -156,7 +156,13 @@ class LiteLLMLanguageModel(OpenAIChatCompletionsLanguageModel):
         max_attempts: int,
         generate_response_call_uuid: object,
     ) -> ChatCompletion | AsyncIterator[object] | object:
-        import litellm
+        try:
+            import litellm
+        except ImportError as e:
+            raise ImportError(
+                "litellm is required for LiteLLMLanguageModel. "
+                "Install it with: pip install memmachine-server[litellm]"
+            ) from e
 
         merged_args: dict[str, Any] = dict(args)
         # MemMachine's parent OpenAI implementation passes `store=False`,

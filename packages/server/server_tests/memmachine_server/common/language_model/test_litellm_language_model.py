@@ -7,11 +7,19 @@ delegates the parsing to the parent class while routing the request through
 `litellm.acompletion`.
 """
 
+import sys
+import types
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from openai.types import chat as openai_chat
+
+# Inject a fake litellm module so tests don't require the real package.
+if "litellm" not in sys.modules:
+    _fake_litellm = types.ModuleType("litellm")
+    _fake_litellm.acompletion = AsyncMock()
+    sys.modules["litellm"] = _fake_litellm
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.language_model.litellm_language_model import (
