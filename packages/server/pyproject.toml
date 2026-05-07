@@ -66,7 +66,7 @@ qdrant = [
     "qdrant-client>=1.17.0",
 ]
 litellm = [
-    "litellm>=1.63.0",
+    "litellm>=1.63.0,<1.85",
 ]
 
 [project.scripts]

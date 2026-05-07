@@ -180,11 +180,11 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         ret: LanguageModel | None = None
         if name in self.conf.openai_responses_language_model_confs:
             ret = self._build_openai_responses_language_model(name)
-        if name in self.conf.openai_chat_completions_language_model_confs:
+        elif name in self.conf.openai_chat_completions_language_model_confs:
             ret = self._build_openai_chat_completions_language_model(name)
-        if name in self.conf.amazon_bedrock_language_model_confs:
+        elif name in self.conf.amazon_bedrock_language_model_confs:
             ret = self._build_amazon_bedrock_language_model(name)
-        if name in self.conf.litellm_language_model_confs:
+        elif name in self.conf.litellm_language_model_confs:
             ret = self._build_litellm_language_model(name)
         if ret is None:
             raise InvalidLanguageModelError(

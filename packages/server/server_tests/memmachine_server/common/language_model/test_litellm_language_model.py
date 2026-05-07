@@ -21,8 +21,8 @@ if "litellm" not in sys.modules:
     _fake_litellm.acompletion = AsyncMock()
     sys.modules["litellm"] = _fake_litellm
 
-from memmachine_server.common.data_types import ExternalServiceAPIError
-from memmachine_server.common.language_model.litellm_language_model import (
+from memmachine_server.common.data_types import ExternalServiceAPIError  # noqa: E402
+from memmachine_server.common.language_model.litellm_language_model import (  # noqa: E402
     LiteLLMLanguageModel,
     LiteLLMLanguageModelParams,
     _is_retryable_litellm_error,
@@ -84,9 +84,9 @@ async def test_request_chat_completion_dispatches_to_litellm(
 
     assert result is fake_response
     fake_acomp.assert_awaited_once()
+    assert fake_acomp.await_args is not None
     kwargs = fake_acomp.await_args.kwargs
     assert kwargs["model"] == "anthropic/claude-sonnet-4-6"
-    # drop_params=True is forwarded by default to keep parent OpenAI args portable
     assert kwargs["drop_params"] is True
 
 
@@ -113,6 +113,7 @@ async def test_request_chat_completion_forwards_api_base_and_key() -> None:
             generate_response_call_uuid="uuid",
         )
 
+    assert fake_acomp.await_args is not None
     kwargs = fake_acomp.await_args.kwargs
     assert kwargs["api_key"] == "sk-test"
     assert kwargs["api_base"] == "http://localhost:4000"
@@ -144,6 +145,7 @@ async def test_request_chat_completion_does_not_overwrite_explicit_kwargs() -> N
             generate_response_call_uuid="uuid",
         )
 
+    assert fake_acomp.await_args is not None
     assert fake_acomp.await_args.kwargs["api_key"] == "from-caller"
 
 
@@ -168,6 +170,7 @@ async def test_request_chat_completion_extra_kwargs_forwarded() -> None:
             generate_response_call_uuid="uuid",
         )
 
+    assert fake_acomp.await_args is not None
     assert fake_acomp.await_args.kwargs["metadata"] == {"tag": "memmachine"}
 
 
@@ -175,12 +178,12 @@ async def test_request_chat_completion_extra_kwargs_forwarded() -> None:
 async def test_request_chat_completion_retries_on_retryable_error(
     model_params: LiteLLMLanguageModelParams,
 ) -> None:
-    class TransientRateLimit(Exception):
+    class TransientRateLimitError(Exception):
         pass
 
-    TransientRateLimit.__name__ = "RateLimitError"
+    TransientRateLimitError.__name__ = "RateLimitError"
     fake_response = _make_chat_completion()
-    side_effects = [TransientRateLimit("slow down"), fake_response]
+    side_effects = [TransientRateLimitError("slow down"), fake_response]
 
     lm = LiteLLMLanguageModel(model_params)
     with patch(
@@ -202,46 +205,50 @@ async def test_request_chat_completion_retries_on_retryable_error(
 async def test_request_chat_completion_raises_external_service_error_after_max_attempts(
     model_params: LiteLLMLanguageModelParams,
 ) -> None:
-    class TransientRateLimit(Exception):
+    class TransientRateLimitError(Exception):
         pass
 
-    TransientRateLimit.__name__ = "RateLimitError"
+    TransientRateLimitError.__name__ = "RateLimitError"
 
     lm = LiteLLMLanguageModel(model_params)
-    with patch(
-        "litellm.acompletion",
-        new_callable=AsyncMock,
-        side_effect=TransientRateLimit("nope"),
+    with (
+        patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=TransientRateLimitError("nope"),
+        ),
+        pytest.raises(ExternalServiceAPIError),
     ):
-        with pytest.raises(ExternalServiceAPIError):
-            await lm._request_chat_completion(
-                args={"model": "x", "messages": []},
-                max_attempts=2,
-                generate_response_call_uuid="uuid",
-            )
+        await lm._request_chat_completion(
+            args={"model": "x", "messages": []},
+            max_attempts=2,
+            generate_response_call_uuid="uuid",
+        )
 
 
 @pytest.mark.asyncio
 async def test_request_chat_completion_non_retryable_error_raises_immediately(
     model_params: LiteLLMLanguageModelParams,
 ) -> None:
-    class HardError(Exception):
+    class HardRequestError(Exception):
         pass
 
-    HardError.__name__ = "BadRequestError"
+    HardRequestError.__name__ = "BadRequestError"
 
     lm = LiteLLMLanguageModel(model_params)
-    with patch(
-        "litellm.acompletion",
-        new_callable=AsyncMock,
-        side_effect=HardError("bad input"),
-    ) as fake_acomp:
-        with pytest.raises(ExternalServiceAPIError):
-            await lm._request_chat_completion(
-                args={"model": "x", "messages": []},
-                max_attempts=3,
-                generate_response_call_uuid="uuid",
-            )
+    with (
+        patch(
+            "litellm.acompletion",
+            new_callable=AsyncMock,
+            side_effect=HardRequestError("bad input"),
+        ) as fake_acomp,
+        pytest.raises(ExternalServiceAPIError),
+    ):
+        await lm._request_chat_completion(
+            args={"model": "x", "messages": []},
+            max_attempts=3,
+            generate_response_call_uuid="uuid",
+        )
     assert fake_acomp.await_count == 1
 
 
@@ -257,7 +264,6 @@ def test_is_retryable_litellm_error_recognizes_known_classes() -> None:
         ("ValueError", False),
     ]
     for name, expected in cases:
-        # Construct a dummy exception subclass with the given name
         cls = type(name, (Exception,), {})
         assert _is_retryable_litellm_error(cls()) is expected, name
 

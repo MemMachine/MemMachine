@@ -157,7 +157,7 @@ class LiteLLMLanguageModel(OpenAIChatCompletionsLanguageModel):
         generate_response_call_uuid: object,
     ) -> ChatCompletion | AsyncIterator[object] | object:
         try:
-            import litellm
+            import litellm  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
                 "litellm is required for LiteLLMLanguageModel. "
