@@ -101,7 +101,6 @@ class Event(BaseModel):
     context: Context = Field(default_factory=NullContext)
     blocks: list[Block]
     properties: dict[str, PropertyValue] = Field(default_factory=dict)
-    metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("properties", mode="before")
     @classmethod
