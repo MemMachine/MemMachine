@@ -162,18 +162,37 @@ class MemMachine:
         if ltm.embedder is None:
             return
 
-        ltm.reranker = self._resolve_ltm_resource_default(
-            current_value=ltm.reranker,
-            default_getter=lambda: self._conf.default_long_term_memory_reranker,
-            missing_warning=(
-                "No default reranker configured; disabling long-term episodic memory."
-            ),
-        )
-        if ltm.reranker is None:
-            return
+        # Reranker is required for declarative; optional for event.
+        backend = ltm.backend if ltm.backend is not None else "declarative"
+        if backend == "declarative":
+            ltm.reranker = self._resolve_ltm_resource_default(
+                current_value=ltm.reranker,
+                default_getter=lambda: self._conf.default_long_term_memory_reranker,
+                missing_warning=(
+                    "No default reranker configured; disabling long-term episodic memory."
+                ),
+            )
+            if ltm.reranker is None:
+                return
 
-        if ltm.vector_graph_store is None:
-            ltm.vector_graph_store = "default_store"
+            if ltm.vector_graph_store is None:
+                ltm.vector_graph_store = "default_store"
+        else:
+            # Event backend: reranker is optional; only resolve if explicit or
+            # available as a default.
+            if ltm.reranker is None:
+                try:
+                    ltm.reranker = self._conf.default_long_term_memory_reranker
+                except (ConfigurationError, Exception):
+                    ltm.reranker = None
+
+            # vector_store + segment_store are required to materialize an
+            # event-backed long-term memory. If either is missing, disable.
+            if ltm.vector_store is None or ltm.segment_store is None:
+                self._disable_long_term_memory(
+                    "Event-backed long-term memory requires both vector_store "
+                    "and segment_store; disabling long-term episodic memory."
+                )
 
     def _disable_long_term_memory(self, warning_message: str) -> None:
         """Disable long-term memory and emit a warning message."""

@@ -24,6 +24,7 @@ from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
     SqlAlchemyConf,
+    SQLiteVectorStoreConf,
     SupportedDB,
 )
 from memmachine_server.common.configuration.embedder_conf import (
@@ -69,6 +70,7 @@ class ConfigurationWizard:
 
     NEO4J_DB_ID = "neo4j_db"
     SQLITE_DB_ID = "sqlite_db"
+    SQLITE_VECTOR_STORE_ID = "sqlite_vector_store"
     LANGUAGE_MODEL_NAME = "llm_model"
     EMBEDDER_NAME = "my_embedder"
     RERANKER_NAME = "my_reranker"
@@ -139,11 +141,13 @@ class ConfigurationWizard:
 
     @cached_property
     def long_term_memory_conf(self) -> LongTermMemoryConfPartial:
-        """Generate long-term memory configuration."""
+        """Generate long-term memory configuration (event-backend default)."""
         return LongTermMemoryConfPartial(
+            backend="event",
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
-            vector_graph_store=self.NEO4J_DB_ID,
+            vector_store=self.SQLITE_VECTOR_STORE_ID,
+            segment_store=self.SQLITE_DB_ID,
         )
 
     @cached_property
@@ -316,9 +320,15 @@ class ConfigurationWizard:
             SqlAlchemyConf,
             db_provider.build_config({"path": "memmachine.db"}),
         )
+        sqlite_vector_store_conf = SQLiteVectorStoreConf(
+            path="memmachine_vector_store.db",
+        )
         return DatabasesConf(
             neo4j_confs={self.NEO4J_DB_ID: neo4j_db_conf},
             relational_db_confs={self.SQLITE_DB_ID: sqlite_db_conf},
+            sqlite_vector_store_confs={
+                self.SQLITE_VECTOR_STORE_ID: sqlite_vector_store_conf,
+            },
         )
 
     @cached_property

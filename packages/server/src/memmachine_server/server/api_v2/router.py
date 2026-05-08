@@ -138,7 +138,7 @@ async def create_project(
         description=spec.description,
         config=ProjectConfig(
             embedder=long_term.embedder if long_term else "",
-            reranker=long_term.reranker if long_term else "",
+            reranker=(long_term.reranker if long_term else "") or "",
         ),
     )
 
@@ -168,7 +168,7 @@ async def get_project(
         description=session_info.description,
         config=ProjectConfig(
             embedder=long_term.embedder if long_term else "",
-            reranker=long_term.reranker if long_term else "",
+            reranker=(long_term.reranker if long_term else "") or "",
         ),
     )
 

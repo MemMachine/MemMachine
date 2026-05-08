@@ -7,9 +7,25 @@ episode_store:
 
 episodic_memory:
   long_term_memory:
+    # Default backend: a VectorGraphStore-backed declarative memory.
+    # backend: declarative                  # explicit; same as omitting the field
     embedder: openai_embedder
     reranker: my_reranker_id
     vector_graph_store: nebula_storage  # Using NebulaGraph
+    #
+    # Alternative backend: event memory (VectorStore + SegmentStore).
+    # backend: event
+    # embedder: openai_embedder
+    # reranker: my_reranker_id              # optional; omit to use embedding scores
+    # vector_store: event_vector_store      # references resources.databases
+    # segment_store: profile_storage        # references a relational DB; segment store is created from it
+    # properties_schema:                    # optional — user-defined filterable properties
+    #   source_role: str
+    #   target_id: str
+    # segmenter:                            # optional — defaults to passthrough
+    #   type: passthrough                   # or: text (with max_chunk_length)
+    # deriver:                              # optional — defaults to whole-text deriver
+    #   type: whole_text                    # or: sentence_text
   short_term_memory:
     llm_model: openai_model
     message_capacity: 500

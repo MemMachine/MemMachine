@@ -10,6 +10,7 @@ from memmachine_server.common.configuration import (
     EpisodicMemoryConfPartial,
 )
 from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -34,6 +35,7 @@ def test_update_long_term_memory_conf(long_term_memory_conf: LongTermMemoryConfP
     )
 
     updated = specific.merge(long_term_memory_conf)
+    assert isinstance(updated, DeclarativeLongTermMemoryConf)
     assert updated.session_id == "session_123"
     assert updated.embedder == "embedder_v2"
     assert updated.reranker == "reranker_v1"
