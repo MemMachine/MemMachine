@@ -77,7 +77,7 @@ async def llm_feature_update(
     user_prompt = (
         "The old feature set is provided below:\n"
         "<OLD_PROFILE>\n"
-        f"{json.dumps(_features_to_llm_format(features))}\n"
+        f"{json.dumps(_features_to_llm_format(features), ensure_ascii=False)}\n"
         "</OLD_PROFILE>\n"
         "\n"
         "The history is provided below:\n"
@@ -133,7 +133,9 @@ async def llm_consolidate_features(
     """Merge overlapping features and return consolidation commands from the LLM."""
     parsed_output = await model.generate_parsed_response(
         system_prompt=consolidate_prompt,
-        user_prompt=json.dumps(_features_to_consolidation_format(features)),
+        user_prompt=json.dumps(
+            _features_to_consolidation_format(features), ensure_ascii=False
+        ),
         output_format=SemanticConsolidateMemoryRes,
     )
 

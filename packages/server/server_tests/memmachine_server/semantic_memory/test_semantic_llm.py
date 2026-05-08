@@ -312,3 +312,133 @@ class TestConsolidationSerialization:
         assert entry["feature"] == "observer_fix"
         assert entry["value"] == "Fixed observer subagent bug"
         assert entry["metadata"] == {"id": "42"}
+
+
+class TestNonAsciiPromptSerialization:
+    """Both ``llm_feature_update`` and ``llm_consolidate_features`` embed
+    the existing feature set into the user prompt via
+    ``json.dumps(..., ensure_ascii=False)``. The non-ASCII payload must
+    survive into the prompt as literal Unicode (so the LLM sees
+    ``"寿司"`` and not ``"\\u5bff\\u53f8"``) and the prompt must remain
+    a valid UTF-8 string."""
+
+    @pytest.fixture
+    def non_ascii_features(self):
+        return [
+            SemanticFeature(
+                category="Profile",
+                tag="食べ物",  # tag itself is non-ASCII
+                feature_name="favorite_dish",
+                value="寿司 🍣",
+                metadata=SemanticFeature.Metadata(id="100"),
+            ),
+            SemanticFeature(
+                category="Profile",
+                tag="préférences",
+                feature_name="café",
+                value="naïve résumé — Привет",
+                metadata=SemanticFeature.Metadata(id="101"),
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_feature_update_prompt_preserves_non_ascii_literally(
+        self,
+        magic_mock_llm_model: MagicMock,
+        non_ascii_features: list[SemanticFeature],
+    ):
+        magic_mock_llm_model.generate_parsed_response.return_value = {"commands": []}
+
+        await llm_feature_update(
+            features=non_ascii_features,
+            message_content="I had 寿司 for lunch",
+            model=magic_mock_llm_model,
+            update_prompt="Update features",
+        )
+
+        # The user_prompt is the second positional or 'user_prompt' kwarg.
+        call_kwargs = magic_mock_llm_model.generate_parsed_response.call_args.kwargs
+        user_prompt = call_kwargs["user_prompt"]
+
+        # Literal Unicode reaches the LLM, no escape sequences.
+        assert "食べ物" in user_prompt
+        assert "寿司 🍣" in user_prompt
+        assert "préférences" in user_prompt
+        assert "café" in user_prompt
+        assert "naïve résumé — Привет" in user_prompt
+        assert "\\u" not in user_prompt
+
+        # The prompt is UTF-8 transport-safe.
+        assert user_prompt.encode("utf-8").decode("utf-8") == user_prompt
+
+    @pytest.mark.asyncio
+    async def test_consolidate_prompt_preserves_non_ascii_literally(
+        self,
+        magic_mock_llm_model: MagicMock,
+        non_ascii_features: list[SemanticFeature],
+    ):
+        magic_mock_llm_model.generate_parsed_response.return_value = {
+            "consolidated_memories": [],
+            "keep_memories": None,
+        }
+
+        await llm_consolidate_features(
+            features=non_ascii_features,
+            model=magic_mock_llm_model,
+            consolidate_prompt="Consolidate features",
+        )
+
+        call_kwargs = magic_mock_llm_model.generate_parsed_response.call_args.kwargs
+        user_prompt = call_kwargs["user_prompt"]
+
+        assert "食べ物" in user_prompt
+        assert "寿司 🍣" in user_prompt
+        assert "préférences" in user_prompt
+        assert "naïve résumé — Привет" in user_prompt
+        assert "\\u" not in user_prompt
+        assert user_prompt.encode("utf-8").decode("utf-8") == user_prompt
+
+        # The consolidation prompt is bare JSON — verify it still parses
+        # and round-trips losslessly.
+        import json
+
+        parsed = json.loads(user_prompt)
+        assert parsed[0]["tag"] == "食べ物"
+        assert parsed[0]["value"] == "寿司 🍣"
+        assert parsed[0]["metadata"] == {"id": "100"}
+        assert parsed[1]["feature"] == "café"
+        assert parsed[1]["value"] == "naïve résumé — Привет"
+
+    @pytest.mark.asyncio
+    async def test_feature_update_prompt_old_profile_block_is_valid_json(
+        self,
+        magic_mock_llm_model: MagicMock,
+        non_ascii_features: list[SemanticFeature],
+    ):
+        """The feature-update prompt wraps the JSON inside ``<OLD_PROFILE>``
+        delimiters; the inner block must still parse as JSON so the LLM
+        is shown structurally valid input."""
+        magic_mock_llm_model.generate_parsed_response.return_value = {"commands": []}
+
+        await llm_feature_update(
+            features=non_ascii_features,
+            message_content="…",
+            model=magic_mock_llm_model,
+            update_prompt="Update features",
+        )
+
+        user_prompt = magic_mock_llm_model.generate_parsed_response.call_args.kwargs[
+            "user_prompt"
+        ]
+
+        start = user_prompt.index("<OLD_PROFILE>\n") + len("<OLD_PROFILE>\n")
+        end = user_prompt.index("\n</OLD_PROFILE>")
+        old_profile_json = user_prompt[start:end]
+
+        import json
+
+        parsed = json.loads(old_profile_json)
+        assert parsed == {
+            "食べ物": {"favorite_dish": "寿司 🍣"},
+            "préférences": {"café": "naïve résumé — Привет"},
+        }
