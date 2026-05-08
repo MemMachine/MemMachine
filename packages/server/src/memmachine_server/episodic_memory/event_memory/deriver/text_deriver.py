@@ -48,7 +48,7 @@ class WholeTextDeriver(Deriver):
     """Emits one derivative with the segment's whole text formatted in context."""
 
     @override
-    def derive(self, segment: Segment) -> list[Derivative]:
+    async def derive(self, segment: Segment) -> list[Derivative]:
         match segment.block:
             case TextBlock(text=text):
                 return _build_text_derivatives(
@@ -64,7 +64,7 @@ class SentenceTextDeriver(Deriver):
     """Emits one derivative per sentence in the segment's text, formatted in context."""
 
     @override
-    def derive(self, segment: Segment) -> list[Derivative]:
+    async def derive(self, segment: Segment) -> list[Derivative]:
         match segment.block:
             case TextBlock(text=text):
                 return _build_text_derivatives(

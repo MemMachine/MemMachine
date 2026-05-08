@@ -66,7 +66,7 @@ class TextSegmenter(Segmenter):
         )
 
     @override
-    def segment(self, event: Event) -> list[Segment]:
+    async def segment(self, event: Event) -> list[Segment]:
         segments: list[Segment] = []
         for index, block in enumerate(event.blocks):
             match block:

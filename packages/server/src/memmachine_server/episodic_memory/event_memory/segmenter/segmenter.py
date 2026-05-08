@@ -12,6 +12,6 @@ class Segmenter(ABC):
     """Segmenter ABC for segmenting events into segments."""
 
     @abstractmethod
-    def segment(self, event: Event) -> list[Segment]:
+    async def segment(self, event: Event) -> list[Segment]:
         """Segment an event into segments."""
         raise NotImplementedError

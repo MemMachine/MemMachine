@@ -1,5 +1,6 @@
 """Event memory system for storing and retrieving events."""
 
+import asyncio
 import datetime
 import json
 import logging
@@ -227,14 +228,20 @@ class EventMemory:
         events = list(events)
         self._validate_events(events)
 
+        segment_lists = await asyncio.gather(
+            *(self._segmenter.segment(event) for event in events)
+        )
         segments = [
-            segment for event in events for segment in self._segmenter.segment(event)
+            segment for segment_list in segment_lists for segment in segment_list
         ]
         t_segmentation = time.monotonic()
 
-        segments_to_derivatives: dict[Segment, list[Derivative]] = {
-            segment: self._deriver.derive(segment) for segment in segments
-        }
+        derivative_lists = await asyncio.gather(
+            *(self._deriver.derive(segment) for segment in segments)
+        )
+        segments_to_derivatives: dict[Segment, list[Derivative]] = dict(
+            zip(segments, derivative_lists, strict=True)
+        )
 
         derivatives = [
             derivative

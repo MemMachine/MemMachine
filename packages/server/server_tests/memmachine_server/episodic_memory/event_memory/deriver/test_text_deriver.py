@@ -19,6 +19,8 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     WholeTextDeriver,
 )
 
+pytestmark = pytest.mark.asyncio
+
 _TS = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
 
 
@@ -65,10 +67,10 @@ def _block_text(block: Block) -> str:
 
 
 class TestWholeTextDeriver:
-    def test_null_context_emits_one_derivative_with_raw_text(self):
+    async def test_null_context_emits_one_derivative_with_raw_text(self):
         seg = _make_segment(block=TextBlock(text="hello world"))
 
-        result = WholeTextDeriver().derive(seg)
+        result = await WholeTextDeriver().derive(seg)
 
         assert len(result) == 1
         derivative = result[0]
@@ -77,80 +79,80 @@ class TestWholeTextDeriver:
         assert derivative.timestamp == seg.timestamp
         assert derivative.context == seg.context
 
-    def test_producer_context_prefixes_text(self):
+    async def test_producer_context_prefixes_text(self):
         seg = _make_segment(
             block=TextBlock(text="hi there"),
             context=ProducerContext(producer="Alice"),
         )
 
-        result = WholeTextDeriver().derive(seg)
+        result = await WholeTextDeriver().derive(seg)
 
         assert len(result) == 1
         assert result[0].block == TextBlock(text="Alice: hi there")
 
-    def test_propagates_segment_properties(self):
+    async def test_propagates_segment_properties(self):
         seg = _make_segment(
             block=TextBlock(text="x"),
             properties={"color": "red", "score": 7},
         )
 
-        result = WholeTextDeriver().derive(seg)
+        result = await WholeTextDeriver().derive(seg)
 
         assert result[0].properties == {"color": "red", "score": 7}
 
-    def test_non_text_block_raises(self):
+    async def test_non_text_block_raises(self):
         seg = _make_segment_with_unsupported_block()
 
         with pytest.raises(NotImplementedError, match="Unsupported block type"):
-            WholeTextDeriver().derive(seg)
+            await WholeTextDeriver().derive(seg)
 
-    def test_each_derive_call_emits_unique_uuid(self):
+    async def test_each_derive_call_emits_unique_uuid(self):
         seg = _make_segment(block=TextBlock(text="x"))
 
-        result1 = WholeTextDeriver().derive(seg)
-        result2 = WholeTextDeriver().derive(seg)
+        result1 = await WholeTextDeriver().derive(seg)
+        result2 = await WholeTextDeriver().derive(seg)
 
         assert result1[0].uuid != result2[0].uuid
 
 
 class TestSentenceTextDeriver:
-    def test_single_sentence_emits_one_derivative(self):
+    async def test_single_sentence_emits_one_derivative(self):
         seg = _make_segment(block=TextBlock(text="Hello world."))
 
-        result = SentenceTextDeriver().derive(seg)
+        result = await SentenceTextDeriver().derive(seg)
 
         assert len(result) == 1
         assert result[0].block == TextBlock(text="Hello world.")
 
-    def test_multi_sentence_emits_one_per_sentence(self):
+    async def test_multi_sentence_emits_one_per_sentence(self):
         seg = _make_segment(
             block=TextBlock(text="First sentence. Second sentence. Third sentence.")
         )
 
-        result = SentenceTextDeriver().derive(seg)
+        result = await SentenceTextDeriver().derive(seg)
 
         # extract_sentences returns a set; assert on the set of derivative texts.
         texts = {_block_text(d.block) for d in result}
         assert texts == {"First sentence.", "Second sentence.", "Third sentence."}
 
-    def test_producer_context_prefixes_each_sentence(self):
+    async def test_producer_context_prefixes_each_sentence(self):
         seg = _make_segment(
             block=TextBlock(text="One. Two."),
             context=ProducerContext(producer="Bob"),
         )
 
-        result = SentenceTextDeriver().derive(seg)
+        result = await SentenceTextDeriver().derive(seg)
 
         texts = {_block_text(d.block) for d in result}
         assert texts == {"Bob: One.", "Bob: Two."}
 
-    def test_propagates_segment_metadata(self):
+    async def test_propagates_segment_metadata(self):
         seg = _make_segment(
             block=TextBlock(text="A. B."),
             properties={"k": "v"},
         )
 
-        result = SentenceTextDeriver().derive(seg)
+        result = await SentenceTextDeriver().derive(seg)
 
         for derivative in result:
             assert derivative.segment_uuid == seg.uuid
@@ -158,8 +160,8 @@ class TestSentenceTextDeriver:
             assert derivative.context == seg.context
             assert derivative.properties == {"k": "v"}
 
-    def test_non_text_block_raises(self):
+    async def test_non_text_block_raises(self):
         seg = _make_segment_with_unsupported_block()
 
         with pytest.raises(NotImplementedError, match="Unsupported block type"):
-            SentenceTextDeriver().derive(seg)
+            await SentenceTextDeriver().derive(seg)
