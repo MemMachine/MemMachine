@@ -18,6 +18,8 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
     TextSegmenter,
 )
 
+pytestmark = pytest.mark.asyncio
+
 _TS = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
 
 
@@ -52,10 +54,10 @@ def _make_event_with_unsupported_block() -> Event:
 
 
 class TestTextSegmenter:
-    def test_short_text_emits_single_segment(self):
+    async def test_short_text_emits_single_segment(self):
         event = _make_event(blocks=[TextBlock(text="hello world")])
 
-        result = TextSegmenter().segment(event)
+        result = await TextSegmenter().segment(event)
 
         assert len(result) == 1
         segment = result[0]
@@ -66,11 +68,11 @@ class TestTextSegmenter:
         assert segment.timestamp == event.timestamp
         assert segment.context == event.context
 
-    def test_long_text_splits_into_multiple_segments(self):
+    async def test_long_text_splits_into_multiple_segments(self):
         long_text = "word " * 1000  # ~5000 chars
         event = _make_event(blocks=[TextBlock(text=long_text.strip())])
 
-        result = TextSegmenter().segment(event)
+        result = await TextSegmenter().segment(event)
 
         assert len(result) > 1
         offsets = sorted(s.offset for s in result)
@@ -81,19 +83,19 @@ class TestTextSegmenter:
             assert isinstance(segment.block, TextBlock)
             assert len(segment.block.text) <= 2000
 
-    def test_max_chunk_length_controls_split_size(self):
+    async def test_max_chunk_length_controls_split_size(self):
         event = _make_event(blocks=[TextBlock(text="word " * 200)])
 
-        small_result = TextSegmenter(max_chunk_length=50).segment(event)
-        large_result = TextSegmenter(max_chunk_length=5000).segment(event)
+        small_result = await TextSegmenter(max_chunk_length=50).segment(event)
+        large_result = await TextSegmenter(max_chunk_length=5000).segment(event)
 
         assert len(small_result) > len(large_result)
         assert len(large_result) == 1
 
-    def test_multiple_blocks_get_distinct_indexes(self):
+    async def test_multiple_blocks_get_distinct_indexes(self):
         event = _make_event(blocks=[TextBlock(text="first"), TextBlock(text="second")])
 
-        result = TextSegmenter().segment(event)
+        result = await TextSegmenter().segment(event)
 
         assert len(result) == 2
         result.sort(key=lambda s: s.index)
@@ -104,43 +106,43 @@ class TestTextSegmenter:
         assert result[0].block == TextBlock(text="first")
         assert result[1].block == TextBlock(text="second")
 
-    def test_propagates_event_context(self):
+    async def test_propagates_event_context(self):
         event = _make_event(
             blocks=[TextBlock(text="hi")],
             context=ProducerContext(producer="Alice"),
         )
 
-        result = TextSegmenter().segment(event)
+        result = await TextSegmenter().segment(event)
 
         assert result[0].context == ProducerContext(producer="Alice")
 
-    def test_propagates_event_properties(self):
+    async def test_propagates_event_properties(self):
         event = _make_event(
             blocks=[TextBlock(text="hi")],
             properties={"color": "red", "score": 7},
         )
 
-        result = TextSegmenter().segment(event)
+        result = await TextSegmenter().segment(event)
 
         assert result[0].properties == {"color": "red", "score": 7}
 
-    def test_empty_blocks_emits_no_segments(self):
+    async def test_empty_blocks_emits_no_segments(self):
         event = _make_event(blocks=[])
 
-        result = TextSegmenter().segment(event)
+        result = await TextSegmenter().segment(event)
 
         assert result == []
 
-    def test_each_segment_call_emits_unique_uuids(self):
+    async def test_each_segment_call_emits_unique_uuids(self):
         event = _make_event(blocks=[TextBlock(text="x")])
 
-        result1 = TextSegmenter().segment(event)
-        result2 = TextSegmenter().segment(event)
+        result1 = await TextSegmenter().segment(event)
+        result2 = await TextSegmenter().segment(event)
 
         assert result1[0].uuid != result2[0].uuid
 
-    def test_non_text_block_raises(self):
+    async def test_non_text_block_raises(self):
         event = _make_event_with_unsupported_block()
 
         with pytest.raises(NotImplementedError, match="Unsupported block type"):
-            TextSegmenter().segment(event)
+            await TextSegmenter().segment(event)

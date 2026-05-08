@@ -12,6 +12,6 @@ class Deriver(ABC):
     """Deriver ABC for deriving derivatives from segments."""
 
     @abstractmethod
-    def derive(self, segment: Segment) -> list[Derivative]:
+    async def derive(self, segment: Segment) -> list[Derivative]:
         """Derive derivatives from a segment."""
         raise NotImplementedError
