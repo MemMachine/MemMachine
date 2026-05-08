@@ -14,9 +14,10 @@ def _long_term_memory_backend_discriminator(value: object) -> str:
     """
     Resolve the long-term-memory backend tag for the discriminated union.
 
-    Treats missing/None `backend` as `"declarative"` so configs and persisted
-    session blobs from before the backend discriminator existed continue to
-    deserialize as the declarative backend.
+    Parse-time default: a missing/None `backend` means the writer predates the
+    discriminator, so deserialize as `"declarative"` (the legacy backend).
+    Code that *creates* new configs is responsible for explicitly setting
+    `backend="event"` if it wants the new default.
     """
     if isinstance(value, dict):
         backend = cast(dict[str, Any], value).get("backend")
@@ -301,7 +302,10 @@ class LongTermMemoryConfPartial(BaseModel):
 
         Resolution rule for the backend discriminator:
         - if either side sets `backend` explicitly, that value wins (primary first).
-        - if both sides leave it None, default to 'declarative' (backwards-compat).
+        - if neither side sets `backend`, default to `declarative` (the legacy
+          shape, for backwards compatibility with pre-discriminator configs).
+          Callers that want event-memory should set `backend="event"`
+          explicitly at creation time (e.g. wizard, project-creation API).
         """
         backend = self.backend if self.backend is not None else other.backend
         if backend is None:

@@ -218,7 +218,15 @@ class MemMachineClient:
             org_id=org_id,
             project_id=project_id,
             description=description,
-            config=ProjectConfig(embedder=embedder, reranker=reranker),
+            config=ProjectConfig(
+                backend=None,
+                embedder=embedder,
+                reranker=reranker,
+                vector_graph_store="",
+                vector_store="",
+                segment_store="",
+                properties_schema={},
+            ),
         )
         data = spec.model_dump(exclude_none=True)
 

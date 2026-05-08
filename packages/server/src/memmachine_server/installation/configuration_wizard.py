@@ -322,6 +322,9 @@ class ConfigurationWizard:
         )
         sqlite_vector_store_conf = SQLiteVectorStoreConf(
             path="memmachine_vector_store.db",
+            # Persist ANN indexes to disk; without this they're rebuilt on every
+            # restart from the SQLite payload table.
+            index_directory="memmachine_vector_indexes",
         )
         return DatabasesConf(
             neo4j_confs={self.NEO4J_DB_ID: neo4j_db_conf},

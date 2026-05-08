@@ -28,6 +28,7 @@ from memmachine_server.common.configuration.embedder_conf import (
 )
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
+    LongTermMemoryConfPartial,
 )
 from memmachine_server.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
@@ -41,6 +42,38 @@ from memmachine_server.common.resource_manager.resource_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _ltm_config_response_from_partial(
+    ltm: LongTermMemoryConfPartial | None,
+    enabled: bool | None,
+) -> LongTermMemoryConfigResponse:
+    """Build a LongTermMemoryConfigResponse from a partial.
+
+    Surfaces both backends' fields. Fields irrelevant to the active backend are
+    left None.
+    """
+    if ltm is None:
+        return LongTermMemoryConfigResponse(
+            backend=None,
+            embedder=None,
+            reranker=None,
+            vector_graph_store=None,
+            vector_store=None,
+            segment_store=None,
+            properties_schema=None,
+            enabled=enabled if enabled is not None else True,
+        )
+    return LongTermMemoryConfigResponse(
+        backend=ltm.backend,
+        embedder=ltm.embedder,
+        reranker=ltm.reranker,
+        vector_graph_store=ltm.vector_graph_store,
+        vector_store=ltm.vector_store,
+        segment_store=ltm.segment_store,
+        properties_schema=ltm.properties_schema,
+        enabled=enabled if enabled is not None else True,
+    )
 
 
 def _get_embedder_provider(manager_conf: EmbeddersConf, name: str) -> str:
@@ -146,6 +179,9 @@ def _apply_ltm_updates(
         em.long_term_memory = ltm
 
     changes: list[str] = []
+    if spec_ltm.backend is not None:
+        ltm.backend = spec_ltm.backend
+        changes.append(f"episodic_memory.long_term_memory.backend={spec_ltm.backend}")
     if spec_ltm.embedder is not None:
         ltm.embedder = spec_ltm.embedder
         changes.append(f"episodic_memory.long_term_memory.embedder={spec_ltm.embedder}")
@@ -156,6 +192,21 @@ def _apply_ltm_updates(
         ltm.vector_graph_store = spec_ltm.vector_graph_store
         changes.append(
             f"episodic_memory.long_term_memory.vector_graph_store={spec_ltm.vector_graph_store}"
+        )
+    if spec_ltm.vector_store is not None:
+        ltm.vector_store = spec_ltm.vector_store
+        changes.append(
+            f"episodic_memory.long_term_memory.vector_store={spec_ltm.vector_store}"
+        )
+    if spec_ltm.segment_store is not None:
+        ltm.segment_store = spec_ltm.segment_store
+        changes.append(
+            f"episodic_memory.long_term_memory.segment_store={spec_ltm.segment_store}"
+        )
+    if spec_ltm.properties_schema is not None:
+        ltm.properties_schema = spec_ltm.properties_schema
+        changes.append(
+            f"episodic_memory.long_term_memory.properties_schema={spec_ltm.properties_schema}"
         )
     return changes
 
@@ -520,15 +571,9 @@ class ConfigService:
         config = self._resource_manager.config
         em = config.episodic_memory
 
-        ltm_config = LongTermMemoryConfigResponse(
-            embedder=em.long_term_memory.embedder if em.long_term_memory else None,
-            reranker=em.long_term_memory.reranker if em.long_term_memory else None,
-            vector_graph_store=em.long_term_memory.vector_graph_store
-            if em.long_term_memory
-            else None,
-            enabled=em.long_term_memory_enabled
-            if em.long_term_memory_enabled is not None
-            else True,
+        ltm_config = _ltm_config_response_from_partial(
+            em.long_term_memory,
+            em.long_term_memory_enabled,
         )
 
         stm_config = ShortTermMemoryConfigResponse(
@@ -564,15 +609,9 @@ class ConfigService:
         config = self._resource_manager.config
         em = config.episodic_memory
 
-        return LongTermMemoryConfigResponse(
-            embedder=em.long_term_memory.embedder if em.long_term_memory else None,
-            reranker=em.long_term_memory.reranker if em.long_term_memory else None,
-            vector_graph_store=em.long_term_memory.vector_graph_store
-            if em.long_term_memory
-            else None,
-            enabled=em.long_term_memory_enabled
-            if em.long_term_memory_enabled is not None
-            else True,
+        return _ltm_config_response_from_partial(
+            em.long_term_memory,
+            em.long_term_memory_enabled,
         )
 
     def get_short_term_memory_config(self) -> ShortTermMemoryConfigResponse:

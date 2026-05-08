@@ -533,9 +533,13 @@ class TestConfig:
             {"success": True, "message": "Episodic memory configuration updated"}
         )
         ltm_spec = UpdateLongTermMemorySpec(
+            backend=None,
             embedder="new-embedder",
             reranker="new-reranker",
             vector_graph_store="new-store",
+            vector_store=None,
+            segment_store=None,
+            properties_schema=None,
         )
         stm_spec = UpdateShortTermMemorySpec(
             llm_model="new-llm",

@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import regex
 from pydantic import (
@@ -182,10 +182,26 @@ class ProjectConfig(BaseModel):
     """
     Project configuration model.
 
-    This section defines which reranker and embedder models should be used for
-    the project.  If any field is left empty (""), the system automatically falls
-    back to the globally configured defaults in the server configuration file.
+    Identifies the long-term-memory backend and the resource ids it should
+    bind to. If any string field is left empty (""), the server falls back to
+    its globally-configured defaults.
+
+    Backend selection:
+    - `backend="event"` (default for new projects): uses VectorStore +
+      SegmentStore. Requires `vector_store` and `segment_store`.
+    - `backend="declarative"`: uses VectorGraphStore. Requires
+      `vector_graph_store`.
+    - Empty/null `backend`: server falls back to its parse-time default
+      (declarative, for backwards compatibility with pre-discriminator clients).
     """
+
+    backend: Annotated[
+        Literal["declarative", "event"] | None,
+        Field(
+            default=None,
+            description=("Long-term memory backend. New projects should set 'event'."),
+        ),
+    ]
 
     reranker: Annotated[
         str,
@@ -202,6 +218,43 @@ class ProjectConfig(BaseModel):
             default="",
             description=SpecDoc.EMBEDDER_ID,
             examples=Examples.EMBEDDER,
+        ),
+    ]
+
+    # Declarative-backend resource id.
+    vector_graph_store: Annotated[
+        str,
+        Field(
+            default="",
+            description="VectorGraphStore resource id (declarative backend only)",
+        ),
+    ]
+
+    # Event-backend resource ids.
+    vector_store: Annotated[
+        str,
+        Field(
+            default="",
+            description="VectorStore resource id (event backend only)",
+        ),
+    ]
+    segment_store: Annotated[
+        str,
+        Field(
+            default="",
+            description=(
+                "SQL engine resource id backing the segment store (event backend only)"
+            ),
+        ),
+    ]
+    properties_schema: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=(
+                "User-defined filterable properties (event backend only). Maps "
+                'name to type ("bool", "int", "float", "str", "datetime").'
+            ),
         ),
     ]
 

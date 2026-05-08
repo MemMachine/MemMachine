@@ -14,10 +14,11 @@ episodic_memory:
     vector_graph_store: my_storage_id
     #
     # Alternative backend: event memory (VectorStore + SegmentStore).
+    # See `event_vector_store` and `profile_storage` under resources.databases below.
     # backend: event
     # embedder: openai_embedder
     # reranker: my_reranker_id              # optional; omit to use embedding scores
-    # vector_store: event_vector_store      # references resources.databases
+    # vector_store: event_vector_store      # references resources.databases (a sqlite_vector_store, qdrant, etc.)
     # segment_store: profile_storage        # references a relational DB; segment store is created from it
     # properties_schema:                    # optional — user-defined filterable properties
     #   source_role: str
@@ -78,6 +79,18 @@ resources:
       provider: sqlite
       config:
         path: sqlite_test.db
+    # Example VectorStore for the event-backed long-term memory.
+    # Wire it via `episodic_memory.long_term_memory.vector_store`.
+    event_vector_store:
+      provider: sqlite_vector_store
+      config:
+        path: event_vectors.db
+        vector_search_engine: usearch  # or: hnswlib
+        # Persist ANN indexes to disk. If `index_directory` is omitted, indexes
+        # are kept in-memory only and rebuilt from the SQLite payload table on
+        # every restart — fine for tests, not for production.
+        index_directory: event_vector_indexes
+        save_threshold: 1000           # ops before auto-saving to `index_directory`
   embedders:
     openai_embedder:
       provider: openai

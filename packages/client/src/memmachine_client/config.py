@@ -337,9 +337,13 @@ class Config:
         """
         self._check_closed()
         spec = UpdateLongTermMemorySpec(
+            backend=None,
             embedder=embedder,
             reranker=reranker,
             vector_graph_store=vector_graph_store,
+            vector_store=None,
+            segment_store=None,
+            properties_schema=None,
         )
         payload = spec.model_dump(exclude_none=True)
         if enabled is not None:

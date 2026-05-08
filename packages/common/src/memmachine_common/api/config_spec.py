@@ -61,6 +61,16 @@ class ResourcesStatus(BaseModel):
 class LongTermMemoryConfigResponse(BaseModel):
     """Response model for long-term memory configuration."""
 
+    backend: Annotated[
+        Literal["declarative", "event"] | None,
+        Field(
+            default=None,
+            description=(
+                "Long-term memory backend. None means the writer predates the "
+                "discriminator and is treated as 'declarative'."
+            ),
+        ),
+    ]
     embedder: Annotated[
         str | None,
         Field(default=None, description=SpecDoc.LTM_CONFIG_EMBEDDER),
@@ -69,9 +79,37 @@ class LongTermMemoryConfigResponse(BaseModel):
         str | None,
         Field(default=None, description=SpecDoc.LTM_CONFIG_RERANKER),
     ]
+    # Declarative-backend only.
     vector_graph_store: Annotated[
         str | None,
         Field(default=None, description=SpecDoc.LTM_CONFIG_VECTOR_GRAPH_STORE),
+    ]
+    # Event-backend only.
+    vector_store: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="VectorStore resource id (event backend only)",
+        ),
+    ]
+    segment_store: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "SQL engine resource id backing the segment store (event backend only)"
+            ),
+        ),
+    ]
+    properties_schema: Annotated[
+        dict[str, str] | None,
+        Field(
+            default=None,
+            description=(
+                "User-defined filterable properties (event backend only). Maps "
+                'name to type ("bool", "int", "float", "str", "datetime").'
+            ),
+        ),
     ]
     enabled: Annotated[
         bool,
@@ -368,6 +406,16 @@ class AddLanguageModelSpec(BaseModel):
 class UpdateLongTermMemorySpec(BaseModel):
     """Partial update for long-term memory configuration."""
 
+    backend: Annotated[
+        Literal["declarative", "event"] | None,
+        Field(
+            default=None,
+            description=(
+                "Long-term memory backend. Omit/null to keep the existing "
+                "backend; set 'declarative' or 'event' to switch."
+            ),
+        ),
+    ]
     embedder: Annotated[
         str | None,
         Field(default=None, description=SpecDoc.LTM_EMBEDDER),
@@ -376,9 +424,34 @@ class UpdateLongTermMemorySpec(BaseModel):
         str | None,
         Field(default=None, description=SpecDoc.LTM_RERANKER),
     ]
+    # Declarative-backend only.
     vector_graph_store: Annotated[
         str | None,
         Field(default=None, description=SpecDoc.LTM_VECTOR_GRAPH_STORE),
+    ]
+    # Event-backend only.
+    vector_store: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="VectorStore resource id (event backend only)",
+        ),
+    ]
+    segment_store: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "SQL engine resource id backing the segment store (event backend only)"
+            ),
+        ),
+    ]
+    properties_schema: Annotated[
+        dict[str, str] | None,
+        Field(
+            default=None,
+            description="User-defined filterable properties (event backend only)",
+        ),
     ]
 
 

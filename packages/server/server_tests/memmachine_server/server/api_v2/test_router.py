@@ -6,6 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 from memmachine_common.api.spec import ContentType, Episode, SearchResult
 
+from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
+    EventLongTermMemoryConf,
+)
 from memmachine_server.common.episode_store.episode_model import EpisodeType
 from memmachine_server.common.errors import (
     ConfigurationError,
@@ -46,8 +50,12 @@ def test_create_project(client, mock_memmachine):
     }
 
     mock_session = MagicMock()
-    mock_session.episode_memory_conf.long_term_memory.embedder = "openai"
-    mock_session.episode_memory_conf.long_term_memory.reranker = "cohere"
+    mock_session.episode_memory_conf.long_term_memory = DeclarativeLongTermMemoryConf(
+        session_id="test_org/test_proj",
+        embedder="openai",
+        reranker="cohere",
+        vector_graph_store="store",
+    )
 
     mock_memmachine.create_session.return_value = mock_session
 
@@ -118,8 +126,14 @@ def test_get_project(client, mock_memmachine):
 
     mock_session_info = MagicMock()
     mock_session_info.description = "A test project"
-    mock_session_info.episode_memory_conf.long_term_memory.embedder = "openai"
-    mock_session_info.episode_memory_conf.long_term_memory.reranker = "cohere"
+    mock_session_info.episode_memory_conf.long_term_memory = (
+        DeclarativeLongTermMemoryConf(
+            session_id="test_org/test_proj",
+            embedder="openai",
+            reranker="cohere",
+            vector_graph_store="store",
+        )
+    )
     mock_memmachine.get_session.return_value = mock_session_info
 
     response = client.post("/api/v2/projects/get", json=payload)
@@ -146,6 +160,114 @@ def test_get_project(client, mock_memmachine):
     response = client.post("/api/v2/projects/get", json=payload)
     assert response.status_code == 404
     assert response.json()["detail"] == "Project does not exist"
+
+
+def test_create_project_with_explicit_event_backend(client, mock_memmachine):
+    """Client opts into event backend; resource ids round-trip in the response."""
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "description": "event-backed project",
+        "config": {
+            "backend": "event",
+            "embedder": "openai",
+            "vector_store": "vstore",
+            "segment_store": "pgengine",
+            "properties_schema": {"my_field": "str"},
+        },
+    }
+
+    mock_session = MagicMock()
+    mock_session.episode_memory_conf.long_term_memory = EventLongTermMemoryConf(
+        session_id="test_org/test_proj",
+        embedder="openai",
+        vector_store="vstore",
+        segment_store="pgengine",
+        properties_schema={"my_field": "str"},
+    )
+    mock_memmachine.create_session.return_value = mock_session
+
+    response = client.post("/api/v2/projects", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["config"]["backend"] == "event"
+    assert body["config"]["vector_store"] == "vstore"
+    assert body["config"]["segment_store"] == "pgengine"
+    assert body["config"]["properties_schema"] == {"my_field": "str"}
+
+    # Server forwards the event-shaped partial to create_session unchanged.
+    mock_memmachine.create_session.assert_awaited_once()
+    user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
+    assert user_conf.long_term_memory.backend == "event"
+    assert user_conf.long_term_memory.vector_store == "vstore"
+    assert user_conf.long_term_memory.segment_store == "pgengine"
+
+
+def test_create_project_without_backend_defaults_to_event(client, mock_memmachine):
+    """When the client doesn't specify `backend`, the v2 API defaults to event.
+
+    This is where the "new defaults to event" policy is enforced — at the
+    project-creation entry point. Storage-level parsing keeps treating
+    missing-backend as declarative for backwards compatibility.
+    """
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "description": "p",
+        "config": {
+            "embedder": "openai",
+            "vector_store": "vstore",
+            "segment_store": "pgengine",
+        },
+    }
+
+    mock_session = MagicMock()
+    mock_session.episode_memory_conf.long_term_memory = EventLongTermMemoryConf(
+        session_id="test_org/test_proj",
+        embedder="openai",
+        vector_store="vstore",
+        segment_store="pgengine",
+    )
+    mock_memmachine.create_session.return_value = mock_session
+
+    response = client.post("/api/v2/projects", json=payload)
+    assert response.status_code == 201
+
+    user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
+    assert user_conf.long_term_memory.backend == "event"
+
+
+def test_create_project_with_explicit_declarative_backend(client, mock_memmachine):
+    """Explicit `backend: declarative` is honored and resource ids round-trip."""
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "description": "declarative",
+        "config": {
+            "backend": "declarative",
+            "embedder": "openai",
+            "reranker": "cohere",
+            "vector_graph_store": "neo",
+        },
+    }
+
+    mock_session = MagicMock()
+    mock_session.episode_memory_conf.long_term_memory = DeclarativeLongTermMemoryConf(
+        session_id="test_org/test_proj",
+        embedder="openai",
+        reranker="cohere",
+        vector_graph_store="neo",
+    )
+    mock_memmachine.create_session.return_value = mock_session
+
+    response = client.post("/api/v2/projects", json=payload)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["config"]["backend"] == "declarative"
+    assert body["config"]["vector_graph_store"] == "neo"
+
+    user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
+    assert user_conf.long_term_memory.backend == "declarative"
 
 
 def test_get_episode_count(client, mock_memmachine):
