@@ -35,6 +35,8 @@ dependencies = [
     "greenlet>=3.2.4",
     "tzdata>=2024.1 ; sys_platform == 'win32'",
     "psutil>=7.1.0",
+    "langchain-text-splitters>=1.1.1",
+    "babel>=2.18.0",
 ]
 requires-python = ">= 3.12"
 authors = [

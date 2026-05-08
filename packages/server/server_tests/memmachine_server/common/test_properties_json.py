@@ -87,12 +87,57 @@ class TestEncodeFormat:
 
 class TestDecodeErrors:
     def test_unknown_type_name(self):
-        with pytest.raises(ValueError, match="Unknown property type name"):
+        with pytest.raises(ValueError, match="unknown type name"):
             decode_properties({"x": {"t": "unknown", "v": 1}})
 
     def test_non_dict_entry(self):
-        with pytest.raises(TypeError, match="Expected dict"):
+        with pytest.raises(TypeError, match="must be Mapping"):
             decode_properties({"x": 42})
+
+    def test_non_string_key(self):
+        with pytest.raises(TypeError, match="Property key must be str"):
+            decode_properties({42: {"t": "int", "v": 1}})
+
+    def test_extra_keys_scalar(self):
+        with pytest.raises(ValueError, match="must have exactly keys"):
+            decode_properties({"x": {"t": "int", "v": 1, "extra": "junk"}})
+
+    def test_extra_keys_datetime(self):
+        with pytest.raises(ValueError, match="must have exactly keys"):
+            decode_properties(
+                {
+                    "x": {
+                        "t": "datetime",
+                        "v": "2024-01-01T00:00:00+00:00",
+                        "tz": 0,
+                        "extra": 1,
+                    }
+                }
+            )
+
+    def test_missing_tz_datetime(self):
+        with pytest.raises(ValueError, match="datetime entry must have exactly keys"):
+            decode_properties(
+                {"x": {"t": "datetime", "v": "2024-01-01T00:00:00+00:00"}}
+            )
+
+    def test_wrong_tz_type(self):
+        with pytest.raises(TypeError, match="must be int"):
+            decode_properties(
+                {"x": {"t": "datetime", "v": "2024-01-01T00:00:00+00:00", "tz": "zero"}}
+            )
+
+    def test_wrong_value_type(self):
+        with pytest.raises(TypeError, match="must be int"):
+            decode_properties({"x": {"t": "int", "v": "not_an_int"}})
+
+    def test_missing_value(self):
+        with pytest.raises(ValueError, match="entry missing"):
+            decode_properties({"x": {"t": "int"}})
+
+    def test_missing_type(self):
+        with pytest.raises(TypeError, match="must be str"):
+            decode_properties({"x": {"v": 1}})
 
 
 class TestEncodeErrors:
