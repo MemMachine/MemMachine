@@ -87,6 +87,12 @@ EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
 # different semantics in the declarative backend; preserve that here too.
 _FILTERABLE_METADATA_NONE_FLAG = "_filterable_metadata_none"
 
+# Multiplier applied to `num_episodes_limit` when over-fetching from EventMemory
+# so that dedup-by-`_episode_uid` has enough headroom to return that many
+# distinct episodes even when a single episode produces multiple segments
+# (e.g., under TextSegmenter with chunking).
+_EVENT_BACKEND_DEDUP_OVERFETCH = 4
+
 
 class DeclarativeBackendParams(BaseModel):
     """Parameters for the declarative-backed LongTermMemory."""
@@ -262,9 +268,17 @@ class LongTermMemory:
     ) -> list[tuple[float, Episode]]:
         assert self._event_memory is not None
         assert self._episode_storage is not None
+        # Over-fetch from EventMemory: the per-segment results can have many
+        # segments per episode under non-passthrough segmenters, and we dedup
+        # them by `_episode_uid` below. Without headroom, the dedup loop can
+        # return fewer than `num_episodes_limit` distinct episodes.
+        vector_search_limit = max(
+            num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
+            num_episodes_limit,
+        )
         result = await self._event_memory.query(
             query,
-            vector_search_limit=num_episodes_limit,
+            vector_search_limit=vector_search_limit,
             expand_context=expand_context,
             property_filter=property_filter,
         )
