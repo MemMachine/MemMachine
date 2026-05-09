@@ -23,8 +23,8 @@ from memmachine_server.common.configuration import (
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
+    QdrantConf,
     SqlAlchemyConf,
-    SQLiteVectorStoreConf,
     SupportedDB,
 )
 from memmachine_server.common.configuration.embedder_conf import (
@@ -70,7 +70,7 @@ class ConfigurationWizard:
 
     NEO4J_DB_ID = "neo4j_db"
     SQLITE_DB_ID = "sqlite_db"
-    SQLITE_VECTOR_STORE_ID = "sqlite_vector_store"
+    QDRANT_VECTOR_STORE_ID = "qdrant_vector_store"
     LANGUAGE_MODEL_NAME = "llm_model"
     EMBEDDER_NAME = "my_embedder"
     RERANKER_NAME = "my_reranker"
@@ -146,7 +146,7 @@ class ConfigurationWizard:
             backend="event",
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
-            vector_store=self.SQLITE_VECTOR_STORE_ID,
+            vector_store=self.QDRANT_VECTOR_STORE_ID,
             segment_store=self.SQLITE_DB_ID,
         )
 
@@ -320,18 +320,14 @@ class ConfigurationWizard:
             SqlAlchemyConf,
             db_provider.build_config({"path": "memmachine.db"}),
         )
-        sqlite_vector_store_conf = SQLiteVectorStoreConf(
-            path="memmachine_vector_store.db",
-            # Persist ANN indexes to disk; without this they're rebuilt on every
-            # restart from the SQLite payload table.
-            index_directory="memmachine_vector_indexes",
-        )
+        # Default vector store for server deployment is Qdrant. Localhost
+        # defaults assume `docker run -p 6333:6333 qdrant/qdrant` or similar;
+        # the user can edit cfg.yml afterwards to point at a remote Qdrant.
+        qdrant_vector_store_conf = QdrantConf()
         return DatabasesConf(
             neo4j_confs={self.NEO4J_DB_ID: neo4j_db_conf},
             relational_db_confs={self.SQLITE_DB_ID: sqlite_db_conf},
-            sqlite_vector_store_confs={
-                self.SQLITE_VECTOR_STORE_ID: sqlite_vector_store_conf,
-            },
+            qdrant_confs={self.QDRANT_VECTOR_STORE_ID: qdrant_vector_store_conf},
         )
 
     @cached_property

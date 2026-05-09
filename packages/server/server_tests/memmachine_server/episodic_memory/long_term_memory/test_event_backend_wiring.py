@@ -291,6 +291,45 @@ async def test_user_metadata_filter_round_trips(
     assert uids == {"m-1"}
 
 
+async def test_system_field_filter_round_trips(
+    long_term_memory,
+    fake_episode_storage,
+):
+    """Bare client-API field (`producer_id`) translates to storage key `_producer_id`.
+
+    EventMemory translates the filter consistently for both vector_store and
+    segment_store stages so a system-field filter actually narrows results.
+    """
+    episodes = [
+        Episode(
+            uid="s-1",
+            content="alice msg",
+            session_key="sess1",
+            created_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
+            producer_id="alice",
+            producer_role="user",
+        ),
+        Episode(
+            uid="s-2",
+            content="bob msg",
+            session_key="sess1",
+            created_at=datetime(2026, 1, 15, 12, 1, tzinfo=UTC),
+            producer_id="bob",
+            producer_role="user",
+        ),
+    ]
+    fake_episode_storage._episodes.update({e.uid: e for e in episodes})
+    await long_term_memory.add_episodes(episodes)
+
+    scored = await long_term_memory.search_scored(
+        "msg",
+        num_episodes_limit=10,
+        property_filter=FilterComparison(field="producer_id", op="=", value="alice"),
+    )
+    uids = {ep.uid for _, ep in scored}
+    assert uids == {"s-1"}
+
+
 async def test_close_is_a_noop(long_term_memory):
     # Should not raise.
     await long_term_memory.close()

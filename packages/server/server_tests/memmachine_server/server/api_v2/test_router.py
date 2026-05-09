@@ -203,30 +203,26 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
     assert user_conf.long_term_memory.segment_store == "pgengine"
 
 
-def test_create_project_without_backend_defaults_to_event(client, mock_memmachine):
-    """When the client doesn't specify `backend`, the v2 API defaults to event.
+def test_create_project_without_backend_passes_none_through(client, mock_memmachine):
+    """Without an explicit `backend`, the v2 API leaves it as None.
 
-    This is where the "new defaults to event" policy is enforced — at the
-    project-creation entry point. Storage-level parsing keeps treating
-    missing-backend as declarative for backwards compatibility.
+    The server-side config determines resolution: legacy configs without a
+    `backend` field resolve to declarative (backwards-compat); wizard-generated
+    configs explicitly set `backend: event`.
     """
     payload = {
         "org_id": "test_org",
         "project_id": "test_proj",
         "description": "p",
-        "config": {
-            "embedder": "openai",
-            "vector_store": "vstore",
-            "segment_store": "pgengine",
-        },
+        "config": {"embedder": "openai", "reranker": "cohere"},
     }
 
     mock_session = MagicMock()
-    mock_session.episode_memory_conf.long_term_memory = EventLongTermMemoryConf(
+    mock_session.episode_memory_conf.long_term_memory = DeclarativeLongTermMemoryConf(
         session_id="test_org/test_proj",
         embedder="openai",
-        vector_store="vstore",
-        segment_store="pgengine",
+        reranker="cohere",
+        vector_graph_store="store",
     )
     mock_memmachine.create_session.return_value = mock_session
 
@@ -234,7 +230,7 @@ def test_create_project_without_backend_defaults_to_event(client, mock_memmachin
     assert response.status_code == 201
 
     user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
-    assert user_conf.long_term_memory.backend == "event"
+    assert user_conf.long_term_memory.backend is None
 
 
 def test_create_project_with_explicit_declarative_backend(client, mock_memmachine):
