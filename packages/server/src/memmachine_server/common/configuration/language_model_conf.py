@@ -98,6 +98,74 @@ class OpenAIChatCompletionsLanguageModelConf(
         return v
 
 
+class LiteLLMLanguageModelConf(
+    MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
+):
+    """Configuration for LiteLLM-backed language models.
+
+    LiteLLM routes a single `model` spec (e.g. ``anthropic/claude-sonnet-4-6``)
+    to whichever underlying provider the prefix selects, picking up that
+    backing's standard env vars (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``,
+    ``AWS_*``, ...) at call time. Set ``api_base`` to point at a LiteLLM
+    proxy server for centralized credential management.
+    """
+
+    model: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "LiteLLM model spec, e.g. 'anthropic/claude-sonnet-4-6', "
+            "'openai/gpt-4o', 'bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0'."
+        ),
+    )
+    api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Optional explicit API key. Most users leave this unset and let "
+            "LiteLLM resolve credentials from each backing's standard env var "
+            "(ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) at call time. Set this "
+            "only when routing through a LiteLLM proxy."
+        ),
+    )
+    api_base: str | None = Field(
+        default=None,
+        description=(
+            "Optional base URL. Set to a LiteLLM proxy endpoint "
+            "(e.g. 'http://localhost:4000') for proxy mode."
+        ),
+    )
+    api_version: str | None = Field(
+        default=None,
+        description="Optional API version (Azure-style endpoints).",
+    )
+    drop_params: bool = Field(
+        default=True,
+        description=(
+            "Forward `drop_params=True` to litellm.acompletion so unsupported "
+            "kwargs are stripped per backing rather than raising."
+        ),
+    )
+    extra_kwargs: dict[str, Any] | None = Field(
+        default=None,
+        description="Extra kwargs forwarded verbatim to litellm.acompletion.",
+    )
+    max_retry_interval_seconds: int = Field(
+        default=120,
+        description="Max retry interval in seconds when retrying API calls.",
+        gt=0,
+    )
+
+    @field_validator("api_base")
+    @classmethod
+    def validate_api_base(cls, v: str | None) -> str | None:
+        """Ensure the base URL includes a scheme and host when provided."""
+        if v is not None:
+            parsed_url = urlparse(v)
+            if not parsed_url.scheme or not parsed_url.netloc:
+                raise ValueError(f"Invalid api_base URL: api_base={v}")
+        return v
+
+
 class AmazonBedrockLanguageModelConf(
     MetricsFactoryIdMixin, YamlSerializableMixin, AWSCredentialsMixin
 ):
@@ -155,6 +223,7 @@ class LanguageModelsConf(BaseModel):
         OpenAIChatCompletionsLanguageModelConf,
     ] = {}
     amazon_bedrock_language_model_confs: dict[str, AmazonBedrockLanguageModelConf] = {}
+    litellm_language_model_confs: dict[str, LiteLLMLanguageModelConf] = {}
 
     def get_openai_responses_language_model_name(self) -> str | None:
         """Get the name of the first OpenAI Responses language model, if any."""
@@ -173,6 +242,16 @@ class LanguageModelsConf(BaseModel):
         if self.amazon_bedrock_language_model_confs:
             return next(iter(self.amazon_bedrock_language_model_confs))
         return None
+
+    def get_litellm_language_model_name(self) -> str | None:
+        """Get the name of the first LiteLLM language model, if any."""
+        if self.litellm_language_model_confs:
+            return next(iter(self.litellm_language_model_confs))
+        return None
+
+    def get_litellm_language_model_conf(self, name: str) -> "LiteLLMLanguageModelConf":
+        """Get LiteLLM language model configuration by name."""
+        return self.litellm_language_model_confs[name]
 
     def get_openai_responses_language_model_conf(
         self, name: str
@@ -198,11 +277,13 @@ class LanguageModelsConf(BaseModel):
             language_model_id in self.openai_responses_language_model_confs
             or language_model_id in self.openai_chat_completions_language_model_confs
             or language_model_id in self.amazon_bedrock_language_model_confs
+            or language_model_id in self.litellm_language_model_confs
         )
 
     OPENAI_RESPONSE: ClassVar[str] = "openai-responses"
     OPEN_CHAT_COMPLETION: ClassVar[str] = "openai-chat-completions"
     AMAZON_BEDROCK: ClassVar[str] = "amazon-bedrock"
+    LITELLM: ClassVar[str] = "litellm"
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
 
@@ -225,6 +306,9 @@ class LanguageModelsConf(BaseModel):
         for lm_id, cfg in self.amazon_bedrock_language_model_confs.items():
             add_language_model(lm_id, self.AMAZON_BEDROCK, cfg.to_yaml_dict())
 
+        for lm_id, cfg in self.litellm_language_model_confs.items():
+            add_language_model(lm_id, self.LITELLM, cfg.to_yaml_dict())
+
         return language_models
 
     def to_yaml(self) -> str:
@@ -242,7 +326,7 @@ class LanguageModelsConf(BaseModel):
         if isinstance(lm, cls):
             return lm
 
-        openai_dict, aws_bedrock_dict, openai_chat_completions_dict = {}, {}, {}
+        openai_dict, aws_bedrock_dict, openai_chat_completions_dict, litellm_dict = {}, {}, {}, {}
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
@@ -257,6 +341,8 @@ class LanguageModelsConf(BaseModel):
                 )
             elif provider == "amazon-bedrock":
                 aws_bedrock_dict[lm_id] = AmazonBedrockLanguageModelConf(**conf)
+            elif provider == "litellm":
+                litellm_dict[lm_id] = LiteLLMLanguageModelConf(**conf)
             else:
                 raise ValueError(
                     f"Unknown language model provider '{provider}' for language model id '{lm_id}'",
@@ -266,4 +352,5 @@ class LanguageModelsConf(BaseModel):
             openai_responses_language_model_confs=openai_dict,
             amazon_bedrock_language_model_confs=aws_bedrock_dict,
             openai_chat_completions_language_model_confs=openai_chat_completions_dict,
+            litellm_language_model_confs=litellm_dict,
         )
