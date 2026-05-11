@@ -668,6 +668,7 @@ reuse the same `RESULT_POSTFIX` without double-counting earlier data.
 ./run_test.sh wikimultihop exp1 delete retrieval_agent
 ./run_test.sh hotpotqa     exp1 delete retrieval_agent
 ./run_test.sh longmemeval  exp1 delete retrieval_agent
+./run_test.sh beam         exp1 delete retrieval_agent
 ```
 
 Notes:
@@ -681,5 +682,7 @@ Notes:
   by ingestion (`group1` and `hotpotqa_group` respectively).
 - For LongMemEval the session_id is derived from `RESULT_POSTFIX`
   (`longmemeval_<RESULT_POSTFIX>`), matching the ingest-time session.
+- For BEAM the session_id is derived from `RESULT_POSTFIX`
+  (`beam_<RESULT_POSTFIX>`), matching the ingest-time session.
 - Concurrency flags (`--ingest-concurrency`, `--search-concurrency`,
   `--judge-concurrency`) are rejected with `delete`.

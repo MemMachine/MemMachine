@@ -74,7 +74,7 @@ async def beam_ingest(
         Dictionary containing ingestion statistics.
     """
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=session_id,
     )

@@ -200,7 +200,7 @@ async def beam_search(
         print(f"After truncation: {len(full_content)} characters")
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, answer_model, query_agent = await agent_utils.init_memmachine_params(
+    memory, answer_model, query_agent, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=session_id,
         agent_name=agent_name,

@@ -88,10 +88,10 @@ usage_beam() {
     echo
     echo "Arguments:"
     echo "  RESULT_POSTFIX    Custom postfix for output files"
-    echo "  RUN_TYPE          Run ingestion or search [ingest | search]"
+    echo "  RUN_TYPE          Run ingestion, search, or delete [ingest | search | delete]"
     echo "  TEST_TARGET       [memmachine | retrieval_agent | llm]"
-    echo "  CHAT_PATH         Path to chat.json file"
-    echo "  QUESTIONS_PATH    Path to probing_questions.json file"
+    echo "  CHAT_PATH         Path to chat.json file (ingest/search only)"
+    echo "  QUESTIONS_PATH    Path to probing_questions.json file (ingest/search only)"
     echo "Options:"
     echo "  --search-concurrency N"
     echo "                     Optional max concurrent BEAM search requests"
@@ -296,7 +296,11 @@ validate_args() {
                 echo "--ingest-concurrency is only supported for locomo ingest"
                 exit 1
             fi
-            if [ "$#" -ne 6 ]; then
+            if [ "${3:-}" = "delete" ]; then
+                if [ "$#" -ne 4 ]; then
+                    show_help beam
+                fi
+            elif [ "$#" -ne 6 ]; then
                 show_help beam
             fi
             if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
@@ -404,9 +408,15 @@ run_test() {
         beam)
             RESULT_POSTFIX=$2
             INGEST=$3
-            TEST_TARGET=$4
-            CHAT_PATH=$5
-            QUESTIONS_PATH=$6
+            if [ "$INGEST" = "delete" ]; then
+                TEST_TARGET=$4
+                CHAT_PATH=""
+                QUESTIONS_PATH=""
+            else
+                TEST_TARGET=$4
+                CHAT_PATH=$5
+                QUESTIONS_PATH=$6
+            fi
             ;;
         *)
             echo "Unknown test: $TEST"
@@ -483,6 +493,7 @@ run_test() {
             INGEST_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam/beam_ingest.py" --data-path "$CHAT_PATH" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID")
             SEARCH_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam/beam_search.py" --chat-data-path "$CHAT_PATH" --data-path "$QUESTIONS_PATH" --eval-result-path "$RESULT_FILE" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID" --test-target "$TEST_TARGET")
             EVALUATE_CMD=("${PYTHON_CMD[@]}" "$SCRIPT_DIR/beam/beam_evaluate.py" --data-path "$RESULT_FILE" --target-path "$EVAL_FILE" --config-path "$CONFIG_FILE")
+            DELETE_CMD=("${PYTHON_CMD[@]}" -u "$SCRIPT_DIR/beam/beam_delete.py" --config-path "$CONFIG_FILE" --session-id "$SESSION_ID")
             if [ -n "${SEARCH_CONCURRENCY:-}" ]; then
                 SEARCH_CMD+=(--concurrency "$SEARCH_CONCURRENCY")
             fi
