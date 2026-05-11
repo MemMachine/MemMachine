@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from openai.types import chat as openai_chat
 
-_fake_litellm = types.ModuleType("litellm")
+_fake_litellm: Any = types.ModuleType("litellm")
 _fake_litellm.acompletion = AsyncMock()
 _original_litellm = sys.modules.get("litellm")
 sys.modules["litellm"] = _fake_litellm
@@ -28,7 +28,9 @@ from memmachine_server.common.language_model.litellm_language_model import (  # 
 )
 
 
-def _make_chat_completion(content: str = "hello", **extra: Any) -> openai_chat.ChatCompletion:
+def _make_chat_completion(
+    content: str = "hello", **extra: Any
+) -> openai_chat.ChatCompletion:
     payload: dict[str, Any] = {
         "id": "resp-1",
         "object": "chat.completion",
@@ -65,7 +67,9 @@ def model_params() -> LiteLLMLanguageModelParams:
     )
 
 
-def test_init_does_not_require_openai_client(model_params: LiteLLMLanguageModelParams) -> None:
+def test_init_does_not_require_openai_client(
+    model_params: LiteLLMLanguageModelParams,
+) -> None:
     """LiteLLMLanguageModel skips the parent's AsyncOpenAI requirement."""
     lm = LiteLLMLanguageModel(model_params)
     assert lm._model == "anthropic/claude-sonnet-4-6"
@@ -86,7 +90,10 @@ async def test_request_chat_completion_dispatches_to_litellm(
         return_value=fake_response,
     ) as fake_acomp:
         result = await lm._request_chat_completion(
-            args={"model": "anthropic/claude-sonnet-4-6", "messages": [{"role": "user", "content": "x"}]},
+            args={
+                "model": "anthropic/claude-sonnet-4-6",
+                "messages": [{"role": "user", "content": "x"}],
+            },
             max_attempts=1,
             generate_response_call_uuid="uuid",
         )
@@ -306,10 +313,12 @@ async def test_request_chat_completion_raises_import_error_when_litellm_absent(
 ) -> None:
     """When litellm is not installed, _request_chat_completion raises ImportError."""
     lm = LiteLLMLanguageModel(model_params)
-    with patch.dict(sys.modules, {"litellm": None}):
-        with pytest.raises(ImportError, match="litellm is required"):
-            await lm._request_chat_completion(
-                args={"model": "x", "messages": []},
-                max_attempts=1,
-                generate_response_call_uuid="uuid",
-            )
+    with (
+        patch.dict(sys.modules, {"litellm": None}),
+        pytest.raises(ImportError, match="litellm is required"),
+    ):
+        await lm._request_chat_completion(
+            args={"model": "x", "messages": []},
+            max_attempts=1,
+            generate_response_call_uuid="uuid",
+        )
